@@ -1,0 +1,14 @@
+[package]
+name = "vulkan"
+version = "0.1.0"
+authors = ["Austin Shafer <ashafer@badland.io>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+objc="0.2.6"
+metal="0.16"
+cocoa="0.20"
+winit="0.19.5"
+ash="0.29.0"
