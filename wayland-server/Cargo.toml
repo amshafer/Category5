@@ -1,0 +1,10 @@
+[package]
+name = "wayland-server"
+version = "0.1.0"
+authors = ["Austin Shafer <ashafer@badland.io>"]
+
+[build-dependencies]
+bindgen="0.51"
+
+[dependencies]
+minifb="0.14"

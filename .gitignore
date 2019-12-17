@@ -1,3 +1,7 @@
-/target
+vulkan/target
+wayland-server/target
 **/*.rs.bk
+**/*.core
 **/*~
+**/*.emacs
+**/*.vim
