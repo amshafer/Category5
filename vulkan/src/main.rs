@@ -8,13 +8,22 @@
 #[macro_use]
 extern crate ash;
 extern crate winit;
+extern crate cgmath;
+extern crate obj;
+
 use winit::*;
+use cgmath::{Point3,Vector3,Matrix4};
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::cell::RefCell;
 use std::io::Cursor;
 use std::ptr;
+use std::marker::Copy;
+
+use std::fs::File;
+use std::io::BufReader;
+use obj::*;
 
 pub use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::{vk, Device, Entry, Instance};
@@ -42,6 +51,8 @@ use cocoa::base::id as cocoa_id;
 use metal::CoreAnimationLayer;
 #[cfg(target_os = "macos")]
 use objc::runtime::YES;
+
+static EYE: Point3<f32> = Point3::new(0.0, 3.0, -7.0);
 
 // MoltenVK provides vulkan on top of apple's metal api
 // this function is straight from the ash examples
@@ -173,12 +184,50 @@ pub struct Renderer {
     pub render_sema: vk::Semaphore,
 }
 
+// an application specific set of resources to draw.
+//
+// These are the "dynamic" parts of our application. The things
+// that change depending on the scene. It holds pipelines, layouts
+// shaders, and geometry.
+//
+// Ideally the `Renderer` can render/present anything, and this
+// struct specifies what to draw.
 pub struct AppContext {
     pub pass: vk::RenderPass,
     pub pipeline: vk::Pipeline,
     pub pipeline_layout: vk::PipelineLayout,
-    pub shader_modules: Box<[vk::ShaderModule]>,
+    pub descriptor_layouts: Vec<vk::DescriptorSetLayout>,
+    pub shader_modules: Vec<vk::ShaderModule>,
     pub framebuffers: Vec<vk::Framebuffer>,
+    // each swapchain image should have its ubos/descriptors
+    pub uniform_buffers: Vec<vk::Buffer>,
+    pub uniform_buffers_memory: Vec<vk::DeviceMemory>,
+    pub descriptor_pool: vk::DescriptorPool,
+    pub descriptors: Vec<vk::DescriptorSet>,
+    // This is the set of geometric objects in the scene
+    pub meshes: Vec<Mesh>,
+}
+
+// A single 3D object, stored in indexed vertex form
+//
+// All 3D objects should be stored as a set of vertices, which
+// are combined into a mesh by selecting indices. This is typical stuff.
+pub struct Mesh {
+    // Resources for the vertex buffer
+    pub vert_buffer: vk::Buffer,
+    pub vert_buffer_memory: vk::DeviceMemory,
+    pub vert_count: u32,
+    // Resources for the index buffer
+    pub index_buffer: vk::Buffer,
+    pub index_buffer_memory: vk::DeviceMemory,
+}
+
+#[derive(Clone,Copy)]
+#[repr(C)]
+pub struct ShaderConstants {
+    pub model: Matrix4<f32>,
+    pub view: Matrix4<f32>,
+    pub proj: Matrix4<f32>,
 }
 
 // Most of the functions below will be unsafe. Only the safe functions
@@ -586,9 +635,14 @@ impl Renderer {
     {
         // for each memory type
         for (index, ref mem_type) in props.memory_types.iter().enumerate() {
-            // vk::MemoryPropertyFlags::DEVICE_LOCAL is 1            
-            if reqs.memory_type_bits & 1 == 1
-                && mem_type.property_flags == flags {
+            // `reqs` only give us the bit representation of the flags
+            let req_type =
+                vk::MemoryPropertyFlags::from_raw(reqs.memory_type_bits);
+
+            // ash autogenerates common operations for bitfield style structs
+            // they can be found in `vk_bitflags_wrapped`
+            if req_type.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
+                && mem_type.property_flags.contains(flags) {
                     println!("Selected type with flags {:?}",
                              mem_type.property_flags);
                     return Some(index as u32);
@@ -1034,6 +1088,9 @@ impl Renderer {
     // assembly, viewport/stencil location, rasterization type, depth
     // information, and color blending.
     //
+    // Pipeline layouts specify the full set of resources that the pipeline
+    // can access while running.
+    //
     // This method roughly follows the "fixed function" part of the
     // vulkan tutorial.
     pub unsafe fn create_pipeline(&mut self,
@@ -1042,13 +1099,37 @@ impl Renderer {
                                   shader_stages: &[vk::PipelineShaderStageCreateInfo])
                                   -> vk::Pipeline
     {
+        // This binds our vertex input to location 0 to be passed to the shader
+        // Think of it like specifying the data stream given to the shader
+        let vertex_bindings = [vk::VertexInputBindingDescription {
+            binding: 0, // (location = 0)
+            stride: mem::size_of::<Vector3<f32>>() as u32,
+            input_rate: vk::VertexInputRate::VERTEX,
+        }];
+
+        // These describe how the shader should parse the data passed
+        // think of it like breaking the above data stream into variables
+        let vertex_attributes = [
+            vk::VertexInputAttributeDescription {
+                binding: 0, // The data binding to parse
+                location: 0, // the location of the attribute we are specifying
+                // Common types
+                //     float: VK_FORMAT_R32_SFLOAT
+                //     vec2:  VK_FORMAT_R32G32_SFLOAT
+                //     vec3:  VK_FORMAT_R32G32B32_SFLOAT
+                //     vec4:  VK_FORMAT_R32G32B32A32_SFLOAT
+                format: vk::Format::R32G32B32_SFLOAT,
+                offset: 0,
+            },
+        ];
+
         // now for the fixed function portions of the pipeline
-        // for now vertices are specified in the shader
+        // This describes the layout of resources passed to the shaders
         let vertex_info = vk::PipelineVertexInputStateCreateInfo {
-            vertex_attribute_description_count: 0,
-            p_vertex_attribute_descriptions: ptr::null(),
-            vertex_binding_description_count: 0,
-            p_vertex_binding_descriptions: ptr::null(),
+            vertex_binding_description_count: 1,
+            p_vertex_binding_descriptions: vertex_bindings.as_ptr(),
+            vertex_attribute_description_count: 1,
+            p_vertex_attribute_descriptions: vertex_attributes.as_ptr(),
             ..Default::default()
         };
 
@@ -1117,6 +1198,7 @@ impl Renderer {
         // just do basic alpha blending. This is straight from the tutorial
         let blend_attachment_states = [vk::PipelineColorBlendAttachmentState {
             blend_enable: 1, // VK_TRUE
+            // blend the new contents over the old
             src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
             dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
             color_blend_op: vk::BlendOp::ADD,
@@ -1191,6 +1273,149 @@ impl Renderer {
             .collect()
     }
 
+    // Returns a `ShaderConstants` with the default values for this application
+    //
+    // Constants will be the contents of the uniform buffers which are
+    // processed by the shaders. The most obvious entry is the model + view
+    // + perspective projection matrix.
+    pub fn get_shader_constants() -> ShaderConstants {
+        // transform from blender's coordinate system to vulkan
+        let model = Matrix4::from_translation(Vector3::new(0.0, -1.5, 0.0));
+
+        let view = Matrix4::look_at(
+            EYE, // eye location
+            Point3::new(0.0, 0.0, 0.0), // point to look at
+            Vector3::new(0.0, -1.0, 0.0), // up direction
+        );
+
+        // cgmath's version of gluPerspective
+        let proj = cgmath::perspective(
+            cgmath::Deg(45.0), // FOV in degrees
+            1.333, // aspect
+            0.1, // near clipping plane
+            100.0, // far clipping plane
+        );
+
+        ShaderConstants {
+            model: model,
+            view: view,
+            proj: proj,
+        }
+    }
+
+    // Create `count` descriptor layouts
+    //
+    // Descriptor layouts specify the number and characteristics of descriptor
+    // sets which will be made available to the pipeline through the pipeline
+    // layout.
+    //
+    // The layouts created will be the default for this application. This should
+    // usually be at least one descriptor for the MVP martrix.
+    pub unsafe fn create_descriptor_layouts(&mut self,
+                                            count: usize)
+                                        -> Vec<vk::DescriptorSetLayout>
+    {
+        // pass the MVP matrix
+        let bindings = [vk::DescriptorSetLayoutBinding::builder()
+                        .binding(0)
+                        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                        .stage_flags(vk::ShaderStageFlags::VERTEX)
+                        .descriptor_count(1)
+                        .build()
+        ];
+
+        let info = vk::DescriptorSetLayoutCreateInfo::builder()
+            .bindings(&bindings);
+
+        let mut ret = Vec::new();
+        // We want to return a vector with a layout for every swapchain
+        // image. We want them all to be the same
+        for _ in 0..count {
+            ret.push(
+                self.dev.create_descriptor_set_layout(&info, None)
+                    .unwrap()
+            );
+        }
+
+        return ret;
+    }
+
+    // Create a descriptor pool to allocate all of our sets from
+    //
+    // All descriptor sets will be allocated from this. We can delete
+    // or reset this to take care of all of the descriptor sets at once.
+    //
+    // The pool returned is NOT thread safe
+    pub unsafe fn create_descriptor_pool(&mut self,
+                                         capacity: u32)
+                                         -> vk::DescriptorPool
+    {
+        let size = [vk::DescriptorPoolSize::builder()
+                    .ty(vk::DescriptorType::UNIFORM_BUFFER)
+                    .descriptor_count(capacity)
+                    .build()
+        ];
+
+        let info = vk::DescriptorPoolCreateInfo::builder()
+            .pool_sizes(&size)
+            .max_sets(capacity);
+
+        self.dev.create_descriptor_pool(&info, None).unwrap()
+    }
+
+    // Allocate a descriptor set for each layout in `layouts`
+    //
+    // A descriptor set specifies a group of attachments that can
+    // be referenced by the graphics pipeline. Think of a descriptor
+    // as the hardware's handle to a resource. The set of descriptors
+    // allocated in each set is specified in the layout.
+    pub unsafe fn allocate_descriptor_sets(&mut self,
+                                           pool: vk::DescriptorPool,
+                                           layouts: &[vk::DescriptorSetLayout])
+                                           -> Vec<vk::DescriptorSet>
+    {
+        let info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(pool)
+            .set_layouts(layouts)
+            .build();
+
+        self.dev.allocate_descriptor_sets(&info).unwrap()
+    }
+
+    // Update a descriptor set to use the provided buffer
+    //
+    // Update the entry in `set` at offset `element` to use the
+    // values in `buf`. Descriptor sets can be updated outside of
+    // command buffers.
+    pub unsafe fn update_descriptor_set(&mut self,
+                                        dtype: vk::DescriptorType,
+                                        buf: vk::Buffer,
+                                        set: vk::DescriptorSet,
+                                        element: u32)
+    {
+        let info = vk::DescriptorBufferInfo::builder()
+            .buffer(buf)
+            .offset(0)
+            .range(mem::size_of::<ShaderConstants>() as u64)
+            .build();
+        let write_info = [
+            vk::WriteDescriptorSet::builder()
+                .dst_set(set)
+                .dst_binding(0)
+                // descriptors can be arrays, so we need to specify an offset
+                // into that array if applicable
+                .dst_array_element(element)
+                .descriptor_type(dtype)
+                .buffer_info(&[info])
+                .build()
+        ];
+
+        self.dev.update_descriptor_sets(
+            &write_info, // descriptor writes
+            &[], // descriptor copies
+        );
+    }
+
     // Set up the application. This should *always* be called
     //
     // Once we have allocated a renderer with `new`, we should initialize
@@ -1214,9 +1439,15 @@ impl Renderer {
                 self.create_shader_stages(program_entrypoint_name.as_ptr())
             );
 
+            // prepare descriptors for all of the uniforms to pass to shaders
+            let descriptor_layouts = self.create_descriptor_layouts(
+                self.views.len() // Number of swapchain images
+            );
+
             // even though we don't have anything special in our layout, we
             // still need to have a created layout for the pipeline
-            let layout_info = vk::PipelineLayoutCreateInfo::default();
+            let layout_info = vk::PipelineLayoutCreateInfo::builder()
+                .set_layouts(descriptor_layouts.as_slice());
             let layout = self.dev.create_pipeline_layout(&layout_info, None)
                 .unwrap();
             
@@ -1224,17 +1455,173 @@ impl Renderer {
 
             let framebuffers = self.create_framebuffers(pass, self.resolution);
 
+            // Allocate the actual descriptor sets for each framebuffer
+            let pool = self.create_descriptor_pool(framebuffers.len() as u32);
+            let descriptors = self.allocate_descriptor_sets(
+                pool,
+                descriptor_layouts.as_slice()
+            );
+
+            let consts = Renderer::get_shader_constants();
+
+            // create a uniform buffer for every framebuffer
+            // this will hold stuff like mvp matrices
+            let mut ubos = Vec::new();
+            let mut ubos_mem = Vec::new();
+
+            // Each swapchain image will have its own set of resources
+            for i in 0..framebuffers.len() {
+                let (buf, mem) = self.create_buffer(
+                    vk::BufferUsageFlags::UNIFORM_BUFFER,
+                    vk::SharingMode::EXCLUSIVE,
+                    // this specifies the constants to copy into the buffer
+                    &[consts],
+                );
+
+                // now we need to update the descriptor set with the
+                // buffer of the uniform constants to use
+                self.update_descriptor_set(
+                    vk::DescriptorType::UNIFORM_BUFFER,
+                    buf,
+                    descriptors[i],
+                    0);
+
+                ubos.push(buf);
+                ubos_mem.push(mem);
+            }
+
             // The app context contains the scene specific data
             self.app_ctx = Some(AppContext {
                 pass: pass,
                 pipeline: pipeline,
                 pipeline_layout: layout,
+                descriptor_layouts: descriptor_layouts,
                 framebuffers: framebuffers,
+                uniform_buffers: ubos,
+                uniform_buffers_memory: ubos_mem,
+                descriptor_pool: pool,
+                descriptors: descriptors,
                 shader_modules: shader_stages
                     .iter()
                     .map(|info| { info.module })
                     .collect(),
+                meshes: Vec::new(),
             });
+        }
+    }
+
+    // Allocates a buffer/memory pair of size `size`.
+    //
+    // This is just a helper for `create_buffer`. It does not fill
+    // the buffer with anything.
+    pub unsafe fn create_buffer_with_size(&mut self,
+                                          usage: vk::BufferUsageFlags,
+                                          mode: vk::SharingMode,
+                                          size: u64)
+                                          -> (vk::Buffer, vk::DeviceMemory)
+    {
+        let create_info = vk::BufferCreateInfo::builder()
+            .size(size)
+            .usage(usage)
+            .sharing_mode(mode);
+
+        let buffer = self.dev.create_buffer(&create_info, None).unwrap();
+        let req = self.dev.get_buffer_memory_requirements(buffer);
+        // get the memory types for this pdev
+        let props = Renderer::get_pdev_mem_properties(&self.inst, self.pdev);
+        // find the memory type that best suits our requirements
+        let index = Renderer::find_memory_type_index(
+            &props,
+            &req,
+            // we want to be able to map the buffer to populate it
+            vk::MemoryPropertyFlags::HOST_VISIBLE
+                | vk::MemoryPropertyFlags::HOST_COHERENT,
+        ).unwrap();
+
+        // now we need to allocate memory to back the buffer
+        let alloc_info = vk::MemoryAllocateInfo {
+            allocation_size: req.size,
+            memory_type_index: index,
+            ..Default::default()
+        };
+
+        let memory = self.dev.allocate_memory(&alloc_info, None).unwrap();
+
+        return (buffer, memory);
+    }
+
+    // allocates a buffer/memory pair and fills it with `data`
+    //
+    // There are two components to a memory backed resource in vulkan:
+    // vkBuffer which is the actual buffer itself, and vkDeviceMemory which
+    // represents a region of allocated memory to hold the buffer contents.
+    //
+    // Both are returned, as both need to be destroyed when they are done.
+    pub unsafe fn create_buffer<T: Copy>(&mut self,
+                                         usage: vk::BufferUsageFlags,
+                                         mode: vk::SharingMode,
+                                         data: &[T])
+                                         -> (vk::Buffer, vk::DeviceMemory)
+    {
+        let size = std::mem::size_of_val(data) as u64;
+        let (buffer, memory) = self.create_buffer_with_size(
+            usage,
+            mode,
+            size,
+        );
+
+        // Now we copy our data into the buffer
+        let ptr = self.dev.map_memory(
+            memory,
+            0, // offset
+            size,
+            vk::MemoryMapFlags::empty()
+        ).unwrap();
+
+        // rust doesn't have a raw memcpy, so we need to transform the void
+        // ptr to a slice. This is unsafe as the length needs to be correct
+        let dst = std::slice::from_raw_parts_mut(ptr as *mut T, data.len());
+        dst.copy_from_slice(data);
+
+        self.dev.unmap_memory(memory);
+        // Until now the buffer has not had any memory assigned
+        self.dev.bind_buffer_memory(buffer, memory, 0).unwrap();
+
+        (buffer, memory)
+    }
+
+    // Add a mesh to the renderer to be displayed.
+    //
+    // The meshes are added to a list, and will be individually
+    // dispatched for drawing later.
+    //
+    // Meshes need to be in an indexed vertex format.
+    pub fn add_mesh(&mut self,
+                    vertices: &[Vector3<f32>],
+                    indices: &[Vector3<u32>])
+    {
+        unsafe {
+            let (vbuf, vmem) = self.create_buffer(
+                vk::BufferUsageFlags::VERTEX_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                vertices,
+            );
+            let (ibuf, imem) = self.create_buffer(
+                vk::BufferUsageFlags::INDEX_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                indices,
+            );
+
+            if let Some(ctx) = &mut self.app_ctx {
+                ctx.meshes.push(Mesh {
+                    vert_buffer: vbuf,
+                    vert_buffer_memory: vmem,
+                    // multiply the index len by the vector size
+                    vert_count: indices.len() as u32 * 3,
+                    index_buffer: ibuf,
+                    index_buffer_memory: imem,
+                });
+            }
         }
     }
 
@@ -1250,6 +1637,64 @@ impl Renderer {
         ).unwrap();
 
         self.current_image = idx;
+    }
+
+    // Fills a command buffer with draw calls for all of the meshes
+    //
+    // This function should wrapped by a closure which starts and ends
+    // a render pass. This function is pass agnostic, and just records
+    // operations into `cbuf`.
+    //
+    // It sets up draw calls for all of the rend.app_ctx.meshes, so if that
+    // list is updated then this probably needs to be re-recorded.
+    pub unsafe fn record_draw(rend: &Renderer, cbuf: vk::CommandBuffer) {
+        if let Some(app) = &rend.app_ctx {
+            rend.dev.cmd_bind_pipeline(
+                cbuf,
+                vk::PipelineBindPoint::GRAPHICS,
+                app.pipeline
+            );
+
+            // Descriptor sets can be updated elsewhere, but
+            // they must be bound before drawing
+            rend.dev.cmd_bind_descriptor_sets(
+                cbuf,
+                vk::PipelineBindPoint::GRAPHICS,
+                app.pipeline_layout,
+                0, // first set
+                &[app.descriptors[rend.current_image as usize]],
+                &[], // dynamic offsets
+            );
+
+            for mesh in app.meshes.iter() {
+                // bind the vertex and index buffers from
+                // the first mesh
+                rend.dev.cmd_bind_vertex_buffers(
+                    cbuf, // cbuf to draw in
+                    0, // first vertex binding updated by the command
+                    &[mesh.vert_buffer], // set of buffers to bind
+                    &[0], // offsets for the above buffers
+                );
+                rend.dev.cmd_bind_index_buffer(
+                    cbuf,
+                    mesh.index_buffer,
+                    0, // offset
+                    vk::IndexType::UINT32,
+                );
+
+                // Here is where everything is actually drawn
+                // technically 3 vertices are being drawn
+                // by the shader
+                rend.dev.cmd_draw_indexed(
+                    cbuf, // drawing command buffer
+                    mesh.vert_count, // number of verts
+                    1, // number of instances
+                    0, // first vertex
+                    0, // vertex offset
+                    1, // first instance
+                );
+            }
+        }
     }
 
     // Render a frame, but do not present it
@@ -1297,33 +1742,17 @@ impl Renderer {
                     &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT],
                     &[self.present_sema], // wait_semas
                     &[self.render_sema], // signal_semas
-                    // this closure will be the contents of the cbuf
+                    // this closure starts a renderpass and initiates recording
                     |rend, cbuf| {
                         // begin a render pass. This is what drawing operations
-                        // will be recorded in
+                        // will be recorded in.
                         rend.dev.cmd_begin_render_pass(
                             cbuf,
                             &pass_begin_info,
                             vk::SubpassContents::INLINE,
                         );
 
-                        if let Some(app) = &rend.app_ctx {
-                            rend.dev.cmd_bind_pipeline(
-                                cbuf,
-                                vk::PipelineBindPoint::GRAPHICS,
-                                app.pipeline
-                            );
-                        }
-
-                        // Here is where everything is actually drawn
-                        // technically 3 vertices are being drawn by the shader
-                        rend.dev.cmd_draw(
-                            cbuf, // drawing command buffer
-                            3, // number of verts
-                            1, // number of instances
-                            0, // first vertex
-                            0, // first instance
-                        );
+                        Renderer::record_draw(rend, cbuf);
 
                         // finish up our render pass
                         rend.dev.cmd_end_render_pass(cbuf);
@@ -1370,7 +1799,28 @@ impl Drop for Renderer {
             // first destroy the application specific resources
             if let Some(ctx) = &self.app_ctx {
                 self.dev.device_wait_idle().unwrap();
+
+                for mesh in ctx.meshes.iter() {
+                    self.dev.free_memory(mesh.vert_buffer_memory, None);
+                    self.dev.free_memory(mesh.index_buffer_memory, None);
+                    self.dev.destroy_buffer(mesh.vert_buffer, None);
+                    self.dev.destroy_buffer(mesh.index_buffer, None);
+                }
+
+                for u in ctx.uniform_buffers.iter() {
+                    self.dev.destroy_buffer(*u, None);
+                }
+
+                for u in ctx.uniform_buffers_memory.iter() {
+                    self.dev.free_memory(*u, None);
+                }
+
                 self.dev.destroy_render_pass(ctx.pass, None);
+
+                for l in ctx.descriptor_layouts.iter() {
+                    self.dev.destroy_descriptor_set_layout(*l, None);
+                }
+                self.dev.destroy_descriptor_pool(ctx.descriptor_pool, None);
                 self.dev.destroy_pipeline_layout(ctx.pipeline_layout, None);
 
                 for m in ctx.shader_modules.iter() {
@@ -1383,12 +1833,12 @@ impl Drop for Renderer {
 
                 self.dev.destroy_pipeline(ctx.pipeline, None);
             }
-            
+
             // first wait for the device to finish working
             self.dev.device_wait_idle().unwrap();
             self.dev.destroy_semaphore(self.present_sema, None);
             self.dev.destroy_semaphore(self.render_sema, None);
-            
+
             self.dev.free_memory(self.depth_image_mem, None);
             self.dev.destroy_image_view(self.depth_image_view, None);
             self.dev.destroy_image(self.depth_image, None);
@@ -1417,6 +1867,38 @@ fn main() {
     let mut rend = Renderer::new();
     // initialize the pipeline, renderpasses, and display engine
     rend.setup();
+
+    let shape_file_names = vec!{ "shapes/teapot.obj" };
+
+    for fname in shape_file_names.iter() {
+        // read an obj file of choice
+        // straight from the obj-rs README.md
+        let shape_file = BufReader::new(File::open(fname).unwrap());
+        let obj_mesh: Obj = load_obj(shape_file).unwrap();
+
+        let obj_vertices: Vec<Vector3<f32>> = obj_mesh.vertices.iter()
+            .map(|v| {
+                Vector3::new(v.position[0], v.position[1], v.position[2])
+            }).collect();
+
+        let mut obj_indices: Vec<Vector3<u32>> = Vec::new();
+        let mut iter = obj_mesh.indices.iter().peekable();
+        while !iter.peek().is_none() {
+            let mut elements = iter.by_ref().take(3);
+            obj_indices.push(Vector3::new(
+                *elements.next().unwrap() as u32,
+                *elements.next().unwrap() as u32,
+                *elements.next().unwrap() as u32,
+            ));
+        }
+
+        rend.add_mesh(
+            // vertices
+            obj_vertices.as_slice(),
+            // indices
+            obj_indices.as_slice(),
+        );
+    }
 
     println!("Begin render loop...");
     let mut cont = true;
