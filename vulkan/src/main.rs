@@ -10,6 +10,8 @@ extern crate ash;
 extern crate winit;
 extern crate cgmath;
 extern crate obj;
+#[macro_use]
+extern crate memoffset;
 
 use winit::*;
 use cgmath::{Point3,Vector3,Matrix4};
@@ -220,6 +222,19 @@ pub struct Mesh {
     // Resources for the index buffer
     pub index_buffer: vk::Buffer,
     pub index_buffer_memory: vk::DeviceMemory,
+}
+
+// Contiains a vertex and all its related data
+//
+// Things like vertex normals and colors will be passed in
+// the same vertex input assembly, so this type provides
+// a wrapper for handling all of them at once.
+#[repr(C)]
+#[derive(Clone,Copy)]
+pub struct VertData {
+    pub vertex: Vector3<f32>,
+    pub normal: Vector3<f32>,
+    pub color: Vector3<f32>,
 }
 
 #[derive(Clone,Copy)]
@@ -1103,13 +1118,14 @@ impl Renderer {
         // Think of it like specifying the data stream given to the shader
         let vertex_bindings = [vk::VertexInputBindingDescription {
             binding: 0, // (location = 0)
-            stride: mem::size_of::<Vector3<f32>>() as u32,
+            stride: mem::size_of::<VertData>() as u32,
             input_rate: vk::VertexInputRate::VERTEX,
         }];
 
         // These describe how the shader should parse the data passed
         // think of it like breaking the above data stream into variables
         let vertex_attributes = [
+            // vertex location
             vk::VertexInputAttributeDescription {
                 binding: 0, // The data binding to parse
                 location: 0, // the location of the attribute we are specifying
@@ -1119,19 +1135,22 @@ impl Renderer {
                 //     vec3:  VK_FORMAT_R32G32B32_SFLOAT
                 //     vec4:  VK_FORMAT_R32G32B32A32_SFLOAT
                 format: vk::Format::R32G32B32_SFLOAT,
-                offset: 0,
+                offset: offset_of!(VertData, vertex) as u32,
+            },
+            // normal vector
+            vk::VertexInputAttributeDescription {
+                binding: 0, // The data binding to parse
+                location: 1, // the location of the attribute we are specifying
+                format: vk::Format::R32G32B32_SFLOAT,
+                offset: offset_of!(VertData, normal) as u32,
             },
         ];
 
         // now for the fixed function portions of the pipeline
         // This describes the layout of resources passed to the shaders
-        let vertex_info = vk::PipelineVertexInputStateCreateInfo {
-            vertex_binding_description_count: 1,
-            p_vertex_binding_descriptions: vertex_bindings.as_ptr(),
-            vertex_attribute_description_count: 1,
-            p_vertex_attribute_descriptions: vertex_attributes.as_ptr(),
-            ..Default::default()
-        };
+        let vertex_info = vk::PipelineVertexInputStateCreateInfo::builder()
+            .vertex_binding_descriptions(&vertex_bindings)
+            .vertex_attribute_descriptions(&vertex_attributes);
 
         // input assembly describes how to turn the vertex
         // and index buffers into primatives
@@ -1597,7 +1616,7 @@ impl Renderer {
     //
     // Meshes need to be in an indexed vertex format.
     pub fn add_mesh(&mut self,
-                    vertices: &[Vector3<f32>],
+                    vertices: &[VertData],
                     indices: &[Vector3<u32>])
     {
         unsafe {
@@ -1876,9 +1895,13 @@ fn main() {
         let shape_file = BufReader::new(File::open(fname).unwrap());
         let obj_mesh: Obj = load_obj(shape_file).unwrap();
 
-        let obj_vertices: Vec<Vector3<f32>> = obj_mesh.vertices.iter()
+        let obj_vertices: Vec<VertData> = obj_mesh.vertices.iter()
             .map(|v| {
-                Vector3::new(v.position[0], v.position[1], v.position[2])
+                VertData {
+                    vertex: Vector3::new(v.position[0], v.position[1], v.position[2]),
+                    normal: Vector3::new(v.normal[0], v.normal[1], v.normal[2]),
+                    color: Vector3::new(1.0, 1.0, 1.0),
+                }
             }).collect();
 
         let mut obj_indices: Vec<Vector3<u32>> = Vec::new();
