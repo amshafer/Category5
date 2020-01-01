@@ -20,8 +20,8 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::cell::RefCell;
 use std::io::Cursor;
-use std::ptr;
 use std::marker::Copy;
+use std::mem;
 
 use std::fs::File;
 use std::io::BufReader;
@@ -35,8 +35,6 @@ use ash::extensions::{
     khr::{Surface, Swapchain},
 };
 
-#[cfg(target_os = "macos")]
-use std::mem;
 #[cfg(target_os = "macos")]
 use ash::extensions::mvk::MacOSSurface;
 #[cfg(target_os = "macos")]
@@ -53,9 +51,44 @@ use cocoa::base::id as cocoa_id;
 use metal::CoreAnimationLayer;
 #[cfg(target_os = "macos")]
 use objc::runtime::YES;
+#[cfg(all(unix, not(target_os = "macos")))]
+use ash::extensions::khr::XlibSurface;
 
 static EYE: Point3<f32> = Point3::new(0.0, 3.0, -7.0);
 
+// Stolen from the ash examples in `lib.rs`
+//
+// Create an X11 window on freebsd to display our scene.
+// This is pretty straighforward as all it does is spawn
+// an xlib surface.
+#[cfg(all(unix, not(target_os = "macos")))]
+unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>(
+    entry: &E,
+    instance: &I,
+    window: &winit::Window,
+) -> Result<vk::SurfaceKHR, vk::Result> {
+    use winit::os::unix::WindowExt;
+    let x11_display = window.get_xlib_display().unwrap();
+    let x11_window = window.get_xlib_window().unwrap();
+    let x11_create_info = vk::XlibSurfaceCreateInfoKHR::builder()
+        .window(x11_window)
+        .dpy(x11_display as *mut vk::Display);
+
+    let xlib_surface_loader = XlibSurface::new(entry, instance);
+    xlib_surface_loader.create_xlib_surface(&x11_create_info, None)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn platform_extension_names() -> Vec<*const i8> {
+    vec![
+        Surface::name().as_ptr(),
+        XlibSurface::name().as_ptr(),
+        DebugReport::name().as_ptr(),
+    ]
+}
+
+// Also stolen from the ash examples
+//
 // MoltenVK provides vulkan on top of apple's metal api
 // this function is straight from the ash examples
 // It's included because i'm testing on my laptop
@@ -66,6 +99,7 @@ unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>(
     instance: &I,
     window: &winit::Window,
 ) -> Result<vk::SurfaceKHR, vk::Result> {
+    use std::ptr;
     use winit::os::macos::WindowExt;
 
     let wnd: cocoa_id = mem::transmute(window.get_nswindow());
@@ -91,6 +125,15 @@ unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>(
 
     let macos_surface_loader = MacOSSurface::new(entry, instance);
     macos_surface_loader.create_mac_os_surface_mvk(&create_info, None)
+}
+
+#[cfg(target_os = "macos")]
+fn platform_extension_names() -> Vec<*const i8> {
+    vec![
+        Surface::name().as_ptr(),
+        MacOSSurface::name().as_ptr(),
+        DebugReport::name().as_ptr(),
+    ]
 }
 
 // this happy little debug callback is also from the ash examples
@@ -294,18 +337,21 @@ impl Renderer {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("VulkanRenderer").unwrap();
 
+        #[cfg(target_os = "macos")]
         let layer_names = [CString::new("VK_LAYER_LUNARG_standard_validation")
                            .unwrap()];
-        let layers_names_raw: Vec<*const i8> = layer_names
+
+        // On FreeBSD, the standard validation layers do not play well with
+        // x11 surfaces for some reason. Reenable the layers when fixed.
+        #[cfg(unix)]
+        let layer_names = [];
+
+        let layer_names_raw: Vec<*const i8> = layer_names
             .iter()
-            .map(|raw_name| raw_name.as_ptr())
+            .map(|raw_name: &CString| raw_name.as_ptr())
             .collect();
 
-        let extension_names_raw = vec![
-            Surface::name().as_ptr(),
-            MacOSSurface::name().as_ptr(),
-            DebugReport::name().as_ptr(),
-        ];
+        let extension_names_raw = platform_extension_names();
 
         let appinfo = vk::ApplicationInfo::builder()
             .application_name(&app_name)
@@ -316,7 +362,7 @@ impl Renderer {
 
         let create_info = vk::InstanceCreateInfo::builder()
             .application_info(&appinfo)
-            .enabled_layer_names(&layers_names_raw)
+            .enabled_layer_names(&layer_names_raw)
             .enabled_extension_names(&extension_names_raw);
 
         let instance: Instance = entry
@@ -649,19 +695,19 @@ impl Renderer {
                                   -> Option<u32>
     {
         // for each memory type
-        for (index, ref mem_type) in props.memory_types.iter().enumerate() {
-            // `reqs` only give us the bit representation of the flags
-            let req_type =
-                vk::MemoryPropertyFlags::from_raw(reqs.memory_type_bits);
-
+        for (i, ref mem_type) in props.memory_types.iter().enumerate() {
+            // Bit i of memoryBitTypes will be set if the resource supports
+            // the ith memory type in props.
+            //
             // ash autogenerates common operations for bitfield style structs
             // they can be found in `vk_bitflags_wrapped`
-            if req_type.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
+            if (reqs.memory_type_bits >> i) & 1 == 1
                 && mem_type.property_flags.contains(flags) {
                     println!("Selected type with flags {:?}",
                              mem_type.property_flags);
-                    return Some(index as u32);
-                }
+                    // return the index into the memory type array
+                    return Some(i as u32);
+            }
         }
         None
     }
