@@ -343,11 +343,10 @@ impl Renderer {
 
         // On FreeBSD, the standard validation layers do not play well with
         // x11 surfaces for some reason. Reenable the layers when fixed.
-        #[cfg(unix)]
+        #[cfg(not(target_os = "macos"))]
         let layer_names = [];
 
-        let layer_names_raw: Vec<*const i8> = layer_names
-            .iter()
+        let layer_names_raw: Vec<*const i8> = layer_names.iter()
             .map(|raw_name: &CString| raw_name.as_ptr())
             .collect();
 
@@ -1615,6 +1614,32 @@ impl Renderer {
         return (buffer, memory);
     }
 
+    // Writes `data` to `memory`
+    //
+    // This is a helper method for mapping and updating the value stored
+    // in device memory Memory needs to be host visible and coherent.
+    // This does not flush after writing.
+    pub unsafe fn update_memory<T: Copy>(&self,
+                                         memory: vk::DeviceMemory,
+                                         data: &[T])
+    {
+        // Now we copy our data into the buffer
+        let data_size = std::mem::size_of_val(data) as u64;
+        let ptr = self.dev.map_memory(
+            memory,
+            0, // offset
+            data_size,
+            vk::MemoryMapFlags::empty()
+        ).unwrap();
+
+        // rust doesn't have a raw memcpy, so we need to transform the void
+        // ptr to a slice. This is unsafe as the length needs to be correct
+        let dst = std::slice::from_raw_parts_mut(ptr as *mut T, data.len());
+        dst.copy_from_slice(data);
+
+        self.dev.unmap_memory(memory);
+    }
+
     // allocates a buffer/memory pair and fills it with `data`
     //
     // There are two components to a memory backed resource in vulkan:
@@ -1635,20 +1660,8 @@ impl Renderer {
             size,
         );
 
-        // Now we copy our data into the buffer
-        let ptr = self.dev.map_memory(
-            memory,
-            0, // offset
-            size,
-            vk::MemoryMapFlags::empty()
-        ).unwrap();
+        self.update_memory(memory, data);
 
-        // rust doesn't have a raw memcpy, so we need to transform the void
-        // ptr to a slice. This is unsafe as the length needs to be correct
-        let dst = std::slice::from_raw_parts_mut(ptr as *mut T, data.len());
-        dst.copy_from_slice(data);
-
-        self.dev.unmap_memory(memory);
         // Until now the buffer has not had any memory assigned
         self.dev.bind_buffer_memory(buffer, memory, 0).unwrap();
 
@@ -1686,6 +1699,27 @@ impl Renderer {
                     index_buffer: ibuf,
                     index_buffer_memory: imem,
                 });
+            }
+        }
+    }
+
+    // Apply a transform matrix to all meshes
+    //
+    // This updates the model matrix of the shader constants
+    // used for all models
+    pub fn transform_meshes(&mut self,
+                            transform: &Matrix4<f32>)
+    {
+        let mut consts = Renderer::get_shader_constants();
+        consts.model = consts.model * transform;
+
+        unsafe {
+            if let Some(ctx) = &self.app_ctx {
+                // Each framebuffer has its own ubo, so we need
+                // to update all of them
+                for mem in ctx.uniform_buffers_memory.iter() {
+                    self.update_memory(*mem, &[consts]);
+                }
             }
         }
     }
@@ -1971,7 +2005,13 @@ fn main() {
 
     println!("Begin render loop...");
     let mut cont = true;
+    let mut angle = 0.0;
     while cont {
+        // Make the scene spin slowly
+        let rot_matrix = Matrix4::from_angle_y(cgmath::Deg(angle));
+        angle += 0.3;
+        rend.transform_meshes(&rot_matrix);
+
         // draw a frame to be displayed
         rend.start_frame();
         // present our frame to the screen

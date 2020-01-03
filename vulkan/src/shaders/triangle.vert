@@ -7,7 +7,7 @@ layout(location = 1) in vec3 norm;
 layout(location = 0) out vec3 fragColor;
 
 // this needs to be normalized
-vec3 lightpos = vec3(0.58, 0.58, 0.58);
+vec3 lightpos = vec3(-0.58, 0.58, -0.58);
 
 layout(binding = 0) uniform ShaderConstants {
     mat4 model;
