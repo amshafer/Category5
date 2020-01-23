@@ -34,7 +34,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "ash"
 version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "git+https://github.com/MaikKlein/ash#31d14486e5c03c64d6bed9aa59d2c473abcd4339"
 dependencies = [
  "shared_library 0.1.9 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -766,7 +766,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "vulkan"
 version = "0.1.0"
 dependencies = [
- "ash 0.29.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ash 0.29.0 (git+https://github.com/MaikKlein/ash)",
  "cgmath 0.17.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "cocoa 0.20.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "memoffset 0.5.3 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -917,7 +917,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum android_glue 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "000444226fcff248f2bc4c7625be32c63caccfecc2723a2b9f78a7487a49c407"
 "checksum approx 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)" = "f0e60b75072ecd4168020818c0107f2857bb6c4e64252d8d3983f6263b40a5c3"
 "checksum arrayvec 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "cff77d8686867eceff3105329d4698d96c2391c176d5d03adc90c7389162b5b8"
-"checksum ash 0.29.0 (registry+https://github.com/rust-lang/crates.io-index)" = "003d1fb2eb12eb06d4a03dbe02eea67a9fac910fa97932ab9e3a75b96a1ea5e5"
+"checksum ash 0.29.0 (git+https://github.com/MaikKlein/ash)" = "<none>"
 "checksum autocfg 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)" = "1d49d90015b3c36167a20fe2810c5cd875ad504b39cff3d4eae7977e6b7c1cb2"
 "checksum backtrace 0.3.40 (registry+https://github.com/rust-lang/crates.io-index)" = "924c76597f0d9ca25d762c25a4d369d51267536465dc5064bdf0eb073ed477ea"
 "checksum backtrace-sys 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)" = "5d6575f128516de27e3ce99689419835fce9643a9b215a14d2b5b685be018491"

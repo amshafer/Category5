@@ -8,7 +8,7 @@ edition = "2018"
 
 [dependencies]
 winit="0.19.5"
-ash="0.29.0"
+ash= { git = "https://github.com/MaikKlein/ash" }
 cgmath="0.17"
 obj-rs="0.5"
 memoffset="0.5"
@@ -17,3 +17,14 @@ memoffset="0.5"
 objc="0.2.6"
 metal="0.16"
 cocoa="0.20"
+
+# Here we can declare our own conditional compliation features
+[features]
+default = []
+
+# The default option represents running as the root compositor on freebsd
+# i.e. When running in a bare terminal without x11
+#
+# The x11 feature meants we should use an x11 surface instead of a
+# khr display surface
+x11 = []

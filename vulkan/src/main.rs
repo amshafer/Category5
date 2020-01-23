@@ -5,7 +5,6 @@
  */
 
 #![allow(non_camel_case_types)]
-#[macro_use]
 extern crate ash;
 extern crate winit;
 extern crate cgmath;
@@ -30,10 +29,8 @@ use obj::*;
 pub use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::{vk, Device, Entry, Instance};
 use ash::util;
-use ash::extensions::{
-    ext::DebugReport,
-    khr::{Surface, Swapchain},
-};
+use ash::extensions::ext::DebugReport;
+use ash::extensions::khr;
 
 #[cfg(target_os = "macos")]
 use ash::extensions::mvk::MacOSSurface;
@@ -51,89 +48,164 @@ use cocoa::base::id as cocoa_id;
 use metal::CoreAnimationLayer;
 #[cfg(target_os = "macos")]
 use objc::runtime::YES;
-#[cfg(all(unix, not(target_os = "macos")))]
-use ash::extensions::khr::XlibSurface;
 
 static EYE: Point3<f32> = Point3::new(0.0, 3.0, -7.0);
 
-// Stolen from the ash examples in `lib.rs`
+// A display represents a physical screen
 //
-// Create an X11 window on freebsd to display our scene.
-// This is pretty straighforward as all it does is spawn
-// an xlib surface.
-#[cfg(all(unix, not(target_os = "macos")))]
-unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>(
-    entry: &E,
-    instance: &I,
-    window: &winit::Window,
-) -> Result<vk::SurfaceKHR, vk::Result> {
-    use winit::os::unix::WindowExt;
-    let x11_display = window.get_xlib_display().unwrap();
-    let x11_window = window.get_xlib_window().unwrap();
-    let x11_create_info = vk::XlibSurfaceCreateInfoKHR::builder()
-        .window(x11_window)
-        .dpy(x11_display as *mut vk::Display);
-
-    let xlib_surface_loader = XlibSurface::new(entry, instance);
-    xlib_surface_loader.create_xlib_surface(&x11_create_info, None)
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-fn platform_extension_names() -> Vec<*const i8> {
-    vec![
-        Surface::name().as_ptr(),
-        XlibSurface::name().as_ptr(),
-        DebugReport::name().as_ptr(),
-    ]
-}
-
-// Also stolen from the ash examples
+// This is mostly the same as vulkan's concept of a display,
+// but it is a bit different. This name is overloaded as vulkan,
+// ash, and us have something called a display. Essentially
+// this holds the PFN loaders, the display KHR extension object,
+// and the surface generated for the physical display.
 //
-// MoltenVK provides vulkan on top of apple's metal api
-// this function is straight from the ash examples
-// It's included because i'm testing on my laptop
-// until I start experimenting with X11-less BSD
-#[cfg(target_os = "macos")]
-unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>(
-    entry: &E,
-    instance: &I,
-    window: &winit::Window,
-) -> Result<vk::SurfaceKHR, vk::Result> {
-    use std::ptr;
-    use winit::os::macos::WindowExt;
-
-    let wnd: cocoa_id = mem::transmute(window.get_nswindow());
-
-    let layer = CoreAnimationLayer::new();
-
-    layer.set_edge_antialiasing_mask(0);
-    layer.set_presents_with_transaction(false);
-    layer.remove_all_animations();
-
-    let view = wnd.contentView();
-
-    layer.set_contents_scale(view.backingScaleFactor());
-    view.setLayer(mem::transmute(layer.as_ref()));
-    view.setWantsLayer(YES);
-
-    let create_info = vk::MacOSSurfaceCreateInfoMVK {
-        s_type: vk::StructureType::MACOS_SURFACE_CREATE_INFO_M,
-        p_next: ptr::null(),
-        flags: Default::default(),
-        p_view: window.get_nsview() as *const c_void,
-    };
-
-    let macos_surface_loader = MacOSSurface::new(entry, instance);
-    macos_surface_loader.create_mac_os_surface_mvk(&create_info, None)
+// The swapchain is generated (and regenerated) from this stuff.
+pub struct Display {
+    // function pointer loaders
+    display_loader: khr::Display,
+    surface_loader: khr::Surface,
+    // the actual surface (KHR extension)
+    surface: vk::SurfaceKHR,
 }
 
-#[cfg(target_os = "macos")]
-fn platform_extension_names() -> Vec<*const i8> {
-    vec![
-        Surface::name().as_ptr(),
-        MacOSSurface::name().as_ptr(),
-        DebugReport::name().as_ptr(),
-    ]
+impl Display {
+    pub unsafe fn new<E: EntryV1_0, I: InstanceV1_0>
+        (entry: &E,
+         inst: &I,
+         pdev: vk::PhysicalDevice)
+        -> Display
+    {
+        let d_loader = khr::Display::new(entry, inst);
+        let s_loader = khr::Surface::new(entry, inst);
+
+        let surface =
+            Display::create_surface(entry, inst, &d_loader, pdev)
+            .unwrap();
+
+        Display {
+            display_loader: d_loader,
+            surface_loader: s_loader,
+            surface: surface,
+        }
+    }
+
+    // Selects a resolution for the renderer
+    // for now this just selects the VGA's puny 640x480
+    unsafe fn select_resolution(&self,
+                                surface_caps: &vk::SurfaceCapabilitiesKHR)
+                                -> vk::Extent2D
+    {
+        match surface_caps.current_extent.width {
+            std::u32::MAX => vk::Extent2D {
+                // this should be a tunable at some point
+                width: 640,
+                height: 480,
+            },
+            _ => surface_caps.current_extent,
+        }
+    }
+
+    // choose a vkSurfaceFormatKHR for the vkSurfaceKHR
+    //
+    // This selects the color space and layout for a surface
+    pub unsafe fn select_surface_format(&self,
+                                        pdev: vk::PhysicalDevice)
+                                        -> vk::SurfaceFormatKHR
+    {
+        let formats = self.surface_loader
+            .get_physical_device_surface_formats(pdev, self.surface)
+            .unwrap();
+
+        formats.iter()
+            .map(|fmt| match fmt.format {
+                // if the surface does not specify a desired format
+                // then we can choose our own
+                vk::Format::UNDEFINED => vk::SurfaceFormatKHR {
+                    format: vk::Format::B8G8R8_UNORM,
+                    color_space: fmt.color_space,
+                },
+                // if the surface has a desired format we will just
+                // use that
+                _ => *fmt,
+            })
+            .nth(0)
+            .expect("Could not find a surface format")
+    }
+
+
+    // get a surface to display directly to a screen
+    // TODO: This should be combined with the surface stuff
+    // into a Display struct
+    #[cfg(unix)]
+    unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>
+        (_entry: &E, // entry and inst aren't used but still need
+         _inst: &I, // to be passed for compatibility
+         loader: &khr::Display,
+         pdev: vk::PhysicalDevice)
+        -> Result<vk::SurfaceKHR, vk::Result>
+    {
+        let disp_props = loader
+            .get_physical_device_display_properties(pdev)
+            .unwrap();
+
+        for (i,p) in disp_props.iter().enumerate() {
+            println!("{} display: {:?}", i, p.display_name);
+        }
+
+        let mode_props = loader
+            .get_display_mode_properties(pdev,
+                                         disp_props[0].display)
+            .unwrap();
+
+        for (i,m) in mode_props.iter().enumerate() {
+            println!("display 0 - {} mode: {:?}", i,
+                     m.parameters.refresh_rate);
+        }
+
+        let plane_props = loader
+            .get_physical_device_display_plane_properties(pdev)
+            .unwrap();
+
+        for (i,p) in plane_props.iter().enumerate() {
+            println!("display 0 - plane: {} at stack {}", i,
+                     p.current_stack_index);
+            let supported = loader
+                .get_display_plane_supported_displays(pdev, 0)
+                .unwrap();
+
+            for (i,d) in disp_props.iter().enumerate() {
+                if supported.contains(&d.display) {
+                    println!("  supports display {}", i);
+                }
+            }
+        }
+
+        // create a display mode
+        let mode_info = vk::DisplayModeCreateInfoKHR::builder()
+            .parameters(mode_props[0].parameters);
+        let mode = loader
+            .create_display_mode(pdev,
+                                 disp_props[0].display,
+                                 &mode_info,
+                                 None)
+            .unwrap();
+
+        // create a display surface
+        let surf_info = vk::DisplaySurfaceCreateInfoKHR::builder()
+            .display_mode(mode)
+            .plane_index(0)
+            .image_extent(mode_props[0].parameters.visible_region);
+        loader.create_display_plane_surface(&surf_info, None)
+    }
+
+    // this should really go in its own Platform thingy
+    fn extension_names() -> Vec<*const i8> {
+        vec![
+            khr::Surface::name().as_ptr(),
+            khr::Display::name().as_ptr(),
+            DebugReport::name().as_ptr(),
+        ]
+    }
 }
 
 // this happy little debug callback is also from the ash examples
@@ -166,10 +238,6 @@ unsafe extern "system" fn vulkan_debug_callback(
 // Application specific fields should be at the bottom of the
 // struct, with the commonly required fields at the top.
 pub struct Renderer {
-    // these fields take care of windowing on the desktop
-    // they will eventually be replaced
-    pub window: winit::Window,
-    pub event_loop: RefCell<winit::EventsLoop>,
     // debug callback sugar mentioned earlier
     pub debug_loader: DebugReport,
     pub debug_callback: vk::DebugReportCallbackEXT,
@@ -190,16 +258,15 @@ pub struct Renderer {
     // processes things to be physically displayed
     pub present_queue: vk::Queue,
 
-    // loads surface extension functions
-    pub surface_loader: Surface,
-    // the actual surface (KHR extension)
-    pub surface: vk::SurfaceKHR,
+    // vk_khr_display and vk_khr_surface wrapper.
+    pub display: Display,
     pub surface_format: vk::SurfaceFormatKHR,
-    // resolution we created the swapchain with
+    pub surface_caps: vk::SurfaceCapabilitiesKHR,
+    // resolution to create the swapchain with
     pub resolution: vk::Extent2D,
 
     // loads swapchain extension
-    pub swapchain_loader: Swapchain,
+    pub swapchain_loader: khr::Swapchain,
     // the actual swapchain
     pub swapchain: vk::SwapchainKHR,
     // index into swapchain images that we are currently using
@@ -313,21 +380,6 @@ impl Renderer {
         return (dr_loader, callback);
     }
 
-    // creates a window in the current desktop environment
-    // this will also one day be removed
-    unsafe fn create_window() -> (winit::Window, winit::EventsLoop) {
-        let events_loop = winit::EventsLoop::new();
-        let window = winit::WindowBuilder::new()
-            .with_title("Vulkan")
-            .with_dimensions(winit::dpi::LogicalSize::new(
-                f64::from(640),
-                f64::from(480),
-            ))
-            .build(&events_loop)
-            .unwrap();
-        return (window, events_loop);
-    }
-
     // Create a vkInstance
     //
     // Most of the create info entries are straightforward, with
@@ -337,7 +389,7 @@ impl Renderer {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("VulkanRenderer").unwrap();
 
-        #[cfg(target_os = "macos")]
+	#[cfg(target_os = "macos")]
         let layer_names = [CString::new("VK_LAYER_LUNARG_standard_validation")
                            .unwrap()];
 
@@ -350,14 +402,14 @@ impl Renderer {
             .map(|raw_name: &CString| raw_name.as_ptr())
             .collect();
 
-        let extension_names_raw = platform_extension_names();
+        let extension_names_raw = Display::extension_names();
 
         let appinfo = vk::ApplicationInfo::builder()
             .application_name(&app_name)
             .application_version(0)
             .engine_name(&app_name)
             .engine_version(0)
-            .api_version(vk_make_version!(1, 1, 127));
+            .api_version(vk::make_version(1, 1, 127));
 
         let create_info = vk::InstanceCreateInfo::builder()
             .application_info(&appinfo)
@@ -377,7 +429,7 @@ impl Renderer {
     pub unsafe fn is_valid_queue_family(pdevice: vk::PhysicalDevice,
                                  info: vk::QueueFamilyProperties,
                                  index: u32,
-                                 surface_loader: &Surface,
+                                 surface_loader: &khr::Surface,
                                  surface: vk::SurfaceKHR) -> bool {
         info.queue_flags.contains(vk::QueueFlags::GRAPHICS)
             && surface_loader
@@ -386,7 +438,7 @@ impl Renderer {
                 pdevice,
                 index,
                 surface,
-            )
+            ).unwrap()
     }
 
     // Choose a vkPhysicalDevice and queue family index
@@ -395,45 +447,57 @@ impl Renderer {
     // provide the surface PFN loader and the surface so
     // that we can ensure the pdev/queue combination can
     // present the surface
-    pub unsafe fn select_pdev_and_family(inst: &Instance,
-                                         surface_loader: &Surface,
-                                         surface: vk::SurfaceKHR)
-                                         -> (vk::PhysicalDevice, u32)
+    pub unsafe fn select_pdev(inst: &Instance)
+                              -> vk::PhysicalDevice
     {
         let pdevices = inst
                 .enumerate_physical_devices()
                 .expect("Physical device error");
 
         // for each physical device
-        pdevices
+        *pdevices
             .iter()
-            .map(|pdevice| {
-                // get the properties per queue family
-                inst
-                    .get_physical_device_queue_family_properties(*pdevice)
-                    // for each property info
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, info)| {
-                        // add the device and the family to a list of
-                        // candidates for use later
-                        if Renderer::is_valid_queue_family(*pdevice,
-                                                           *info,
-                                                           index as u32,
-                                                           surface_loader,
-                                                           surface) {
-                            // return the pdevice/family pair
-                            Some((*pdevice, index as u32))
-                        } else {
-                            None
-                        }
-                    })
-                    .nth(0)
-            })
-            .filter_map(|v| v)
+            // eventually there needs to be a way of grabbing
+            // the configured pdev from the user
             .nth(0)
             // for now we are just going to get the first one
             .expect("Couldn't find suitable device.")
+    }
+
+    // Choose a queue family
+    //
+    // returns an index into the array of queue types.
+    // provide the surface PFN loader and the surface so
+    // that we can ensure the pdev/queue combination can
+    // present the surface
+    pub unsafe fn select_queue_family(inst: &Instance,
+                              pdev: vk::PhysicalDevice,
+                              surface_loader: &khr::Surface,
+                              surface: vk::SurfaceKHR)
+                              -> u32
+    {
+        // get the properties per queue family
+        inst
+            .get_physical_device_queue_family_properties(pdev)
+            // for each property info
+            .iter()
+            .enumerate()
+            .filter_map(|(index, info)| {
+                // add the device and the family to a list of
+                // candidates for use later
+                if Renderer::is_valid_queue_family(pdev,
+                                                   *info,
+                                                   index as u32,
+                                                   surface_loader,
+                                                   surface) {
+                    // return the pdevice/family pair
+                    Some(index as u32)
+                } else {
+                    None
+                }
+            })
+            .nth(0)
+            .expect("Could not find a suitable queue family")
     }
 
     // get the vkPhysicalDeviceMemoryProperties structure for a vkPhysicalDevice
@@ -442,56 +506,6 @@ impl Renderer {
                                           -> vk::PhysicalDeviceMemoryProperties
     {
         inst.get_physical_device_memory_properties(pdev)
-    }
-
-    // for now just a wrapper to the global create surface
-    pub unsafe fn create_surface
-        (entry: &Entry, inst: &Instance, window: &winit::Window)
-         -> vk::SurfaceKHR
-    {
-        create_surface(entry, inst, window).unwrap()
-    }
-
-    // choose a vkSurfaceFormatKHR for the vkSurfaceKHR
-    //
-    // This selects the color space and layout for a surface
-    pub unsafe fn select_surface_format(pdev: vk::PhysicalDevice,
-                                        loader: &Surface,
-                                        surface: vk::SurfaceKHR)
-                                        -> vk::SurfaceFormatKHR
-    {
-        let formats = loader.get_physical_device_surface_formats(pdev, surface)
-            .unwrap();
-        
-        formats.iter()
-            .map(|fmt| match fmt.format {
-                // if the surface does not specify a desired format
-                // then we can choose our own
-                vk::Format::UNDEFINED => vk::SurfaceFormatKHR {
-                    format: vk::Format::B8G8R8_UNORM,
-                    color_space: fmt.color_space,
-                },
-                // if the surface has a desired format we will just
-                // use that
-                _ => *fmt,
-            })
-            .nth(0)
-            .expect("Could not find a surface format")
-    }
-
-    // Selects a resolution for the renderer
-    // for now this just selects the VGA's puny 640x480
-    pub unsafe fn select_resolution(surface_caps: &vk::SurfaceCapabilitiesKHR)
-                                    -> vk::Extent2D
-    {
-        match surface_caps.current_extent.width {
-            std::u32::MAX => vk::Extent2D {
-                // this should be a tunable at some point
-                width: 640,
-                height: 480,
-            },
-            _ => surface_caps.current_extent,
-        }
     }
 
     // Create a vkDevice from a vkPhysicalDevice
@@ -507,7 +521,7 @@ impl Renderer {
                                 present_queue: u32)
                                 -> Device
     {
-        let dev_extension_names = [Swapchain::name().as_ptr()];
+        let dev_extension_names = [khr::Swapchain::name().as_ptr()];
         let features = vk::PhysicalDeviceFeatures {
             shader_clip_distance: 1,
             ..Default::default()
@@ -538,8 +552,8 @@ impl Renderer {
     // swapchain is dependent on the characteristics and format of the surface
     // it is created for.
     // The application resolution is set by this method.
-    pub unsafe fn create_swapchain(swapchain_loader: &Swapchain,
-                                   surface_loader: &Surface,
+    pub unsafe fn create_swapchain(swapchain_loader: &khr::Swapchain,
+                                   surface_loader: &khr::Surface,
                                    pdev: vk::PhysicalDevice,
                                    surface: vk::SurfaceKHR,
                                    surface_caps: &vk::SurfaceCapabilitiesKHR,
@@ -640,7 +654,7 @@ impl Renderer {
     // get all the presentation images for the swapchain
     // specify the image views, which specify how we want
     // to access our images
-    pub unsafe fn select_images_and_views(swapchain_loader: &Swapchain,
+    pub unsafe fn select_images_and_views(swapchain_loader: &khr::Swapchain,
                                           swapchain: vk::SwapchainKHR,
                                           dev: &Device,
                                           surface_format: vk::SurfaceFormatKHR)
@@ -795,46 +809,52 @@ impl Renderer {
     // device, and creating a swapchain.
     //
     // All methods called after this only need to take a mutable reference to
-    // self, avoiding any nasty argument lists like the functions above. The goal
-    // is to have this make dealing with the api less wordy.
+    // self, avoiding any nasty argument lists like the functions above. 
+    // The goal is to have this make dealing with the api less wordy.
     pub fn new() -> Renderer {
         unsafe {
-            let (window, event_loop) = Renderer::create_window();
-
             let (entry, inst) = Renderer::create_instance();
             
-            let (dr_loader, d_callback) = Renderer::setup_debug(&entry, &inst);
+            let (dr_loader, d_callback) = Renderer::setup_debug(&entry,
+                                                                &inst);
 
-            let surface = Renderer::create_surface(&entry, &inst, &window);
-            let surface_loader = Surface::new(&entry, &inst);
+            let pdev = Renderer::select_pdev(&inst);
 
-            let (pdev, queue_family) =
-                Renderer::select_pdev_and_family(&inst,
-                                                 &surface_loader,
-                                                 surface);
+            // Our display is in charge of choosing a medium to draw on,
+            // and will create a surface on that medium
+            let display = Display::new(&entry, &inst, pdev);
+
+            let queue_family =
+                Renderer::select_queue_family(&inst,
+                                              pdev,
+                                              &display.surface_loader,
+                                              display.surface);
             let mem_props = Renderer::get_pdev_mem_properties(&inst, pdev);
+
+            // do this after we have gotten a valid physical device
+            let surface_format = display.select_surface_format(pdev);
+
+            let surface_caps = display.surface_loader
+                .get_physical_device_surface_capabilities(pdev,
+                                                          display.surface)
+                .unwrap();
+            let surface_resolution = display.select_resolution(
+                &surface_caps
+            );
 
             let dev = Renderer::create_device(&inst, pdev, queue_family);
             let present_queue = dev.get_device_queue(queue_family, 0);
 
-            // do this after we have gotten a valid physical device
-            let surface_format = Renderer::select_surface_format(pdev,
-                                                                 &surface_loader,
-                                                                 surface);
-            let surface_caps = surface_loader
-                .get_physical_device_surface_capabilities(pdev, surface)
-                .unwrap();
-
-            let surface_resolution = Renderer::select_resolution(&surface_caps);
-
-            let swapchain_loader = Swapchain::new(&inst, &dev);
-            let swapchain = Renderer::create_swapchain(&swapchain_loader,
-                                                       &surface_loader,
-                                                       pdev,
-                                                       surface,
-                                                       &surface_caps,
-                                                       surface_format,
-                                                       &surface_resolution);
+            let swapchain_loader = khr::Swapchain::new(&inst, &dev);
+            let swapchain = Renderer::create_swapchain(
+                &swapchain_loader,
+                &display.surface_loader,
+                pdev,
+                display.surface,
+                &surface_caps,
+                surface_format,
+                &surface_resolution
+            );
 
             let pool = Renderer::create_command_pool(&dev, queue_family);
             let buffers = Renderer::create_command_buffers(&dev, pool);
@@ -847,12 +867,14 @@ impl Renderer {
 
             // the depth attachment needs to have its own resources
             let (depth_image, depth_image_view, depth_image_mem) =
-                Renderer::create_image(&dev,
-                                       &mem_props,
-                                       &surface_resolution,
-                                       vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                                       vk::ImageAspectFlags::DEPTH,
-                                       vk::MemoryPropertyFlags::DEVICE_LOCAL);
+                Renderer::create_image(
+                    &dev,
+                    &mem_props,
+                    &surface_resolution,
+                    vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                    vk::ImageAspectFlags::DEPTH,
+                    vk::MemoryPropertyFlags::DEVICE_LOCAL
+                );
 
             let sema_create_info = vk::SemaphoreCreateInfo::default();
 
@@ -863,10 +885,9 @@ impl Renderer {
                 .create_semaphore(&sema_create_info, None)
                 .unwrap();
 
-            // you are now the proud owner of a brand new rendering context
+            // you are now the proud owner of a half complete
+            // rendering context
             Renderer {
-                window: window,
-                event_loop: RefCell::new(event_loop),
                 debug_loader: dr_loader,
                 debug_callback: d_callback,
                 loader: entry,
@@ -875,13 +896,13 @@ impl Renderer {
                 pdev: pdev,
                 family_index: queue_family,
                 present_queue: present_queue,
-                surface_loader: surface_loader,
-                surface: surface,
+                display: display,
                 surface_format: surface_format,
+                surface_caps: surface_caps,
+                resolution: surface_resolution,
                 swapchain_loader: swapchain_loader,
                 swapchain: swapchain,
                 current_image: 0,
-                resolution: surface_resolution,
                 images: images,
                 views: image_views,
                 depth_image: depth_image,
@@ -955,13 +976,12 @@ impl Renderer {
 
             // create a fence to be notified when the commands have finished
             // executing. Wait immediately for the fence.
-            self.dev.queue_submit(queue, &[submit_info], fence)
-                .expect("Could not submit buffer to queue");
+            self.dev.queue_submit(queue, &[submit_info], fence).unwrap();
 
             self.dev.wait_for_fences(&[fence],
-                                     true, // wait for all
-                                     std::u64::MAX, //timeout
-            ).expect("Could not wait for the submit fence");
+			true, // wait for all
+			std::u64::MAX, //timeout
+            ).unwrap();
             // the commands are now executed
             self.dev.destroy_fence(fence, None);
         }
@@ -1950,7 +1970,10 @@ impl Drop for Renderer {
 
             self.swapchain_loader.destroy_swapchain(self.swapchain, None);
             self.dev.destroy_device(None);
-            self.surface_loader.destroy_surface(self.surface, None);
+            self.display.surface_loader.destroy_surface(
+                self.display.surface,
+                None
+            );
             
             self.debug_loader
                 .destroy_debug_report_callback(self.debug_callback, None);
@@ -2016,23 +2039,5 @@ fn main() {
         rend.start_frame();
         // present our frame to the screen
         rend.present();
-
-        // For winit to display anything we need to process the event loop
-        // A window isn't created if this isn't here
-        rend.event_loop.borrow_mut().poll_events(|event| {
-            // window event nonsense from the example. This can be removed/modified
-            match event {
-                Event::WindowEvent { event, .. } => match event {
-                    WindowEvent::KeyboardInput { input, .. } => {
-                        if let Some(VirtualKeyCode::Escape) = input.virtual_keycode {
-                            cont = false;
-                        }
-                    }
-                    WindowEvent::CloseRequested => cont = false,
-                    _ => (),
-                },
-                _ => (),
-            }
-        });
     }
 }
