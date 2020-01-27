@@ -6,18 +6,15 @@
 
 #![allow(non_camel_case_types)]
 extern crate ash;
-extern crate winit;
 extern crate cgmath;
 extern crate obj;
 #[macro_use]
 extern crate memoffset;
 
-use winit::*;
 use cgmath::{Point3,Vector3,Matrix4};
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
-use std::cell::RefCell;
 use std::io::Cursor;
 use std::marker::Copy;
 use std::mem;
@@ -32,23 +29,6 @@ use ash::util;
 use ash::extensions::ext::DebugReport;
 use ash::extensions::khr;
 
-#[cfg(target_os = "macos")]
-use ash::extensions::mvk::MacOSSurface;
-#[cfg(target_os = "macos")]
-extern crate cocoa;
-#[cfg(target_os = "macos")]
-extern crate metal;
-#[cfg(target_os = "macos")]
-extern crate objc;
-#[cfg(target_os = "macos")]
-use cocoa::appkit::{NSView, NSWindow};
-#[cfg(target_os = "macos")]
-use cocoa::base::id as cocoa_id;
-#[cfg(target_os = "macos")]
-use metal::CoreAnimationLayer;
-#[cfg(target_os = "macos")]
-use objc::runtime::YES;
-
 static EYE: Point3<f32> = Point3::new(0.0, 3.0, -7.0);
 
 // A display represents a physical screen
@@ -61,14 +41,24 @@ static EYE: Point3<f32> = Point3::new(0.0, 3.0, -7.0);
 //
 // The swapchain is generated (and regenerated) from this stuff.
 pub struct Display {
-    // function pointer loaders
-    display_loader: khr::Display,
-    surface_loader: khr::Surface,
     // the actual surface (KHR extension)
     surface: vk::SurfaceKHR,
+    // the display itself
+    display: vk::DisplayKHR,
+    // The mode the display was created with
+    display_mode: vk::DisplayModeKHR,
+    // function pointer loaders
+    surface_loader: khr::Surface,
+    display_loader: khr::Display,
+    resolution: vk::Extent2D,
 }
 
 impl Display {
+    // Create an on-screen surface.
+    //
+    // This will grab the function pointer loaders for the
+    // surface and display extensions and then create a
+    // surface to be rendered to.
     pub unsafe fn new<E: EntryV1_0, I: InstanceV1_0>
         (entry: &E,
          inst: &I,
@@ -78,36 +68,39 @@ impl Display {
         let d_loader = khr::Display::new(entry, inst);
         let s_loader = khr::Surface::new(entry, inst);
 
-        let surface =
+        let (display, surface, mode, resolution) =
             Display::create_surface(entry, inst, &d_loader, pdev)
             .unwrap();
 
         Display {
-            display_loader: d_loader,
             surface_loader: s_loader,
+            display_loader: d_loader,
+            display_mode: mode,
+            display: display,
             surface: surface,
+            resolution: resolution,
         }
     }
 
     // Selects a resolution for the renderer
-    // for now this just selects the VGA's puny 640x480
+    //
+    // We saved the resolution of the display surface when we created
+    // it. If the surface capabilities doe not specify a requested
+    // extent, then we will return the screen's resolution.
     unsafe fn select_resolution(&self,
                                 surface_caps: &vk::SurfaceCapabilitiesKHR)
                                 -> vk::Extent2D
     {
         match surface_caps.current_extent.width {
-            std::u32::MAX => vk::Extent2D {
-                // this should be a tunable at some point
-                width: 640,
-                height: 480,
-            },
+            std::u32::MAX => self.resolution,
             _ => surface_caps.current_extent,
         }
     }
 
     // choose a vkSurfaceFormatKHR for the vkSurfaceKHR
     //
-    // This selects the color space and layout for a surface
+    // This selects the color space and layout for a surface. This should
+    // be called by the Renderer after creating a Display.
     pub unsafe fn select_surface_format(&self,
                                         pdev: vk::PhysicalDevice)
                                         -> vk::SurfaceFormatKHR
@@ -133,25 +126,38 @@ impl Display {
     }
 
 
-    // get a surface to display directly to a screen
-    // TODO: This should be combined with the surface stuff
-    // into a Display struct
+    // Get a physical display surface.
+    //
+    // This returns the surfaceKHR to create a swapchain with, the
+    // mode the display is using, and the resolution of the screen.
+    // The resolution is returned here to avoid having to recall the
+    // vkGetDisplayModeProperties function a second time.
+    //
+    // Yea this has a gross amount of return values...
     #[cfg(unix)]
     unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>
         (_entry: &E, // entry and inst aren't used but still need
          _inst: &I, // to be passed for compatibility
          loader: &khr::Display,
          pdev: vk::PhysicalDevice)
-        -> Result<vk::SurfaceKHR, vk::Result>
+         -> Result<(vk::DisplayKHR,
+                    vk::SurfaceKHR,
+                    vk::DisplayModeKHR,
+                    vk::Extent2D),
+                   vk::Result>
     {
+        // This is essentially a list of the available displays.
+        // Despite having a display_name member, the names are very
+        // unhelpful. (e.x. "monitor").
         let disp_props = loader
             .get_physical_device_display_properties(pdev)
             .unwrap();
 
         for (i,p) in disp_props.iter().enumerate() {
-            println!("{} display: {:?}", i, p.display_name);
+            println!("{} display: {:?}", i, CStr::from_ptr(p.display_name));
         }
 
+        // The available modes for the display. This holds the resolution.
         let mode_props = loader
             .get_display_mode_properties(pdev,
                                          disp_props[0].display)
@@ -162,6 +168,9 @@ impl Display {
                      m.parameters.refresh_rate);
         }
 
+        // As of now we are not doing anything important with planes,
+        // but it is still useful to see which ones are reported by
+        // the hardware.
         let plane_props = loader
             .get_physical_device_display_plane_properties(pdev)
             .unwrap();
@@ -169,8 +178,10 @@ impl Display {
         for (i,p) in plane_props.iter().enumerate() {
             println!("display 0 - plane: {} at stack {}", i,
                      p.current_stack_index);
+
             let supported = loader
-                .get_display_plane_supported_displays(pdev, 0)
+                .get_display_plane_supported_displays(pdev,
+                                                      0) // plane index
                 .unwrap();
 
             for (i,d) in disp_props.iter().enumerate() {
@@ -180,7 +191,7 @@ impl Display {
             }
         }
 
-        // create a display mode
+        // create a display mode from the parameters we got earlier
         let mode_info = vk::DisplayModeCreateInfoKHR::builder()
             .parameters(mode_props[0].parameters);
         let mode = loader
@@ -190,21 +201,50 @@ impl Display {
                                  None)
             .unwrap();
 
-        // create a display surface
+        // Finally we can create our surface to render to. From this
+        // point on everything is normal 
         let surf_info = vk::DisplaySurfaceCreateInfoKHR::builder()
             .display_mode(mode)
             .plane_index(0)
             .image_extent(mode_props[0].parameters.visible_region);
-        loader.create_display_plane_surface(&surf_info, None)
+
+        match loader.create_display_plane_surface(&surf_info, None) {
+            // we want to return the display, the surface, the mode
+            // (so we can free it later), and the resolution to be saved.
+            Ok(surf) => Ok((
+                disp_props[0].display,
+                surf,
+                mode,
+                mode_props[0].parameters.visible_region
+            )),
+            Err(e) => Err(e),
+        }
     }
 
-    // this should really go in its own Platform thingy
+    // this should really go in its own Platform module
+    //
+    // The two most important extensions are Surface and Display.
+    // Without them we cannot render anything.
     fn extension_names() -> Vec<*const i8> {
         vec![
             khr::Surface::name().as_ptr(),
             khr::Display::name().as_ptr(),
             DebugReport::name().as_ptr(),
         ]
+    }
+}
+
+impl Drop for Display {
+    fn drop (&mut self) {
+        unsafe {
+            self.surface_loader.destroy_surface(
+                self.surface,
+                None
+            );
+        }
+        // It seems that the display resources (mode) are cleaned up
+        // when the surface is destroyed. There are not separate
+        // deconstructors for them
     }
 }
 
@@ -1362,7 +1402,9 @@ impl Renderer {
     // Constants will be the contents of the uniform buffers which are
     // processed by the shaders. The most obvious entry is the model + view
     // + perspective projection matrix.
-    pub fn get_shader_constants() -> ShaderConstants {
+    pub fn get_shader_constants(resolution: vk::Extent2D)
+                                -> ShaderConstants
+    {
         // transform from blender's coordinate system to vulkan
         let model = Matrix4::from_translation(Vector3::new(0.0, -1.5, 0.0));
 
@@ -1375,7 +1417,7 @@ impl Renderer {
         // cgmath's version of gluPerspective
         let proj = cgmath::perspective(
             cgmath::Deg(45.0), // FOV in degrees
-            1.333, // aspect
+            resolution.width as f32 / resolution.height as f32, // aspect ratio
             0.1, // near clipping plane
             100.0, // far clipping plane
         );
@@ -1546,7 +1588,7 @@ impl Renderer {
                 descriptor_layouts.as_slice()
             );
 
-            let consts = Renderer::get_shader_constants();
+            let consts = Renderer::get_shader_constants(self.resolution);
 
             // create a uniform buffer for every framebuffer
             // this will hold stuff like mvp matrices
@@ -1730,7 +1772,7 @@ impl Renderer {
     pub fn transform_meshes(&mut self,
                             transform: &Matrix4<f32>)
     {
-        let mut consts = Renderer::get_shader_constants();
+        let mut consts = Renderer::get_shader_constants(self.resolution);
         consts.model = consts.model * transform;
 
         unsafe {
@@ -1970,11 +2012,9 @@ impl Drop for Renderer {
 
             self.swapchain_loader.destroy_swapchain(self.swapchain, None);
             self.dev.destroy_device(None);
-            self.display.surface_loader.destroy_surface(
-                self.display.surface,
-                None
-            );
-            
+
+            // Display cleans up after itself
+
             self.debug_loader
                 .destroy_debug_report_callback(self.debug_callback, None);
             self.inst.destroy_instance(None);
@@ -2027,7 +2067,7 @@ fn main() {
     }
 
     println!("Begin render loop...");
-    let mut cont = true;
+    let cont = true;
     let mut angle = 0.0;
     while cont {
         // Make the scene spin slowly
