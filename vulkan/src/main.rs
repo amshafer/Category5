@@ -977,30 +977,36 @@ impl Renderer {
          signal_semas: &[vk::Semaphore],
          record_fn: F)
     {
+        self.cbuf_record(cbuf,
+                         vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                         record_fn);
+
+        self.cbuf_submit(cbuf,
+                         queue,
+                         wait_stages,
+                         wait_semas,
+                         signal_semas);
+    }
+
+    // Submits a command buffer.
+    //
+    // The buffer MUST have been recorded before this
+    //
+    // cbuf - the command buffer to use
+    // queue - the queue to submit cbuf to
+    // wait_stages - a list of pipeline stages to wait on
+    // wait_semas - semaphores we consume
+    // signal_semas - semaphores we notify
+    pub fn cbuf_submit
+        (&mut self,
+         cbuf: vk::CommandBuffer,
+         queue: vk::Queue,
+         wait_stages: &[vk::PipelineStageFlags],
+         wait_semas: &[vk::Semaphore],
+         signal_semas: &[vk::Semaphore])
+    {
         unsafe {
-            // first reset the queue so we know it is empty
-            self.dev.reset_command_buffer(
-                cbuf,
-                vk::CommandBufferResetFlags::RELEASE_RESOURCES,
-            ).expect("Could not reset command buffer");
-
-            // this cbuf will only be used once, so tell vulkan that
-            // so it can optimize accordingly
-            let record_info = vk::CommandBufferBeginInfo::builder()
-                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-
-            // start recording the command buffer, call the function
-            // passed to load it with operations, and then end the
-            // command buffer
-            self.dev.begin_command_buffer(cbuf, &record_info)
-                .expect("Could not start command buffer");
-
-            record_fn(self, cbuf);
-
-            self.dev.end_command_buffer(cbuf)
-                .expect("Could not end command buffer");
-
-            // once the one-time buffer has been recorded we can submit
+            // The buffer must have been recorded before we can submit
             // it for execution.
             let submit_info = vk::SubmitInfo::builder()
                 .wait_semaphores(wait_semas)
@@ -1024,6 +1030,44 @@ impl Renderer {
             ).unwrap();
             // the commands are now executed
             self.dev.destroy_fence(fence, None);
+        }
+    }
+
+    // Records but does not submit a command buffer.
+    //
+    // cbuf - the command buffer to use
+    // flags - the usage flags for the buffer
+    //
+    // All operations in the `record_fn` argument will be
+    // recorded in the command buffer `cbuf`.
+    pub fn cbuf_record<F: FnOnce(&mut Renderer, vk::CommandBuffer)>
+        (&mut self,
+         cbuf: vk::CommandBuffer,
+         flags: vk::CommandBufferUsageFlags,
+         record_fn: F)
+    {
+        unsafe {
+            // first reset the queue so we know it is empty
+            self.dev.reset_command_buffer(
+                cbuf,
+                vk::CommandBufferResetFlags::RELEASE_RESOURCES,
+            ).expect("Could not reset command buffer");
+
+            // this cbuf will only be used once, so tell vulkan that
+            // so it can optimize accordingly
+            let record_info = vk::CommandBufferBeginInfo::builder()
+                .flags(flags);
+
+            // start recording the command buffer, call the function
+            // passed to load it with operations, and then end the
+            // command buffer
+            self.dev.begin_command_buffer(cbuf, &record_info)
+                .expect("Could not start command buffer");
+
+            record_fn(self, cbuf);
+
+            self.dev.end_command_buffer(cbuf)
+                .expect("Could not end command buffer");
         }
     }
 
