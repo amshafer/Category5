@@ -331,9 +331,17 @@ pub struct Renderer {
     // because we create the image, we need to back it with memory
     pub depth_image_mem: vk::DeviceMemory,
 
-    // semaphores to tell us when presentation or rendering finished
+    // This signals that the latest contents have been presented.
+    // It is signaled by acquire next image and is consumed by
+    // the cbuf submission
     pub present_sema: vk::Semaphore,
+    // This is signaled by start_frame, and is consumed by present.
+    // This keeps presentation from occurring until rendering is
+    // complete
     pub render_sema: vk::Semaphore,
+    // This fence coordinates draw call reuse. It will be signaled
+    // when submitting the draw calls to the queue has finished
+    pub submit_fence: vk::Fence,
 }
 
 // an application specific set of resources to draw.
@@ -928,6 +936,12 @@ impl Renderer {
                 .create_semaphore(&sema_create_info, None)
                 .unwrap();
 
+            let fence = dev.create_fence(
+                &vk::FenceCreateInfo::builder()
+                    .flags(vk::FenceCreateFlags::SIGNALED),
+                None,
+            ).expect("Could not create fence");
+
             // you are now the proud owner of a half complete
             // rendering context
             Renderer {
@@ -955,6 +969,7 @@ impl Renderer {
                 cbufs: buffers,
                 present_sema: present_sema,
                 render_sema: render_sema,
+                submit_fence: fence,
                 app_ctx: None,
             }
         }
@@ -1018,21 +1033,19 @@ impl Renderer {
                 .signal_semaphores(signal_semas)
                 .build();
 
-            let fence = self.dev.create_fence(
-                &vk::FenceCreateInfo::default(),
-                None,
-            ).expect("Could not create fence");
+            // Before we submit ourselves, we need to wait for the
+            // previous frame's execution command to finish
+            self.dev.wait_for_fences(&[self.submit_fence],
+			             true, // wait for all
+			             std::u64::MAX, //timeout
+            ).unwrap();
 
             // create a fence to be notified when the commands have finished
             // executing. Wait immediately for the fence.
-            self.dev.queue_submit(queue, &[submit_info], fence).unwrap();
-
-            self.dev.wait_for_fences(&[fence],
-			true, // wait for all
-			std::u64::MAX, //timeout
-            ).unwrap();
-            // the commands are now executed
-            self.dev.destroy_fence(fence, None);
+            self.dev.queue_submit(queue,
+                                  &[submit_info],
+                                  self.submit_fence)
+                .unwrap();
         }
     }
 
@@ -2018,9 +2031,12 @@ impl Drop for Renderer {
         unsafe {
             println!("Stoping the renderer");
 
+
+            // first wait for the device to finish working
+            self.dev.device_wait_idle().unwrap();
+
             // first destroy the application specific resources
             if let Some(ctx) = &self.app_ctx {
-                self.dev.device_wait_idle().unwrap();
 
                 for mesh in ctx.meshes.iter() {
                     self.dev.free_memory(mesh.vert_buffer_memory, None);
@@ -2056,8 +2072,6 @@ impl Drop for Renderer {
                 self.dev.destroy_pipeline(ctx.pipeline, None);
             }
 
-            // first wait for the device to finish working
-            self.dev.device_wait_idle().unwrap();
             self.dev.destroy_semaphore(self.present_sema, None);
             self.dev.destroy_semaphore(self.render_sema, None);
 
@@ -2072,6 +2086,7 @@ impl Drop for Renderer {
             self.dev.destroy_command_pool(self.pool, None);
 
             self.swapchain_loader.destroy_swapchain(self.swapchain, None);
+            self.dev.destroy_fence(self.submit_fence, None);
             self.dev.destroy_device(None);
 
             // Display cleans up after itself
