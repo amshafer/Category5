@@ -677,11 +677,12 @@ impl Renderer {
     // For now we are only allocating two: one to set up the resources
     // and one to do all the work.
     pub unsafe fn create_command_buffers(dev: &Device,
-                                         pool: vk::CommandPool)
+                                         pool: vk::CommandPool,
+                                         count: u32)
                                          -> Vec<vk::CommandBuffer>
     {
         let cbuf_allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_buffer_count(2)
+            .command_buffer_count(count)
             .command_pool(pool)
             .level(vk::CommandBufferLevel::PRIMARY);
 
@@ -895,15 +896,17 @@ impl Renderer {
                 surface_format,
                 &surface_resolution
             );
-
-            let pool = Renderer::create_command_pool(&dev, queue_family);
-            let buffers = Renderer::create_command_buffers(&dev, pool);
             
             let (images, image_views) =
                 Renderer::select_images_and_views(&swapchain_loader,
                                                   swapchain,
                                                   &dev,
                                                   surface_format);
+
+            let pool = Renderer::create_command_pool(&dev, queue_family);
+            let buffers = Renderer::create_command_buffers(&dev,
+                                                           pool,
+                                                           images.len() as u32);
 
             // the depth attachment needs to have its own resources
             let (depth_image, depth_image_view, depth_image_mem) =
@@ -1071,6 +1074,63 @@ impl Renderer {
         }
     }
 
+    pub fn record_cbufs(&mut self) {
+        unsafe {
+            // we need to clear any existing data when we start a pass
+            let clear_vals = [
+                vk::ClearValue {
+                    color: vk::ClearColorValue {
+                        float32: [0.0, 0.0, 0.0, 0.0],
+                    },
+                },
+                vk::ClearValue {
+                    depth_stencil: vk::ClearDepthStencilValue {
+                        depth: 1.0,
+                        stencil: 0,
+                    },
+                },
+            ];
+
+            // there is a cbuf for each framebuffer, so we will record a
+            // cbuf for each one
+            for img in 0..self.cbufs.len() {
+
+                // Most of the resources we use are app specific
+                if let Some(ctx) = &self.app_ctx {
+                    // We want to start a render pass to hold all of our drawing
+                    // The actual pass is started in the cbuf
+                    let pass_begin_info = vk::RenderPassBeginInfo::builder()
+                        .render_pass(ctx.pass)
+                        .framebuffer(ctx.framebuffers[img])
+                        .render_area(vk::Rect2D {
+                            offset: vk::Offset2D { x: 0, y: 0 },
+                            extent: self.resolution,
+                        })
+                        .clear_values(&clear_vals);
+                    
+                    self.cbuf_record(
+                        self.cbufs[img],
+                        vk::CommandBufferUsageFlags::SIMULTANEOUS_USE,
+                        // The contents of the command buffer
+                        |rend, cbuf| {
+                            // All of our drawing operations need to be recorded
+                            // inside a render pass
+                            rend.dev.cmd_begin_render_pass(
+                                cbuf,
+                                &pass_begin_info,
+                                vk::SubpassContents::INLINE,
+                            );
+
+                            Renderer::record_draw(rend, cbuf);
+
+                            rend.dev.cmd_end_render_pass(cbuf);
+                        },
+                    );
+                }
+            }
+        }
+    }
+
     // set up the depth image in self.
     //
     // We need to transfer the format of the depth image to something
@@ -1081,7 +1141,7 @@ impl Renderer {
         // we need to execute a cbuf to set up the memory we are
         // going to use later
         self.cbuf_onetime(
-            self.cbufs[0], // use the first one for initialization
+            self.cbufs[0], // Just use the first one
             self.present_queue,
             &[], // wait_stages
             &[], // wait_semas
@@ -1911,59 +1971,16 @@ impl Renderer {
         unsafe {
             self.get_next_swapchain_image_index();
 
-            // we need to clear both the color and depth attachments first
-            let clear_vals = [
-                vk::ClearValue {
-                    color: vk::ClearColorValue {
-                        float32: [0.0, 0.0, 0.0, 0.0],
-                    },
-                },
-                vk::ClearValue {
-                    depth_stencil: vk::ClearDepthStencilValue {
-                        depth: 1.0,
-                        stencil: 0,
-                    },
-                },
-            ];
-
-            // Most of the resources we use are app specific
-            if let Some(ctx) = &self.app_ctx {
-                // We want to start a render pass to hold all of our drawing
-                // The actual pass is started in the cbuf
-                let pass_begin_info = vk::RenderPassBeginInfo::builder()
-                    .render_pass(ctx.pass)
-                    .framebuffer(ctx.framebuffers[self.current_image as usize])
-                    .render_area(vk::Rect2D {
-                        offset: vk::Offset2D { x: 0, y: 0 },
-                        extent: self.resolution,
-                    })
-                    .clear_values(&clear_vals);
-
-                // Create and submit a cbuf to perform the draw calls
-                self.cbuf_onetime(
-                    self.cbufs[1], // use the second one for drawing
-                    self.present_queue,
-                    // wait_stages
-                    &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT],
-                    &[self.present_sema], // wait_semas
-                    &[self.render_sema], // signal_semas
-                    // this closure starts a renderpass and initiates recording
-                    |rend, cbuf| {
-                        // begin a render pass. This is what drawing operations
-                        // will be recorded in.
-                        rend.dev.cmd_begin_render_pass(
-                            cbuf,
-                            &pass_begin_info,
-                            vk::SubpassContents::INLINE,
-                        );
-
-                        Renderer::record_draw(rend, cbuf);
-
-                        // finish up our render pass
-                        rend.dev.cmd_end_render_pass(cbuf);
-                    },
-                );
-            }
+            // Submit the recorded cbuf to perform the draw calls
+            self.cbuf_submit(
+                // submit the cbuf for the current image
+                self.cbufs[self.current_image as usize],
+                self.present_queue,
+                // wait_stages
+                &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT],
+                &[self.present_sema], // wait_semas
+                &[self.render_sema], // signal_semas
+            );
         }
     }
 
@@ -2109,6 +2126,8 @@ fn main() {
             obj_indices.as_slice(),
         );
     }
+
+    rend.record_cbufs();
 
     println!("Begin render loop...");
     let cont = true;
