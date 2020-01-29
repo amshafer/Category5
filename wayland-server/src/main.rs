@@ -4,14 +4,48 @@
 //   #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 //
 // Austin Shafer - 2019
-extern crate minifb;
-
 mod wayland_bindings;
 use wayland_bindings::*;
 
-use minifb::{WindowOptions, Window};
 use std::ptr;
 use std::cell::RefCell;
+
+// Gets a private struct from a wl_resource
+//
+// wl_resources have a "user data" section which holds a private
+// struct for us. This macro provides a safe and ergonomic way to grab
+// that struct. The userdata will always have a container which holds
+// our private struct, for now it is a RefCell. This macro "checks out"
+// the private struct from its container to keep the borrow checker
+// happy and our code safe.
+//
+// This macro uses unsafe code
+//
+// Example usage:
+//      (get a reference to a `Surface` struct)
+//  let mut surface = get_userdata!(resource, Surface).unwrap();
+//
+// Arguments:
+//  resource: *mut wl_resource
+//  generic: the type of private struct
+//
+// Returns:
+//  Option holding the RefMut we can access the struct through
+macro_rules! get_userdata {
+    // We need to know what type to use for the RefCell
+    ($resource:ident, $generic:ty) => {
+        unsafe {
+            // use .as_mut to get an option<&> we can match against
+            match (wl_resource_get_user_data($resource)
+                   as *mut RefCell<$generic>).as_mut() {
+                None => None,
+                // Borrowing from the refcell will dynamically enforce
+                // lifetime contracts. This can panic.
+                Some(cell) => Some((*cell).borrow_mut()),
+            }
+        }
+    }
+}
 
 // wl_surface_interface implementation
 //
@@ -69,15 +103,7 @@ impl Surface {
     {
         // get our private struct and assign it the buffer
         // that the client has attached
-        let cell: *mut RefCell<Surface> = unsafe {
-            wl_resource_get_user_data(resource) as *mut RefCell<Surface>
-        };
-        if cell == ptr::null_mut() {
-            return;
-        }
-
-        let mut surface = unsafe { (*cell).borrow_mut() };
-
+        let mut surface = get_userdata!(resource, Surface).unwrap();
         surface.s_attached_buffer = Some(buffer);
     }
 
@@ -85,15 +111,7 @@ impl Surface {
                              resource: *mut wl_resource)
     {
         // only do shm for now
-        let cell: *mut RefCell<Surface> = unsafe {
-            wl_resource_get_user_data(resource) as *mut RefCell<Surface>
-        };
-        if cell == ptr::null_mut() {
-            return;
-        }
-
-        let mut surface = unsafe { (*cell).borrow_mut() };
-
+        let mut surface = get_userdata!(resource, Surface).unwrap();
         // the wl_shm_buffer object, not the framebuffer
         if !surface.s_attached_buffer.is_none() {
             surface.s_committed_buffer = surface.s_attached_buffer;
@@ -101,12 +119,8 @@ impl Surface {
     }
 
     pub extern "C" fn delete(resource: *mut wl_resource) {
-        let surface: *mut Surface = unsafe {
-            wl_resource_get_user_data(resource) as *mut Surface
-        };
-        if surface == ptr::null_mut() {
-            return;
-        }
+        //let mut surface = get_userdata!(resource, Surface).unwrap();
+        // Do nothing for now
     }
 
     // create a new visible surface at coordinates (x,y)
@@ -142,9 +156,6 @@ pub struct Compositor {
     c_clients: Vec<RefCell<u32>>,
     // A list of surfaces which have been handed out to clients
     c_surfaces: Vec<RefCell<Surface>>,
-    // the mini framebuffer we are using for now
-    c_window: Window,
-    c_fb: [u32; 1024 * 1024],
 }
 
 // wlci - wl compositor interface
@@ -195,24 +206,30 @@ impl Compositor {
     {
         println!("Creating surface");
         // get the compositor from the resource
-        let comp: *mut Compositor = unsafe {
-            wl_resource_get_user_data(resource) as *mut Compositor
-        };
-        if comp == ptr::null_mut() {
-            return;
-        }
+        // Because the compositor is the caller of even_loop_dispatch we
+        // cannot do the normal RefCell stuff in get_userdata. This requires
+        // an unsafe workaround
+        let mut comp = unsafe {
+            // use .as_mut to get an option<&> we can match against
+            match (wl_resource_get_user_data(resource)
+                   as *mut Compositor).as_mut() {
+                None => None,
+                Some(c) => Some(c),
+            }
+        }.unwrap();
 
         // first get a new resource to represent our surface
         let res = unsafe {
             wl_resource_create(client, &wl_surface_interface, 3, id)
         };
         
-        unsafe {
-            // create an entry in the surfaces list
-            (*comp).c_surfaces.push(RefCell::new(Surface::new(res, 0, 0)));
-            // get a pointer to the refcell
-            let surface_cell = &mut (*comp).c_surfaces[(*comp).c_surfaces.len() - 1];
+        // create an entry in the surfaces list
+        comp.c_surfaces.push(RefCell::new(Surface::new(res, 0, 0)));
+        // get a pointer to the refcell
+        let entry_index = comp.c_surfaces.len() - 1;
+        let surface_cell = &mut comp.c_surfaces[entry_index];
 
+        unsafe {
             // set the implementation for the wl_surface interface. This means
             // passing our new surface as the user data field. The surface callbacks
             // will need it.
@@ -263,26 +280,7 @@ impl Compositor {
                 continue;
             }
             
-            unsafe {
-                let shm_buff = wl_shm_buffer_get(surface.s_committed_buffer.unwrap());
-                let width = wl_shm_buffer_get_width(shm_buff);
-                let height = wl_shm_buffer_get_height(shm_buff);
-                // this is the raw data
-                let fb_raw = wl_shm_buffer_get_data(shm_buff) as *mut _ as *mut u32;
-                let fb: &[u32] =
-                    core::slice::from_raw_parts(fb_raw,
-                                                (4 * width * height) as usize);
-
-                for i in 0..height {
-                    for j in 0..width {
-                        let off: usize = (surface.s_x + surface.s_y * 1024) as usize;
-                        let idx: usize = (i * width + j) as usize;
-                        self.c_fb[off + (i * 1024 + j) as usize] = fb[idx];
-                    }
-                }
-            }
-
-            self.c_window.update_with_buffer_size(&self.c_fb, 1024, 1024).unwrap();
+            // draw the window
         }
     }
 
@@ -310,13 +308,6 @@ impl Compositor {
                 c_event_loop_fd: loop_fd,
                 c_clients: Vec::new(),
                 c_surfaces: Vec::new(),
-                c_window: Window::new("Wayland Compositor",
-                                     1024, // width
-                                     1024, // height
-                                     WindowOptions::default()).unwrap_or_else(|e| {
-                                         panic!("{}", e);
-                                     }),
-                c_fb: [0; 1024 * 1024],
             });
 
             // create interface for our compositor
@@ -349,7 +340,7 @@ impl Drop for Compositor {
 
 fn main() {
     let mut comp = Compositor::new();
-    
+
     loop {
         // wait for the next event
         comp.event_loop_dispatch();
