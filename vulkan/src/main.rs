@@ -294,9 +294,12 @@ pub struct Renderer {
     pub pdev: vk::PhysicalDevice,
 
     // index into the array of queue families
-    pub family_index: u32,
+    pub graphics_family_index: u32,
+    pub transfer_family_index: u32,
     // processes things to be physically displayed
     pub present_queue: vk::Queue,
+    // queue for copy operations
+    pub transfer_queue: vk::Queue,
 
     // vk_khr_display and vk_khr_surface wrapper.
     pub display: Display,
@@ -475,11 +478,14 @@ impl Renderer {
     // Queue families need to support graphical presentation and 
     // presentation on the given surface.
     pub unsafe fn is_valid_queue_family(pdevice: vk::PhysicalDevice,
-                                 info: vk::QueueFamilyProperties,
-                                 index: u32,
-                                 surface_loader: &khr::Surface,
-                                 surface: vk::SurfaceKHR) -> bool {
-        info.queue_flags.contains(vk::QueueFlags::GRAPHICS)
+                                        info: vk::QueueFamilyProperties,
+                                        index: u32,
+                                        surface_loader: &khr::Surface,
+                                        surface: vk::SurfaceKHR,
+                                        flags: vk::QueueFlags)
+                                        -> bool
+    {
+        info.queue_flags.contains(flags)
             && surface_loader
             // ensure compatibility with the surface
             .get_physical_device_surface_support(
@@ -519,10 +525,11 @@ impl Renderer {
     // that we can ensure the pdev/queue combination can
     // present the surface
     pub unsafe fn select_queue_family(inst: &Instance,
-                              pdev: vk::PhysicalDevice,
-                              surface_loader: &khr::Surface,
-                              surface: vk::SurfaceKHR)
-                              -> u32
+                                      pdev: vk::PhysicalDevice,
+                                      surface_loader: &khr::Surface,
+                                      surface: vk::SurfaceKHR,
+                                      flags: vk::QueueFlags)
+                                      -> u32
     {
         // get the properties per queue family
         inst
@@ -533,15 +540,15 @@ impl Renderer {
             .filter_map(|(index, info)| {
                 // add the device and the family to a list of
                 // candidates for use later
-                if Renderer::is_valid_queue_family(pdev,
-                                                   *info,
-                                                   index as u32,
-                                                   surface_loader,
-                                                   surface) {
+                match Renderer::is_valid_queue_family(pdev,
+                                                      *info,
+                                                      index as u32,
+                                                      surface_loader,
+                                                      surface,
+                                                      flags) {
                     // return the pdevice/family pair
-                    Some(index as u32)
-                } else {
-                    None
+                    true => Some(index as u32),
+                    false => None,
                 }
             })
             .nth(0)
@@ -566,7 +573,7 @@ impl Renderer {
     // present_queue argument.
     pub unsafe fn create_device(inst: &Instance,
                                 pdev: vk::PhysicalDevice,
-                                present_queue: u32)
+                                queues: &[u32])
                                 -> Device
     {
         let dev_extension_names = [khr::Swapchain::name().as_ptr()];
@@ -575,15 +582,18 @@ impl Renderer {
             ..Default::default()
         };
 
-        // for now we only have one queue, so one priority
+        // for now we only have one graphics queue, so one priority
         let priorities = [1.0];
-        let queue_info = [vk::DeviceQueueCreateInfo::builder()
-                          .queue_family_index(present_queue)
-                          .queue_priorities(&priorities)
-                          .build()];
+        let mut queue_infos = Vec::new();
+        for i in queues {
+            queue_infos.push(vk::DeviceQueueCreateInfo::builder()
+                             .queue_family_index(*i)
+                             .queue_priorities(&priorities)
+                             .build());
+        }
 
         let dev_create_info = vk::DeviceCreateInfo::builder()
-            .queue_create_infos(&queue_info)
+            .queue_create_infos(queue_infos.as_ref())
             .enabled_extension_names(&dev_extension_names)
             .enabled_features(&features);
 
@@ -850,6 +860,165 @@ impl Renderer {
         return (image, view, image_memory);
     }
 
+    // Transitions `image` to the `new` layout using `cbuf`
+    //
+    // Images need to be manually transitioned from two layouts. A
+    // normal use case is transitioning an image from an undefined
+    // layout to the optimal shader access layout. This is also
+    // used  by depth images.
+    pub unsafe fn transition_image_layout(&self,
+                                          image: vk::Image,
+                                          cbuf: vk::CommandBuffer,
+                                          old: vk::ImageLayout,
+                                          new: vk::ImageLayout,
+                                          access: vk::AccessFlags,
+                                          aspect: vk::ImageAspectFlags)
+    {
+        let layout_barrier = vk::ImageMemoryBarrier::builder()
+            .image(image)
+            // access patern for the resulting layout
+            .dst_access_mask(
+                access
+            )
+            // go from an undefined old layout to whatever the
+            // driver decides is the optimal depth layout
+            .old_layout(old)
+            .new_layout(new)
+            .subresource_range(
+                vk::ImageSubresourceRange::builder()
+                    .aspect_mask(aspect)
+                    .layer_count(1)
+                    .level_count(1)
+                    .build(),
+            )
+            .build();
+
+        // process the barrier we created, which will perform
+        // the actual transition.
+        self.dev.cmd_pipeline_barrier(
+            cbuf,
+            vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+            vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[layout_barrier],
+        );
+    }
+
+    // needs to be recorded in a cbuf
+    pub unsafe fn copy_buf_to_img(&self,
+                                  cbuf: vk::CommandBuffer,
+                                  buffer: vk::Buffer,
+                                  image: vk::Image,
+                                  width: u32,
+                                  height: u32)
+    {
+        let region = vk::BufferImageCopy::builder()
+            // 0 specifies that the pixels are tightly packed
+            .buffer_offset(0)
+            .buffer_row_length(0)
+            .buffer_image_height(0)
+            .image_offset(vk::Offset3D {
+                x: 0,
+                y: 0,
+                z: 0
+            })
+            .image_extent(vk::Extent3D {
+                width: width,
+                height: height,
+                depth: 1,
+            })
+            .build();
+
+        self.dev.cmd_copy_buffer_to_image(
+            cbuf,
+            buffer,
+            image,
+            // this is the layout the image is currently using
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            &[region]
+        );
+    }
+
+    // Create a new image, and fill it with `data`
+    //
+    // This is meant for loading a texture into an image.
+    // It essentially just wraps `create_image` and
+    // `update_memory`.
+    //
+    // The resulting image will be in the shader read layout
+    pub unsafe fn create_image_with_contents<T: Copy>(
+        &mut self,
+        mem_props: &vk::PhysicalDeviceMemoryProperties,
+        resolution: &vk::Extent2D,
+        usage: vk::ImageUsageFlags,
+        aspect_flags: vk::ImageAspectFlags,
+        mem_flags: vk::MemoryPropertyFlags,
+        data: &[T])
+        -> (vk::Image, vk::ImageView, vk::DeviceMemory)
+    {
+        let (image, view, img_mem) = Renderer::create_image(&self.dev,
+                                                            mem_props,
+                                                            resolution,
+                                                            usage,
+                                                            aspect_flags,
+                                                            mem_flags);
+
+        // The image is created with DEVICE_LOCAL memory types, so we need
+        // to make a staging buffer to copy the data from.
+        let (buffer, buf_mem) = self.create_buffer(
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            vk::SharingMode::EXCLUSIVE,
+            vk::MemoryPropertyFlags::HOST_VISIBLE
+                | vk::MemoryPropertyFlags::HOST_COHERENT,
+            data
+        );
+
+        // allocate a new cbuf for us to work with
+        let new_cbuf = Renderer::create_command_buffers(&self.dev,
+                                                        self.pool,
+                                                        1)[0]; // only get one
+
+        // now perform the copy
+        self.cbuf_onetime(
+            new_cbuf,
+            self.transfer_queue,
+            &[], // wait stages
+            &[], // wait semas
+            &[], // signal semas
+            |rend, cbuf| {
+                // transition our image to be a transfer destination
+                rend.transition_image_layout(
+                    image,
+                    cbuf,
+                    vk::ImageLayout::UNDEFINED,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    vk::AccessFlags::TRANSFER_WRITE,
+                    vk::ImageAspectFlags::COLOR,
+                );
+
+                rend.copy_buf_to_img(cbuf,
+                                     buffer,
+                                     image,
+                                     resolution.width,
+                                     resolution.height);
+
+                // transition back to the optimal color format
+                rend.transition_image_layout(
+                    image,
+                    cbuf,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    vk::AccessFlags::SHADER_READ,
+                    vk::ImageAspectFlags::COLOR,
+                );
+            }
+        );
+
+        (image, view, img_mem)
+    }
+
     // Create a new Vulkan Renderer
     //
     // This renderer is very application specific. It is not meant to be
@@ -873,11 +1042,18 @@ impl Renderer {
             // and will create a surface on that medium
             let display = Display::new(&entry, &inst, pdev);
 
-            let queue_family =
+            let graphics_queue_family =
                 Renderer::select_queue_family(&inst,
                                               pdev,
                                               &display.surface_loader,
-                                              display.surface);
+                                              display.surface,
+                                              vk::QueueFlags::GRAPHICS);
+            let transfer_queue_family =
+                Renderer::select_queue_family(&inst,
+                                              pdev,
+                                              &display.surface_loader,
+                                              display.surface,
+                                              vk::QueueFlags::TRANSFER);
             let mem_props = Renderer::get_pdev_mem_properties(&inst, pdev);
 
             // do this after we have gotten a valid physical device
@@ -891,8 +1067,9 @@ impl Renderer {
                 &surface_caps
             );
 
-            let dev = Renderer::create_device(&inst, pdev, queue_family);
-            let present_queue = dev.get_device_queue(queue_family, 0);
+            let dev = Renderer::create_device(&inst, pdev, &[graphics_queue_family]);
+            let present_queue = dev.get_device_queue(graphics_queue_family, 0);
+            let transfer_queue = dev.get_device_queue(transfer_queue_family, 0);
 
             let swapchain_loader = khr::Swapchain::new(&inst, &dev);
             let swapchain = Renderer::create_swapchain(
@@ -911,7 +1088,7 @@ impl Renderer {
                                                   &dev,
                                                   surface_format);
 
-            let pool = Renderer::create_command_pool(&dev, queue_family);
+            let pool = Renderer::create_command_pool(&dev, graphics_queue_family);
             let buffers = Renderer::create_command_buffers(&dev,
                                                            pool,
                                                            images.len() as u32);
@@ -951,8 +1128,10 @@ impl Renderer {
                 inst: inst,
                 dev: dev,
                 pdev: pdev,
-                family_index: queue_family,
+                graphics_family_index: graphics_queue_family,
+                transfer_family_index: transfer_queue_family,
                 present_queue: present_queue,
+                transfer_queue: transfer_queue,
                 display: display,
                 surface_format: surface_format,
                 surface_caps: surface_caps,
@@ -1150,11 +1329,16 @@ impl Renderer {
     // usable. We will use an image barrier to set the image as a depth
     // stencil attachment to be used later.
     pub unsafe fn setup_depth_image(&mut self) {
+        // allocate a new cbuf for us to work with
+        let new_cbuf = Renderer::create_command_buffers(&self.dev,
+                                                        self.pool,
+                                                        1)[0]; // only get one
+
         // the depth image and view have already been created by new
         // we need to execute a cbuf to set up the memory we are
         // going to use later
         self.cbuf_onetime(
-            self.cbufs[0], // Just use the first one
+            new_cbuf,
             self.present_queue,
             &[], // wait_stages
             &[], // wait_semas
@@ -1164,36 +1348,14 @@ impl Renderer {
                 // We need to initialize the depth attachment by
                 // performing a layout transition to the optimal
                 // depth layout
-                let layout_barrier = vk::ImageMemoryBarrier::builder()
-                    .image(rend.depth_image)
-                    // access patern for the resulting layout
-                    .dst_access_mask(
-                        vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
-                            | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                    )
-                    // go from an undefined old layout to whatever the
-                    // driver decides is the optimal depth layout
-                    .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                    .old_layout(vk::ImageLayout::UNDEFINED)
-                    .subresource_range(
-                        vk::ImageSubresourceRange::builder()
-                            .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                            .layer_count(1)
-                            .level_count(1)
-                            .build(),
-                    )
-                    .build();
-
-                // process the barrier we created, which will perform
-                // the actual transition.
-                rend.dev.cmd_pipeline_barrier(
-                    cbuf,
-                    vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                    vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &[layout_barrier],
+                rend.transition_image_layout(
+                    rend.depth_image,
+                    rend.cbufs[0],
+                    vk::ImageLayout::UNDEFINED,
+                    vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                    vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                    vk::ImageAspectFlags::DEPTH
                 );
             },
         );
@@ -1717,6 +1879,8 @@ impl Renderer {
                 let (buf, mem) = self.create_buffer(
                     vk::BufferUsageFlags::UNIFORM_BUFFER,
                     vk::SharingMode::EXCLUSIVE,
+                    vk::MemoryPropertyFlags::HOST_VISIBLE
+                        | vk::MemoryPropertyFlags::HOST_COHERENT,
                     // this specifies the constants to copy into the buffer
                     &[consts],
                 );
@@ -1757,9 +1921,10 @@ impl Renderer {
     //
     // This is just a helper for `create_buffer`. It does not fill
     // the buffer with anything.
-    pub unsafe fn create_buffer_with_size(&mut self,
+    pub unsafe fn create_buffer_with_size(&self,
                                           usage: vk::BufferUsageFlags,
                                           mode: vk::SharingMode,
+                                          flags: vk::MemoryPropertyFlags,
                                           size: u64)
                                           -> (vk::Buffer, vk::DeviceMemory)
     {
@@ -1776,9 +1941,7 @@ impl Renderer {
         let index = Renderer::find_memory_type_index(
             &props,
             &req,
-            // we want to be able to map the buffer to populate it
-            vk::MemoryPropertyFlags::HOST_VISIBLE
-                | vk::MemoryPropertyFlags::HOST_COHERENT,
+            flags,
         ).unwrap();
 
         // now we need to allocate memory to back the buffer
@@ -1826,9 +1989,10 @@ impl Renderer {
     // represents a region of allocated memory to hold the buffer contents.
     //
     // Both are returned, as both need to be destroyed when they are done.
-    pub unsafe fn create_buffer<T: Copy>(&mut self,
+    pub unsafe fn create_buffer<T: Copy>(&self,
                                          usage: vk::BufferUsageFlags,
                                          mode: vk::SharingMode,
+                                         flags: vk::MemoryPropertyFlags,
                                          data: &[T])
                                          -> (vk::Buffer, vk::DeviceMemory)
     {
@@ -1836,6 +2000,7 @@ impl Renderer {
         let (buffer, memory) = self.create_buffer_with_size(
             usage,
             mode,
+            flags,
             size,
         );
 
@@ -1861,11 +2026,15 @@ impl Renderer {
             let (vbuf, vmem) = self.create_buffer(
                 vk::BufferUsageFlags::VERTEX_BUFFER,
                 vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
                 vertices,
             );
             let (ibuf, imem) = self.create_buffer(
                 vk::BufferUsageFlags::INDEX_BUFFER,
                 vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
                 indices,
             );
 
