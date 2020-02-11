@@ -10,8 +10,9 @@ extern crate cgmath;
 extern crate obj;
 #[macro_use]
 extern crate memoffset;
+extern crate image;
 
-use cgmath::{Point3,Vector3,Matrix4};
+use cgmath::{Point3,Vector3,Vector2,Matrix4};
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
@@ -29,7 +30,7 @@ use ash::util;
 use ash::extensions::ext::DebugReport;
 use ash::extensions::khr;
 
-static EYE: Point3<f32> = Point3::new(0.0, 3.0, -7.0);
+static EYE: Point3<f32> = Point3::new(0.0, 0.0, 7.0);
 
 // A display represents a physical screen
 //
@@ -383,6 +384,10 @@ pub struct Mesh {
     // Resources for the index buffer
     pub index_buffer: vk::Buffer,
     pub index_buffer_memory: vk::DeviceMemory,
+    // image containing the contents of the window
+    pub image: vk::Image,
+    pub image_view: vk::ImageView,
+    pub image_mem: vk::DeviceMemory,
 }
 
 // Contiains a vertex and all its related data
@@ -395,7 +400,7 @@ pub struct Mesh {
 pub struct VertData {
     pub vertex: Vector3<f32>,
     pub normal: Vector3<f32>,
-    pub color: Vector3<f32>,
+    pub tex: Vector2<f32>,
 }
 
 #[derive(Clone,Copy)]
@@ -802,6 +807,7 @@ impl Renderer {
     pub unsafe fn create_image(dev: &Device,
                                mem_props: &vk::PhysicalDeviceMemoryProperties,
                                resolution: &vk::Extent2D,
+                               format: vk::Format,
                                usage: vk::ImageUsageFlags,
                                aspect: vk::ImageAspectFlags, 
                                flags: vk::MemoryPropertyFlags)
@@ -811,7 +817,7 @@ impl Renderer {
         // some memory to it later.
         let create_info = vk::ImageCreateInfo::builder()
             .image_type(vk::ImageType::TYPE_2D)
-            .format(vk::Format::D16_UNORM)
+            .format(format)
             .extent(vk::Extent3D {
                 width: resolution.width,
                 height: resolution.height,
@@ -860,6 +866,25 @@ impl Renderer {
         return (image, view, image_memory);
     }
 
+    pub unsafe fn create_sampler(&self) -> vk::Sampler {
+        let info = vk::SamplerCreateInfo::builder()
+            // filter for magnified (oversampled) pixels
+            .mag_filter(vk::Filter::LINEAR)
+            // filter for minified (undersampled) pixels
+            .min_filter(vk::Filter::LINEAR)
+            // repeat the texture on wraparound
+            .address_mode_u(vk::SamplerAddressMode::REPEAT)
+            .address_mode_v(vk::SamplerAddressMode::REPEAT)
+            .address_mode_w(vk::SamplerAddressMode::REPEAT)
+            // disable this for performance
+            .anisotropy_enable(false)
+            .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
+            // texture coords are [0,1)
+            .unnormalized_coordinates(false);
+
+        self.dev.create_sampler(&info, None).unwrap()
+    }
+
     // Transitions `image` to the `new` layout using `cbuf`
     //
     // Images need to be manually transitioned from two layouts. A
@@ -869,17 +894,31 @@ impl Renderer {
     pub unsafe fn transition_image_layout(&self,
                                           image: vk::Image,
                                           cbuf: vk::CommandBuffer,
+                                          src_access: vk::AccessFlags,
                                           old: vk::ImageLayout,
+                                          dst_access: vk::AccessFlags,
                                           new: vk::ImageLayout,
-                                          access: vk::AccessFlags,
                                           aspect: vk::ImageAspectFlags)
     {
+        // automatically detect the pipeline src/dest stages to use.
+        // If we are in an undefined state, we need to wait for the transfer
+        // pseudo stage to perform the transition.
+        let src_stage =
+            match old == vk::ImageLayout::UNDEFINED {
+                true => vk::PipelineStageFlags::TOP_OF_PIPE,
+                false => vk::PipelineStageFlags::TRANSFER,
+            };
+
+        let dst_stage =
+            match old == vk::ImageLayout::UNDEFINED {
+                true => vk::PipelineStageFlags::TRANSFER,
+                false => vk::PipelineStageFlags::TOP_OF_PIPE,
+            };
+
         let layout_barrier = vk::ImageMemoryBarrier::builder()
             .image(image)
-            // access patern for the resulting layout
-            .dst_access_mask(
-                access
-            )
+            .src_access_mask(src_access)
+            .dst_access_mask(dst_access)
             // go from an undefined old layout to whatever the
             // driver decides is the optimal depth layout
             .old_layout(old)
@@ -897,8 +936,8 @@ impl Renderer {
         // the actual transition.
         self.dev.cmd_pipeline_barrier(
             cbuf,
-            vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-            vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+            src_stage,
+            dst_stage,
             vk::DependencyFlags::empty(),
             &[],
             &[],
@@ -919,6 +958,11 @@ impl Renderer {
             .buffer_offset(0)
             .buffer_row_length(0)
             .buffer_image_height(0)
+            .image_subresource(vk::ImageSubresourceLayers::builder()
+                               .aspect_mask(vk::ImageAspectFlags::COLOR)
+                               .mip_level(0)
+                               .build()
+            )
             .image_offset(vk::Offset3D {
                 x: 0,
                 y: 0,
@@ -952,6 +996,7 @@ impl Renderer {
         &mut self,
         mem_props: &vk::PhysicalDeviceMemoryProperties,
         resolution: &vk::Extent2D,
+        format: vk::Format,
         usage: vk::ImageUsageFlags,
         aspect_flags: vk::ImageAspectFlags,
         mem_flags: vk::MemoryPropertyFlags,
@@ -961,6 +1006,7 @@ impl Renderer {
         let (image, view, img_mem) = Renderer::create_image(&self.dev,
                                                             mem_props,
                                                             resolution,
+                                                            format,
                                                             usage,
                                                             aspect_flags,
                                                             mem_flags);
@@ -972,7 +1018,7 @@ impl Renderer {
             vk::SharingMode::EXCLUSIVE,
             vk::MemoryPropertyFlags::HOST_VISIBLE
                 | vk::MemoryPropertyFlags::HOST_COHERENT,
-            data
+            &data,
         );
 
         // allocate a new cbuf for us to work with
@@ -992,9 +1038,10 @@ impl Renderer {
                 rend.transition_image_layout(
                     image,
                     cbuf,
+                    vk::AccessFlags::empty(),
                     vk::ImageLayout::UNDEFINED,
-                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     vk::AccessFlags::TRANSFER_WRITE,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     vk::ImageAspectFlags::COLOR,
                 );
 
@@ -1008,9 +1055,10 @@ impl Renderer {
                 rend.transition_image_layout(
                     image,
                     cbuf,
+                    vk::AccessFlags::TRANSFER_WRITE,
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                     vk::AccessFlags::SHADER_READ,
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                     vk::ImageAspectFlags::COLOR,
                 );
             }
@@ -1099,6 +1147,7 @@ impl Renderer {
                     &dev,
                     &mem_props,
                     &surface_resolution,
+                    vk::Format::D16_UNORM,
                     vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
                     vk::ImageAspectFlags::DEPTH,
                     vk::MemoryPropertyFlags::DEVICE_LOCAL
@@ -1351,10 +1400,11 @@ impl Renderer {
                 rend.transition_image_layout(
                     rend.depth_image,
                     rend.cbufs[0],
+                    vk::AccessFlags::empty(),
                     vk::ImageLayout::UNDEFINED,
-                    vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                     vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
                         | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                    vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                     vk::ImageAspectFlags::DEPTH
                 );
             },
@@ -1527,6 +1577,13 @@ impl Renderer {
                 location: 1, // the location of the attribute we are specifying
                 format: vk::Format::R32G32B32_SFLOAT,
                 offset: offset_of!(VertData, normal) as u32,
+            },
+            // Texture coordinates
+            vk::VertexInputAttributeDescription {
+                binding: 0, // The data binding to parse
+                location: 2, // the location of the attribute we are specifying
+                format: vk::Format::R32G32B32_SFLOAT,
+                offset: offset_of!(VertData, tex) as u32,
             },
         ];
 
@@ -1720,11 +1777,17 @@ impl Renderer {
                                             count: usize)
                                         -> Vec<vk::DescriptorSetLayout>
     {
-        // pass the MVP matrix
+        // ubos for the MVP matrix and image samplers for textures
         let bindings = [vk::DescriptorSetLayoutBinding::builder()
                         .binding(0)
                         .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                         .stage_flags(vk::ShaderStageFlags::VERTEX)
+                        .descriptor_count(1)
+                        .build(),
+                        vk::DescriptorSetLayoutBinding::builder()
+                        .binding(1)
+                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
                         .descriptor_count(1)
                         .build()
         ];
@@ -1758,12 +1821,16 @@ impl Renderer {
         let size = [vk::DescriptorPoolSize::builder()
                     .ty(vk::DescriptorType::UNIFORM_BUFFER)
                     .descriptor_count(capacity)
+                    .build(),
+                    vk::DescriptorPoolSize::builder()
+                    .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .descriptor_count(capacity)
                     .build()
         ];
 
         let info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&size)
-            .max_sets(capacity);
+            .max_sets(self.images.len() as u32);
 
         self.dev.create_descriptor_pool(&info, None).unwrap()
     }
@@ -2020,7 +2087,9 @@ impl Renderer {
     // Meshes need to be in an indexed vertex format.
     pub fn add_mesh(&mut self,
                     vertices: &[VertData],
-                    indices: &[Vector3<u32>])
+                    indices: &[Vector3<u32>],
+                    texture: &[u8],
+                    resolution: vk::Extent2D)
     {
         unsafe {
             let (vbuf, vmem) = self.create_buffer(
@@ -2038,6 +2107,19 @@ impl Renderer {
                 indices,
             );
 
+            // TODO: make this cached in Renderer
+            let mem_props = Renderer::get_pdev_mem_properties(&self.inst, self.pdev);
+
+            let (image, view, img_mem) = self.create_image_with_contents(
+                &mem_props,
+                &resolution,
+                vk::Format::R32G32B32_SFLOAT,
+                vk::ImageUsageFlags::SAMPLED,
+                vk::ImageAspectFlags::COLOR,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                texture,
+            );
+
             if let Some(ctx) = &mut self.app_ctx {
                 ctx.meshes.push(Mesh {
                     vert_buffer: vbuf,
@@ -2046,6 +2128,9 @@ impl Renderer {
                     vert_count: indices.len() as u32 * 3,
                     index_buffer: ibuf,
                     index_buffer_memory: imem,
+                    image: image,
+                    image_view: view,
+                    image_mem: img_mem,
                 });
             }
         }
@@ -2275,41 +2360,51 @@ fn main() {
     // initialize the pipeline, renderpasses, and display engine
     rend.setup();
 
-    let shape_file_names = vec!{ "shapes/teapot.obj" };
+    // read our image
+    let img = image::open("../hurricane.png").unwrap().to_rgb();
+    let pixels: Vec<u8> = img.into_vec();
+    let norm = Vector3::new(0.0, 1.0, 0.0);
 
-    for fname in shape_file_names.iter() {
-        // read an obj file of choice
-        // straight from the obj-rs README.md
-        let shape_file = BufReader::new(File::open(fname).unwrap());
-        let obj_mesh: Obj = load_obj(shape_file).unwrap();
+    let square_size = 1.0;
+    let data = [
+        VertData {
+            vertex: Vector3::new(square_size, 0.0, -square_size),
+            normal: norm,
+            tex: Vector2::new(0.0, 0.0),
+        },
+        VertData {
+            vertex: Vector3::new(-square_size, 0.0, -square_size),
+            normal: norm,
+            tex: Vector2::new(1.0, 0.0),
+        },
+        VertData {
+            vertex: Vector3::new(square_size, 0.0, square_size),
+            normal: norm,
+            tex: Vector2::new(0.0, 1.0),
+        },
+        VertData {
+            vertex: Vector3::new(-square_size, 0.0, square_size),
+            normal: norm,
+            tex: Vector2::new(1.0, 1.0),
+        },
+    ];
 
-        let obj_vertices: Vec<VertData> = obj_mesh.vertices.iter()
-            .map(|v| {
-                VertData {
-                    vertex: Vector3::new(v.position[0], v.position[1], v.position[2]),
-                    normal: Vector3::new(v.normal[0], v.normal[1], v.normal[2]),
-                    color: Vector3::new(1.0, 1.0, 1.0),
-                }
-            }).collect();
-
-        let mut obj_indices: Vec<Vector3<u32>> = Vec::new();
-        let mut iter = obj_mesh.indices.iter().peekable();
-        while !iter.peek().is_none() {
-            let mut elements = iter.by_ref().take(3);
-            obj_indices.push(Vector3::new(
-                *elements.next().unwrap() as u32,
-                *elements.next().unwrap() as u32,
-                *elements.next().unwrap() as u32,
-            ));
-        }
-
-        rend.add_mesh(
-            // vertices
-            obj_vertices.as_slice(),
-            // indices
-            obj_indices.as_slice(),
-        );
-    }
+    let indices = [
+        Vector3::new(2, 3, 1),
+        Vector3::new(2, 4, 3),
+    ];
+    
+    rend.add_mesh(
+        // vertices
+        &data,
+        // indices
+        &indices,
+        pixels.as_ref(),
+        vk::Extent2D {
+            width: 512,
+            height: 512,
+        },
+    );
 
     rend.record_cbufs();
 
@@ -2320,7 +2415,7 @@ fn main() {
         // Make the scene spin slowly
         let rot_matrix = Matrix4::from_angle_y(cgmath::Deg(angle));
         angle += 0.3;
-        rend.transform_meshes(&rot_matrix);
+        //rend.transform_meshes(&rot_matrix);
 
         // draw a frame to be displayed
         rend.start_frame();
