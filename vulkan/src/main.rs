@@ -21,10 +21,6 @@ use std::marker::Copy;
 use std::mem;
 use std::cell::RefCell;
 
-use std::fs::File;
-use std::io::BufReader;
-use obj::*;
-
 pub use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::{vk, Device, Entry, Instance};
 use ash::util;
@@ -364,17 +360,16 @@ pub struct AppContext {
     pub descriptor_pool: vk::DescriptorPool,
     // (as per `create_descriptor_layouts`)
     // This will only be the sets holding the uniform buffers,
-    // one for each framebuffer.
     // any mesh specific descriptors are in the mesh's sets.
-    pub descriptor_uniform_layouts: Vec<vk::DescriptorSetLayout>,
-    pub descriptors: Vec<vk::DescriptorSet>,
+    pub descriptor_uniform_layout: vk::DescriptorSetLayout,
+    pub ubo_descriptor: vk::DescriptorSet,
     // these are the layouts for mesh specific (texture) descriptors
-    pub descriptor_mesh_layout: vk::DescriptorSetLayout,
+    pub descriptor_sampler_layout: vk::DescriptorSetLayout,
     pub shader_modules: Vec<vk::ShaderModule>,
     pub framebuffers: Vec<vk::Framebuffer>,
-    // each swapchain image should have its ubos/descriptors
-    pub uniform_buffers: Vec<vk::Buffer>,
-    pub uniform_buffers_memory: Vec<vk::DeviceMemory>,
+    // shader constants are shared by all swapchain images
+    pub uniform_buffer: vk::Buffer,
+    pub uniform_buffers_memory: vk::DeviceMemory,
     // This is the set of geometric objects in the scene
     pub meshes: Vec<Mesh>,
 }
@@ -397,7 +392,8 @@ pub struct Mesh {
     pub image_view: vk::ImageView,
     pub image_mem: vk::DeviceMemory,
     // Window-speccific descriptors (texture sampler)
-    pub descriptors: Vec<vk::DescriptorSet>,
+    // one for each framebuffer
+    pub sampler_descriptors: Vec<vk::DescriptorSet>,
 }
 
 // Contiains a vertex and all its related data
@@ -931,7 +927,9 @@ impl Renderer {
                     .build(),
             )
             .build();
+        #[allow(unused_assignments)]
         let mut src_stage = vk::PipelineStageFlags::TOP_OF_PIPE;
+        #[allow(unused_assignments)]
         let mut dst_stage = vk::PipelineStageFlags::TOP_OF_PIPE;
 
         // automatically detect the pipeline src/dest stages to use.
@@ -1249,6 +1247,18 @@ impl Renderer {
                          wait_stages,
                          wait_semas,
                          signal_semas);
+
+        unsafe {
+            // We need to wait for the command submission to finish, this
+            // is why you should avoid using this function
+            self.dev.wait_for_fences(&[self.submit_fence],
+			             true, // wait for all
+			             std::u64::MAX, //timeout
+            ).unwrap();
+
+            // do not reset the fence since the next cbuf_submit will
+            // expect it to be signaled
+        }
     }
 
     // Submits a command buffer.
@@ -1284,6 +1294,9 @@ impl Renderer {
 			             true, // wait for all
 			             std::u64::MAX, //timeout
             ).unwrap();
+
+            // we need to reset the fence since it has been signaled
+            self.dev.reset_fences(&[self.submit_fence]).unwrap();
 
             // create a fence to be notified when the commands have finished
             // executing. Wait immediately for the fence.
@@ -1379,7 +1392,7 @@ impl Renderer {
                                 vk::SubpassContents::INLINE,
                             );
 
-                            Renderer::record_draw(rend, cbuf);
+                            Renderer::record_draw(rend, cbuf, img);
 
                             rend.dev.cmd_end_render_pass(cbuf);
                         },
@@ -1609,14 +1622,14 @@ impl Renderer {
                 //     vec2:  VK_FORMAT_R32G32_SFLOAT
                 //     vec3:  VK_FORMAT_R32G32B32_SFLOAT
                 //     vec4:  VK_FORMAT_R32G32B32A32_SFLOAT
-                format: vk::Format::R32G32B32_SFLOAT,
+                format: vk::Format::R32G32_SFLOAT,
                 offset: offset_of!(VertData, vertex) as u32,
             },
             // Texture coordinates
             vk::VertexInputAttributeDescription {
                 binding: 0, // The data binding to parse
                 location: 1, // the location of the attribute we are specifying
-                format: vk::Format::R32G32B32_SFLOAT,
+                format: vk::Format::R32G32_SFLOAT,
                 offset: offset_of!(VertData, tex) as u32,
             },
         ];
@@ -1772,7 +1785,7 @@ impl Renderer {
     // Constants will be the contents of the uniform buffers which are
     // processed by the shaders. The most obvious entry is the model + view
     // + perspective projection matrix.
-    pub fn get_shader_constants(resolution: vk::Extent2D)
+    pub fn get_shader_constants(_resolution: vk::Extent2D)
                                 -> ShaderConstants
     {
         // transform from blender's coordinate system to vulkan
@@ -1803,9 +1816,8 @@ impl Renderer {
     //
     // The layouts created will be the default for this application. This should
     // usually be at least one descriptor for the MVP martrix.
-    pub unsafe fn create_descriptor_layouts(&mut self,
-                                            count: usize)
-                                            -> (Vec<vk::DescriptorSetLayout>,
+    pub unsafe fn create_descriptor_layouts(&mut self)
+                                            -> (vk::DescriptorSetLayout,
                                                 vk::DescriptorSetLayout)
     {
         // supplies `descriptor_uniform_layouts`
@@ -1821,18 +1833,14 @@ impl Renderer {
         let info = vk::DescriptorSetLayoutCreateInfo::builder()
             .bindings(&bindings);
 
-        let mut ubos = Vec::new();
-        // We want to return a vector with a layout for every swapchain
-        // image. We want them all to be the same
-        for _ in 0..count {
-            ubos.push(
-                self.dev.create_descriptor_set_layout(&info, None)
-                    .unwrap()
-            );
-        }
+        let ubo = self.dev.create_descriptor_set_layout(&info, None)
+            .unwrap();
 
         // supplies `descriptor_mesh_layouts`
         // There will be a sampler for each window
+        //
+        // This descriptor needs to be second in the pipeline list
+        // so the shader can reference it as set 1
         let bindings=[vk::DescriptorSetLayoutBinding::builder()
                       .binding(1)
                       .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
@@ -1843,10 +1851,10 @@ impl Renderer {
         let info = vk::DescriptorSetLayoutCreateInfo::builder()
             .bindings(&bindings);
 
-        let samplers = self.dev.create_descriptor_set_layout(&info, None)
+        let sampler = self.dev.create_descriptor_set_layout(&info, None)
             .unwrap();
 
-        return (ubos, samplers);
+        return (ubo, sampler);
     }
 
     // Create a descriptor pool to allocate all of our sets from
@@ -1861,17 +1869,17 @@ impl Renderer {
     {
         let size = [vk::DescriptorPoolSize::builder()
                     .ty(vk::DescriptorType::UNIFORM_BUFFER)
-                    .descriptor_count(capacity)
+                    .descriptor_count(1)
                     .build(),
                     vk::DescriptorPoolSize::builder()
                     .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .descriptor_count(capacity * 2)
+                    .descriptor_count(capacity)
                     .build()
         ];
 
         let info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&size)
-            .max_sets(self.images.len() as u32);
+            .max_sets(capacity + 1);
 
         self.dev.create_descriptor_pool(&info, None).unwrap()
     }
@@ -1985,14 +1993,19 @@ impl Renderer {
             );
 
             // prepare descriptors for all of the uniforms to pass to shaders
-            let (ubo_layouts, sampler_layout) = self.create_descriptor_layouts(
-                self.views.len() // Number of swapchain images
-            );
+            //
+            // NOTE: These need to be referenced in order by the `set` modifier
+            // in the shaders
+            let (ubo_layout, sampler_layout) = self.create_descriptor_layouts();
+            let descriptor_layouts = &[
+                ubo_layout,      // set 0
+                sampler_layout,  // set 1
+            ];
 
             // even though we don't have anything special in our layout, we
             // still need to have a created layout for the pipeline
             let layout_info = vk::PipelineLayoutCreateInfo::builder()
-                .set_layouts(ubo_layouts.as_slice());
+                .set_layouts(descriptor_layouts);
             let layout = self.dev.create_pipeline_layout(&layout_info, None)
                 .unwrap();
             
@@ -2002,54 +2015,44 @@ impl Renderer {
 
             // Allocate the actual descriptor sets for each framebuffer
             let pool = self.create_descriptor_pool(framebuffers.len() as u32);
-            let descriptors = self.allocate_descriptor_sets(
+            let ubo = self.allocate_descriptor_sets(
                 pool,
-                ubo_layouts.as_slice()
-            );
+                &[ubo_layout],
+            )[0];
 
             let consts = Renderer::get_shader_constants(self.resolution);
 
-            // create a uniform buffer for every framebuffer
-            // this will hold stuff like mvp matrices
-            let mut ubos = Vec::new();
-            let mut ubos_mem = Vec::new();
+            // create a uniform buffer
+            let (buf, mem) = self.create_buffer(
+                vk::BufferUsageFlags::UNIFORM_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                // this specifies the constants to copy into the buffer
+                &[consts],
+            );
 
-            // Each swapchain image will have its own set of resources
-            for i in 0..framebuffers.len() {
-                let (buf, mem) = self.create_buffer(
-                    vk::BufferUsageFlags::UNIFORM_BUFFER,
-                    vk::SharingMode::EXCLUSIVE,
-                    vk::MemoryPropertyFlags::HOST_VISIBLE
-                        | vk::MemoryPropertyFlags::HOST_COHERENT,
-                    // this specifies the constants to copy into the buffer
-                    &[consts],
-                );
-
-                // now we need to update the descriptor set with the
-                // buffer of the uniform constants to use
-                self.update_uniform_descriptor_set(
-                    buf,
-                    descriptors[i],
-                    0, // binding
-                    0, // element
-                );
-
-                ubos.push(buf);
-                ubos_mem.push(mem);
-            }
+            // now we need to update the descriptor set with the
+            // buffer of the uniform constants to use
+            self.update_uniform_descriptor_set(
+                buf,
+                ubo,
+                0, // binding
+                0, // element
+            );
 
             // The app context contains the scene specific data
             self.app_ctx = RefCell::new(Some(AppContext {
                 pass: pass,
                 pipeline: pipeline,
                 pipeline_layout: layout,
-                descriptor_uniform_layouts: ubo_layouts,
-                descriptor_mesh_layout: sampler_layout,
+                descriptor_uniform_layout: ubo_layout,
+                descriptor_sampler_layout: sampler_layout,
                 framebuffers: framebuffers,
-                uniform_buffers: ubos,
-                uniform_buffers_memory: ubos_mem,
+                uniform_buffer: buf,
+                uniform_buffers_memory: mem,
                 descriptor_pool: pool,
-                descriptors: descriptors,
+                ubo_descriptor: ubo,
                 shader_modules: shader_stages
                     .iter()
                     .map(|info| { info.module })
@@ -2200,8 +2203,16 @@ impl Renderer {
             if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
                 // each mesh holds a set of descriptors that it will bind before
                 // drawing itself. This set holds the image sampler
-                let descriptors = self.allocate_descriptor_sets(ctx.descriptor_pool,
-                                                                &[ctx.descriptor_mesh_layout]);
+                let mut descriptors = Vec::new();
+
+                for _ in 0..self.images.len() {
+                    descriptors.push(
+                        self.allocate_descriptor_sets(
+                            ctx.descriptor_pool,
+                            &[ctx.descriptor_sampler_layout]
+                        )[0]
+                    );
+                }
 
                 ctx.meshes.push(Mesh {
                     vert_buffer: vbuf,
@@ -2214,7 +2225,7 @@ impl Renderer {
                     image_sampler: sampler,
                     image_view: view,
                     image_mem: img_mem,
-                    descriptors: descriptors,
+                    sampler_descriptors: descriptors,
                 });
             }
         }
@@ -2232,11 +2243,7 @@ impl Renderer {
 
         unsafe {
             if let Some(ctx) = &*self.app_ctx.borrow() {
-                // Each framebuffer has its own ubo, so we need
-                // to update all of them
-                for mem in ctx.uniform_buffers_memory.iter() {
-                    self.update_memory(*mem, &[consts]);
-                }
+                self.update_memory(ctx.uniform_buffers_memory, &[consts]);
             }
         }
     }
@@ -2263,7 +2270,12 @@ impl Renderer {
     //
     // It sets up draw calls for all of the rend.app_ctx.meshes, so if that
     // list is updated then this probably needs to be re-recorded.
-    pub unsafe fn record_draw(rend: &Renderer, cbuf: vk::CommandBuffer) {
+    //
+    // `image_num`: the framebuffer image number to record in
+    pub unsafe fn record_draw(rend: &Renderer,
+                              cbuf: vk::CommandBuffer,
+                              image_num: usize)
+    {
         if let Some(app) = &*rend.app_ctx.borrow() {
             rend.dev.cmd_bind_pipeline(
                 cbuf,
@@ -2274,7 +2286,7 @@ impl Renderer {
             for mesh in app.meshes.iter() {
                 // bind the texture for our plane
                 rend.update_sampler_descriptor_set(
-                    mesh.descriptors[0],
+                    mesh.sampler_descriptors[image_num],
                     1, // binding
                     0, // element
                     mesh.image_sampler,
@@ -2292,8 +2304,8 @@ impl Renderer {
                     app.pipeline_layout,
                     0, // first set
                     &[
-                        app.descriptors[rend.current_image as usize],
-                        mesh.descriptors[0],
+                        app.ubo_descriptor,
+                        mesh.sampler_descriptors[image_num],
                     ],
                     &[], // dynamic offsets
                 );
@@ -2394,24 +2406,27 @@ impl Drop for Renderer {
                 for mesh in ctx.meshes.iter() {
                     self.dev.free_memory(mesh.vert_buffer_memory, None);
                     self.dev.free_memory(mesh.index_buffer_memory, None);
+                    self.dev.free_memory(mesh.image_mem, None);
                     self.dev.destroy_buffer(mesh.vert_buffer, None);
                     self.dev.destroy_buffer(mesh.index_buffer, None);
+
+                    self.dev.destroy_image(mesh.image, None);
+                    self.dev.destroy_sampler(mesh.image_sampler, None);
+                    self.dev.destroy_image_view(mesh.image_view, None);
                 }
 
-                for u in ctx.uniform_buffers.iter() {
-                    self.dev.destroy_buffer(*u, None);
-                }
-
-                for u in ctx.uniform_buffers_memory.iter() {
-                    self.dev.free_memory(*u, None);
-                }
+                self.dev.destroy_buffer(ctx.uniform_buffer, None);
+                self.dev.free_memory(ctx.uniform_buffers_memory, None);
 
                 self.dev.destroy_render_pass(ctx.pass, None);
 
-                for l in ctx.descriptor_uniform_layouts.iter() {
-                    self.dev.destroy_descriptor_set_layout(*l, None);
-                }
-                self.dev.destroy_descriptor_set_layout(ctx.descriptor_mesh_layout, None);
+                self.dev.destroy_descriptor_set_layout(
+                    ctx.descriptor_uniform_layout, None
+                );
+
+                self.dev.destroy_descriptor_set_layout(
+                    ctx.descriptor_sampler_layout, None
+                );
 
                 self.dev.destroy_descriptor_pool(ctx.descriptor_pool, None);
                 self.dev.destroy_pipeline_layout(ctx.pipeline_layout, None);
@@ -2462,10 +2477,9 @@ fn main() {
     rend.setup();
 
     // read our image
-    let img = image::open("../brick.png").unwrap().to_rgba();
+    let img = image::open("../hurricane.png").unwrap().to_rgba();
     let pixels: Vec<u8> = img.into_vec();
 
-    let square_size = 1.0;
     let data = [
         VertData {
             vertex: Vector2::new(0.0, 0.0),
@@ -2490,19 +2504,12 @@ fn main() {
         Vector3::new(1, 4, 2),
     ];
 
-    let color = 0xff as u8;
     rend.add_mesh(
         // vertices
         &data,
         // indices
         &indices,
         pixels.as_ref(),
-        // &[
-        //     color, color, color,
-        //     color, color, color,
-        //     color, color, color,
-        //     color, color, color,
-        // ],
         vk::Extent2D {
             width: 512,
             height: 512,
@@ -2513,13 +2520,7 @@ fn main() {
 
     println!("Begin render loop...");
     let cont = true;
-    let mut angle = 0.0;
     while cont {
-        // Make the scene spin slowly
-        let rot_matrix = Matrix4::from_angle_y(cgmath::Deg(angle));
-        angle += 0.3;
-        //rend.transform_meshes(&rot_matrix);
-
         // draw a frame to be displayed
         rend.start_frame();
         // present our frame to the screen
