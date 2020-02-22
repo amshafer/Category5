@@ -203,7 +203,11 @@ impl Display {
         // point on everything is normal 
         let surf_info = vk::DisplaySurfaceCreateInfoKHR::builder()
             .display_mode(mode)
+            // TODO: Don't just chose the first plane
             .plane_index(0)
+            // TODO: check plane_props to make sure identity is set
+            .transform(vk::SurfaceTransformFlagsKHR::IDENTITY)
+            .alpha_mode(vk::DisplayPlaneAlphaFlagsKHR::OPAQUE)
             .image_extent(mode_props[0].parameters.visible_region);
 
         match loader.create_display_plane_surface(&surf_info, None) {
@@ -450,14 +454,10 @@ impl Renderer {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("VulkanRenderer").unwrap();
 
-	#[cfg(target_os = "macos")]
+        // in the future this should be removed. We should only load
+        // validation if the env variable requests it.
         let layer_names = [CString::new("VK_LAYER_LUNARG_standard_validation")
                            .unwrap()];
-
-        // On FreeBSD, the standard validation layers do not play well with
-        // x11 surfaces for some reason. Reenable the layers when fixed.
-        #[cfg(not(target_os = "macos"))]
-        let layer_names = [];
 
         let layer_names_raw: Vec<*const i8> = layer_names.iter()
             .map(|raw_name: &CString| raw_name.as_ptr())
