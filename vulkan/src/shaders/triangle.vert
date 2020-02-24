@@ -12,8 +12,12 @@ mat4 view;
 mat4 proj;
 } ubo;
 
+layout(push_constant) uniform PushConstants {
+float order;
+} push;
+
 void main() {
-     gl_Position = ubo.model * vec4(loc, 0.5, 1.0);
+     gl_Position = ubo.model * vec4(loc, push.order, 1.0);
 
      fragcoord = coord;
 }

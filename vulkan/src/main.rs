@@ -398,6 +398,8 @@ pub struct Mesh {
     // Window-speccific descriptors (texture sampler)
     // one for each framebuffer
     pub sampler_descriptors: Vec<vk::DescriptorSet>,
+    // The z-ordering of the window
+    pub order: f32,
 }
 
 // Contiains a vertex and all its related data
@@ -1691,14 +1693,14 @@ impl Renderer {
         };
         
         // we do want a depth test enabled for this, using our noop stencil
-        // test. This should record Z-order to 1.0f
+        // test. This should record Z-order to 1,000
         let depth_info = vk::PipelineDepthStencilStateCreateInfo {
             depth_test_enable: 1,
             depth_write_enable: 1,
             depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
             front: stencil_state,
             back: stencil_state,
-            max_depth_bounds: 1.0,
+            max_depth_bounds: 1000.0,
             ..Default::default()
         };
 
@@ -2002,9 +2004,18 @@ impl Renderer {
                 sampler_layout,  // set 1
             ];
 
+            // make a push constant entry for the z ordering of a window
+            let constants = &[vk::PushConstantRange::builder()
+                              .stage_flags(vk::ShaderStageFlags::VERTEX)
+                              .offset(0)
+                              // depth is measured as a normalized float
+                              .size(std::mem::size_of::<u32>() as u32)
+                              .build()];
+
             // even though we don't have anything special in our layout, we
             // still need to have a created layout for the pipeline
             let layout_info = vk::PipelineLayoutCreateInfo::builder()
+                .push_constant_ranges(constants)
                 .set_layouts(descriptor_layouts);
             let layout = self.dev.create_pipeline_layout(&layout_info, None)
                 .unwrap();
@@ -2188,6 +2199,10 @@ impl Renderer {
             // TODO: make this cached in Renderer
             let mem_props = Renderer::get_pdev_mem_properties(&self.inst, self.pdev);
 
+            // This image will back the contents of the on-screen client window.
+            //
+            // TODO: this should eventually just use the image reported from
+            // wayland.
             let (image, view, img_mem) = self.create_image_with_contents(
                 &mem_props,
                 &resolution,
@@ -2203,6 +2218,8 @@ impl Renderer {
             if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
                 // each mesh holds a set of descriptors that it will bind before
                 // drawing itself. This set holds the image sampler
+                //
+                // right now they only hold an image sampler
                 let mut descriptors = Vec::new();
 
                 for _ in 0..self.images.len() {
@@ -2226,6 +2243,8 @@ impl Renderer {
                     image_view: view,
                     image_mem: img_mem,
                     sampler_descriptors: descriptors,
+                    // TODO: properly track window orderings
+                    order: 0.5,
                 });
             }
         }
@@ -2323,6 +2342,16 @@ impl Renderer {
                     mesh.index_buffer,
                     0, // offset
                     vk::IndexType::UINT32,
+                );
+
+                // Set the z-ordering of the window we want to render
+                // (this sets the visible window ordering)
+                rend.dev.cmd_push_constants(
+                    cbuf,
+                    app.pipeline_layout,
+                    vk::ShaderStageFlags::VERTEX,
+                    0, // offset
+                    &mesh.order.to_ne_bytes(),
                 );
 
                 // Here is where everything is actually drawn
