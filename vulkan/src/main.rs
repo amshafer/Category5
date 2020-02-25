@@ -12,7 +12,11 @@ extern crate obj;
 extern crate memoffset;
 extern crate image;
 
-use cgmath::{Point3,Vector3,Vector2,SquareMatrix,Matrix4};
+extern crate bincode;
+extern crate serde;
+use serde::{Serialize, Deserialize};
+
+use cgmath::{Vector3,Vector2,Matrix4};
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
@@ -27,7 +31,29 @@ use ash::util;
 use ash::extensions::ext::DebugReport;
 use ash::extensions::khr;
 
-static EYE: Point3<f32> = Point3::new(0.0, 0.0, -1.0);
+static QUAD_DATA: [VertData; 4] = [
+    VertData {
+        vertex: Vector2::new(0.0, 0.0),
+        tex: Vector2::new(0.0, 0.0),
+    },
+    VertData {
+        vertex: Vector2::new(1.0, 0.0),
+        tex: Vector2::new(1.0, 0.0),
+    },
+    VertData {
+        vertex: Vector2::new(0.0, 1.0),
+        tex: Vector2::new(0.0, 1.0),
+    },
+    VertData {
+        vertex: Vector2::new(1.0, 1.0),
+        tex: Vector2::new(1.0, 1.0),
+    },
+];
+
+static QUAD_INDICES: [Vector3::<u32>; 2] = [
+    Vector3::new(1, 2, 3),
+    Vector3::new(1, 4, 2),
+];
 
 // A display represents a physical screen
 //
@@ -38,6 +64,7 @@ static EYE: Point3<f32> = Point3::new(0.0, 0.0, -1.0);
 // and the surface generated for the physical display.
 //
 // The swapchain is generated (and regenerated) from this stuff.
+#[allow(dead_code)]
 pub struct Display {
     // the actual surface (KHR extension)
     surface: vk::SurfaceKHR,
@@ -356,7 +383,12 @@ pub struct Renderer {
 // shaders, and geometry.
 //
 // Ideally the `Renderer` can render/present anything, and this
-// struct specifies what to draw.
+// struct specifies what to draw. This allows the second half
+// of the initialization functions to just have a self ref.
+//
+// meshes are created with Renderer::create_mesh. The renderer is in
+// charge of creating/destroying the meshes since all of the mesh
+// resources are created from the Renderer.
 pub struct AppContext {
     pub pass: vk::RenderPass,
     pub pipeline: vk::Pipeline,
@@ -382,6 +414,10 @@ pub struct AppContext {
 //
 // All 3D objects should be stored as a set of vertices, which
 // are combined into a mesh by selecting indices. This is typical stuff.
+//
+// meshes are created with Renderer::create_mesh. The renderer is in
+// charge of creating/destroying the meshes since all of the mesh
+// resources are created from the Renderer.
 pub struct Mesh {
     // Resources for the vertex buffer
     pub vert_buffer: vk::Buffer,
@@ -398,8 +434,7 @@ pub struct Mesh {
     // Window-speccific descriptors (texture sampler)
     // one for each framebuffer
     pub sampler_descriptors: Vec<vk::DescriptorSet>,
-    // The z-ordering of the window
-    pub order: f32,
+    pub push: PushConstants,
 }
 
 // Contiains a vertex and all its related data
@@ -414,12 +449,35 @@ pub struct VertData {
     pub tex: Vector2<f32>,
 }
 
+// Shader constants are used for
+// the larger uniform values which are
+// not changed very often.
 #[derive(Clone,Copy)]
 #[repr(C)]
 pub struct ShaderConstants {
     pub model: Matrix4<f32>,
-    pub view: Matrix4<f32>,
-    pub proj: Matrix4<f32>,
+    // Maybe these should be floats for HiDPI?
+    pub width: f32,
+    pub height: f32,
+}
+
+// Push constants are used for small bits of data
+// which are changed often. We will use them to
+// transform the default square into the size of
+// the client window.
+//
+// This needs to be less than 128 bytes
+#[derive(Clone,Copy,Serialize,Deserialize)]
+#[repr(C)]
+pub struct PushConstants {
+    // the z-ordering of the window being drawn
+    pub order: f32,
+    // this is [0,resolution]
+    pub x: u32,
+    pub y: u32,
+    // Maybe these should be floats for HiDPI?
+    pub width: f32,
+    pub height: f32,
 }
 
 // Most of the functions below will be unsafe. Only the safe functions
@@ -1131,6 +1189,7 @@ impl Renderer {
             let surface_resolution = display.select_resolution(
                 &surface_caps
             );
+            println!("Rendering with resolution {:?}", surface_resolution);
 
             let dev = Renderer::create_device(&inst, pdev, &[graphics_queue_family]);
             let present_queue = dev.get_device_queue(graphics_queue_family, 0);
@@ -1787,26 +1846,16 @@ impl Renderer {
     // Constants will be the contents of the uniform buffers which are
     // processed by the shaders. The most obvious entry is the model + view
     // + perspective projection matrix.
-    pub fn get_shader_constants(_resolution: vk::Extent2D)
+    pub fn get_shader_constants(resolution: vk::Extent2D)
                                 -> ShaderConstants
     {
         // transform from blender's coordinate system to vulkan
-        //let model = Matrix4::from_translation(Vector3::new(-0.5, -0.5, 0.0));
-        let model = Matrix4::identity();
-
-        let view = Matrix4::look_at(
-            EYE, // eye location
-            Point3::new(0.0, 0.0, 0.0), // point to look at
-            Vector3::new(0.0, -1.0, 0.0), // up direction
-        );
-
-        // orthogonal projection (not used for now)
-        let proj = Matrix4::identity();
+        let model = Matrix4::from_translation(Vector3::new(-1.0, -1.0, 0.0));
 
         ShaderConstants {
             model: model,
-            view: view,
-            proj: proj,
+            width: resolution.width as f32,
+            height: resolution.height as f32,
         }
     }
 
@@ -2009,7 +2058,7 @@ impl Renderer {
                               .stage_flags(vk::ShaderStageFlags::VERTEX)
                               .offset(0)
                               // depth is measured as a normalized float
-                              .size(std::mem::size_of::<u32>() as u32)
+                              .size(std::mem::size_of::<PushConstants>() as u32)
                               .build()];
 
             // even though we don't have anything special in our layout, we
@@ -2168,17 +2217,20 @@ impl Renderer {
         (buffer, memory)
     }
 
-    // Add a mesh to the renderer to be displayed.
-    //
-    // The meshes are added to a list, and will be individually
-    // dispatched for drawing later.
+    // Create a mesh and its needed data
     //
     // Meshes need to be in an indexed vertex format.
-    pub fn add_mesh(&mut self,
-                    vertices: &[VertData],
-                    indices: &[Vector3<u32>],
-                    texture: &[u8],
-                    resolution: vk::Extent2D)
+    //
+    // tex_res is the resolution of `texture`
+    // window_res is the size of the on screen window
+    pub fn create_mesh(&mut self,
+                       vertices: &[VertData],
+                       indices: &[Vector3<u32>],
+                       texture: &[u8],
+                       tex_res: vk::Extent2D,
+                       window_res: vk::Extent2D,
+                       position: Vector2<u32>)
+                       -> Option<Mesh>
     {
         unsafe {
             let (vbuf, vmem) = self.create_buffer(
@@ -2205,7 +2257,7 @@ impl Renderer {
             // wayland.
             let (image, view, img_mem) = self.create_image_with_contents(
                 &mem_props,
-                &resolution,
+                &tex_res,
                 vk::Format::R8G8B8A8_SRGB,
                 vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
                 vk::ImageAspectFlags::COLOR,
@@ -2231,7 +2283,7 @@ impl Renderer {
                     );
                 }
 
-                ctx.meshes.push(Mesh {
+                return Some(Mesh {
                     vert_buffer: vbuf,
                     vert_buffer_memory: vmem,
                     // multiply the index len by the vector size
@@ -2244,9 +2296,48 @@ impl Renderer {
                     image_mem: img_mem,
                     sampler_descriptors: descriptors,
                     // TODO: properly track window orderings
-                    order: 0.5,
+                    push: PushConstants {
+                        order: 0.5,
+                        x: position.x,
+                        y: position.y,
+                        width: window_res.width as f32,
+                        height: window_res.height as f32,
+                    },
                 });
             }
+
+            return None;
+        }
+    }
+
+    // Add a mesh to the renderer to be displayed.
+    //
+    // The meshes are added to a list, and will be individually
+    // dispatched for drawing later.
+    //
+    // Meshes need to be in an indexed vertex format.
+    //
+    // tex_res is the resolution of `texture`
+    // window_res is the size of the on screen window
+    pub fn add_mesh(&mut self,
+                    vertices: &[VertData],
+                    indices: &[Vector3<u32>],
+                    texture: &[u8],
+                    tex_res: vk::Extent2D,
+                    window_res: vk::Extent2D,
+                    position: Vector2<u32>)
+    {
+        let mesh = self.create_mesh(
+            vertices,
+            indices,
+            texture,
+            tex_res,
+            window_res,
+            position,
+        ).unwrap();
+
+        if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
+            ctx.meshes.push(mesh);
         }
     }
 
@@ -2351,7 +2442,8 @@ impl Renderer {
                     app.pipeline_layout,
                     vk::ShaderStageFlags::VERTEX,
                     0, // offset
-                    &mesh.order.to_ne_bytes(),
+                    // get at &[u8] from our struct
+                    bincode::serialize(&mesh.push).unwrap().as_slice(),
                 );
 
                 // Here is where everything is actually drawn
@@ -2410,6 +2502,30 @@ impl Renderer {
                 .unwrap();
         }
     }
+
+    // Set the desktop background for the renderer
+    //
+    // This basically just creates a mesh with the max
+    // depth that takes up the entire screen.
+    pub fn set_background(&mut self,
+                          texture: &[u8],
+                          tex_res: vk::Extent2D)
+    {
+        self.add_mesh(
+            // default static square coordinates
+            &QUAD_DATA,
+            &QUAD_INDICES,
+            texture,
+            tex_res,
+            // size of the window on screen
+            vk::Extent2D {
+                width: self.resolution.width,
+                height: self.resolution.height,
+            },
+            // align it at the top left
+            Vector2::new(0, 0),
+        );
+    }
 }
 
 // Clean up after ourselves when the renderer gets destroyed.
@@ -2424,7 +2540,6 @@ impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
             println!("Stoping the renderer");
-
 
             // first wait for the device to finish working
             self.dev.device_wait_idle().unwrap();
@@ -2509,40 +2624,13 @@ fn main() {
     let img = image::open("../hurricane.png").unwrap().to_rgba();
     let pixels: Vec<u8> = img.into_vec();
 
-    let data = [
-        VertData {
-            vertex: Vector2::new(0.0, 0.0),
-            tex: Vector2::new(0.0, 0.0),
-        },
-        VertData {
-            vertex: Vector2::new(1.0, 0.0),
-            tex: Vector2::new(1.0, 0.0),
-        },
-        VertData {
-            vertex: Vector2::new(0.0, 1.0),
-            tex: Vector2::new(0.0, 1.0),
-        },
-        VertData {
-            vertex: Vector2::new(1.0, 1.0),
-            tex: Vector2::new(1.0, 1.0),
-        },
-    ];
-
-    let indices = [
-        Vector3::new(1, 2, 3),
-        Vector3::new(1, 4, 2),
-    ];
-
-    rend.add_mesh(
-        // vertices
-        &data,
-        // indices
-        &indices,
+    rend.set_background(
         pixels.as_ref(),
+        // dimensions of the texture
         vk::Extent2D {
             width: 512,
             height: 512,
-        },
+        }
     );
 
     rend.record_cbufs();

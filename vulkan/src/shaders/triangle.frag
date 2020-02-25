@@ -7,5 +7,5 @@ layout(location = 0) out vec4 res;
 layout(set = 1, binding = 1) uniform sampler2D tex;
 
 void main() {
-    res = texture(tex, coord);
+     res = texture(tex, coord);
 }
