@@ -32,6 +32,8 @@ use ash::util;
 use ash::extensions::ext::DebugReport;
 use ash::extensions::khr;
 
+// This is the reference data for a normal quad
+// that will be used to draw client windows.
 static QUAD_DATA: [VertData; 4] = [
     VertData {
         vertex: Vector2::new(0.0, 0.0),
@@ -278,7 +280,7 @@ impl Drop for Display {
     }
 }
 
-// this happy little debug callback is also from the ash examples
+// this happy little debug callback is from the ash examples
 // all it does is print any errors/warnings thrown.
 unsafe extern "system" fn vulkan_debug_callback(
     _: vk::DebugReportFlagsEXT,
@@ -414,6 +416,13 @@ pub struct AppContext {
     pub background: Option<Mesh>,
 }
 
+// This represents a client window.
+//
+// All drawn components are tracked with Mesh, this struct
+// keeps track of the window components (content meshes and
+// titlebar mesh) and the location/size (push constants).
+//
+// See Renderer::record_draw for how this is displayed.
 pub struct App {
     // This is the set of geometric objects in the application
     pub meshes: Vec<Mesh>,
@@ -449,6 +458,8 @@ pub struct Mesh {
 }
 
 impl Mesh {
+    // A simple teardown function. The renderer is needed since
+    // it allocated all these objects.
     fn destroy(&self, rend: &Renderer) {
         unsafe {
             rend.dev.free_memory(self.vert_buffer_memory, None);
@@ -461,6 +472,17 @@ impl Mesh {
         }
     }
 
+    // Generate draw calls for this mesh
+    //
+    // It is a very common operation to draw a mesh, this
+    // helper draws itself at the locations passed by `push`
+    //
+    // First all descriptor sets and input assembly is bound
+    // before the call to vkCmdDrawIndexed. The descriptor
+    // sets should be updated whenever window contents are
+    // changed, and then cbufs should be regenerated using this.
+    //
+    // Must be called while recording a cbuf
     unsafe fn record_draw(&self,
                           rend: &Renderer,
                           cbuf: vk::CommandBuffer,
@@ -555,7 +577,8 @@ pub struct ShaderConstants {
 // transform the default square into the size of
 // the client window.
 //
-// This needs to be less than 128 bytes
+// This should to be less than 128 bytes to guarantee
+// that there will be enough push constant space.
 #[derive(Clone,Copy,Serialize,Deserialize)]
 #[repr(C)]
 pub struct PushConstants {
@@ -1020,6 +1043,11 @@ impl Renderer {
         return (image, view, image_memory);
     }
 
+    // Create an image sampler
+    //
+    // Samplers are used to filter data from an image when
+    // it is referenced from a fragment shader. It allows
+    // for additional processing effects on the input.
     pub unsafe fn create_sampler(&self) -> vk::Sampler {
         let info = vk::SamplerCreateInfo::builder()
             // filter for magnified (oversampled) pixels
@@ -1110,6 +1138,13 @@ impl Renderer {
         );
     }
 
+    // Copies a widthxheight buffer to an image
+    //
+    // This is used to load a texture into an image
+    // to be sampled by the shaders. The buffer will
+    // usually be a staging buffer, see
+    // `create_image_with_contents` for an example.
+    //
     // needs to be recorded in a cbuf
     pub unsafe fn copy_buf_to_img(&self,
                                   cbuf: vk::CommandBuffer,
@@ -2013,12 +2048,14 @@ impl Renderer {
                     .build(),
                     vk::DescriptorPoolSize::builder()
                     .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    // Max number of samplers that can be allocated
                     .descriptor_count(capacity * 3)
                     .build()
         ];
 
         let info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&size)
+            // max number of total sets that can be allocated
             .max_sets(capacity * 3 + 1);
 
         self.dev.create_descriptor_pool(&info, None).unwrap()
@@ -2080,6 +2117,9 @@ impl Renderer {
 
     // Update an image sampler descriptor set
     //
+    // This is what actually sets the image that the sampler
+    // will filter for the shader. The image is referenced
+    // by the `view` argument.
     pub unsafe fn update_sampler_descriptor_set(&self,
                                                 set: vk::DescriptorSet,
                                                 binding: u32,
@@ -2708,6 +2748,7 @@ fn main() {
     // initialize the pipeline, renderpasses, and display engine
     rend.setup();
 
+    // read our image
     let i = image::open("../bsd.png").unwrap().to_rgba();
     let p: Vec<u8> = i.into_vec();
 
@@ -2728,7 +2769,7 @@ fn main() {
         Vector2::new(500, 300),
         0.5, // depth
     );
-    // read our image
+
     let img = image::open("../hurricane.png").unwrap().to_rgba();
     let pixels: Vec<u8> = img.into_vec();
 
@@ -2741,6 +2782,7 @@ fn main() {
         }
     );
 
+    // Record our draw calls once, since the scene is not dynamic
     rend.record_cbufs();
 
     println!("Begin render loop...");
