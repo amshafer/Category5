@@ -24,6 +24,7 @@ use std::io::Cursor;
 use std::marker::Copy;
 use std::mem;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 pub use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::{vk, Device, Entry, Instance};
@@ -400,14 +401,26 @@ pub struct AppContext {
     pub descriptor_uniform_layout: vk::DescriptorSetLayout,
     pub ubo_descriptor: vk::DescriptorSet,
     // these are the layouts for mesh specific (texture) descriptors
+    // Window-speccific descriptors (texture sampler)
+    // one for each framebuffer
     pub descriptor_sampler_layout: vk::DescriptorSetLayout,
     pub shader_modules: Vec<vk::ShaderModule>,
     pub framebuffers: Vec<vk::Framebuffer>,
     // shader constants are shared by all swapchain images
     pub uniform_buffer: vk::Buffer,
     pub uniform_buffers_memory: vk::DeviceMemory,
-    // This is the set of geometric objects in the scene
+    // This is the set of applications in this scene
+    pub apps: Vec<App>,
+    pub background: Option<Mesh>,
+}
+
+pub struct App {
+    // This is the set of geometric objects in the application
     pub meshes: Vec<Mesh>,
+    // Title bar to draw above these window(s)
+    pub titlebar: Rc<Mesh>,
+    // The position and size of the window
+    pub push: PushConstants,
 }
 
 // A single 3D object, stored in indexed vertex form
@@ -428,13 +441,89 @@ pub struct Mesh {
     pub index_buffer_memory: vk::DeviceMemory,
     // image containing the contents of the window
     pub image: vk::Image,
-    pub image_sampler: vk::Sampler,
     pub image_view: vk::ImageView,
     pub image_mem: vk::DeviceMemory,
-    // Window-speccific descriptors (texture sampler)
-    // one for each framebuffer
+    // TODO: this should probably be a uniform texel buffer
     pub sampler_descriptors: Vec<vk::DescriptorSet>,
-    pub push: PushConstants,
+    pub image_sampler: vk::Sampler,
+}
+
+impl Mesh {
+    fn destroy(&self, rend: &Renderer) {
+        unsafe {
+            rend.dev.free_memory(self.vert_buffer_memory, None);
+            rend.dev.free_memory(self.index_buffer_memory, None);
+            rend.dev.free_memory(self.image_mem, None);
+            rend.dev.destroy_buffer(self.vert_buffer, None);
+            rend.dev.destroy_buffer(self.index_buffer, None);
+            rend.dev.destroy_image(self.image, None);
+            rend.dev.destroy_image_view(self.image_view, None);
+        }
+    }
+
+    unsafe fn record_draw(&self,
+                          rend: &Renderer,
+                          cbuf: vk::CommandBuffer,
+                          image_num: usize,
+                          push: &PushConstants)
+    {
+        if let Some(ctx) = &*rend.app_ctx.borrow() {
+            // Descriptor sets can be updated elsewhere, but
+            // they must be bound before drawing
+            //
+            // We need to bind both the uniform set, and the per-Mesh
+            // set for the image sampler
+            rend.dev.cmd_bind_descriptor_sets(
+                cbuf,
+                vk::PipelineBindPoint::GRAPHICS,
+                ctx.pipeline_layout,
+                0, // first set
+                &[
+                    ctx.ubo_descriptor,
+                    self.sampler_descriptors[image_num],
+                ],
+                &[], // dynamic offsets
+            );
+
+            // bind the vertex and index buffers from
+            // the first mesh
+            rend.dev.cmd_bind_vertex_buffers(
+                cbuf, // cbuf to draw in
+                0, // first vertex binding updated by the command
+                &[self.vert_buffer], // set of buffers to bind
+                &[0], // offsets for the above buffers
+            );
+            rend.dev.cmd_bind_index_buffer(
+                cbuf,
+                self.index_buffer,
+                0, // offset
+                vk::IndexType::UINT32,
+            );
+
+            // Set the z-ordering of the window we want to render
+            // (this sets the visible window ordering)
+            rend.dev.cmd_push_constants(
+                cbuf,
+                ctx.pipeline_layout,
+                vk::ShaderStageFlags::VERTEX,
+                0, // offset
+                // get at &[u8] from our struct
+                bincode::serialize(push).unwrap().as_slice(),
+            );
+
+            // Here is where everything is actually drawn
+            // technically 3 vertices are being drawn
+            // by the shader
+            rend.dev.cmd_draw_indexed(
+                cbuf, // drawing command buffer
+                self.vert_count, // number of verts
+                1, // number of instances
+                0, // first vertex
+                0, // vertex offset
+                1, // first instance
+            );
+        }
+    }
 }
 
 // Contiains a vertex and all its related data
@@ -1759,7 +1848,7 @@ impl Renderer {
             depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
             front: stencil_state,
             back: stencil_state,
-            max_depth_bounds: 1000.0,
+            max_depth_bounds: 1.0,
             ..Default::default()
         };
 
@@ -1924,13 +2013,13 @@ impl Renderer {
                     .build(),
                     vk::DescriptorPoolSize::builder()
                     .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .descriptor_count(capacity)
+                    .descriptor_count(capacity * 3)
                     .build()
         ];
 
         let info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&size)
-            .max_sets(capacity + 1);
+            .max_sets(capacity * 3 + 1);
 
         self.dev.create_descriptor_pool(&info, None).unwrap()
     }
@@ -1946,6 +2035,7 @@ impl Renderer {
                                            layouts: &[vk::DescriptorSetLayout])
                                            -> Vec<vk::DescriptorSet>
     {
+        println!("Allocating {} descriptor sets", layouts.len());
         let info = vk::DescriptorSetAllocateInfo::builder()
             .descriptor_pool(pool)
             .set_layouts(layouts)
@@ -2117,7 +2207,8 @@ impl Renderer {
                     .iter()
                     .map(|info| { info.module })
                     .collect(),
-                meshes: Vec::new(),
+                apps: Vec::new(),
+                background: None,
             }));
         }
     }
@@ -2227,9 +2318,7 @@ impl Renderer {
                        vertices: &[VertData],
                        indices: &[Vector3<u32>],
                        texture: &[u8],
-                       tex_res: vk::Extent2D,
-                       window_res: vk::Extent2D,
-                       position: Vector2<u32>)
+                       tex_res: vk::Extent2D)
                        -> Option<Mesh>
     {
         unsafe {
@@ -2275,12 +2364,21 @@ impl Renderer {
                 let mut descriptors = Vec::new();
 
                 for _ in 0..self.images.len() {
-                    descriptors.push(
-                        self.allocate_descriptor_sets(
-                            ctx.descriptor_pool,
-                            &[ctx.descriptor_sampler_layout]
-                        )[0]
+                    let set = self.allocate_descriptor_sets(
+                        ctx.descriptor_pool,
+                        &[ctx.descriptor_sampler_layout]
+                    )[0];
+
+                    // bind the texture for our plane
+                    self.update_sampler_descriptor_set(
+                        set,
+                        1, //n binding
+                        0, // element
+                        sampler,
+                        view,
                     );
+
+                    descriptors.push(set);
                 }
 
                 return Some(Mesh {
@@ -2291,23 +2389,30 @@ impl Renderer {
                     index_buffer: ibuf,
                     index_buffer_memory: imem,
                     image: image,
-                    image_sampler: sampler,
                     image_view: view,
                     image_mem: img_mem,
+                    image_sampler: sampler,
                     sampler_descriptors: descriptors,
-                    // TODO: properly track window orderings
-                    push: PushConstants {
-                        order: 0.5,
-                        x: position.x,
-                        y: position.y,
-                        width: window_res.width as f32,
-                        height: window_res.height as f32,
-                    },
                 });
             }
-
             return None;
         }
+    }
+
+    pub fn get_default_titlebar(&mut self) -> Mesh {
+        let img = image::open("../bar.png").unwrap().to_rgba();
+        let pixels: Vec<u8> = img.into_vec();
+        self.create_mesh(
+            // default static square coordinates
+            &QUAD_DATA,
+            &QUAD_INDICES,
+            // TODO: make a way to change titlebar colors
+            pixels.as_slice(),
+            vk::Extent2D {
+                width: 64,
+                height: 64,
+            },
+        ).unwrap()
     }
 
     // Add a mesh to the renderer to be displayed.
@@ -2325,19 +2430,33 @@ impl Renderer {
                     texture: &[u8],
                     tex_res: vk::Extent2D,
                     window_res: vk::Extent2D,
-                    position: Vector2<u32>)
+                    position: Vector2<u32>,
+                    order: f32)
     {
-        let mesh = self.create_mesh(
-            vertices,
-            indices,
-            texture,
-            tex_res,
-            window_res,
-            position,
-        ).unwrap();
+        let meshes = vec!{
+            self.create_mesh(
+                vertices,
+                indices,
+                texture,
+                tex_res,
+            ).unwrap(),
+        };
+
+        let title = self.get_default_titlebar();
 
         if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
-            ctx.meshes.push(mesh);
+            ctx.apps.push(App {
+                meshes: meshes,
+                titlebar: Rc::new(title),
+                // TODO: properly track window orderings
+                push: PushConstants {
+                    order: order,
+                    x: position.x,
+                    y: position.y,
+                    width: window_res.width as f32,
+                    height: window_res.height as f32,
+                },
+            });
         }
     }
 
@@ -2376,7 +2495,8 @@ impl Renderer {
     //
     // This function should wrapped by a closure which starts and ends
     // a render pass. This function is pass agnostic, and just records
-    // operations into `cbuf`.
+    // operations into `cbuf`. It is meant to be called from a cbuf
+    // recording, it takes the place of using a closure.
     //
     // It sets up draw calls for all of the rend.app_ctx.meshes, so if that
     // list is updated then this probably needs to be re-recorded.
@@ -2393,71 +2513,43 @@ impl Renderer {
                 app.pipeline
             );
 
-            for mesh in app.meshes.iter() {
-                // bind the texture for our plane
-                rend.update_sampler_descriptor_set(
-                    mesh.sampler_descriptors[image_num],
-                    1, // binding
-                    0, // element
-                    mesh.image_sampler,
-                    mesh.image_view,
-                );
-
-                // Descriptor sets can be updated elsewhere, but
-                // they must be bound before drawing
-                //
-                // We need to bind both the uniform set, and the per-Mesh
-                // set for the image sampler
-                rend.dev.cmd_bind_descriptor_sets(
-                    cbuf,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    app.pipeline_layout,
-                    0, // first set
-                    &[
-                        app.ubo_descriptor,
-                        mesh.sampler_descriptors[image_num],
-                    ],
-                    &[], // dynamic offsets
-                );
-
-                // bind the vertex and index buffers from
-                // the first mesh
-                rend.dev.cmd_bind_vertex_buffers(
-                    cbuf, // cbuf to draw in
-                    0, // first vertex binding updated by the command
-                    &[mesh.vert_buffer], // set of buffers to bind
-                    &[0], // offsets for the above buffers
-                );
-                rend.dev.cmd_bind_index_buffer(
-                    cbuf,
-                    mesh.index_buffer,
-                    0, // offset
-                    vk::IndexType::UINT32,
-                );
-
-                // Set the z-ordering of the window we want to render
-                // (this sets the visible window ordering)
-                rend.dev.cmd_push_constants(
-                    cbuf,
-                    app.pipeline_layout,
-                    vk::ShaderStageFlags::VERTEX,
-                    0, // offset
-                    // get at &[u8] from our struct
-                    bincode::serialize(&mesh.push).unwrap().as_slice(),
-                );
-
-                // Here is where everything is actually drawn
-                // technically 3 vertices are being drawn
-                // by the shader
-                rend.dev.cmd_draw_indexed(
-                    cbuf, // drawing command buffer
-                    mesh.vert_count, // number of verts
-                    1, // number of instances
-                    0, // first vertex
-                    0, // vertex offset
-                    1, // first instance
-                );
+            // Each app should have one or more windows,
+            // all of which we need to draw.
+            for a in app.apps.iter() {
+                for mesh in a.meshes.iter() {
+                    mesh.record_draw(rend, cbuf, image_num, &a.push);
+                    // TODO: make titlebars their own objects, with
+                    // their own push constants referencing the mesh
+                    let barsize = rend.resolution.height as f32 * 0.02;
+                    let push = PushConstants {
+                        order: a.push.order, // depth
+                        // size of the window on screen
+                        x: a.push.x,
+                        // use a percentage of the screen size
+                        y: a.push.y,
+                        // align it at the top left
+                        width: a.push.width,
+                        height: barsize,
+                    };
+                    a.titlebar.record_draw(rend, cbuf, image_num, &push);
+                }
             }
+
+            // Draw the background last, painter style
+            app.background.as_ref().unwrap().record_draw(
+                rend,
+                cbuf,
+                image_num,
+                &PushConstants {
+                    order: 0.999, // depth
+                    // size of the window on screen
+                    x: 0,
+                    y: 0,
+                    // align it at the top left
+                    width: rend.resolution.width as f32,
+                    height: rend.resolution.height as f32,
+                },
+            );
         }
     }
 
@@ -2511,20 +2603,17 @@ impl Renderer {
                           texture: &[u8],
                           tex_res: vk::Extent2D)
     {
-        self.add_mesh(
+        let mesh = self.create_mesh(
             // default static square coordinates
             &QUAD_DATA,
             &QUAD_INDICES,
             texture,
             tex_res,
-            // size of the window on screen
-            vk::Extent2D {
-                width: self.resolution.width,
-                height: self.resolution.height,
-            },
-            // align it at the top left
-            Vector2::new(0, 0),
         );
+
+        if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
+            ctx.background = mesh;
+        }
     }
 }
 
@@ -2545,18 +2634,17 @@ impl Drop for Renderer {
             self.dev.device_wait_idle().unwrap();
 
             // first destroy the application specific resources
-            if let Some(ctx) = &*self.app_ctx.borrow_mut() {
+            if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
 
-                for mesh in ctx.meshes.iter() {
-                    self.dev.free_memory(mesh.vert_buffer_memory, None);
-                    self.dev.free_memory(mesh.index_buffer_memory, None);
-                    self.dev.free_memory(mesh.image_mem, None);
-                    self.dev.destroy_buffer(mesh.vert_buffer, None);
-                    self.dev.destroy_buffer(mesh.index_buffer, None);
+                for a in ctx.apps.iter_mut() {
+                    for mesh in a.meshes.iter_mut() {
+                        mesh.destroy(&self);
+                    }
+                    a.titlebar.destroy(&self);
+                }
 
-                    self.dev.destroy_image(mesh.image, None);
-                    self.dev.destroy_sampler(mesh.image_sampler, None);
-                    self.dev.destroy_image_view(mesh.image_view, None);
+                if let Some(m) = &mut ctx.background {
+                    m.destroy(&self);
                 }
 
                 self.dev.destroy_buffer(ctx.uniform_buffer, None);
@@ -2620,6 +2708,26 @@ fn main() {
     // initialize the pipeline, renderpasses, and display engine
     rend.setup();
 
+    let i = image::open("../bsd.png").unwrap().to_rgba();
+    let p: Vec<u8> = i.into_vec();
+
+    rend.add_mesh(
+        &QUAD_DATA,
+        &QUAD_INDICES,
+        p.as_ref(),
+        // dimensions of the texture
+        vk::Extent2D {
+            width: 512,
+            height: 468,
+        },
+        // size of the window
+        vk::Extent2D {
+            width: 512,
+            height: 512,
+        },
+        Vector2::new(500, 300),
+        0.5, // depth
+    );
     // read our image
     let img = image::open("../hurricane.png").unwrap().to_rgba();
     let pixels: Vec<u8> = img.into_vec();
