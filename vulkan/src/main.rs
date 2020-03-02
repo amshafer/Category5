@@ -25,6 +25,7 @@ use std::marker::Copy;
 use std::mem;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::SystemTime;
 
 pub use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::{vk, Device, Entry, Instance};
@@ -55,6 +56,9 @@ static QUAD_INDICES: [Vector3::<u32>; 2] = [
     Vector3::new(1, 2, 3),
     Vector3::new(1, 4, 2),
 ];
+
+// number of client windows to display
+static WINDOW_COUNT: u32 = 10;
 
 // A display represents a physical screen
 //
@@ -262,10 +266,9 @@ impl Display {
             DebugReport::name().as_ptr(),
         ]
     }
-}
 
-impl Drop for Display {
-    fn drop (&mut self) {
+    fn destroy (&mut self) {
+        println!("Destroying display");
         unsafe {
             self.surface_loader.destroy_surface(
                 self.surface,
@@ -275,6 +278,8 @@ impl Drop for Display {
         // It seems that the display resources (mode) are cleaned up
         // when the surface is destroyed. There are not separate
         // deconstructors for them
+        //
+        // The validation layers do warn about them however (bug?)
     }
 }
 
@@ -458,6 +463,7 @@ impl Mesh {
             rend.dev.destroy_buffer(self.index_buffer, None);
             rend.dev.destroy_image(self.image, None);
             rend.dev.destroy_image_view(self.image_view, None);
+            rend.dev.destroy_sampler(self.image_sampler, None);
         }
     }
 
@@ -597,16 +603,13 @@ impl Renderer {
     // Create a vkInstance
     //
     // Most of the create info entries are straightforward, with
-    // the standard validation layers being enabled, along with some
-    // basic extnesions.
+    // some basic extensions being enabled. All of the work is
+    // done in subfunctions.
     unsafe fn create_instance() -> (Entry, Instance) {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("VulkanRenderer").unwrap();
 
-        // in the future this should be removed. We should only load
-        // validation if the env variable requests it.
-        let layer_names = [CString::new("VK_LAYER_LUNARG_standard_validation")
-                           .unwrap()];
+        let layer_names = [];
 
         let layer_names_raw: Vec<*const i8> = layer_names.iter()
             .map(|raw_name: &CString| raw_name.as_ptr())
@@ -1495,7 +1498,7 @@ impl Renderer {
         }
     }
 
-    pub fn record_cbufs(&mut self) {
+    pub fn record_one_cbuf(&mut self, img: usize) {
         unsafe {
             // we need to clear any existing data when we start a pass
             let clear_vals = [
@@ -1512,43 +1515,46 @@ impl Renderer {
                 },
             ];
 
-            // there is a cbuf for each framebuffer, so we will record a
-            // cbuf for each one
-            for img in 0..self.cbufs.len() {
+            // Most of the resources we use are app specific
+            if let Some(ctx) = &*self.app_ctx.borrow() {
+                // We want to start a render pass to hold all of our drawing
+                // The actual pass is started in the cbuf
+                let pass_begin_info = vk::RenderPassBeginInfo::builder()
+                    .render_pass(ctx.pass)
+                    .framebuffer(ctx.framebuffers[img])
+                    .render_area(vk::Rect2D {
+                        offset: vk::Offset2D { x: 0, y: 0 },
+                        extent: self.resolution,
+                    })
+                    .clear_values(&clear_vals);
 
-                // Most of the resources we use are app specific
-                if let Some(ctx) = &*self.app_ctx.borrow() {
-                    // We want to start a render pass to hold all of our drawing
-                    // The actual pass is started in the cbuf
-                    let pass_begin_info = vk::RenderPassBeginInfo::builder()
-                        .render_pass(ctx.pass)
-                        .framebuffer(ctx.framebuffers[img])
-                        .render_area(vk::Rect2D {
-                            offset: vk::Offset2D { x: 0, y: 0 },
-                            extent: self.resolution,
-                        })
-                        .clear_values(&clear_vals);
-                    
-                    self.cbuf_record(
-                        self.cbufs[img],
-                        vk::CommandBufferUsageFlags::SIMULTANEOUS_USE,
-                        // The contents of the command buffer
-                        |rend, cbuf| {
-                            // All of our drawing operations need to be recorded
-                            // inside a render pass
-                            rend.dev.cmd_begin_render_pass(
-                                cbuf,
-                                &pass_begin_info,
-                                vk::SubpassContents::INLINE,
-                            );
+                self.cbuf_record(
+                    self.cbufs[img],
+                    vk::CommandBufferUsageFlags::SIMULTANEOUS_USE,
+                    // The contents of the command buffer
+                    |rend, cbuf| {
+                        // All of our drawing operations need to be recorded
+                        // inside a render pass
+                        rend.dev.cmd_begin_render_pass(
+                            cbuf,
+                            &pass_begin_info,
+                            vk::SubpassContents::INLINE,
+                        );
 
-                            Renderer::record_draw(rend, cbuf, img);
+                        Renderer::record_draw(rend, cbuf, img);
 
-                            rend.dev.cmd_end_render_pass(cbuf);
-                        },
-                    );
-                }
+                        rend.dev.cmd_end_render_pass(cbuf);
+                    },
+                );
             }
+        }
+    }
+
+    pub fn record_cbufs(&mut self) {
+        // there is a cbuf for each framebuffer, so we will record a
+        // cbuf for each one
+        for img in 0..self.cbufs.len() {
+            self.record_one_cbuf(img);
         }
     }
 
@@ -2013,13 +2019,15 @@ impl Renderer {
                     .build(),
                     vk::DescriptorPoolSize::builder()
                     .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .descriptor_count(capacity * 3)
+                    // cap background samp + cap * 2n window samp
+                    .descriptor_count(capacity + capacity * 2 * WINDOW_COUNT)
                     .build()
         ];
 
         let info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&size)
-            .max_sets(capacity * 3 + 1);
+            // 2n * cap window samp + cap background samp + ubo
+            .max_sets(capacity * 2 * WINDOW_COUNT + capacity + 1);
 
         self.dev.create_descriptor_pool(&info, None).unwrap()
     }
@@ -2480,15 +2488,19 @@ impl Renderer {
     // Update self.current_image with the swapchain image to render to
     //
     // This index should be used by `start_frame`
-    pub unsafe fn get_next_swapchain_image_index(&mut self) {
-        let (idx, _) = self.swapchain_loader.acquire_next_image(
-            self.swapchain,
-            std::u64::MAX,
-            self.present_sema,
-            vk::Fence::null(),
-        ).unwrap();
+    pub fn get_next_swapchain_image_index(&mut self) {
+        unsafe {
+            let (idx, _) = self.swapchain_loader.acquire_next_image(
+                self.swapchain,
+                std::u64::MAX,
+                self.present_sema, // signals presentation
+                vk::Fence::null(),
+            ).unwrap();
 
-        self.current_image = idx;
+            // TODO: check if the surface is suboptimal and recreate
+
+            self.current_image = idx;
+        }
     }
 
     // Fills a command buffer with draw calls for all of the meshes
@@ -2559,20 +2571,16 @@ impl Renderer {
     // all geometry to the current framebuffer. Presentation is
     // done later, in case operations need to occur inbetween.
     pub fn start_frame(&mut self) {
-        unsafe {
-            self.get_next_swapchain_image_index();
-
-            // Submit the recorded cbuf to perform the draw calls
-            self.cbuf_submit(
-                // submit the cbuf for the current image
-                self.cbufs[self.current_image as usize],
-                self.present_queue,
-                // wait_stages
-                &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT],
-                &[self.present_sema], // wait_semas
-                &[self.render_sema], // signal_semas
-            );
-        }
+        // Submit the recorded cbuf to perform the draw calls
+        self.cbuf_submit(
+            // submit the cbuf for the current image
+            self.cbufs[self.current_image as usize],
+            self.present_queue,
+            // wait_stages
+            &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT],
+            &[self.present_sema], // wait_semas
+            &[self.render_sema], // signal_semas
+        );
     }
 
     // Present the current swapchain image to the screen
@@ -2580,19 +2588,22 @@ impl Renderer {
     // Finally we can actually flip the buffers and present
     // this image. 
     pub fn present(&mut self) {
-        unsafe {
-            let wait_semas = [self.render_sema];
-            let swapchains = [self.swapchain];
-            let indices = [self.current_image];
-            let info = vk::PresentInfoKHR::builder()
-                .wait_semaphores(&wait_semas)
-                .swapchains(&swapchains)
-                .image_indices(&indices);
+        let wait_semas = [self.render_sema];
+        let swapchains = [self.swapchain];
+        let indices = [self.current_image];
+        let info = vk::PresentInfoKHR::builder()
+            .wait_semaphores(&wait_semas)
+            .swapchains(&swapchains)
+            .image_indices(&indices);
 
+        unsafe {
             self.swapchain_loader
                 .queue_present(self.present_queue, &info)
                 .unwrap();
         }
+
+        // Now that we have presented the frame, get a new one
+        self.get_next_swapchain_image_index();
     }
 
     // Set the desktop background for the renderer
@@ -2691,7 +2702,7 @@ impl Drop for Renderer {
             self.dev.destroy_fence(self.submit_fence, None);
             self.dev.destroy_device(None);
 
-            // Display cleans up after itself
+            self.display.destroy();
 
             self.debug_loader
                 .destroy_debug_report_callback(self.debug_callback, None);
@@ -2703,31 +2714,42 @@ impl Drop for Renderer {
 // Try to keep this completely safe. Renderer should be usable
 // from safe rust.
 fn main() {
+    // If the user passes an argument 'timed', then we should
+    // exit after a short bit and print the FPS
+    let args: Vec<String> = std::env::args().collect();
+    let mut run_forever = true;
+    if args.contains(&String::from("timed")) {
+        run_forever = false;
+    }
+
     // creates a context, swapchain, images, and others
     let mut rend = Renderer::new();
     // initialize the pipeline, renderpasses, and display engine
     rend.setup();
 
-    let i = image::open("../bsd.png").unwrap().to_rgba();
-    let p: Vec<u8> = i.into_vec();
+    let img = image::open("../bsd.png").unwrap().to_rgba();
+    let pixels: Vec<u8> = img.into_vec();
 
-    rend.add_mesh(
-        &QUAD_DATA,
-        &QUAD_INDICES,
-        p.as_ref(),
-        // dimensions of the texture
-        vk::Extent2D {
-            width: 512,
-            height: 468,
-        },
-        // size of the window
-        vk::Extent2D {
-            width: 512,
-            height: 512,
-        },
-        Vector2::new(500, 300),
-        0.5, // depth
-    );
+    for i in 0..WINDOW_COUNT {
+        rend.add_mesh(
+            &QUAD_DATA,
+            &QUAD_INDICES,
+            pixels.as_ref(),
+            // dimensions of the texture
+            vk::Extent2D {
+                width: 512,
+                height: 468,
+            },
+            // size of the window
+            vk::Extent2D {
+                width: 512,
+                height: 512,
+            },
+            Vector2::new(300 + i * 55, 200 + i * 35),
+            0.5, // depth
+        );
+    }
+
     // read our image
     let img = image::open("../hurricane.png").unwrap().to_rgba();
     let pixels: Vec<u8> = img.into_vec();
@@ -2741,14 +2763,29 @@ fn main() {
         }
     );
 
-    rend.record_cbufs();
+    //rend.record_cbufs();
+
+    // We need to get the next swapchain image first so that
+    // the semaphore can be signaled
+    rend.get_next_swapchain_image_index();
 
     println!("Begin render loop...");
-    let cont = true;
-    while cont {
+    let start = SystemTime::now();
+
+    let runtime = 8000;
+    let mut iterations = 0;
+    while run_forever || iterations < runtime {
+        // Record the cbufs for the next frame
+        rend.record_one_cbuf(rend.current_image as usize);
         // draw a frame to be displayed
         rend.start_frame();
         // present our frame to the screen
         rend.present();
+        iterations += 1;
     }
+    let end = SystemTime::now();
+
+    println!("Rendering {} iterations took {:?}", runtime, end.duration_since(start));
+    println!("FPS: {}",
+             iterations as f32 / end.duration_since(start).unwrap().as_secs_f32());
 }
