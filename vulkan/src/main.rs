@@ -416,9 +416,20 @@ pub struct AppContext {
     // shader constants are shared by all swapchain images
     pub uniform_buffer: vk::Buffer,
     pub uniform_buffers_memory: vk::DeviceMemory,
+    // TODO: this should probably be a uniform texel buffer
+    // One sampler for each swapchain image
+    pub image_sampler: vk::Sampler,
     // This is the set of applications in this scene
     pub apps: Vec<App>,
     pub background: Option<Mesh>,
+    // We will hold only one copy of the static QUAD_DATA
+    // which represents an onscreen window.
+    pub vert_buffer: vk::Buffer,
+    pub vert_buffer_memory: vk::DeviceMemory,
+    pub vert_count: u32,
+    // Resources for the index buffer
+    pub index_buffer: vk::Buffer,
+    pub index_buffer_memory: vk::DeviceMemory,
 }
 
 // This represents a client window.
@@ -446,20 +457,11 @@ pub struct App {
 // charge of creating/destroying the meshes since all of the mesh
 // resources are created from the Renderer.
 pub struct Mesh {
-    // Resources for the vertex buffer
-    pub vert_buffer: vk::Buffer,
-    pub vert_buffer_memory: vk::DeviceMemory,
-    pub vert_count: u32,
-    // Resources for the index buffer
-    pub index_buffer: vk::Buffer,
-    pub index_buffer_memory: vk::DeviceMemory,
     // image containing the contents of the window
     pub image: vk::Image,
     pub image_view: vk::ImageView,
     pub image_mem: vk::DeviceMemory,
-    // TODO: this should probably be a uniform texel buffer
     pub sampler_descriptors: Vec<vk::DescriptorSet>,
-    pub image_sampler: vk::Sampler,
 }
 
 impl Mesh {
@@ -467,14 +469,9 @@ impl Mesh {
     // it allocated all these objects.
     fn destroy(&self, rend: &Renderer) {
         unsafe {
-            rend.dev.free_memory(self.vert_buffer_memory, None);
-            rend.dev.free_memory(self.index_buffer_memory, None);
-            rend.dev.free_memory(self.image_mem, None);
-            rend.dev.destroy_buffer(self.vert_buffer, None);
-            rend.dev.destroy_buffer(self.index_buffer, None);
             rend.dev.destroy_image(self.image, None);
             rend.dev.destroy_image_view(self.image_view, None);
-            rend.dev.destroy_sampler(self.image_sampler, None);
+            rend.dev.free_memory(self.image_mem, None);
         }
     }
 
@@ -496,6 +493,14 @@ impl Mesh {
                           push: &PushConstants)
     {
         if let Some(ctx) = &*rend.app_ctx.borrow() {
+            // bind the texture for our plane
+            rend.update_sampler_descriptor_set(
+                self.sampler_descriptors[image_num],
+                1, //n binding
+                0, // element
+                ctx.image_sampler,
+                self.image_view,
+            );
             // Descriptor sets can be updated elsewhere, but
             // they must be bound before drawing
             //
@@ -511,21 +516,6 @@ impl Mesh {
                     self.sampler_descriptors[image_num],
                 ],
                 &[], // dynamic offsets
-            );
-
-            // bind the vertex and index buffers from
-            // the first mesh
-            rend.dev.cmd_bind_vertex_buffers(
-                cbuf, // cbuf to draw in
-                0, // first vertex binding updated by the command
-                &[self.vert_buffer], // set of buffers to bind
-                &[0], // offsets for the above buffers
-            );
-            rend.dev.cmd_bind_index_buffer(
-                cbuf,
-                self.index_buffer,
-                0, // offset
-                vk::IndexType::UINT32,
             );
 
             // Set the z-ordering of the window we want to render
@@ -547,7 +537,7 @@ impl Mesh {
             // by the shader
             rend.dev.cmd_draw_indexed(
                 cbuf, // drawing command buffer
-                self.vert_count, // number of verts
+                ctx.vert_count, // number of verts
                 1, // number of instances
                 0, // first vertex
                 0, // vertex offset
@@ -2161,12 +2151,67 @@ impl Renderer {
         );
     }
 
+    // Create vertex/index buffers for the default quad
+    //
+    // All onscreen regions will be represented by a quad, and
+    // we only need to create one set of vertex/index buffers
+    // for it.
+    pub unsafe fn create_default_geom_bufs(&self)
+                                           -> (vk::Buffer, vk::DeviceMemory,
+                                               vk::Buffer, vk::DeviceMemory)
+    {
+        let (vbuf, vmem) = self.create_buffer(
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+            vk::SharingMode::EXCLUSIVE,
+            vk::MemoryPropertyFlags::HOST_VISIBLE
+                | vk::MemoryPropertyFlags::HOST_COHERENT,
+            &QUAD_DATA,
+        );
+        let (ibuf, imem) = self.create_buffer(
+            vk::BufferUsageFlags::INDEX_BUFFER,
+            vk::SharingMode::EXCLUSIVE,
+            vk::MemoryPropertyFlags::HOST_VISIBLE
+                | vk::MemoryPropertyFlags::HOST_COHERENT,
+            &QUAD_INDICES,
+        );
+
+        return (vbuf, vmem, ibuf, imem);
+    }
+
+    pub unsafe fn create_sampler_descriptors(&self,
+                                             pool: vk::DescriptorPool,
+                                             layout: vk::DescriptorSetLayout,
+                                             image_count: u32)
+                                             -> (vk::Sampler,
+                                                 Vec<vk::DescriptorSet>)
+    {
+        // One image sampler is going to be used for everything
+        let sampler = self.create_sampler();
+        // A descriptor needs to be created for every swapchaing image
+        // so we can prepare the next frame while the current one is
+        // processing.
+        let mut descriptors = Vec::new();
+
+        for _ in 0..image_count {
+            let set = self.allocate_descriptor_sets(
+                pool,
+                &[layout]
+            )[0];
+
+            descriptors.push(set);
+        }
+
+        return (sampler, descriptors);
+    }
+
     // Set up the application. This should *always* be called
     //
     // Once we have allocated a renderer with `new`, we should initialize
     // the rendering pipeline so that we can display things. This method
     // basically sets up all of the "application" specific resources like
     // shaders, geometry, and the like.
+    //
+    // This fills in the AppContext struct in the Renderer
     pub fn setup(&mut self) {
         unsafe {
             self.setup_depth_image();
@@ -2176,10 +2221,10 @@ impl Renderer {
             // This is a really annoying issue with CString ptrs
             let program_entrypoint_name = CString::new("main").unwrap();
             // If the CString is created in `create_shaders`, and is inserted in
-            // the return struct using the `.as_ptr()` method, then the CString will
-            // still be dropped on return and our pointer will be garbage. Instead
-            // we need to ensure that the CString will live long enough. I have no
-            // idea why it is like this.
+            // the return struct using the `.as_ptr()` method, then the CString
+            // will still be dropped on return and our pointer will be garbage.
+            // Instead we need to ensure that the CString will live long
+            // enough. I have no idea why it is like this.
             let shader_stages = Box::new(
                 self.create_shader_stages(program_entrypoint_name.as_ptr())
             );
@@ -2242,6 +2287,12 @@ impl Renderer {
                 0, // element
             );
 
+            // Allocate buffers for all geometry to be used
+            let (vbuf, vmem, ibuf, imem) = self.create_default_geom_bufs();
+
+            // One image sampler is going to be used for everything
+            let sampler = self.create_sampler();
+
             // The app context contains the scene specific data
             self.app_ctx = RefCell::new(Some(AppContext {
                 pass: pass,
@@ -2252,6 +2303,7 @@ impl Renderer {
                 framebuffers: framebuffers,
                 uniform_buffer: buf,
                 uniform_buffers_memory: mem,
+                image_sampler: sampler,
                 descriptor_pool: pool,
                 ubo_descriptor: ubo,
                 shader_modules: shader_stages
@@ -2260,6 +2312,12 @@ impl Renderer {
                     .collect(),
                 apps: Vec::new(),
                 background: None,
+                vert_buffer: vbuf,
+                vert_buffer_memory: vmem,
+                // multiply the index len by the vector size
+                vert_count: QUAD_INDICES.len() as u32 * 3,
+                index_buffer: ibuf,
+                index_buffer_memory: imem,
             }));
         }
     }
@@ -2366,30 +2424,14 @@ impl Renderer {
     // tex_res is the resolution of `texture`
     // window_res is the size of the on screen window
     pub fn create_mesh(&mut self,
-                       vertices: &[VertData],
-                       indices: &[Vector3<u32>],
                        texture: &[u8],
                        tex_res: vk::Extent2D)
                        -> Option<Mesh>
     {
         unsafe {
-            let (vbuf, vmem) = self.create_buffer(
-                vk::BufferUsageFlags::VERTEX_BUFFER,
-                vk::SharingMode::EXCLUSIVE,
-                vk::MemoryPropertyFlags::HOST_VISIBLE
-                    | vk::MemoryPropertyFlags::HOST_COHERENT,
-                vertices,
-            );
-            let (ibuf, imem) = self.create_buffer(
-                vk::BufferUsageFlags::INDEX_BUFFER,
-                vk::SharingMode::EXCLUSIVE,
-                vk::MemoryPropertyFlags::HOST_VISIBLE
-                    | vk::MemoryPropertyFlags::HOST_COHERENT,
-                indices,
-            );
-
             // TODO: make this cached in Renderer
-            let mem_props = Renderer::get_pdev_mem_properties(&self.inst, self.pdev);
+            let mem_props = Renderer::get_pdev_mem_properties(&self.inst,
+                                                              self.pdev);
 
             // This image will back the contents of the on-screen client window.
             //
@@ -2404,9 +2446,6 @@ impl Renderer {
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
                 texture,
             );
-
-            let sampler = self.create_sampler();
-
             if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
                 // each mesh holds a set of descriptors that it will bind before
                 // drawing itself. This set holds the image sampler
@@ -2420,29 +2459,13 @@ impl Renderer {
                         &[ctx.descriptor_sampler_layout]
                     )[0];
 
-                    // bind the texture for our plane
-                    self.update_sampler_descriptor_set(
-                        set,
-                        1, //n binding
-                        0, // element
-                        sampler,
-                        view,
-                    );
-
                     descriptors.push(set);
                 }
 
                 return Some(Mesh {
-                    vert_buffer: vbuf,
-                    vert_buffer_memory: vmem,
-                    // multiply the index len by the vector size
-                    vert_count: indices.len() as u32 * 3,
-                    index_buffer: ibuf,
-                    index_buffer_memory: imem,
                     image: image,
                     image_view: view,
                     image_mem: img_mem,
-                    image_sampler: sampler,
                     sampler_descriptors: descriptors,
                 });
             }
@@ -2454,9 +2477,6 @@ impl Renderer {
         let img = image::open("../bar.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
         self.create_mesh(
-            // default static square coordinates
-            &QUAD_DATA,
-            &QUAD_INDICES,
             // TODO: make a way to change titlebar colors
             pixels.as_slice(),
             vk::Extent2D {
@@ -2476,8 +2496,6 @@ impl Renderer {
     // tex_res is the resolution of `texture`
     // window_res is the size of the on screen window
     pub fn add_mesh(&mut self,
-                    vertices: &[VertData],
-                    indices: &[Vector3<u32>],
                     texture: &[u8],
                     tex_res: vk::Extent2D,
                     window_res: vk::Extent2D,
@@ -2486,8 +2504,6 @@ impl Renderer {
     {
         let meshes = vec!{
             self.create_mesh(
-                vertices,
-                indices,
                 texture,
                 tex_res,
             ).unwrap(),
@@ -2566,6 +2582,21 @@ impl Renderer {
                 cbuf,
                 vk::PipelineBindPoint::GRAPHICS,
                 app.pipeline
+            );
+
+            // bind the vertex and index buffers from
+            // the first mesh
+            rend.dev.cmd_bind_vertex_buffers(
+                cbuf, // cbuf to draw in
+                0, // first vertex binding updated by the command
+                &[app.vert_buffer], // set of buffers to bind
+                &[0], // offsets for the above buffers
+            );
+            rend.dev.cmd_bind_index_buffer(
+                cbuf,
+                app.index_buffer,
+                0, // offset
+                vk::IndexType::UINT32,
             );
 
             // Each app should have one or more windows,
@@ -2658,9 +2689,6 @@ impl Renderer {
                           tex_res: vk::Extent2D)
     {
         let mesh = self.create_mesh(
-            // default static square coordinates
-            &QUAD_DATA,
-            &QUAD_INDICES,
             texture,
             tex_res,
         );
@@ -2690,6 +2718,7 @@ impl Drop for Renderer {
             // first destroy the application specific resources
             if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
 
+                // Free all meshes in each app
                 for a in ctx.apps.iter_mut() {
                     for mesh in a.meshes.iter_mut() {
                         mesh.destroy(&self);
@@ -2700,6 +2729,13 @@ impl Drop for Renderer {
                 if let Some(m) = &mut ctx.background {
                     m.destroy(&self);
                 }
+
+                self.dev.free_memory(ctx.vert_buffer_memory, None);
+                self.dev.free_memory(ctx.index_buffer_memory, None);
+                self.dev.destroy_buffer(ctx.vert_buffer, None);
+                self.dev.destroy_buffer(ctx.index_buffer, None);
+
+                self.dev.destroy_sampler(ctx.image_sampler, None);
 
                 self.dev.destroy_buffer(ctx.uniform_buffer, None);
                 self.dev.free_memory(ctx.uniform_buffers_memory, None);
@@ -2777,8 +2813,6 @@ fn main() {
 
     for i in 0..WINDOW_COUNT {
         rend.add_mesh(
-            &QUAD_DATA,
-            &QUAD_INDICES,
             pixels.as_ref(),
             // dimensions of the texture
             vk::Extent2D {
@@ -2820,7 +2854,7 @@ fn main() {
     println!("Begin render loop...");
     let start = SystemTime::now();
 
-    let runtime = 8000;
+    let runtime = 1000;
     let mut iterations = 0;
     while run_forever || iterations < runtime {
         // Record the cbufs for the next frame
