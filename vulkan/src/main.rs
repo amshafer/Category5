@@ -535,7 +535,10 @@ impl Mesh {
                 ctx.pipeline_layout,
                 vk::ShaderStageFlags::VERTEX,
                 0, // offset
-                // get at &[u8] from our struct
+                // get a &[u8] from our struct
+                // TODO: This should go. It is showing up as a noticeable
+                // hit in profiling. Idk if there is a safe way to replace
+                // it.
                 bincode::serialize(push).unwrap().as_slice(),
             );
 
@@ -821,14 +824,16 @@ impl Renderer {
             surface_caps.current_transform
         };
 
-        // the best mode for presentation is MAILBOX (triple buffering)
+        // the best mode for presentation is FIFO (with triple buffering)
+        // as this is recommended by the samsung developer page, which
+        // I am *assuming* is a good reference for low power apps
         let present_modes = surface_loader
             .get_physical_device_surface_present_modes(pdev, surface)
             .unwrap();
         let mode = present_modes
             .iter()
             .cloned()
-            .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
+            .find(|&mode| mode == vk::PresentModeKHR::FIFO)
             // fallback to FIFO if the mailbox mode is not available
             .unwrap_or(vk::PresentModeKHR::FIFO);
 
@@ -2491,7 +2496,7 @@ impl Renderer {
         let title = self.get_default_titlebar();
 
         if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
-            ctx.apps.push(App {
+            ctx.apps.insert(0, App {
                 meshes: meshes,
                 titlebar: Rc::new(title),
                 // TODO: properly track window orderings
@@ -2765,7 +2770,9 @@ fn main() {
     // initialize the pipeline, renderpasses, and display engine
     rend.setup();
 
-    let img = image::open("../bsd.png").unwrap().to_rgba();
+    let img = image::open("/home/ashafer/git/compositor_playground/bsd.png")
+        .unwrap()
+        .to_rgba();
     let pixels: Vec<u8> = img.into_vec();
 
     for i in 0..WINDOW_COUNT {
@@ -2790,7 +2797,9 @@ fn main() {
 
     // read our image
 
-    let img = image::open("../hurricane.png").unwrap().to_rgba();
+    let img = image::open("/home/ashafer/git/compositor_playground/hurricane.png")
+        .unwrap()
+        .to_rgba();
     let pixels: Vec<u8> = img.into_vec();
 
     rend.set_background(
