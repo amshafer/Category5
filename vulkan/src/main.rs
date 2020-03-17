@@ -4,7 +4,7 @@
  * Very clearly derived from the ash examples
  */
 
-#![allow(non_camel_case_types)]
+#![allow(dead_code, non_camel_case_types)]
 extern crate ash;
 extern crate cgmath;
 extern crate obj;
@@ -32,6 +32,9 @@ use ash::{vk, Device, Entry, Instance};
 use ash::util;
 use ash::extensions::ext::DebugReport;
 use ash::extensions::khr;
+
+mod descpool;
+use descpool::DescPool;
 
 // This is the reference data for a normal quad
 // that will be used to draw client windows.
@@ -71,7 +74,6 @@ static WINDOW_COUNT: u32 = 10;
 // and the surface generated for the physical display.
 //
 // The swapchain is generated (and regenerated) from this stuff.
-#[allow(dead_code)]
 pub struct Display {
     // the actual surface (KHR extension)
     surface: vk::SurfaceKHR,
@@ -401,16 +403,15 @@ pub struct AppContext {
     pub pass: vk::RenderPass,
     pub pipeline: vk::Pipeline,
     pub pipeline_layout: vk::PipelineLayout,
-    pub descriptor_pool: vk::DescriptorPool,
+    // This descriptor pool allocates only the 1 ubo
+    pub uniform_pool: vk::DescriptorPool,
+    // This is an allocator for the dynamic sets (samplers)
+    pub desc_pool: DescPool,
     // (as per `create_descriptor_layouts`)
     // This will only be the sets holding the uniform buffers,
     // any mesh specific descriptors are in the mesh's sets.
     pub descriptor_uniform_layout: vk::DescriptorSetLayout,
     pub ubo_descriptor: vk::DescriptorSet,
-    // these are the layouts for mesh specific (texture) descriptors
-    // Window-speccific descriptors (texture sampler)
-    // one for each framebuffer
-    pub descriptor_sampler_layout: vk::DescriptorSetLayout,
     pub shader_modules: Vec<vk::ShaderModule>,
     pub framebuffers: Vec<vk::Framebuffer>,
     // shader constants are shared by all swapchain images
@@ -461,6 +462,7 @@ pub struct Mesh {
     pub image: vk::Image,
     pub image_view: vk::ImageView,
     pub image_mem: vk::DeviceMemory,
+    pub pool_handle: usize,
     pub sampler_descriptors: Vec<vk::DescriptorSet>,
 }
 
@@ -1984,7 +1986,7 @@ impl Renderer {
         }
     }
 
-    // Create `count` descriptor layouts
+    // Create uniform buffer descriptor layout
     //
     // Descriptor layouts specify the number and characteristics of descriptor
     // sets which will be made available to the pipeline through the pipeline
@@ -1992,9 +1994,8 @@ impl Renderer {
     //
     // The layouts created will be the default for this application. This should
     // usually be at least one descriptor for the MVP martrix.
-    pub unsafe fn create_descriptor_layouts(&mut self)
-                                            -> (vk::DescriptorSetLayout,
-                                                vk::DescriptorSetLayout)
+    pub unsafe fn create_ubo_layout(&mut self)
+                                    -> vk::DescriptorSetLayout
     {
         // supplies `descriptor_uniform_layouts`
         // ubos for the MVP matrix and image samplers for textures
@@ -2009,55 +2010,28 @@ impl Renderer {
         let info = vk::DescriptorSetLayoutCreateInfo::builder()
             .bindings(&bindings);
 
-        let ubo = self.dev.create_descriptor_set_layout(&info, None)
-            .unwrap();
-
-        // supplies `descriptor_mesh_layouts`
-        // There will be a sampler for each window
-        //
-        // This descriptor needs to be second in the pipeline list
-        // so the shader can reference it as set 1
-        let bindings=[vk::DescriptorSetLayoutBinding::builder()
-                      .binding(1)
-                      .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                      .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-                      .descriptor_count(1)
-                      .build()
-        ];
-        let info = vk::DescriptorSetLayoutCreateInfo::builder()
-            .bindings(&bindings);
-
-        let sampler = self.dev.create_descriptor_set_layout(&info, None)
-            .unwrap();
-
-        return (ubo, sampler);
+        self.dev.create_descriptor_set_layout(&info, None)
+            .unwrap()
     }
 
-    // Create a descriptor pool to allocate all of our sets from
+    // Create a descriptor pool for the uniform buffer
     //
-    // All descriptor sets will be allocated from this. We can delete
-    // or reset this to take care of all of the descriptor sets at once.
+    // All other dynamic sets are tracked using a DescPool. This pool
+    // is for statically numbered resources.
     //
     // The pool returned is NOT thread safe
-    pub unsafe fn create_descriptor_pool(&mut self,
-                                         capacity: u32)
+    pub unsafe fn create_descriptor_pool(&mut self)
                                          -> vk::DescriptorPool
     {
         let size = [vk::DescriptorPoolSize::builder()
                     .ty(vk::DescriptorType::UNIFORM_BUFFER)
                     .descriptor_count(1)
                     .build(),
-                    vk::DescriptorPoolSize::builder()
-                    .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    // cap background samp + cap * 2n window samp
-                    .descriptor_count(capacity + capacity * 2 * WINDOW_COUNT)
-                    .build()
         ];
 
         let info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&size)
-            // 2n * cap window samp + cap background samp + ubo
-            .max_sets(capacity * 2 * WINDOW_COUNT + capacity + 1);
+            .max_sets(1);
 
         self.dev.create_descriptor_pool(&info, None).unwrap()
     }
@@ -2073,7 +2047,6 @@ impl Renderer {
                                            layouts: &[vk::DescriptorSetLayout])
                                            -> Vec<vk::DescriptorSet>
     {
-        println!("Allocating {} descriptor sets", layouts.len());
         let info = vk::DescriptorSetAllocateInfo::builder()
             .descriptor_pool(pool)
             .set_layouts(layouts)
@@ -2229,14 +2202,21 @@ impl Renderer {
                 self.create_shader_stages(program_entrypoint_name.as_ptr())
             );
 
+            // Each window is going to have a sampler descriptor for every
+            // framebuffer image. Unfortunately this means the descriptor
+            // count will be runtime dependent.
+            // This is an allocator for those descriptors
+            let descpool = DescPool::create(&self);
+
             // prepare descriptors for all of the uniforms to pass to shaders
             //
             // NOTE: These need to be referenced in order by the `set` modifier
             // in the shaders
-            let (ubo_layout, sampler_layout) = self.create_descriptor_layouts();
+            let ubo_layout = self.create_ubo_layout();
+            // These are the layout recognized by the pipeline
             let descriptor_layouts = &[
                 ubo_layout,      // set 0
-                sampler_layout,  // set 1
+                descpool.layout, // set 1
             ];
 
             // make a push constant entry for the z ordering of a window
@@ -2259,10 +2239,10 @@ impl Renderer {
 
             let framebuffers = self.create_framebuffers(pass, self.resolution);
 
-            // Allocate the actual descriptor sets for each framebuffer
-            let pool = self.create_descriptor_pool(framebuffers.len() as u32);
+            // Allocate a pool only for the ubo descriptors
+            let uniform_pool = self.create_descriptor_pool();
             let ubo = self.allocate_descriptor_sets(
-                pool,
+                uniform_pool,
                 &[ubo_layout],
             )[0];
 
@@ -2299,12 +2279,12 @@ impl Renderer {
                 pipeline: pipeline,
                 pipeline_layout: layout,
                 descriptor_uniform_layout: ubo_layout,
-                descriptor_sampler_layout: sampler_layout,
                 framebuffers: framebuffers,
                 uniform_buffer: buf,
                 uniform_buffers_memory: mem,
                 image_sampler: sampler,
-                descriptor_pool: pool,
+                uniform_pool: uniform_pool,
+                desc_pool: descpool,
                 ubo_descriptor: ubo,
                 shader_modules: shader_stages
                     .iter()
@@ -2451,21 +2431,16 @@ impl Renderer {
                 // drawing itself. This set holds the image sampler
                 //
                 // right now they only hold an image sampler
-                let mut descriptors = Vec::new();
-
-                for _ in 0..self.images.len() {
-                    let set = self.allocate_descriptor_sets(
-                        ctx.descriptor_pool,
-                        &[ctx.descriptor_sampler_layout]
-                    )[0];
-
-                    descriptors.push(set);
-                }
+                let (handle, descriptors) = ctx.desc_pool.allocate_samplers(
+                    &self,
+                    self.images.len(),
+                );
 
                 return Some(Mesh {
                     image: image,
                     image_view: view,
                     image_mem: img_mem,
+                    pool_handle: handle,
                     sampler_descriptors: descriptors,
                 });
             }
@@ -2746,11 +2721,8 @@ impl Drop for Renderer {
                     ctx.descriptor_uniform_layout, None
                 );
 
-                self.dev.destroy_descriptor_set_layout(
-                    ctx.descriptor_sampler_layout, None
-                );
+                ctx.desc_pool.destroy(&self);
 
-                self.dev.destroy_descriptor_pool(ctx.descriptor_pool, None);
                 self.dev.destroy_pipeline_layout(ctx.pipeline_layout, None);
 
                 for m in ctx.shader_modules.iter() {
