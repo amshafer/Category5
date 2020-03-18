@@ -24,7 +24,6 @@ use std::io::Cursor;
 use std::marker::Copy;
 use std::mem;
 use std::cell::RefCell;
-use std::rc::Rc;
 use std::time::SystemTime;
 
 pub use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
@@ -431,6 +430,8 @@ pub struct AppContext {
     // Resources for the index buffer
     pub index_buffer: vk::Buffer,
     pub index_buffer_memory: vk::DeviceMemory,
+    // Title bar to draw above the windows
+    pub titlebar: Option<Mesh>,
 }
 
 // This represents a client window.
@@ -443,8 +444,6 @@ pub struct AppContext {
 pub struct App {
     // This is the set of geometric objects in the application
     pub meshes: Vec<Mesh>,
-    // Title bar to draw above these window(s)
-    pub titlebar: Rc<Mesh>,
     // The position and size of the window
     pub push: PushConstants,
 }
@@ -495,14 +494,6 @@ impl Mesh {
                           push: &PushConstants)
     {
         if let Some(ctx) = &*rend.app_ctx.borrow() {
-            // bind the texture for our plane
-            rend.update_sampler_descriptor_set(
-                self.sampler_descriptors[image_num],
-                1, //n binding
-                0, // element
-                ctx.image_sampler,
-                self.image_view,
-            );
             // Descriptor sets can be updated elsewhere, but
             // they must be bound before drawing
             //
@@ -2298,7 +2289,13 @@ impl Renderer {
                 vert_count: QUAD_INDICES.len() as u32 * 3,
                 index_buffer: ibuf,
                 index_buffer_memory: imem,
+                titlebar: None,
             }));
+
+            let title = self.get_default_titlebar();
+            if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
+                ctx.titlebar = Some(title);
+            }
         }
     }
 
@@ -2426,6 +2423,7 @@ impl Renderer {
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
                 texture,
             );
+
             if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
                 // each mesh holds a set of descriptors that it will bind before
                 // drawing itself. This set holds the image sampler
@@ -2435,6 +2433,17 @@ impl Renderer {
                     &self,
                     self.images.len(),
                 );
+
+                for i in 0..self.images.len() {
+                    // bind the texture for our window
+                    self.update_sampler_descriptor_set(
+                        descriptors[i],
+                        1, //n binding
+                        0, // element
+                        ctx.image_sampler,
+                        view,
+                    );
+                }
 
                 return Some(Mesh {
                     image: image,
@@ -2484,12 +2493,9 @@ impl Renderer {
             ).unwrap(),
         };
 
-        let title = self.get_default_titlebar();
-
         if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
             ctx.apps.insert(0, App {
                 meshes: meshes,
-                titlebar: Rc::new(title),
                 // TODO: properly track window orderings
                 push: PushConstants {
                     order: order,
@@ -2592,7 +2598,8 @@ impl Renderer {
                         width: a.push.width,
                         height: barsize,
                     };
-                    a.titlebar.record_draw(rend, cbuf, image_num, &push);
+                    app.titlebar.as_ref().unwrap()
+                        .record_draw(rend, cbuf, image_num, &push);
                 }
             }
 
@@ -2698,8 +2705,8 @@ impl Drop for Renderer {
                     for mesh in a.meshes.iter_mut() {
                         mesh.destroy(&self);
                     }
-                    a.titlebar.destroy(&self);
                 }
+                ctx.titlebar.as_ref().unwrap().destroy(&self);
 
                 if let Some(m) = &mut ctx.background {
                     m.destroy(&self);
