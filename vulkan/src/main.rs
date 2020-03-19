@@ -234,6 +234,16 @@ impl Display {
                                  None)
             .unwrap();
 
+        // Print out the plane capabilities
+        for (i,_) in plane_props.iter().enumerate() {
+            let caps = loader.get_display_plane_capabilities(
+                pdev,
+                mode,
+                i as u32,
+            ).unwrap();
+            println!("Plane {}: supports alpha {:?}", i, caps.supported_alpha);
+        }
+
         // Finally we can create our surface to render to. From this
         // point on everything is normal 
         let surf_info = vk::DisplaySurfaceCreateInfoKHR::builder()
@@ -431,7 +441,16 @@ pub struct AppContext {
     pub index_buffer: vk::Buffer,
     pub index_buffer_memory: vk::DeviceMemory,
     // Title bar to draw above the windows
-    pub titlebar: Option<Mesh>,
+    pub titlebar: Option<Titlebar>,
+}
+
+// This consolidates the multiple resources needed
+// to represent a titlebar
+pub struct Titlebar {
+    // The thick bar itself
+    bar: Mesh,
+    // One dot to rule them all. Used for buttons
+    dot: Mesh
 }
 
 // This represents a client window.
@@ -2457,17 +2476,33 @@ impl Renderer {
         }
     }
 
-    pub fn get_default_titlebar(&mut self) -> Mesh {
+    pub fn get_default_titlebar(&mut self) -> Titlebar {
         let img = image::open("../bar.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
-        self.create_mesh(
+        let bar = self.create_mesh(
             // TODO: make a way to change titlebar colors
             pixels.as_slice(),
             vk::Extent2D {
                 width: 64,
                 height: 64,
             },
-        ).unwrap()
+        ).unwrap();
+
+        let img = image::open("../dot.png").unwrap().to_rgba();
+        let pixels: Vec<u8> = img.into_vec();
+        let dot = self.create_mesh(
+            // TODO: make a way to change titlebar colors
+            pixels.as_slice(),
+            vk::Extent2D {
+                width: 64,
+                height: 64,
+            },
+        ).unwrap();
+
+        Titlebar {
+            bar: bar,
+            dot: dot,
+        }
     }
 
     // Add a mesh to the renderer to be displayed.
@@ -2584,22 +2619,45 @@ impl Renderer {
             // all of which we need to draw.
             for a in app.apps.iter() {
                 for mesh in a.meshes.iter() {
-                    mesh.record_draw(rend, cbuf, image_num, &a.push);
-                    // TODO: make titlebars their own objects, with
-                    // their own push constants referencing the mesh
+                    // The bar should be a percentage of the screen height
                     let barsize = rend.resolution.height as f32 * 0.02;
+                    // The dotsize should be just slightly smaller
+                    let dotsize = barsize * 0.95;
                     let push = PushConstants {
-                        order: a.push.order, // depth
-                        // size of the window on screen
-                        x: a.push.x,
-                        // use a percentage of the screen size
+                        order: a.push.order - 0.002, // depth
+                        // the x position needs to be all the way to the
+                        // right side of the bar
+                        x: a.push.x
+                            // Multiply by 2 (see vert shader for details)
+                            + a.push.width as u32 * 2
+                            // we don't want to go past the end of the bar
+                            - barsize as u32 * 2,
                         y: a.push.y,
-                        // align it at the top left
+                        // align it at the top right
+                        width: dotsize,
+                        height: dotsize,
+                    };
+                    // render buttons on the titlebar
+                    app.titlebar.as_ref().unwrap().dot
+                        .record_draw(rend, cbuf, image_num, &push);
+
+                    // now render the bar itself, as wide as the window
+                    // the bar needs to be behind the dots
+                    let push = PushConstants {
+                        order: a.push.order - 0.001, // depth
+                        // align it at the top right
+                        x: a.push.x,
+                        y: a.push.y,
+                        // the bar is as wide as the window
                         width: a.push.width,
+                        // use a percentage of the screen size
                         height: barsize,
                     };
-                    app.titlebar.as_ref().unwrap()
+                    app.titlebar.as_ref().unwrap().bar
                         .record_draw(rend, cbuf, image_num, &push);
+
+                    // Finally, we can draw the window itself
+                    mesh.record_draw(rend, cbuf, image_num, &a.push);
                 }
             }
 
@@ -2706,7 +2764,8 @@ impl Drop for Renderer {
                         mesh.destroy(&self);
                     }
                 }
-                ctx.titlebar.as_ref().unwrap().destroy(&self);
+                ctx.titlebar.as_ref().unwrap().bar.destroy(&self);
+                ctx.titlebar.as_ref().unwrap().dot.destroy(&self);
 
                 if let Some(m) = &mut ctx.background {
                     m.destroy(&self);
@@ -2804,7 +2863,8 @@ fn main() {
                 height: 512,
             },
             Vector2::new(300 + i * 55, 200 + i * 35),
-            0.5, // depth
+            // minimum z + inter-window distance * window num
+            0.005 + 0.01 * i as f32, // depth
         );
     }
 
