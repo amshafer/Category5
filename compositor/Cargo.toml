@@ -1,0 +1,18 @@
+[package]
+name = "compositor"
+version = "0.1.0"
+authors = ["Austin Shafer <ashafer@badland.io>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ash= { git = "https://github.com/MaikKlein/ash" }
+cgmath="0.17"
+memoffset="0.5"
+image="0.23"
+serde = { version = "1.0", features = ["derive"] }
+bincode="1.2.1"
+
+[build-dependencies]
+bindgen="0.51"
