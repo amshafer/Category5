@@ -14,9 +14,7 @@ extern crate image;
 mod vkcomp;
 mod ways;
 
-use vkcomp::Renderer;
-use cgmath::Vector2;
-use ash::vk;
+pub use vkcomp::wm::*;
 
 use std::time::SystemTime;
 
@@ -33,48 +31,47 @@ fn main() {
     }
 
     // creates a context, swapchain, images, and others
-    let mut rend = Renderer::new();
     // initialize the pipeline, renderpasses, and display engine
-    rend.setup();
+    let mut wm = WindowManager::new();
 
-    let img = image::open("/home/ashafer/git/compositor_playground/bsd.png")
+    let img =
+        image::open("/home/ashafer/git/compositor_playground/bsd.png")
         .unwrap()
         .to_rgba();
     let pixels: Vec<u8> = img.into_vec();
 
     for i in 0..WINDOW_COUNT {
-        rend.add_mesh(
-            pixels.as_ref(),
+        let info = WindowCreateInfo {
+            tex: pixels.as_ref(),
             // dimensions of the texture
-            vk::Extent2D {
-                width: 512,
-                height: 468,
-            },
+            tex_width: 512,
+            tex_height: 468,
             // size of the window
-            vk::Extent2D {
-                width: 512,
-                height: 512,
-            },
-            Vector2::new(300 + i * 55, 200 + i * 35),
+            window_width: 512,
+            window_height: 512,
+            x: 300 + i * 55,
+            y: 200 + i * 35,
             // minimum z + inter-window distance * window num
-            0.005 + 0.01 * i as f32, // depth
+            order: 0.005 + 0.01 * i as f32, // depth
+        };
+        wm.create_window(
+            &info
         );
     }
 
     // read our image
 
-    let img = image::open("/home/ashafer/git/compositor_playground/hurricane.png")
+    let img =
+        image::open("/home/ashafer/git/compositor_playground/hurricane.png")
         .unwrap()
         .to_rgba();
     let pixels: Vec<u8> = img.into_vec();
 
-    rend.set_background(
+    wm.set_background_from_mem(
         pixels.as_ref(),
         // dimensions of the texture
-        vk::Extent2D {
-            width: 512,
-            height: 512,
-        }
+        512,
+        512,
     );
 
     //rend.record_cbufs();
@@ -85,12 +82,10 @@ fn main() {
     let runtime = 1000;
     let mut iterations = 0;
     while run_forever || iterations < runtime {
-        // Record the cbufs for the next frame
-        rend.record_next_cbuf();
         // draw a frame to be displayed
-        rend.start_frame();
+        wm.begin_frame();
         // present our frame to the screen
-        rend.present();
+        wm.end_frame();
         iterations += 1;
     }
     let end = SystemTime::now();
