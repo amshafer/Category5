@@ -1911,8 +1911,8 @@ impl Renderer {
             src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
             dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
             color_blend_op: vk::BlendOp::ADD,
-            src_alpha_blend_factor: vk::BlendFactor::SRC_ALPHA,
-            dst_alpha_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+            src_alpha_blend_factor: vk::BlendFactor::ONE,
+            dst_alpha_blend_factor: vk::BlendFactor::ZERO,
             alpha_blend_op: vk::BlendOp::ADD,
             color_write_mask: vk::ColorComponentFlags::all(),
         }];
@@ -2641,6 +2641,23 @@ impl Renderer {
                     let barsize = rend.resolution.height as f32 * 0.02;
                     // The dotsize should be just slightly smaller
                     let dotsize = barsize * 0.95;
+                    // now render the bar itself, as wide as the window
+                    // the bar needs to be behind the dots
+                    let push = PushConstants {
+                        order: a.push.order - 0.001, // depth
+                        // align it at the top right
+                        x: a.push.x,
+                        y: a.push.y,
+                        // the bar is as wide as the window
+                        width: a.push.width,
+                        // use a percentage of the screen size
+                        height: barsize,
+                    };
+                    app.titlebar.as_ref().unwrap().bar
+                        .record_draw(rend, cbuf, image_num, &push);
+
+                    // We should render the dot second, so alpha blending
+                    // has a color to use
                     let push = PushConstants {
                         order: a.push.order - 0.002, // depth
                         // the x position needs to be all the way to the
@@ -2657,21 +2674,6 @@ impl Renderer {
                     };
                     // render buttons on the titlebar
                     app.titlebar.as_ref().unwrap().dot
-                        .record_draw(rend, cbuf, image_num, &push);
-
-                    // now render the bar itself, as wide as the window
-                    // the bar needs to be behind the dots
-                    let push = PushConstants {
-                        order: a.push.order - 0.001, // depth
-                        // align it at the top right
-                        x: a.push.x,
-                        y: a.push.y,
-                        // the bar is as wide as the window
-                        width: a.push.width,
-                        // use a percentage of the screen size
-                        height: barsize,
-                    };
-                    app.titlebar.as_ref().unwrap().bar
                         .record_draw(rend, cbuf, image_num, &push);
 
                     // Finally, we can draw the window itself
