@@ -273,6 +273,10 @@ impl Compositor {
         }
     }
 
+    // Present the surface for rendering
+    //
+    // This essentially makes the buffer available to the window manager
+    // for drawing.
     pub fn render(&mut self) {
         for cell in self.c_surfaces.iter() {
             let surface = cell.borrow();
@@ -346,8 +350,10 @@ fn main() {
         // wait for the next event
         comp.event_loop_dispatch();
 
+        // Process client callbacks
         comp.flush_clients();
 
+        // Draw the screen
         comp.render();
     }
 }

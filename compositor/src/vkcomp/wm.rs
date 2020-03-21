@@ -19,7 +19,7 @@ struct Titlebar {
 // keeps track of the window components (content meshes and
 // titlebar mesh) and the location/size (push constants).
 //
-// See Renderer::record_draw for how this is displayed.
+// See WindowManager::record_draw for how this is displayed.
 pub struct App {
     // This is the set of geometric objects in the application
     meshes: Vec<Mesh>,
@@ -28,17 +28,31 @@ pub struct App {
 }
 
 // Encapsulates vkcomp and provides a sensible windowing API
+//
+// This layer provides graphical operations to the above
+// layers. It will support two classes of displayed objs,
+// windows (has content and a titlebar) and sprites.
+//
+// Sprites should only be used for desktop effects, such
+// as notifications. Sprites are not owned by a client
+// whereas windows are.
 pub struct WindowManager {
     // The vulkan renderer. It implements the draw logic,
     // whereas WindowManager implements organizational logic
     rend: Renderer,
     // This is the set of applications in this scene
     apps: Vec<App>,
+    //  The background picture of the desktop
     background: Option<Mesh>,
     // Title bar to draw above the windows
     titlebar: Titlebar,
 }
 
+// Window creation parameters
+//
+// Similar to how arguments are passed in vulkan, here
+// we have a structure that holds all the arguments
+// for creating a window.
 pub struct WindowCreateInfo<'a> {
     // Window position
     pub x: u32,
@@ -87,6 +101,11 @@ impl WindowManager {
         }
     }
 
+    // Create a new WindowManager
+    //
+    // This will create all the graphical resources needed for
+    // the compositor. The WindowManager will create and own
+    // the Renderer, thereby readying the display to draw.
     pub fn new() -> WindowManager {
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
@@ -152,6 +171,14 @@ impl WindowManager {
         });
     }
 
+    // Record all the drawing operations for the current scene
+    //
+    // Vulkan requires that we record a list of operations into a command
+    // buffer which is later submitted for display. This method organizes
+    // the recording of draw operations for all elements in the desktop.
+    //
+    // params: a private info structure for the Renderer. It holds all
+    // the data about what we are recording.
     fn record_draw(&self, params: &RecordParams) {
         // Each app should have one or more windows,
         // all of which we need to draw.
@@ -219,6 +246,14 @@ impl WindowManager {
     }
 
     // A helper which records the cbuf for the next frame
+    //
+    // Recording a frame follows this general pattern:
+    //  1. The recording parameters are requested
+    //  2. Recording is started
+    //  3. WindowManager specifies the order/position of Meshes to be recorded
+    //  4. Recording is stopped
+    //
+    // This *does not* present anything to the screen
     pub fn record_next_frame(&mut self) {
         let params = self.rend.get_recording_parameters();
         self.rend.begin_recording_one_frame(&params);
@@ -228,11 +263,27 @@ impl WindowManager {
         self.rend.end_recording_one_frame(&params);
     }
 
+    // Begin rendering a frame
+    //
+    // Vulkan is asynchronous, meaning that commands are submitted
+    // and later waited on. This method records the next cbuf
+    // and asks the Renderer to submit it.
+    //
+    // The frame is not presented to the display until WindowManager::end_frame is called.
     pub fn begin_frame(&mut self) {
         self.record_next_frame();
         self.rend.begin_frame();
     }
 
+    // End a frame
+    //
+    // Once the frame's cbuf has been recorded and submitted, we
+    // can present it to the physical display.
+    //
+    // It is possible that the upper layers may want to perform
+    // operations between submission of the frame and when that
+    // frame is presented, which is why begin/end frame is split
+    // into two methods.
     pub fn end_frame(&mut self) {
         self.rend.present();
     }
