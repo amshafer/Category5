@@ -3,6 +3,7 @@
 // Austin Shafer - 2020
 
 use super::renderer::*;
+use super::renderer::mesh::Mesh;
 
 // This consolidates the multiple resources needed
 // to represent a titlebar
