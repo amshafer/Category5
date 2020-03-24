@@ -142,8 +142,10 @@ impl Surface {
 // This class is point of first contact from higher levels in the stack.
 // It roughly holds the wl_compositor/wl_display/wl_event_loop objects.
 // There should be as little compositor logic in this as possible, most
-// of the design decisions and actions should be taken by higher levels, using
-// this API to hide the unsafe bits.
+// of the design decisions and actions should be taken by higher levels,
+// using this API hides the unsafe bits.
+//
+// This is really the wayland compositor protocol object
 pub struct Compositor {
     // The wayland display object, this is the core
     // global singleton for libwayland
@@ -336,18 +338,5 @@ impl Drop for Compositor {
         unsafe {
             wl_display_destroy(self.c_display);            
         }
-    }
-}
-
-fn main() {
-    let mut comp = Compositor::new();
-
-    loop {
-        // wait for the next event
-        comp.event_loop_dispatch();
-
-        comp.flush_clients();
-
-        comp.render();
     }
 }

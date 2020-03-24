@@ -23,6 +23,8 @@ fn main () {
         .generate()
         .expect("Could not generate bindings for libwayland");
 
-    bindings.write_to_file("src/ways/wayland_bindings.rs")
-        .expect("Could not write bindings to src/ways/wayland_bindings.rs");
+    bindings.write_to_file("src/category5/ways/wayland_bindings.rs")
+        .expect(
+            "Could not write bindings to src/category5/ways/wayland_bindings.rs"
+        );
 }

@@ -1,8 +1,13 @@
 // A window management API for the vulkan backend
 //
 // Austin Shafer - 2020
-
+#![allow(dead_code)]
 use super::renderer::*;
+
+pub mod task;
+use task::*;
+
+use std::sync::mpsc::{Receiver};
 
 // This consolidates the multiple resources needed
 // to represent a titlebar
@@ -32,6 +37,8 @@ pub struct WindowManager {
     // The vulkan renderer. It implements the draw logic,
     // whereas WindowManager implements organizational logic
     rend: Renderer,
+    // The channel to recieve work over
+    rx: Receiver<Task>,
     // This is the set of applications in this scene
     apps: Vec<App>,
     background: Option<Mesh>,
@@ -87,7 +94,7 @@ impl WindowManager {
         }
     }
 
-    pub fn new() -> WindowManager {
+    pub fn new(rx: Receiver<Task>) -> WindowManager {
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
         let mut rend = Renderer::new();
@@ -98,6 +105,7 @@ impl WindowManager {
             rend: rend,
             apps: Vec::new(),
             background: None,
+            rx: rx,
         }
     }
 
@@ -105,10 +113,10 @@ impl WindowManager {
     //
     // This basically just creates a mesh with the max
     // depth that takes up the entire screen.
-    pub fn set_background_from_mem(&mut self,
-                                   texture: &[u8],
-                                   tex_width: u32,
-                                   tex_height: u32)
+    fn set_background_from_mem(&mut self,
+                               texture: &[u8],
+                               tex_width: u32,
+                               tex_height: u32)
     {
         let mesh = self.rend.create_mesh(
             texture,
@@ -128,8 +136,8 @@ impl WindowManager {
     //
     // tex_res is the resolution of `texture`
     // window_res is the size of the on screen window
-    pub fn create_window(&mut self,
-                         info: &WindowCreateInfo)
+    fn create_window(&mut self,
+                     info: &WindowCreateInfo)
     {
         let meshes = vec!{
             self.rend.create_mesh(
@@ -219,7 +227,7 @@ impl WindowManager {
     }
 
     // A helper which records the cbuf for the next frame
-    pub fn record_next_frame(&mut self) {
+    fn record_next_frame(&mut self) {
         let params = self.rend.get_recording_parameters();
         self.rend.begin_recording_one_frame(&params);
 
@@ -228,13 +236,34 @@ impl WindowManager {
         self.rend.end_recording_one_frame(&params);
     }
 
-    pub fn begin_frame(&mut self) {
+    fn begin_frame(&mut self) {
         self.record_next_frame();
         self.rend.begin_frame();
     }
 
-    pub fn end_frame(&mut self) {
+    fn end_frame(&mut self) {
         self.rend.present();
+    }
+    
+    pub fn process_task(&mut self, task: &Task) {
+        match task {
+            Task::begin_frame => self.begin_frame(),
+            Task::end_frame => self.end_frame(),
+            Task::set_background_from_mem(sb) => {
+                self.set_background_from_mem(
+                    sb.pixels.as_ref(),
+                    sb.width,
+                    sb.height,
+                );
+            },
+        };
+    }
+
+    pub fn worker_thread(&mut self) {
+        loop {
+            let task = self.rx.recv().unwrap();
+            self.process_task(&task);
+        }
     }
 }
 

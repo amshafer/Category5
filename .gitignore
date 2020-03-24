@@ -1,7 +1,6 @@
 vulkan/target
 input/target
 wayland-server/target
-compositor/target
 **/*.rs.bk
 **/*.core
 **/*~
