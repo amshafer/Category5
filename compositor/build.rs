@@ -2,10 +2,10 @@
 //   based on the bindgen manual
 //
 // Austin Shafer - 2019
-
 extern crate bindgen;
 
-fn main () {
+#[cfg(not(target_os = "macos"))]
+fn main() {
     // tell cargo to link with libthreadpool.so
     println!("cargo:rustc-env=LD_LIBRARY_PATH=/usr/local/lib/");
     println!("cargo:rustc-link-search=native=/usr/local/lib/");
@@ -27,4 +27,9 @@ fn main () {
         .expect(
             "Could not write bindings to src/category5/ways/wayland_bindings.rs"
         );
+}
+
+#[cfg(target_os = "macos")]
+fn main() {
+    println!("Compiling on macos, not regenerating wayland bindings");
 }

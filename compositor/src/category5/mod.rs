@@ -15,6 +15,7 @@ use std::sync::mpsc::{Sender};
 // The category5 compositor
 //
 // This is the top layer of the storm
+#[allow(dead_code)]
 pub struct Category5 {
     // The wayland compositor
     // Kind of confusing since category5 is also
