@@ -23,6 +23,7 @@ pub struct Mesh {
     pub image: vk::Image,
     pub image_view: vk::ImageView,
     pub image_mem: vk::DeviceMemory,
+    pub image_resolution: vk::Extent2D,
     pub pool_handle: usize,
     pub sampler_descriptors: Vec<vk::DescriptorSet>,
 }

@@ -32,8 +32,10 @@ struct Titlebar {
 //
 // See WindowManager::record_draw for how this is displayed.
 pub struct App {
+    // This id uniquely identifies the App
+    id: u64,
     // This is the set of geometric objects in the application
-    meshes: Vec<Mesh>,
+    mesh: Option<Mesh>,
     // The position and size of the window
     push: PushConstants,
 }
@@ -59,27 +61,6 @@ pub struct WindowManager {
     background: Option<Mesh>,
     // Title bar to draw above the windows
     titlebar: Titlebar,
-}
-
-// Window creation parameters
-//
-// Similar to how arguments are passed in vulkan, here
-// we have a structure that holds all the arguments
-// for creating a window.
-pub struct WindowCreateInfo<'a> {
-    // Window position
-    pub x: u32,
-    pub y: u32,
-    // Memory region to copy window contents from
-    pub tex: &'a [u8],
-    // The resolution of the texture
-    pub tex_width: u32,
-    pub tex_height: u32,
-    // The size of the window (in pixels)
-    pub window_width: u32,
-    pub window_height: u32,
-    // The depth z-ordering from [0.005, 1.0)
-    pub order: f32
 }
 
 impl WindowManager {
@@ -161,28 +142,49 @@ impl WindowManager {
     //
     // tex_res is the resolution of `texture`
     // window_res is the size of the on screen window
-    fn create_window(&mut self,
-                     info: &WindowCreateInfo)
-    {
-        let meshes = vec!{
-            self.rend.create_mesh(
-                info.tex,
-                info.tex_width,
-                info.tex_height,
-            ).unwrap(),
-        };
-
+    fn create_window(&mut self, info: &CreateWindow) {
         self.apps.insert(0, App {
-            meshes: meshes,
+            id: info.id,
+            mesh: None,
             // TODO: properly track window orderings
             push: PushConstants {
-                order: info.order,
+                order: 0.005,
                 x: info.x,
                 y: info.y,
                 width: info.window_width as f32,
                 height: info.window_height as f32,
             },
         });
+    }
+
+    fn update_window_contents_from_mem(&mut self,
+                                       info: &UpdateWindowContentsFromMem)
+    {
+        // Find the app corresponding to that window id
+        let app = match self.apps
+            .iter_mut()
+            .find(|app| app.id == info.id)
+        {
+            Some(a) => a,
+            // If the id is not found, then don't update anything
+            None => { println!("Could not find id {}", info.id); return; },
+        };
+
+        if !app.mesh.is_none() {
+            self.rend.update_app_contents_from_mem(
+                app,
+                &info.pixels,
+            );
+        } else {
+            // If it does not have a mesh, then this must be the
+            // first time contents were attached to it. Go ahead
+            // and make one now
+            app.mesh = Some(self.rend.create_mesh(
+                info.pixels.as_ref(),
+                info.width as u32,
+                info.height as u32,
+            ).unwrap());
+        }
     }
 
     // Record all the drawing operations for the current scene
@@ -197,48 +199,51 @@ impl WindowManager {
         // Each app should have one or more windows,
         // all of which we need to draw.
         for a in self.apps.iter() {
-            for mesh in a.meshes.iter() {
-                // The bar should be a percentage of the screen height
-                let barsize =
-                    self.rend.resolution.height as f32 * 0.02;
-                // The dotsize should be just slightly smaller
-                let dotsize = barsize * 0.95;
-                // now render the bar itself, as wide as the window
-                // the bar needs to be behind the dots
-                let push = PushConstants {
-                    order: a.push.order - 0.001, // depth
-                    // align it at the top right
-                    x: a.push.x,
-                    y: a.push.y,
-                    // the bar is as wide as the window
-                    width: a.push.width,
-                    // use a percentage of the screen size
-                    height: barsize,
-                };
-                self.titlebar.bar
-                    .record_draw(&self.rend, params, &push);
+            // The bar should be a percentage of the screen height
+            let barsize =
+                self.rend.resolution.height as f32 * 0.02;
+            // The dotsize should be just slightly smaller
+            let dotsize = barsize * 0.95;
+            // now render the bar itself, as wide as the window
+            // the bar needs to be behind the dots
+            let push = PushConstants {
+                order: a.push.order - 0.001, // depth
+                // align it at the top right
+                x: a.push.x,
+                y: a.push.y,
+                // the bar is as wide as the window
+                width: a.push.width,
+                // use a percentage of the screen size
+                height: barsize,
+            };
+            self.titlebar.bar
+                .record_draw(&self.rend, params, &push);
 
-                // We should render the dot second, so alpha blending
-                // has a color to use
-                let push = PushConstants {
-                    order: a.push.order - 0.002, // depth
-                    // the x position needs to be all the way to the
-                    // right side of the bar
-                    x: a.push.x
-                    // Multiply by 2 (see vert shader for details)
-                        + a.push.width as u32 * 2
-                    // we don't want to go past the end of the bar
-                        - barsize as u32 * 2,
-                    y: a.push.y,
-                    // align it at the top right
-                    width: dotsize,
-                    height: dotsize,
-                };
-                // render buttons on the titlebar
-                self.titlebar.dot
-                    .record_draw(&self.rend, params, &push);
+            // We should render the dot second, so alpha blending
+            // has a color to use
+            let push = PushConstants {
+                order: a.push.order - 0.002, // depth
+                // the x position needs to be all the way to the
+                // right side of the bar
+                x: a.push.x
+                // Multiply by 2 (see vert shader for details)
+                    + a.push.width as u32 * 2
+                // we don't want to go past the end of the bar
+                    - barsize as u32 * 2,
+                y: a.push.y,
+                // align it at the top right
+                width: dotsize,
+                height: dotsize,
+            };
+            // render buttons on the titlebar
+            self.titlebar.dot
+                .record_draw(&self.rend, params, &push);
 
-                // Finally, we can draw the window itself
+            // Finally, we can draw the window itself
+            // If the mesh does not exist, then only the titlebar
+            // and other window decorations will be drawn
+            if let Some(mesh) = &a.mesh {
+                // TODO: else draw blank mesh?
                 mesh.record_draw(&self.rend, params, &a.push);
             }
         }
@@ -262,10 +267,11 @@ impl WindowManager {
     // A helper which records the cbuf for the next frame
     //
     // Recording a frame follows this general pattern:
-    //  1. The recording parameters are requested
-    //  2. Recording is started
-    //  3. WindowManager specifies the order/position of Meshes to be recorded
-    //  4. Recording is stopped
+    //  1. The recording parameters are requested.
+    //  2. Recording is started.
+    //  3. WindowManager specifies the order/position of Meshes
+    //     to be recorded.
+    //  4. Recording is stopped.
     //
     // This *does not* present anything to the screen
     fn record_next_frame(&mut self) {
@@ -307,13 +313,19 @@ impl WindowManager {
         match task {
             Task::begin_frame => self.begin_frame(),
             Task::end_frame => self.end_frame(),
-            Task::set_background_from_mem(sb) => {
+            Task::sbfm(sb) => {
                 self.set_background_from_mem(
                     sb.pixels.as_ref(),
                     sb.width,
                     sb.height,
                 );
             },
+            Task::cw(cw) => {
+                self.create_window(cw);
+            },
+            Task::uwcfm(uw) => {
+                self.update_window_contents_from_mem(uw);
+            }
         };
     }
 
@@ -331,9 +343,7 @@ impl Drop for WindowManager {
     fn drop(&mut self) {
         // Free all meshes in each app
         for a in self.apps.iter_mut() {
-            for mesh in a.meshes.iter_mut() {
-                mesh.destroy(&self.rend);
-            }
+            a.mesh.as_ref().unwrap().destroy(&self.rend);
         }
         self.titlebar.bar.destroy(&self.rend);
         self.titlebar.dot.destroy(&self.rend);

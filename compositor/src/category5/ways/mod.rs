@@ -1,15 +1,20 @@
 // Wayland binding fun fun fun
 //
-// put this in the bindings
-//   #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 //
 // Austin Shafer - 2019
 #![allow(dead_code, unused_variables, non_camel_case_types)]
 #[allow(non_upper_case_globals)]
 mod wayland_bindings;
 use wayland_bindings::*;
+use crate::category5::utils::MemImage;
+
+pub mod task;
+pub use task::*;
 
 use std::cell::RefCell;
+use super::vkcomp::wm;
+
+use std::sync::mpsc::{Sender,Receiver};
 
 // Gets a private struct from a wl_resource
 //
@@ -56,13 +61,15 @@ macro_rules! get_userdata {
 // generated docs of wayland_bindings.
 static SURFACE_INTERFACE: wl_surface_interface = wl_surface_interface {
     destroy: None,
-    // Attaches a wl_buffer to the surface which represents the window contents
+    // Attaches a wl_buffer to the surface which represents
+    // the window contents.
     attach: Some(Surface::attach),
     damage: None,
     frame: None,
     set_opaque_region: None,
     set_input_region: None,
-    // Gives the compositor "ownership" of the current buffer, for presentation
+    // Gives the compositor "ownership" of the current buffer,
+    // for presentation.
     commit: Some(Surface::commit),
     set_buffer_transform: None,
     set_buffer_scale: None,
@@ -76,6 +83,7 @@ static SURFACE_INTERFACE: wl_surface_interface = wl_surface_interface {
 // interface, not this. A surface will have a buffer attached to it which
 // will be displayed to the client when it is committed.
 pub struct Surface {
+    s_id: u64, // The id of the window in the renderer
     // A resource representing a wl_surface. (the 'real' surface)
     s_surface: *mut wl_resource,
     // The currently attached buffer. Will be displayed on commit
@@ -87,6 +95,7 @@ pub struct Surface {
     // the location of the surface in our compositor
     s_x: u32,
     s_y: u32,
+    s_wm_tx: Sender<wm::task::Task>,
 }
 
 impl Surface {
@@ -117,6 +126,25 @@ impl Surface {
         if !surface.s_attached_buffer.is_none() {
             surface.s_committed_buffer = surface.s_attached_buffer;
         }
+
+        unsafe {
+            let shm_buff = wl_shm_buffer_get(surface
+                                             .s_committed_buffer.unwrap());
+            let width = wl_shm_buffer_get_width(shm_buff) as usize;
+            let height = wl_shm_buffer_get_height(shm_buff) as usize;
+            // this is the raw data
+            let fb_raw = wl_shm_buffer_get_data(shm_buff)
+                as *mut _ as *mut u8;
+            let fb = MemImage::new(fb_raw, width, height);
+
+            surface.s_wm_tx.send(
+                wm::task::Task::update_window_contents_from_mem(
+                    surface.s_id, // ID of the new window
+                    fb,
+                    width, height, // window dimensions
+                )
+            ).unwrap();
+        }
     }
 
     pub extern "C" fn delete(resource: *mut wl_resource) {
@@ -126,13 +154,21 @@ impl Surface {
 
     // create a new visible surface at coordinates (x,y)
     // from the specified wayland resource
-    pub fn new(res: *mut wl_resource, x: u32, y: u32) -> Surface {
+    pub fn new(id: u64,
+               res: *mut wl_resource,
+               wm_tx: Sender<wm::task::Task>,
+               x: u32,
+               y: u32)
+               -> Surface
+    {
         Surface {
+            s_id: id,
             s_surface: res,
             s_attached_buffer: None,
             s_committed_buffer: None,
             s_x: x,
             s_y: y,
+            s_wm_tx: wm_tx,
         }
     }
 }
@@ -159,18 +195,23 @@ pub struct Compositor {
     c_clients: Vec<RefCell<u32>>,
     // A list of surfaces which have been handed out to clients
     c_surfaces: Vec<RefCell<Surface>>,
+    c_wm_tx: Sender<wm::task::Task>,
+    c_rx: Receiver<Task>,
+    c_next_window_id: u64,
 }
 
 // wlci - wl compositor interface
 //
 // our implementation of wl_compositor_interface. The compositor singleton
 // kicks off the window creation process by creating a surface
-static COMPOSITOR_INTERFACE: wl_compositor_interface = wl_compositor_interface {
-    // called asynchronously by the client when they want to request a surface
-    create_surface: Some(Compositor::create_surface),
-    // wl_region represent an opaque input region in the surface
-    create_region: Some(Compositor::create_region),
-};
+static COMPOSITOR_INTERFACE: wl_compositor_interface =
+    wl_compositor_interface {
+        // called asynchronously by the client when they
+        // want to request a surface
+        create_surface: Some(Compositor::create_surface),
+        // wl_region represent an opaque input region in the surface
+        create_region: Some(Compositor::create_region),
+    };
 
 impl Compositor {
 
@@ -180,18 +221,22 @@ impl Compositor {
     // and we can set our implementation so that surfaces/regions can be
     // created.
     // the data arg is added as the private data for the implementation.
-    pub extern "C" fn bind_compositor_callback(client: *mut wl_client,
-                                               data: *mut ::std::os::raw::c_void,
-                                               version: u32,
-                                               id: u32)
+    pub extern "C" fn bind_compositor_callback(
+        client: *mut wl_client,
+        data: *mut ::std::os::raw::c_void,
+        version: u32,
+        id: u32)
     {
         println!("Binding the compositor interface");
 
         unsafe {
-            let res = wl_resource_create(client, &wl_compositor_interface, 1, id);
+            let res = wl_resource_create(
+                client, &wl_compositor_interface, 1, id
+            );
             wl_resource_set_implementation(
                 res,
-                &COMPOSITOR_INTERFACE as *const _ as *const std::ffi::c_void,
+                &COMPOSITOR_INTERFACE
+                    as *const _ as *const std::ffi::c_void,
                 data, // this will be the Compositor *mut self
                 None
             );
@@ -204,8 +249,8 @@ impl Compositor {
     // our surface interface. It will be called next when the surface
     // is bound.
     pub extern "C" fn create_surface(client: *mut wl_client,
-                                        resource: *mut wl_resource,
-                                        id: u32)
+                                     resource: *mut wl_resource,
+                                     id: u32)
     {
         println!("Creating surface");
         // get the compositor from the resource
@@ -225,17 +270,34 @@ impl Compositor {
         let res = unsafe {
             wl_resource_create(client, &wl_surface_interface, 3, id)
         };
-        
+
+        // Ask the window manage to create a new window
+        // without contents
+        comp.c_next_window_id += 1;
+        comp.c_wm_tx.send(
+            wm::task::Task::create_window(
+                comp.c_next_window_id, // ID of the new window
+                0, 0, // position
+                // No texture yet, it will be added by Surface
+                64, 64, // window dimensions
+            )
+        ).unwrap();
+
         // create an entry in the surfaces list
-        comp.c_surfaces.push(RefCell::new(Surface::new(res, 0, 0)));
+        comp.c_surfaces.push(RefCell::new(Surface::new(
+            comp.c_next_window_id,
+            res,
+            comp.c_wm_tx.clone(),
+            0, 0
+        )));
         // get a pointer to the refcell
         let entry_index = comp.c_surfaces.len() - 1;
         let surface_cell = &mut comp.c_surfaces[entry_index];
 
         unsafe {
-            // set the implementation for the wl_surface interface. This means
-            // passing our new surface as the user data field. The surface callbacks
-            // will need it.
+            // set the implementation for the wl_surface interface.
+            // This means passing our new surface as the user data 
+            // field. The surface callbacks will need it.
             wl_resource_set_implementation(
                 res, // the surfaces resource
                 &SURFACE_INTERFACE as *const _ as *const std::ffi::c_void,
@@ -248,8 +310,8 @@ impl Compositor {
     //
     // 
     pub extern "C" fn create_region(client: *mut wl_client,
-                                       resource: *mut wl_resource,
-                                       id: u32)
+                                    resource: *mut wl_resource,
+                                    id: u32)
     {
         println!("Creating region");
     }
@@ -293,12 +355,16 @@ impl Compositor {
 
     // Returns a new Compositor struct
     //
-    // This creates a new wayland compositor, setting up all the needed resources
-    // for the struct. It will create a wl_display, initialize a new socket,
-    // create the client/surface lists, and create a compositor global resource.
+    // This creates a new wayland compositor, setting up all 
+    // the needed resources for the struct. It will create a
+    // wl_display, initialize a new socket, create the client/surface
+    //  lists, and create a compositor global resource.
+    //
     // This kicks off the global callback chain, starting with
     //    Compositor::bind_compositor_callback
-    pub fn new() -> Box<Compositor> {
+    pub fn new(rx: Receiver<Task>, wm_tx: Sender<wm::task::Task>)
+               -> Box<Compositor>
+    {
         unsafe {
             let display = wl_display_create();
             // created at /var/run/user/1001/wayland-0
@@ -315,6 +381,9 @@ impl Compositor {
                 c_event_loop_fd: loop_fd,
                 c_clients: Vec::new(),
                 c_surfaces: Vec::new(),
+                c_rx: rx,
+                c_wm_tx: wm_tx,
+                c_next_window_id: 1,
             });
 
             // create interface for our compositor
@@ -330,6 +399,17 @@ impl Compositor {
             );
 
             return comp;
+        }
+    }
+
+    pub fn worker_thread(&mut self) {
+        loop {
+            // wait for the next event
+            self.event_loop_dispatch();
+            self.flush_clients();
+
+            //let task = self.rx.recv().unwrap();
+            //self.process_task(&task);
         }
     }
 }

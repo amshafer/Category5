@@ -32,6 +32,9 @@ use display::Display;
 pub mod mesh;
 use mesh::Mesh;
 
+use super::App;
+use crate::category5::utils::MemImage;
+
 // This is the reference data for a normal quad
 // that will be used to draw client windows.
 static QUAD_DATA: [VertData; 4] = [
@@ -852,6 +855,81 @@ impl Renderer {
         );
     }
 
+    pub fn update_app_contents_from_mem(&mut self,
+                                        app: &App,
+                                        data: &MemImage)
+    {
+        app.mesh.as_ref().map(|mesh| {
+            unsafe {
+                self.update_image_contents_from_mem(
+                    mesh.image,
+                    mesh.image_resolution.width,
+                    mesh.image_resolution.height,
+                    data.as_slice(),
+                );
+            }
+        });
+    }
+
+    unsafe fn update_image_contents_from_mem<T: Copy>(&mut self,
+                                                      image: vk::Image,
+                                                      width: u32,
+                                                      height: u32,
+                                                      data: &[T])
+    {
+        // The image is created with DEVICE_LOCAL memory types,
+        // so we need to make a staging buffer to copy the data from.
+        let (buffer, buf_mem) = self.create_buffer(
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            vk::SharingMode::EXCLUSIVE,
+            vk::MemoryPropertyFlags::HOST_VISIBLE
+                | vk::MemoryPropertyFlags::HOST_COHERENT,
+            &data,
+        );
+
+        // allocate a new cbuf for us to work with
+        let new_cbuf = Renderer::create_command_buffers(
+            &self.dev,
+            self.pool,
+            // only get one
+            1)[0];
+
+        // now perform the copy
+        self.cbuf_onetime(
+            new_cbuf,
+            self.present_queue,
+            &[], // wait stages
+            &[], // wait semas
+            &[], // signal semas
+            |rend, cbuf| {
+                // transition our image to be a transfer destination
+                rend.transition_image_layout(
+                    image,
+                    cbuf,
+                    vk::ImageLayout::UNDEFINED,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                );
+
+                rend.copy_buf_to_img(cbuf,
+                                     buffer,
+                                     image,
+                                     width,
+                                     height);
+
+                // transition back to the optimal color format
+                rend.transition_image_layout(
+                    image,
+                    cbuf,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                );
+            }
+        );
+
+        self.dev.destroy_buffer(buffer, None);
+        self.dev.free_memory(buf_mem, None);
+    }
+
     // Create a new image, and fill it with `data`
     //
     // This is meant for loading a texture into an image.
@@ -878,55 +956,12 @@ impl Renderer {
                                                             aspect_flags,
                                                             mem_flags);
 
-        // The image is created with DEVICE_LOCAL memory types, so we need
-        // to make a staging buffer to copy the data from.
-        let (buffer, buf_mem) = self.create_buffer(
-            vk::BufferUsageFlags::TRANSFER_SRC,
-            vk::SharingMode::EXCLUSIVE,
-            vk::MemoryPropertyFlags::HOST_VISIBLE
-                | vk::MemoryPropertyFlags::HOST_COHERENT,
-            &data,
+        self.update_image_contents_from_mem(
+            image,
+            resolution.width,
+            resolution.height,
+            data,
         );
-
-        // allocate a new cbuf for us to work with
-        let new_cbuf = Renderer::create_command_buffers(&self.dev,
-                                                        self.pool,
-                                                        1)[0]; // only get one
-
-        // now perform the copy
-        self.cbuf_onetime(
-            new_cbuf,
-            self.present_queue,
-            &[], // wait stages
-            &[], // wait semas
-            &[], // signal semas
-            |rend, cbuf| {
-                // transition our image to be a transfer destination
-                rend.transition_image_layout(
-                    image,
-                    cbuf,
-                    vk::ImageLayout::UNDEFINED,
-                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                );
-
-                rend.copy_buf_to_img(cbuf,
-                                     buffer,
-                                     image,
-                                     resolution.width,
-                                     resolution.height);
-
-                // transition back to the optimal color format
-                rend.transition_image_layout(
-                    image,
-                    cbuf,
-                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                );
-            }
-        );
-
-        self.dev.destroy_buffer(buffer, None);
-        self.dev.free_memory(buf_mem, None);
 
         (image, view, img_mem)
     }
@@ -2134,23 +2169,25 @@ impl Renderer {
             let mem_props = Renderer::get_pdev_mem_properties(&self.inst,
                                                               self.pdev);
 
-            // This image will back the contents of the on-screen client window.
-            //
+            // This image will back the contents of the on-screen
+            // client window.
             // TODO: this should eventually just use the image reported from
             // wayland.
             let (image, view, img_mem) = self.create_image_with_contents(
                 &mem_props,
                 &tex_res,
                 vk::Format::R8G8B8A8_SRGB,
-                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                vk::ImageUsageFlags::SAMPLED
+                    | vk::ImageUsageFlags::TRANSFER_DST,
                 vk::ImageAspectFlags::COLOR,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
                 texture,
             );
 
             if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
-                // each mesh holds a set of descriptors that it will bind before
-                // drawing itself. This set holds the image sampler
+                // each mesh holds a set of descriptors that it will
+                // bind before drawing itself. This set holds the
+                // image sampler.
                 //
                 // right now they only hold an image sampler
                 let (handle, descriptors) = ctx.desc_pool.allocate_samplers(
@@ -2173,6 +2210,10 @@ impl Renderer {
                     image: image,
                     image_view: view,
                     image_mem: img_mem,
+                    image_resolution: vk::Extent2D {
+                        width: tex_width,
+                        height: tex_height,
+                    },
                     pool_handle: handle,
                     sampler_descriptors: descriptors,
                 });
