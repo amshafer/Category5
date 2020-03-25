@@ -32,9 +32,9 @@ impl DescPool {
 
     // Create an image sampler layout
     //
-    // Descriptor layouts specify the number and characteristics of descriptor
-    // sets which will be made available to the pipeline through the pipeline
-    // layout.
+    // Descriptor layouts specify the number and characteristics
+    // of descriptor sets which will be made available to the
+    // pipeline through the pipeline layout.
     fn create_layout(rend: &Renderer) -> vk::DescriptorSetLayout {
         // supplies `descriptor_mesh_layouts`
         // There will be a sampler for each window
@@ -43,7 +43,8 @@ impl DescPool {
         // so the shader can reference it as set 1
         let bindings=[vk::DescriptorSetLayoutBinding::builder()
                       .binding(1)
-                      .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                      .descriptor_type(
+                          vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                       .stage_flags(vk::ShaderStageFlags::FRAGMENT)
                       .descriptor_count(1)
                       .build()

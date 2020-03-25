@@ -12,6 +12,8 @@ use std::ops::Deref;
 // is used to represent shm buffers from wayland.
 pub struct MemImage {
     ptr: *mut u8,
+    // size of the pixel elements, in bytes
+    element_size: usize,
     width: usize,
     height: usize,
 }
@@ -20,17 +22,25 @@ impl MemImage {
     pub fn as_slice(&self) -> &[u8] {
         if !self.ptr.is_null() {
             unsafe {
-                return slice::from_raw_parts(self.ptr,
-                                             self.width * self.height);
+                return slice::from_raw_parts(
+                    self.ptr,
+                    self.width * self.height * self.element_size,
+                );
             }
         } else {
             panic!("Trying to dereference null pointer");
         }
     }
 
-    pub fn new(ptr: *mut u8, width: usize, height: usize) -> MemImage {
+    pub fn new(ptr: *mut u8,
+               element_size: usize,
+               width: usize,
+               height: usize)
+               -> MemImage
+    {
         MemImage {
             ptr: ptr,
+            element_size: element_size,
             width: width,
             height: height,
         }

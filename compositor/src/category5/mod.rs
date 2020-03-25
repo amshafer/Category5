@@ -25,12 +25,12 @@ pub struct Category5 {
     //
     // Category5 - Graphical desktop compositor
     // ways::Compositor - wayland protocol compositor object 
-    wc: thread::JoinHandle<()>,
+    wc: Option<thread::JoinHandle<()>>,
     wc_tx: Sender<ways::task::Task>,
     // send channel to give the wayland subsystem work
     // wc_tx: Sender<ways::Task>,
     // The window manager (vulkan rendering backend)
-    wm: thread::JoinHandle<()>,
+    wm: Option<thread::JoinHandle<()>>,
     wm_tx: Sender<wm::task::Task>,
 }
 
@@ -44,17 +44,17 @@ impl Category5 {
             // Get the wayland compositor
             // Note that the wayland compositor + vulkan renderer is the
             // complete compositor
-            wc: thread::spawn(|| {
+            wc: Some(thread::spawn(|| {
                 let mut wc = Compositor::new(wc_rx, wm_tx_clone);
                 wc.worker_thread();
-            }),
+            })),
             wc_tx: wc_tx,
             // creates a context, swapchain, images, and others
             // initialize the pipeline, renderpasses, and display engine
-            wm: thread::spawn(|| {
+            wm: Some(thread::spawn(|| {
                 let mut wm = WindowManager::new(wm_rx);
                 wm.worker_thread();
-            }),
+            })),
             wm_tx: wm_tx,
         }
     }
@@ -78,15 +78,7 @@ impl Category5 {
 
     // This is the main loop of the entire system
     pub fn run_forever(&mut self) {
-        loop {
-            // draw a frame to be displayed
-            self.wm_tx.send(
-                wm::task::Task::begin_frame
-            ).unwrap();
-            // present our frame to the screen
-            self.wm_tx.send(
-                wm::task::Task::end_frame
-            ).unwrap();
-        }
+        self.wc.take().unwrap().join().ok();
+        self.wm.take().unwrap().join().ok();
     }
 }

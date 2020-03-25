@@ -135,7 +135,8 @@ impl Surface {
             // this is the raw data
             let fb_raw = wl_shm_buffer_get_data(shm_buff)
                 as *mut _ as *mut u8;
-            let fb = MemImage::new(fb_raw, width, height);
+            // The size of pixels is 4 bytes
+            let fb = MemImage::new(fb_raw, 4, width, height);
 
             surface.s_wm_tx.send(
                 wm::task::Task::update_window_contents_from_mem(

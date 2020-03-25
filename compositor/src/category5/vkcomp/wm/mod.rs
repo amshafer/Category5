@@ -143,6 +143,10 @@ impl WindowManager {
     // tex_res is the resolution of `texture`
     // window_res is the size of the on screen window
     fn create_window(&mut self, info: &CreateWindow) {
+        println!("wm: Creating new window of size {}x{}",
+                 info.window_width, info.window_height,
+        );
+
         self.apps.insert(0, App {
             id: info.id,
             mesh: None,
@@ -160,6 +164,10 @@ impl WindowManager {
     fn update_window_contents_from_mem(&mut self,
                                        info: &UpdateWindowContentsFromMem)
     {
+        println!("wm: Updating app mesh using texture of size {}x{}",
+                 info.width, info.height,
+        );
+
         // Find the app corresponding to that window id
         let app = match self.apps
             .iter_mut()
@@ -249,19 +257,21 @@ impl WindowManager {
         }
 
         // Draw the background last, painter style
-        self.background.as_ref().unwrap().record_draw(
-            &self.rend,
-            params,
-            &PushConstants {
-                order: 0.99999, // make it the max depth
-                // size of the window on screen
-                x: 0,
-                y: 0,
-                // align it at the top left
-                width: self.rend.resolution.width as f32,
-                height: self.rend.resolution.height as f32,
-            },
-        );
+        self.background.as_ref().map(|back| {
+            back.record_draw(
+                &self.rend,
+                params,
+                &PushConstants {
+                    order: 0.99999, // make it the max depth
+                    // size of the window on screen
+                    x: 0,
+                    y: 0,
+                    // align it at the top left
+                    width: self.rend.resolution.width as f32,
+                    height: self.rend.resolution.height as f32,
+                },
+            );
+        });
     }
 
     // A helper which records the cbuf for the next frame
@@ -331,6 +341,9 @@ impl WindowManager {
 
     pub fn worker_thread(&mut self) {
         loop {
+            self.begin_frame();
+            self.end_frame();
+
             let task = self.rx.recv().unwrap();
             self.process_task(&task);
         }

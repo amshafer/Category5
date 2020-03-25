@@ -2334,6 +2334,7 @@ impl Drop for Renderer {
                     ctx.descriptor_uniform_layout, None
                 );
 
+                self.dev.destroy_descriptor_pool(ctx.uniform_pool, None);
                 ctx.desc_pool.destroy(&self);
 
                 self.dev.destroy_pipeline_layout(ctx.pipeline_layout, None);
