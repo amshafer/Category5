@@ -51,6 +51,7 @@ pub struct UpdateWindowContentsFromMem {
 pub enum Task {
     begin_frame,
     end_frame,
+    close_window(u64),
     sbfm(SetBackgroundFromMem),
     cw(CreateWindow),
     uwcfm(UpdateWindowContentsFromMem),

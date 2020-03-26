@@ -149,8 +149,11 @@ impl Surface {
     }
 
     pub extern "C" fn delete(resource: *mut wl_resource) {
-        //let mut surface = get_userdata!(resource, Surface).unwrap();
-        // Do nothing for now
+        let surface = get_userdata!(resource, Surface).unwrap();
+
+        surface.s_wm_tx.send(
+            wm::task::Task::close_window(surface.s_id)
+        ).unwrap();
     }
 
     // create a new visible surface at coordinates (x,y)

@@ -34,6 +34,14 @@ struct Titlebar {
 pub struct App {
     // This id uniquely identifies the App
     id: u64,
+    // Because the images for meshes are used for both
+    // buffers in a double buffer system, when an App is
+    // deleted we need to avoid recording it in the next
+    // frame's cbuf.
+    //
+    // When this flag is set, the we will not be recorded
+    // and will instead be destroyed
+    marked_for_death: bool,
     // This is the set of geometric objects in the application
     mesh: Option<Mesh>,
     // The position and size of the window
@@ -149,6 +157,7 @@ impl WindowManager {
 
         self.apps.insert(0, App {
             id: info.id,
+            marked_for_death: false,
             mesh: None,
             // TODO: properly track window orderings
             push: PushConstants {
@@ -207,6 +216,11 @@ impl WindowManager {
         // Each app should have one or more windows,
         // all of which we need to draw.
         for a in self.apps.iter() {
+            // If this window has been closed, ignore it
+            if a.marked_for_death {
+                continue;
+            }
+
             // The bar should be a percentage of the screen height
             let barsize =
                 self.rend.resolution.height as f32 * 0.02;
@@ -274,6 +288,31 @@ impl WindowManager {
         });
     }
 
+    fn close_window(&mut self, id: u64) {
+        // if it exists, mark it for death
+        self.apps.iter_mut().find(|app| app.id == id).map(|app| {
+            app.marked_for_death = true;
+        });
+    }
+
+    // Remove any apps marked for death
+    fn reap_dead_windows(&mut self) {
+        // Take a reference out here to avoid making the
+        // borrow checker angry
+        let rend = &self.rend;
+
+        // Only retain alive windows in the array
+        self.apps.retain(|app| {
+                if app.marked_for_death {
+                    // Destroy the rendering resources
+                    app.mesh.as_ref().map(|mesh| mesh.destroy(rend));
+
+                    return false;
+                }
+                return true;
+            });
+    }
+
     // A helper which records the cbuf for the next frame
     //
     // Recording a frame follows this general pattern:
@@ -323,6 +362,7 @@ impl WindowManager {
         match task {
             Task::begin_frame => self.begin_frame(),
             Task::end_frame => self.end_frame(),
+            Task::close_window(id) => self.close_window(*id),
             Task::sbfm(sb) => {
                 self.set_background_from_mem(
                     sb.pixels.as_ref(),
@@ -342,6 +382,7 @@ impl WindowManager {
     pub fn worker_thread(&mut self) {
         loop {
             self.begin_frame();
+            self.reap_dead_windows();
             self.end_frame();
 
             let task = self.rx.recv().unwrap();
