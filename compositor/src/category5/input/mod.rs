@@ -147,8 +147,16 @@ impl Input {
             // TODO: need to fix this wrapper
 	    let ev = self.libin.next();
             match ev {
-                Some(Event::Pointer(PointerEvent::Motion(m))) =>
-                    println!("moving mouse: {:?}", m),
+                Some(Event::Pointer(PointerEvent::Motion(m))) => {
+                    println!("moving mouse by ({}, {})",
+                             m.dx(), m.dy());
+                    self.wm_tx.send(
+                        wm::task::Task::move_cursor(
+                            m.dx(),
+                            m.dy(),
+                        )
+                    ).unwrap();
+                },
                 Some(e) => println!("Event: {:?}", e),
                 None => (),
             };

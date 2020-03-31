@@ -19,8 +19,8 @@ pub struct SetBackgroundFromMem {
 }
 
 pub struct MoveCursor {
-    pub x: u32,
-    pub y: u32,
+    pub x: f64,
+    pub y: f64,
 }
 
 // Window creation parameters
@@ -57,6 +57,7 @@ pub enum Task {
     begin_frame,
     end_frame,
     close_window(u64),
+    mc(MoveCursor),
     sbfm(SetBackgroundFromMem),
     cw(CreateWindow),
     uwcfm(UpdateWindowContentsFromMem),
@@ -72,6 +73,13 @@ impl Task {
             pixels: tex,
             width: tex_width,
             height: tex_height,
+        })
+    }
+
+    pub fn move_cursor(x: f64, y: f64) -> Task {
+        Task::mc(MoveCursor {
+            x: x,
+            y: y,
         })
     }
 
