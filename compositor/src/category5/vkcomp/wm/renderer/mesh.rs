@@ -18,6 +18,7 @@ use ash::vk;
 // meshes are created with Renderer::create_mesh. The renderer is in
 // charge of creating/destroying the meshes since all of the mesh
 // resources are created from the Renderer.
+#[derive(Debug)]
 pub struct Mesh {
     // image containing the contents of the window
     pub image: vk::Image,
@@ -83,8 +84,8 @@ impl Mesh {
                     0, // offset
                     // get a &[u8] from our struct
                     // TODO: This should go. It is showing up as a noticeable
-                    // hit in profiling. Idk if there is a safe way to replace
-                    // it.
+                    // hit in profiling. Idk if there is a safe way to
+                    // replace it.
                     bincode::serialize(push).unwrap().as_slice(),
                 );
 

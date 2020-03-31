@@ -18,6 +18,11 @@ pub struct SetBackgroundFromMem {
     pub height: u32,
 }
 
+pub struct MoveCursor {
+    pub x: u32,
+    pub y: u32,
+}
+
 // Window creation parameters
 //
 // Similar to how arguments are passed in vulkan, here

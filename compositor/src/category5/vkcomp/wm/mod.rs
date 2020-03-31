@@ -65,8 +65,10 @@ pub struct WindowManager {
     rx: Receiver<Task>,
     // This is the set of applications in this scene
     apps: Vec<App>,
-    //  The background picture of the desktop
+    // The background picture of the desktop
     background: Option<Mesh>,
+    // Image representing the software cursor
+    cursor: Option<Mesh>,
     // Title bar to draw above the windows
     titlebar: Titlebar,
 }
@@ -103,6 +105,18 @@ impl WindowManager {
         }
     }
 
+    fn get_default_cursor(rend: &mut Renderer) -> Option<Mesh> {
+        let img = image::open("../cursor.png").unwrap().to_rgba();
+        let pixels: Vec<u8> = img.into_vec();
+
+        rend.create_mesh(
+            // TODO: calculate correct cursor size
+            pixels.as_slice(),
+            64,
+            64,
+        )
+    }
+
     // Create a new WindowManager
     //
     // This will create all the graphical resources needed for
@@ -116,6 +130,7 @@ impl WindowManager {
 
         WindowManager {
             titlebar: WindowManager::get_default_titlebar(&mut rend),
+            cursor: WindowManager::get_default_cursor(&mut rend),
             rend: rend,
             apps: Vec::new(),
             background: None,
@@ -283,6 +298,23 @@ impl WindowManager {
                     // align it at the top left
                     width: self.rend.resolution.width as f32,
                     height: self.rend.resolution.height as f32,
+                },
+            );
+        });
+
+        println!("Drawing cursor: {:?}", self.cursor);
+        self.cursor.as_ref().map(|cursor| {
+            cursor.record_draw(
+                &self.rend,
+                params,
+                &PushConstants {
+                    order: 0.0001, // make it the min depth
+                    // put it in the center
+                    x: 1,
+                    y: 1,
+                    // TODO: calculate cursor size
+                    width: 16.0,
+                    height: 16.0,
                 },
             );
         });
