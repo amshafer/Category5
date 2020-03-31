@@ -13,7 +13,9 @@ use renderer::mesh::Mesh;
 pub mod task;
 use task::*;
 
+use std::sync::mpsc;
 use std::sync::mpsc::{Receiver};
+use std::time::Duration;
 
 // This consolidates the multiple resources needed
 // to represent a titlebar
@@ -421,12 +423,26 @@ impl WindowManager {
 
     pub fn worker_thread(&mut self) {
         loop {
+            // Block for any new tasks
+            let task = self.rx.recv().unwrap();
+            self.process_task(&task);
+
+            // We have already done one task, but the previous
+            // frame might not be done. We should keep processing
+            // tasks until it is ready
+            while !self.rend.try_get_next_swapchain_image() {
+                match self.rx.recv_timeout(Duration::from_millis(1)) {
+                    Ok(task) => self.process_task(&task),
+                    // If it times out just continue
+                    Err(mpsc::RecvTimeoutError::Timeout) => (),
+                    Err(err) =>
+                        panic!("Error while waiting for tasks: {:?}", err),
+                };
+            }
+
             self.begin_frame();
             self.reap_dead_windows();
             self.end_frame();
-
-            let task = self.rx.recv().unwrap();
-            self.process_task(&task);
         }
     }
 }

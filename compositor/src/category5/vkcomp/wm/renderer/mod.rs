@@ -2045,10 +2045,6 @@ impl Renderer {
                 index_buffer: ibuf,
                 index_buffer_memory: imem,
             }));
-
-            // We need to get the next swapchain image first so that
-            // the semaphore can be signaled
-            self.get_next_swapchain_image_index();
         }
     }
 
@@ -2241,19 +2237,27 @@ impl Renderer {
 
     // Update self.current_image with the swapchain image to render to
     //
-    // This index should be used by `start_frame`
-    fn get_next_swapchain_image_index(&mut self) {
+    // Returns if the next image index was successfully obtained
+    // false means try again later, the next image is not ready
+    pub fn try_get_next_swapchain_image(&mut self) -> bool {
         unsafe {
-            let (idx, _) = self.swapchain_loader.acquire_next_image(
+            match self.swapchain_loader.acquire_next_image(
                 self.swapchain,
-                std::u64::MAX,
+                0, // use a zero timeout to immediately get the state
                 self.present_sema, // signals presentation
-                vk::Fence::null(),
-            ).unwrap();
-
-            // TODO: check if the surface is suboptimal and recreate
-
-            self.current_image = idx;
+                vk::Fence::null())
+            {
+                // TODO: handle suboptimal surface regeneration
+                Ok((index, _)) => {
+                    self.current_image = index;
+                    return true;
+                },
+                Err(vk::Result::NOT_READY) => return false,
+                Err(vk::Result::TIMEOUT) => return false,
+                // the call did not succeed
+                Err(err) =>
+                    panic!("Could not acquire next image: {:?}", err),
+            };
         }
     }
 
@@ -2293,9 +2297,6 @@ impl Renderer {
                 .queue_present(self.present_queue, &info)
                 .unwrap();
         }
-
-        // Now that we have presented the frame, get a new one
-        self.get_next_swapchain_image_index();
     }
 }
 
