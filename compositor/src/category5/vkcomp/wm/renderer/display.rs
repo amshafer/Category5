@@ -134,10 +134,12 @@ impl Display {
             .unwrap();
 
         for (i,p) in disp_props.iter().enumerate() {
-            println!("{} display: {:?}", i, CStr::from_ptr(p.display_name));
+            println!("{} display: {:?}", i,
+                     CStr::from_ptr(p.display_name));
         }
 
-        // The available modes for the display. This holds the resolution.
+        // The available modes for the display. This holds
+        // the resolution.
         let mode_props = loader
             .get_display_mode_properties(pdev,
                                          disp_props[0].display)
@@ -188,7 +190,8 @@ impl Display {
                 mode,
                 i as u32,
             ).unwrap();
-            println!("Plane {}: supports alpha {:?}", i, caps.supported_alpha);
+            println!("Plane {}: supports alpha {:?}",
+                     i, caps.supported_alpha);
         }
 
         // Finally we can create our surface to render to. From this
