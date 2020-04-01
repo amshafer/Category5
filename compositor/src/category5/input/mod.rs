@@ -8,7 +8,7 @@
 // external input crate.
 extern crate input;
 extern crate udev;
-extern crate libc;
+extern crate kqueue;
 
 use super::vkcomp::wm;
 use super::ways;
@@ -19,10 +19,12 @@ use input::{Libinput,LibinputInterface};
 use input::event::Event;
 use input::event::pointer::PointerEvent;
 
+use kqueue::Watcher;
+
 use std::fs::{File,OpenOptions};
 use std::path::Path;
 use std::os::unix::io::RawFd;
-use std::os::unix::io::{IntoRawFd,FromRawFd};
+use std::os::unix::io::{AsRawFd,IntoRawFd,FromRawFd};
 use std::os::unix::fs::OpenOptionsExt;
 
 use std::mem::drop;
@@ -138,28 +140,42 @@ impl Input {
     }
 
     pub fn worker_thread(&mut self) {
-        loop {
-            // dispatch will grab the latest available data
-            // from the devices and perform libinputs internal
-            // (time sensitive) operations on them
-	    self.libin.dispatch().unwrap();
+        // Create a new kqueue
+        let mut kqueue = Watcher::new().unwrap();
+        // Add a file descriptor to the watchlist
+        kqueue.add_fd(
+            self.libin.as_raw_fd(),
+            kqueue::EventFilter::EVFILT_READ,
+            kqueue::FilterFlag::empty(),
+        ).unwrap();
+        // This calls kevent(2) to let the kernel know that
+        // we are watching everything we have added
+        while kqueue.watch().is_ok() {
+            // next will call kevent(2), but this time to get
+            // any events that have happened. This blocks
+            for _kev in kqueue.iter().next() {
+                // dispatch will grab the latest available data
+                // from the devices and perform libinputs internal
+                // (time sensitive) operations on them
+	        self.libin.dispatch().unwrap();
 
-            // TODO: need to fix this wrapper
-	    let ev = self.libin.next();
-            match ev {
-                Some(Event::Pointer(PointerEvent::Motion(m))) => {
-                    println!("moving mouse by ({}, {})",
-                             m.dx(), m.dy());
-                    self.wm_tx.send(
-                        wm::task::Task::move_cursor(
-                            m.dx(),
-                            m.dy(),
-                        )
-                    ).unwrap();
-                },
-                Some(e) => println!("Event: {:?}", e),
-                None => (),
-            };
+                // TODO: need to fix this wrapper
+	        let ev = self.libin.next();
+                match ev {
+                    Some(Event::Pointer(PointerEvent::Motion(m))) => {
+                        println!("moving mouse by ({}, {})",
+                                 m.dx(), m.dy());
+                        self.wm_tx.send(
+                            wm::task::Task::move_cursor(
+                                m.dx(),
+                                m.dy(),
+                            )
+                        ).unwrap();
+                    },
+                    Some(e) => println!("Event: {:?}", e),
+                    None => (),
+                };
+            }
         }
     }
 }
