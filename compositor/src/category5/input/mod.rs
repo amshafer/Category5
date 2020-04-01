@@ -6,6 +6,7 @@
 // Note that when including this file you need to use
 // ::input::*, because the line below imports an
 // external input crate.
+#![allow(dead_code)]
 extern crate input;
 extern crate udev;
 extern crate kqueue;

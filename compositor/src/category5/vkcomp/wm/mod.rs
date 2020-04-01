@@ -443,7 +443,7 @@ impl WindowManager {
                         //
                         // It doesn't look like this bug will be fixed
                         // anytime soon
-                        thread::sleep(Duration::from_millis(1));
+                        thread::sleep(Duration::from_millis(8));
                     },
                     Err(err) =>
                         panic!("Error while waiting for tasks: {:?}", err),
