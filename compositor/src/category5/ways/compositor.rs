@@ -3,11 +3,13 @@
 //
 // Austin Shafer - 2019
 use super::wayland_bindings::*;
+use super::wayland_safe::*;
 use super::task::*;
 
 use super::surface::{Surface, SURFACE_INTERFACE};
 
 use std::cell::RefCell;
+use std::slice;
 use super::super::vkcomp::wm;
 
 use std::sync::mpsc::{Sender,Receiver};
@@ -52,8 +54,26 @@ static COMPOSITOR_INTERFACE: wl_compositor_interface =
         create_region: Some(Compositor::create_region),
     };
 
-impl Compositor {
+// get the compositor from the resource
+// Because the compositor is the caller of even_loop_dispatch we
+// cannot do the normal RefCell stuff in get_userdata. This requires
+// an unsafe workaround
+// private version of get_userdata
+macro_rules! get_comp_from_userdata {
+    // We need to know what type to use for the RefCell
+    ($resource:ident) => {
+        unsafe {
+            // use .as_mut to get an option<&> we can match against
+            match (wl_resource_get_user_data($resource) as *mut Compositor)
+                .as_mut() {
+                None => None,
+                Some(c) => Some(c),
+            }
+        }
+    }
+}
 
+impl Compositor {
     // Callback for our implementation of the wl_compositor inferface
     //
     // When the client binds a wl_compositor interface this will be called,
@@ -66,20 +86,22 @@ impl Compositor {
         version: u32,
         id: u32)
     {
+        let comp_ref = unsafe {
+            // Get a slice of one Compositor, then grab a ref
+            // to the first one
+            &mut slice::from_raw_parts_mut(data as *mut Compositor, 1)[0]
+        };
         println!("Binding the compositor interface");
 
-        unsafe {
-            let res = wl_resource_create(
-                client, &wl_compositor_interface, 1, id
-            );
-            wl_resource_set_implementation(
-                res,
-                &COMPOSITOR_INTERFACE
-                    as *const _ as *const std::ffi::c_void,
-                data, // this will be the Compositor *mut self
-                None
-            );
-        }
+        let res = ws_resource_create!(
+            client, wl_compositor_interface, 1, id
+        );
+        ws_resource_set_implementation(
+            res,
+            &COMPOSITOR_INTERFACE,
+            comp_ref,
+            None
+        );
     }
 
     // wl_compositor interface create surface
@@ -96,19 +118,10 @@ impl Compositor {
         // Because the compositor is the caller of even_loop_dispatch we
         // cannot do the normal RefCell stuff in get_userdata. This requires
         // an unsafe workaround
-        let comp = unsafe {
-            // use .as_mut to get an option<&> we can match against
-            match (wl_resource_get_user_data(resource)
-                   as *mut Compositor).as_mut() {
-                None => None,
-                Some(c) => Some(c),
-            }
-        }.unwrap();
+        let comp = get_comp_from_userdata!(resource).unwrap();
 
         // first get a new resource to represent our surface
-        let res = unsafe {
-            wl_resource_create(client, &wl_surface_interface, 3, id)
-        };
+        let res = ws_resource_create!(client, wl_surface_interface, 3, id);
 
         // Ask the window manage to create a new window
         // without contents
@@ -133,16 +146,15 @@ impl Compositor {
         let entry_index = comp.c_surfaces.len() - 1;
         let surface_cell = &mut comp.c_surfaces[entry_index];
 
-        unsafe {
-            // set the implementation for the wl_surface interface.
-            // This means passing our new surface as the user data 
-            // field. The surface callbacks will need it.
-            wl_resource_set_implementation(
-                res, // the surfaces resource
-                &SURFACE_INTERFACE as *const _ as *const std::ffi::c_void,
-                surface_cell as *mut _ as *mut std::ffi::c_void,
-                Some(Surface::delete));
-        }
+        // set the implementation for the wl_surface interface.
+        // This means passing our new surface as the user data
+        // field. The surface callbacks will need it.
+        ws_resource_set_implementation(
+            res, // the surfaces resource
+            &SURFACE_INTERFACE,
+            surface_cell,
+            Some(Surface::delete)
+        );
     }
 
     // wl_compositor interface create region
@@ -160,9 +172,7 @@ impl Compositor {
     // dispatches requests to event handlers.
     // this is non-blocking.
     pub fn event_loop_dispatch(&mut self) {
-        unsafe {
-            wl_event_loop_dispatch(self.c_event_loop, -1);
-        }
+        ws_event_loop_dispatch(self.c_event_loop, -1);
     }
 
     // Safe wrapper for wl_display_flush_clients
@@ -171,9 +181,7 @@ impl Compositor {
     // socket. Non-blocking, but will only send as much as
     // the socket can take at the moment.
     pub fn flush_clients(&mut self) {
-        unsafe {
-            wl_display_flush_clients(self.c_display);
-        }
+        ws_display_flush_clients(self.c_display);
     }
 
     // Present the surface for rendering
@@ -204,41 +212,39 @@ impl Compositor {
     pub fn new(rx: Receiver<Task>, wm_tx: Sender<wm::task::Task>)
                -> Box<Compositor>
     {
-        unsafe {
-            let display = wl_display_create();
-            // created at /var/run/user/1001/wayland-0
-            let ret = wl_display_add_socket_auto(display);
-            
-            let event_loop = wl_display_get_event_loop(display);
-            let loop_fd = wl_event_loop_get_fd(event_loop);
+        let display = ws_display_create();
+        // created at /var/run/user/1001/wayland-0
+        let ret = ws_display_add_socket_auto(display);
 
-            let ret = wl_display_init_shm(display);
+        let event_loop = ws_display_get_event_loop(display);
+        let loop_fd = ws_event_loop_get_fd(event_loop);
 
-            let mut comp = Box::new(Compositor {
-                c_display: display,
-                c_event_loop: event_loop,
-                c_event_loop_fd: loop_fd,
-                c_clients: Vec::new(),
-                c_surfaces: Vec::new(),
-                c_rx: rx,
-                c_wm_tx: wm_tx,
-                c_next_window_id: 1,
-            });
+        let ret = ws_display_init_shm(display);
 
-            // create interface for our compositor
-            // this global is independent of any one client, and will be the
-            // first thing they bind
-            let global = wl_global_create(
-                display,
-                &wl_compositor_interface,
-                3,
-                // add ourselves as the private data
-                &mut *comp as *mut _ as *mut std::ffi::c_void,
-                Some(Compositor::bind_compositor_callback)
-            );
+        let mut comp = Box::new(Compositor {
+            c_display: display,
+            c_event_loop: event_loop,
+            c_event_loop_fd: loop_fd,
+            c_clients: Vec::new(),
+            c_surfaces: Vec::new(),
+            c_rx: rx,
+            c_wm_tx: wm_tx,
+            c_next_window_id: 1,
+        });
 
-            return comp;
-        }
+        // create interface for our compositor
+        // this global is independent of any one client, and will be the
+        // first thing they bind
+        let global = ws_global_create!(
+            display,
+            wl_compositor_interface,
+            3,
+            // add ourselves as the private data
+            comp,
+            Compositor::bind_compositor_callback
+        );
+
+        return comp;
     }
 
     pub fn worker_thread(&mut self) {
@@ -258,8 +264,6 @@ impl Compositor {
 // For now all we need to do is free the wl_display
 impl Drop for Compositor {
     fn drop(&mut self) {
-        unsafe {
-            wl_display_destroy(self.c_display);            
-        }
+        ws_display_destroy(self.c_display);
     }
 }

@@ -402,8 +402,9 @@ impl WindowManager {
             Task::begin_frame => self.begin_frame(),
             Task::end_frame => self.end_frame(),
             Task::mc(mc) => {
-                self.cursor_x += mc.x;
-                self.cursor_y += mc.y;
+                let sensitivity = 2.4;
+                self.cursor_x += mc.x * sensitivity;
+                self.cursor_y += mc.y * sensitivity;
             },
             Task::close_window(id) => self.close_window(*id),
             Task::sbfm(sb) => {
