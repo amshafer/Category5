@@ -16,6 +16,7 @@ use task::*;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver};
 use std::time::Duration;
+use std::thread;
 
 // This consolidates the multiple resources needed
 // to represent a titlebar
@@ -431,10 +432,19 @@ impl WindowManager {
             // frame might not be done. We should keep processing
             // tasks until it is ready
             while !self.rend.try_get_next_swapchain_image() {
-                match self.rx.recv_timeout(Duration::from_millis(1)) {
+                match self.rx.try_recv() {
                     Ok(task) => self.process_task(&task),
                     // If it times out just continue
-                    Err(mpsc::RecvTimeoutError::Timeout) => (),
+                    Err(mpsc::TryRecvError::Empty) => {
+                        // We are not able to use recv_timeout due
+                        // to https://github.com/rust-lang/rust/issues/39364
+                        // Instead we need to try to recv and wait
+                        // some number of ms if it was not successful
+                        //
+                        // It doesn't look like this bug will be fixed
+                        // anytime soon
+                        thread::sleep(Duration::from_millis(1));
+                    },
                     Err(err) =>
                         panic!("Error while waiting for tasks: {:?}", err),
                 };
