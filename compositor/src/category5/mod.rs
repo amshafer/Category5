@@ -9,7 +9,7 @@ mod input;
 
 use vkcomp::wm;
 use vkcomp::wm::*;
-use ways::Compositor;
+use ways::compositor::Compositor;
 use self::input::Input;
 
 use std::thread;

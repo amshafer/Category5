@@ -1,15 +1,6 @@
-// Wayland binding fun fun fun
+// Utils for working with wayland (not bindings)
 //
-//
-// Austin Shafer - 2019
-
-#![allow(dead_code, unused_variables, non_camel_case_types)]
-#[macro_use]
-pub mod utils;
-#[allow(non_upper_case_globals)]
-mod wayland_bindings;
-pub mod compositor;
-mod surface;
+// Austin Shafer - 2020
 
 // Gets a private struct from a wl_resource
 //
@@ -32,8 +23,7 @@ mod surface;
 //
 // Returns:
 //  Option holding the RefMut we can access the struct through
-#[allow(unused_macros)]
-#[macro_use]
+#[macro_export]
 macro_rules! get_userdata {
     // We need to know what type to use for the RefCell
     ($resource:ident, $generic:ty) => {
@@ -49,5 +39,3 @@ macro_rules! get_userdata {
         }
     }
 }
-
-pub mod task;
