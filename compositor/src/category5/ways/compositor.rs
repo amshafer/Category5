@@ -26,10 +26,10 @@ use std::sync::mpsc::{Sender,Receiver};
 pub struct Compositor {
     // The wayland display object, this is the core
     // global singleton for libwayland
-    c_display: *mut wl_display,
+    c_display: WLDisplay,
     // This struct holds the event loop, as we want to abstract
     // the unsafe code for flushing clients and waiting for events
-    c_event_loop: *mut wl_event_loop,
+    c_event_loop: WLEventLoop,
     c_event_loop_fd: i32,
     // A list of wayland client representations. These are the
     // currently connected clients.
@@ -61,10 +61,11 @@ static COMPOSITOR_INTERFACE: wl_compositor_interface =
 // private version of get_userdata
 macro_rules! get_comp_from_userdata {
     // We need to know what type to use for the RefCell
-    ($resource:ident) => {
+    ($resource:expr) => {
         unsafe {
             // use .as_mut to get an option<&> we can match against
-            match (wl_resource_get_user_data($resource) as *mut Compositor)
+            match
+                (wl_resource_get_user_data($resource.ptr) as *mut Compositor)
                 .as_mut() {
                 None => None,
                 Some(c) => Some(c),
@@ -94,7 +95,7 @@ impl Compositor {
         println!("Binding the compositor interface");
 
         let res = ws_resource_create!(
-            client, wl_compositor_interface, 1, id
+            WLClient::from_ptr(client), wl_compositor_interface, 1, id
         );
         ws_resource_set_implementation(
             res,
@@ -118,10 +119,12 @@ impl Compositor {
         // Because the compositor is the caller of even_loop_dispatch we
         // cannot do the normal RefCell stuff in get_userdata. This requires
         // an unsafe workaround
-        let comp = get_comp_from_userdata!(resource).unwrap();
+        let comp = get_comp_from_userdata!(WLResource::from_ptr(resource))
+            .unwrap();
 
         // first get a new resource to represent our surface
-        let res = ws_resource_create!(client, wl_surface_interface, 3, id);
+        let res = ws_resource_create!(WLClient::from_ptr(client),
+                                      wl_surface_interface, 3, id);
 
         // Ask the window manage to create a new window
         // without contents

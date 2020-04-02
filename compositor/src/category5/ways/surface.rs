@@ -2,7 +2,7 @@
 //
 // Austin Shafer - 2020
 use super::wayland_bindings::*;
-use crate::category5::utils::MemImage;
+use super::wayland_safe::*;
 
 use std::cell::RefCell;
 use super::super::vkcomp::wm;
@@ -42,13 +42,13 @@ pub static SURFACE_INTERFACE: wl_surface_interface = wl_surface_interface {
 pub struct Surface {
     s_id: u64, // The id of the window in the renderer
     // A resource representing a wl_surface. (the 'real' surface)
-    s_surface: *mut wl_resource,
+    s_surface: WLResource,
     // The currently attached buffer. Will be displayed on commit
     // When the window is created a buffer is not assigned, hence the option
-    s_attached_buffer: Option<*mut wl_resource>,
+    s_attached_buffer: Option<WLResource>,
     // the s_attached_buffer is moved here to signify that we can draw
     // with it.
-    pub s_committed_buffer: Option<*mut wl_resource>,
+    pub s_committed_buffer: Option<WLResource>,
     // the location of the surface in our compositor
     s_x: u32,
     s_y: u32,
@@ -71,7 +71,7 @@ impl Surface {
         // get our private struct and assign it the buffer
         // that the client has attached
         let mut surface = get_userdata!(resource, Surface).unwrap();
-        surface.s_attached_buffer = Some(buffer);
+        surface.s_attached_buffer = Some(WLResource::from_ptr(buffer));
     }
 
     pub extern "C" fn commit(client: *mut wl_client,
@@ -84,25 +84,20 @@ impl Surface {
             surface.s_committed_buffer = surface.s_attached_buffer;
         }
 
-        unsafe {
-            let shm_buff = wl_shm_buffer_get(surface
-                                             .s_committed_buffer.unwrap());
-            let width = wl_shm_buffer_get_width(shm_buff) as usize;
-            let height = wl_shm_buffer_get_height(shm_buff) as usize;
-            // this is the raw data
-            let fb_raw = wl_shm_buffer_get_data(shm_buff)
-                as *mut _ as *mut u8;
-            // The size of pixels is 4 bytes
-            let fb = MemImage::new(fb_raw, 4, width, height);
+        let shm_buff = ws_shm_buffer_get(
+            surface.s_committed_buffer.unwrap()
+        );
+        let fb = ws_shm_buffer_get_data(shm_buff);
+        let width = fb.width;
+        let height = fb.height;
 
-            surface.s_wm_tx.send(
-                wm::task::Task::update_window_contents_from_mem(
-                    surface.s_id, // ID of the new window
-                    fb,
-                    width, height, // window dimensions
-                )
-            ).unwrap();
-        }
+        surface.s_wm_tx.send(
+            wm::task::Task::update_window_contents_from_mem(
+                surface.s_id, // ID of the new window
+                fb,
+                width, height, // window dimensions
+            )
+        ).unwrap();
     }
 
     pub extern "C" fn delete(resource: *mut wl_resource) {
@@ -116,7 +111,7 @@ impl Surface {
     // create a new visible surface at coordinates (x,y)
     // from the specified wayland resource
     pub fn new(id: u64,
-               res: *mut wl_resource,
+               res: WLResource,
                wm_tx: Sender<wm::task::Task>,
                x: u32,
                y: u32)

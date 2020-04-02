@@ -13,9 +13,9 @@ use std::ops::Deref;
 pub struct MemImage {
     ptr: *mut u8,
     // size of the pixel elements, in bytes
-    element_size: usize,
-    width: usize,
-    height: usize,
+    pub element_size: usize,
+    pub width: usize,
+    pub height: usize,
 }
 
 impl MemImage {
