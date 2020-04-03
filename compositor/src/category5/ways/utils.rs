@@ -41,6 +41,18 @@ macro_rules! get_userdata_of_type {
 }
 
 #[macro_export]
+macro_rules! get_userdata_raw {
+    // We need to know what type to use for the RefCell
+    ($resource:expr, $generic:ty) => {
+        unsafe {
+            // use .as_mut to get an option<&> we can match against
+            (wl_resource_get_user_data($resource)
+             as *mut RefCell<$generic>).as_mut()
+        }
+    }
+}
+
+#[macro_export]
 macro_rules! as_mut_c_void {
     ($data:expr) => {
         &mut $data as *mut _ as *mut c_void

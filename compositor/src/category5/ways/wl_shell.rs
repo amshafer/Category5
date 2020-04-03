@@ -6,11 +6,20 @@ use super::wayland_bindings::*;
 use super::wayland_safe::*;
 use super::compositor::Compositor;
 
+use std::cell::RefCell;
+
 pub extern "C" fn bind_wl_shell(client: *mut wl_client,
                                 data: *mut ::std::os::raw::c_void,
                                 version: u32,
                                 id: u32)
 {
+    let comp_ref = unsafe {
+        // Get a slice of one Compositor, then grab a ref
+        // to the first one
+        &mut std::slice::from_raw_parts_mut(
+            data as *mut RefCell<Compositor>, 1)[0]
+    };
+
     let res = ws_resource_create!(
         WLClient::from_ptr(client),
         wl_shell_interface,
@@ -19,7 +28,7 @@ pub extern "C" fn bind_wl_shell(client: *mut wl_client,
     ws_resource_set_implementation(
         res,
         &WL_SHELL_INTERFACE,
-        None::<&mut Compositor>,
+        Some(comp_ref),
         None
     );
 }
@@ -35,6 +44,9 @@ extern "C" fn get_shell_surface(
     id: u32,
     surface: *mut wl_resource)
 {
+    let comp_ref = get_userdata_raw!(resource, Compositor)
+        .unwrap();
+
     let res = ws_resource_create!(
         WLClient::from_ptr(client),
         wl_shell_interface,
@@ -43,7 +55,7 @@ extern "C" fn get_shell_surface(
     ws_resource_set_implementation(
         res,
         &WL_SHELL_INTERFACE,
-        None::<&mut Compositor>,
+        Some(comp_ref),
         None
     );
 }

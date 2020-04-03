@@ -79,7 +79,7 @@ impl Compositor {
             // Get a slice of one Compositor, then grab a ref
             // to the first one
             &mut slice::from_raw_parts_mut(
-                data as *mut Compositor, 1)[0]
+                data as *mut RefCell<Compositor>, 1)[0]
         };
         println!("Binding the compositor interface");
 
