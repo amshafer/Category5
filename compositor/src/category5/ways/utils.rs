@@ -24,9 +24,9 @@
 // Returns:
 //  Option holding the RefMut we can access the struct through
 #[macro_export]
-macro_rules! get_userdata {
+macro_rules! get_userdata_of_type {
     // We need to know what type to use for the RefCell
-    ($resource:ident, $generic:ty) => {
+    ($resource:expr, $generic:ty) => {
         unsafe {
             // use .as_mut to get an option<&> we can match against
             match (wl_resource_get_user_data($resource)
@@ -37,5 +37,12 @@ macro_rules! get_userdata {
                 Some(cell) => Some((*cell).borrow_mut()),
             }
         }
+    }
+}
+
+#[macro_export]
+macro_rules! as_mut_c_void {
+    ($data:expr) => {
+        &mut $data as *mut _ as *mut c_void
     }
 }

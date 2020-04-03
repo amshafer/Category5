@@ -16,6 +16,7 @@ fn main() {
 
     let bindings = bindgen::Builder::default()
         .header("wayland_headers.h")
+        .clang_arg("-I/usr/local/include")
         .rustfmt_bindings(true)
         .whitelist_function("wl_.*")
         .whitelist_type("wl_.*")

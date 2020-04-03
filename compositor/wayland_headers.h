@@ -6,6 +6,6 @@
 #ifndef _WRAPPER_H
 #define _WRAPPER_H
 
-#include "/usr/local/include/wayland-server.h"
+#include <wayland-server.h>
 
 #endif

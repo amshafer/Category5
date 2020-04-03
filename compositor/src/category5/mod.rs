@@ -60,8 +60,8 @@ impl Category5 {
             // Note that the wayland compositor + vulkan renderer
             // is the complete compositor
             wc: Some(thread::spawn(|| {
-                let mut wc = Compositor::new(wc_rx, wm_tx_clone);
-                wc.worker_thread();
+                let mut ev = Compositor::new(wc_rx, wm_tx_clone);
+                ev.worker_thread();
             })),
             wc_tx: wc_tx,
             // creates a context, swapchain, images, and others

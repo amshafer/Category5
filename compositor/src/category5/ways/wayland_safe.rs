@@ -37,7 +37,7 @@ macro_rules! ws_global_create {
     ($display:ident,    // WLDisplay
      $interface:ident,  // wl_interface,
      $version:expr,     // i32
-     $data:ident,       // Box
+     $data:expr,        // *mut c_void
      $bind:expr) => {   // wl_global_bind_func_t
         unsafe {
             assert!(!$display.ptr.is_null());
@@ -45,7 +45,7 @@ macro_rules! ws_global_create {
                 $display.ptr,
                 &$interface,
                 $version,
-                &mut *$data as *mut _ as *mut std::ffi::c_void,
+                $data,
                 Some($bind)
             );
             assert!(!ret.is_null());
@@ -86,10 +86,16 @@ pub struct WLShm {
     pub fd: i32,
 }
 
+// Set the implementation of the resource
+//
+// If using None for data, then you will need to do:
+// https://github.com/rust-lang/rust/issues/39797
+//
+// i.e. None::<&mut Compositor> or something
 pub fn ws_resource_set_implementation<T, D>
     (resource: WLResource,
     implementation: &T,
-    data: &mut D,
+    data: Option<&mut D>,
     destroy: wl_resource_destroy_func_t)
 {
     assert!(!resource.ptr.is_null());
@@ -99,7 +105,10 @@ pub fn ws_resource_set_implementation<T, D>
             implementation
                 as *const _ as *const std::ffi::c_void,
             // this will be the Compositor *mut self
-            data as *mut _ as *mut std::ffi::c_void,
+            match data {
+                Some(d) => d as *mut _ as *mut std::ffi::c_void,
+                None => std::ptr::null_mut(),
+            },
             destroy,
         );
     }

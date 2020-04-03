@@ -70,7 +70,7 @@ impl Surface {
     {
         // get our private struct and assign it the buffer
         // that the client has attached
-        let mut surface = get_userdata!(resource, Surface).unwrap();
+        let mut surface = get_userdata_of_type!(resource, Surface).unwrap();
         surface.s_attached_buffer = Some(WLResource::from_ptr(buffer));
     }
 
@@ -78,7 +78,7 @@ impl Surface {
                              resource: *mut wl_resource)
     {
         // only do shm for now
-        let mut surface = get_userdata!(resource, Surface).unwrap();
+        let mut surface = get_userdata_of_type!(resource, Surface).unwrap();
         // the wl_shm_buffer object, not the framebuffer
         if !surface.s_attached_buffer.is_none() {
             surface.s_committed_buffer = surface.s_attached_buffer;
@@ -101,7 +101,7 @@ impl Surface {
     }
 
     pub extern "C" fn delete(resource: *mut wl_resource) {
-        let surface = get_userdata!(resource, Surface).unwrap();
+        let surface = get_userdata_of_type!(resource, Surface).unwrap();
 
         surface.s_wm_tx.send(
             wm::task::Task::close_window(surface.s_id)
