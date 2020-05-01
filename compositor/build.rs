@@ -1,36 +1,9 @@
-// Generate bindings the the C libthreadpool on the fly
-//   based on the bindgen manual
+// Link with libwayland and generate any wayland bindings
 //
 // Austin Shafer - 2019
-extern crate bindgen;
-
-#[cfg(not(target_os = "macos"))]
 fn main() {
-    // tell cargo to link with libthreadpool.so
+    // tell cargo to link with libwayland-server.so
     println!("cargo:rustc-env=LD_LIBRARY_PATH=/usr/local/lib/");
     println!("cargo:rustc-link-search=native=/usr/local/lib/");
     println!("cargo:rustc-link-lib=dylib=wayland-server");
-
-    // update the generated bindings if the wrapper changes
-    println!("cargo:rerun-if-changed=wrapper.h");
-
-    let bindings = bindgen::Builder::default()
-        .header("wayland_headers.h")
-        .clang_arg("-I/usr/local/include")
-        .rustfmt_bindings(true)
-        .whitelist_function("wl_.*")
-        .whitelist_type("wl_.*")
-        .whitelist_var("wl_.*")
-        .generate()
-        .expect("Could not generate bindings for libwayland");
-
-    bindings.write_to_file("src/category5/ways/wayland_bindings.rs")
-        .expect(
-            "Could not write bindings to src/category5/ways/wayland_bindings.rs"
-        );
-}
-
-#[cfg(target_os = "macos")]
-fn main() {
-    println!("Compiling on macos, not regenerating wayland bindings");
 }

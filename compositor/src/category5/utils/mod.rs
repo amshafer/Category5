@@ -18,6 +18,7 @@ pub struct MemImage {
     pub height: usize,
 }
 
+#[allow(dead_code)]
 impl MemImage {
     pub fn as_slice(&self) -> &[u8] {
         if !self.ptr.is_null() {

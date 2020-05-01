@@ -2,18 +2,22 @@
 //
 //
 // Austin Shafer - 2019
-use super::wayland_bindings::*;
-use super::wayland_safe::*;
-use super::wl_shell;
+
+pub extern crate wayland_server as ws;
+use ws::{Filter,Main};
+
+use ws::protocol::{
+    wl_compositor as wlci,
+    wl_surface as wlsi,
+};
+
 use super::task::*;
-
-use super::surface::{Surface, SURFACE_INTERFACE};
-
-use std::cell::RefCell;
-use std::slice;
+use super::surface::*;
 use super::super::vkcomp::wm;
-use std::os::raw::c_void;
 
+use std::time::Duration;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::mpsc::{Sender,Receiver};
 
 // A wayland compositor wrapper
@@ -25,6 +29,7 @@ use std::sync::mpsc::{Sender,Receiver};
 // using this API hides the unsafe bits.
 //
 // This is really the wayland compositor protocol object
+#[allow(dead_code)]
 pub struct Compositor {
     // A list of wayland client representations. These are the
     // currently connected clients.
@@ -35,93 +40,29 @@ pub struct Compositor {
     c_next_window_id: u64,
 }
 
+#[allow(dead_code)]
 pub struct EventManager {
-    // The compositor interface
-    em_compositor: RefCell<Compositor>,
     // The wayland display object, this is the core
     // global singleton for libwayland
-    em_display: WLDisplay,
-    // This struct holds the event loop, as we want to abstract
-    // the unsafe code for flushing clients and waiting for events
-    em_event_loop: WLEventLoop,
-    em_event_loop_fd: i32,
+    em_display: ws::Display,
     em_wm_tx: Sender<wm::task::Task>,
     em_rx: Receiver<Task>,
 }
 
-// wlci - wl compositor interface
-//
-// our implementation of wl_compositor_interface. The compositor singleton
-// kicks off the window creation process by creating a surface
-static COMPOSITOR_INTERFACE: wl_compositor_interface =
-    wl_compositor_interface {
-        // called asynchronously by the client when they
-        // want to request a surface
-        create_surface: Some(Compositor::create_surface),
-        // wl_region represent an opaque input region in the surface
-        create_region: Some(Compositor::create_region),
-    };
-
 impl Compositor {
-    // Callback for our implementation of the wl_compositor inferface
-    //
-    // When the client binds a wl_compositor interface this will be called,
-    // and we can set our implementation so that surfaces/regions can be
-    // created.
-    // the data arg is added as the private data for the implementation.
-    pub extern "C" fn bind_compositor_callback(
-        client: *mut wl_client,
-        data: *mut c_void,
-        version: u32,
-        id: u32)
-    {
-        let comp_ref = unsafe {
-            // Get a slice of one Compositor, then grab a ref
-            // to the first one
-            &mut slice::from_raw_parts_mut(
-                data as *mut RefCell<Compositor>, 1)[0]
-        };
-        println!("Binding the compositor interface");
-
-        let res = ws_resource_create!(
-            WLClient::from_ptr(client),
-            wl_compositor_interface,
-            1, id
-        );
-        ws_resource_set_implementation(
-            res,
-            &COMPOSITOR_INTERFACE,
-            Some(comp_ref),
-            None
-        );
-    }
 
     // wl_compositor interface create surface
     //
-    // Here we create a resource for the new surface, specifying
-    // our surface interface. It will be called next when the surface
-    // is bound.
-    pub extern "C" fn create_surface(client: *mut wl_client,
-                                     resource: *mut wl_resource,
-                                     id: u32)
-    {
+    //
+    pub fn create_surface(&mut self, surf: Main<wlsi::WlSurface>) {
         println!("Creating surface");
-        // get the compositor from the resource
-        let mut comp = get_userdata_of_type!(
-            resource,
-            Compositor
-        ).unwrap();
-
-        // first get a new resource to represent our surface
-        let res = ws_resource_create!(WLClient::from_ptr(client),
-                                      wl_surface_interface, 3, id);
 
         // Ask the window manage to create a new window
         // without contents
-        comp.c_next_window_id += 1;
-        comp.c_wm_tx.send(
+        self.c_next_window_id += 1;
+        self.c_wm_tx.send(
             wm::task::Task::create_window(
-                comp.c_next_window_id, // ID of the new window
+                self.c_next_window_id, // ID of the new window
                 0, 0, // position
                 // No texture yet, it will be added by Surface
                 64, 64, // window dimensions
@@ -129,53 +70,14 @@ impl Compositor {
         ).unwrap();
 
         // create an entry in the surfaces list
-        let id = comp.c_next_window_id;
-        let wm_tx = comp.c_wm_tx.clone();
-        comp.c_surfaces.push(RefCell::new(Surface::new(
+        let id = self.c_next_window_id;
+        let wm_tx = self.c_wm_tx.clone();
+        self.c_surfaces.push(RefCell::new(Surface::new(
             id,
-            res,
+            surf,
             wm_tx,
             0, 0
         )));
-        // get a pointer to the refcell
-        let entry_index = comp.c_surfaces.len() - 1;
-        let surface_cell = &mut comp.c_surfaces[entry_index];
-
-        // set the implementation for the wl_surface interface.
-        // This means passing our new surface as the user data
-        // field. The surface callbacks will need it.
-        ws_resource_set_implementation(
-            res, // the surfaces resource
-            &SURFACE_INTERFACE,
-            Some(surface_cell),
-            Some(Surface::delete)
-        );
-    }
-
-    // wl_compositor interface create region
-    //
-    // 
-    pub extern "C" fn create_region(client: *mut wl_client,
-                                    resource: *mut wl_resource,
-                                    id: u32)
-    {
-        println!("Creating region");
-    }
-
-    // Present the surface for rendering
-    //
-    // This essentially makes the buffer available to the window manager
-    // for drawing.
-    pub fn render(&mut self) {
-        for cell in self.c_surfaces.iter() {
-            let surface = cell.borrow();
-
-            if surface.s_committed_buffer.is_none() {
-                continue;
-            }
-            
-            // draw the window
-        }
     }
 
     // Returns a new Compositor struct
@@ -190,27 +92,21 @@ impl Compositor {
     pub fn new(rx: Receiver<Task>, wm_tx: Sender<wm::task::Task>)
                -> Box<EventManager>
     {
-        let display = ws_display_create();
-        // created at /var/run/user/1001/wayland-0
-        let ret = ws_display_add_socket_auto(display);
+        let mut display = ws::Display::new();
+        display.add_socket_auto()
+            .expect("Failed to add a socket to the wayland server");
 
-        let event_loop = ws_display_get_event_loop(display);
-        let loop_fd = ws_event_loop_get_fd(event_loop);
-
-        let ret = ws_display_init_shm(display);
-
-        let comp = RefCell::new(Compositor {
-            c_clients: Vec::new(),
-            c_surfaces: Vec::new(),
-            c_wm_tx: wm_tx.clone(),
-            c_next_window_id: 1,
-        });
+        // Later moved into the closure
+        let comp_cell = Rc::new(RefCell::new(
+            Compositor {
+                c_clients: Vec::new(),
+                c_surfaces: Vec::new(),
+                c_wm_tx: wm_tx.clone(),
+                c_next_window_id: 1,
+        }));
 
         let mut evman = Box::new(EventManager {
-            em_compositor: comp,
             em_display: display,
-            em_event_loop: event_loop,
-            em_event_loop_fd: loop_fd,
             em_wm_tx: wm_tx,
             em_rx: rx,
         });
@@ -218,21 +114,36 @@ impl Compositor {
         // create interface for our compositor
         // this global is independent of any one client, and
         // will be the first thing they bind
-        ws_global_create!(
-            display,
-            wl_compositor_interface,
-            3,
-            // add ourselves as the private data
-            as_mut_c_void!(evman.em_compositor),
-            Compositor::bind_compositor_callback
+        evman.em_display.create_global::<wlci::WlCompositor, _>(
+            3, // version
+            Filter::new(
+                // This closure will be called when wl_compositor_interface
+                // is bound. args are (resource, version)
+                move |(r, v): (ws::Main<wlci::WlCompositor>, u32), _, _| {
+                    assert!(v == 3);
+                    // We need to create a filter that will be called when this
+                    // object is requested. This closure just maps requests
+                    // to their handling functions
+                    let comp_clone = comp_cell.clone();
+                    r.quick_assign(move |_proxy, request, _| {
+                        let mut comp = comp_clone.borrow_mut();
+                        match request {
+                            wlci::Request::CreateSurface { id } => comp.create_surface(id),
+                            // All other requests are invalid
+                            _ => unimplemented!(),
+                        }
+                    });
+                }
+            ),
         );
-        ws_global_create!(
-            display,
-            wl_shell_interface,
-            1,
-            std::ptr::null_mut(),
-            wl_shell::bind_wl_shell
-        );
+
+        // ws_global_create!(
+        //     display,
+        //     wl_shell_interface,
+        //     1,
+        //     std::ptr::null_mut(),
+        //     wl_shell::bind_wl_shell
+        // );
 
         return evman;
     }
@@ -242,37 +153,13 @@ impl EventManager {
     pub fn worker_thread(&mut self) {
         loop {
             // wait for the next event
-            self.event_loop_dispatch();
-            self.flush_clients();
+            self.em_display
+                .dispatch(Duration::from_millis(0), &mut ())
+                .unwrap();
+            self.em_display.flush_clients(&mut ());
 
             //let task = self.rx.recv().unwrap();
             //self.process_task(&task);
         }
-    }
-
-    // Safe wrapper for wl_event_loop_dispatch
-    //
-    // dispatches requests to event handlers.
-    // this is non-blocking.
-    pub fn event_loop_dispatch(&mut self) {
-        ws_event_loop_dispatch(self.em_event_loop, -1);
-    }
-
-    // Safe wrapper for wl_display_flush_clients
-    //
-    // Waits while events are sent to the clients through the
-    // socket. Non-blocking, but will only send as much as
-    // the socket can take at the moment.
-    pub fn flush_clients(&mut self) {
-        ws_display_flush_clients(self.em_display);
-    }
-}
-
-// Destroy the compositor
-//
-// For now all we need to do is free the wl_display
-impl Drop for EventManager {
-    fn drop(&mut self) {
-        ws_display_destroy(self.em_display);
     }
 }
