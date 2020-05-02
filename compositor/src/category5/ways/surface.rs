@@ -21,10 +21,10 @@ pub struct Surface {
     s_id: u64, // The id of the window in the renderer
     // The currently attached buffer. Will be displayed on commit
     // When the window is created a buffer is not assigned, hence the option
-    s_attached_buffer: Option<Main<wl_buffer::WlBuffer>>,
+    s_attached_buffer: Option<wl_buffer::WlBuffer>,
     // the s_attached_buffer is moved here to signify that we can draw
     // with it.
-    pub s_committed_buffer: Option<Main<wl_buffer::WlBuffer>>,
+    pub s_committed_buffer: Option<wl_buffer::WlBuffer>,
     // the location of the surface in our compositor
     s_x: u32,
     s_y: u32,
@@ -32,23 +32,32 @@ pub struct Surface {
 }
 
 impl Surface {
+    // Handle a request from a client
+    //
+    pub fn handle_request(&mut self,
+                          surf: Main<wlsi::WlSurface>,
+                          req: wlsi::Request)
+    {
+        match req {
+            wlsi::Request::Attach { buffer, x, y } =>
+                self.attach(surf, buffer, x, y),
+            _ => unimplemented!(),
+        }
+    }
 
-    // // attach a wl_buffer to the surface
-    // //
-    // // The client crafts a buffer with care, and tells us that it will be
-    // // backing the surface represented by `resource`. `buffer` will be
-    // // placed in the private struct that the compositor made.
-    // pub extern "C" fn attach(client: *mut wl_client,
-    //                          resource: *mut wl_resource,
-    //                          buffer: *mut wl_resource,
-    //                          x: i32,
-    //                          y: i32)
-    // {
-    //     // get our private struct and assign it the buffer
-    //     // that the client has attached
-    //     let mut surface = get_userdata_of_type!(resource, Surface).unwrap();
-    //     surface.s_attached_buffer = Some(WLResource::from_ptr(buffer));
-    // }
+    // attach a wl_buffer to the surface
+    //
+    // The client crafts a buffer with care, and tells us that it will be
+    // backing the surface represented by `resource`. `buffer` will be
+    // placed in the private struct that the compositor made.
+    pub fn attach(&mut self,
+                  _surf: Main<wlsi::WlSurface>,
+                  buf: Option<wl_buffer::WlBuffer>,
+                  _x: i32,
+                  _y: i32)
+    {
+        self.s_attached_buffer = buf;
+    }
 
     // pub extern "C" fn commit(client: *mut wl_client,
     //                          resource: *mut wl_resource)
@@ -87,7 +96,6 @@ impl Surface {
     // create a new visible surface at coordinates (x,y)
     // from the specified wayland resource
     pub fn new(id: u64,
-               _surf: Main<wlsi::WlSurface>,
                wm_tx: Sender<wm::task::Task>,
                x: u32,
                y: u32)

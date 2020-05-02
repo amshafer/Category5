@@ -9,9 +9,11 @@ use ws::{Filter,Main};
 use ws::protocol::{
     wl_compositor as wlci,
     wl_surface as wlsi,
+    wl_shm,
 };
 
 use super::task::*;
+use super::shm::*;
 use super::surface::*;
 use super::super::vkcomp::wm;
 
@@ -35,7 +37,7 @@ pub struct Compositor {
     // currently connected clients.
     c_clients: Vec<RefCell<u32>>,
     // A list of surfaces which have been handed out to clients
-    c_surfaces: Vec<RefCell<Surface>>,
+    c_surfaces: Vec<Rc<RefCell<Surface>>>,
     c_wm_tx: Sender<wm::task::Task>,
     c_next_window_id: u64,
 }
@@ -72,12 +74,20 @@ impl Compositor {
         // create an entry in the surfaces list
         let id = self.c_next_window_id;
         let wm_tx = self.c_wm_tx.clone();
-        self.c_surfaces.push(RefCell::new(Surface::new(
-            id,
-            surf,
-            wm_tx,
-            0, 0
-        )));
+        let new_surface = Rc::new(RefCell::new(
+            Surface::new(
+                id,
+                wm_tx,
+                0, 0)
+        ));
+        self.c_surfaces.push(new_surface.clone());
+
+        // wayland_server takes care of creating the resource for
+        // us, but we need to provide a function for it to call
+        surf.quick_assign(move |s, r, _| {
+            let mut nsurf = new_surface.borrow_mut();
+            nsurf.handle_request(s, r);
+        });
     }
 
     // Returns a new Compositor struct
@@ -103,7 +113,8 @@ impl Compositor {
                 c_surfaces: Vec::new(),
                 c_wm_tx: wm_tx.clone(),
                 c_next_window_id: 1,
-        }));
+            }
+        ));
 
         let mut evman = Box::new(EventManager {
             em_display: display,
@@ -111,16 +122,26 @@ impl Compositor {
             em_rx: rx,
         });
 
+        evman.create_surface_global(comp_cell);
+        evman.create_shm_global();
+
+        return evman;
+    }
+}
+
+impl EventManager {
+    
+    fn create_surface_global(&mut self,
+                             comp_cell: Rc<RefCell<Compositor>>) {
         // create interface for our compositor
         // this global is independent of any one client, and
         // will be the first thing they bind
-        evman.em_display.create_global::<wlci::WlCompositor, _>(
+        self.em_display.create_global::<wlci::WlCompositor, _>(
             3, // version
             Filter::new(
                 // This closure will be called when wl_compositor_interface
                 // is bound. args are (resource, version)
-                move |(r, v): (ws::Main<wlci::WlCompositor>, u32), _, _| {
-                    assert!(v == 3);
+                move |(r, _): (ws::Main<wlci::WlCompositor>, u32), _, _| {
                     // We need to create a filter that will be called when this
                     // object is requested. This closure just maps requests
                     // to their handling functions
@@ -128,7 +149,8 @@ impl Compositor {
                     r.quick_assign(move |_proxy, request, _| {
                         let mut comp = comp_clone.borrow_mut();
                         match request {
-                            wlci::Request::CreateSurface { id } => comp.create_surface(id),
+                            wlci::Request::CreateSurface { id } =>
+                                comp.create_surface(id),
                             // All other requests are invalid
                             _ => unimplemented!(),
                         }
@@ -136,20 +158,27 @@ impl Compositor {
                 }
             ),
         );
-
-        // ws_global_create!(
-        //     display,
-        //     wl_shell_interface,
-        //     1,
-        //     std::ptr::null_mut(),
-        //     wl_shell::bind_wl_shell
-        // );
-
-        return evman;
     }
-}
 
-impl EventManager {
+    fn create_shm_global(&mut self) {
+        // create interface for our compositor
+        // this global is independent of any one client, and
+        // will be the first thing they bind
+        self.em_display.create_global::<wl_shm::WlShm, _>(
+            1, // version
+            Filter::new(
+                // This closure will be called when wl_compositor_interface
+                // is bound. args are (resource, version)
+                move |(r, _): (ws::Main<wl_shm::WlShm>, u32), _, _| {
+                    r.quick_assign(move |p, r, _| {
+                        shm_handle_request(r, p);
+                    });
+                    r.format(wl_shm::Format::Xrgb8888);
+                }
+            ),
+        );
+    }
+
     pub fn worker_thread(&mut self) {
         loop {
             // wait for the next event
