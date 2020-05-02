@@ -5,7 +5,8 @@ extern crate wayland_server as ws;
 use ws::Main;
 use ws::protocol::{wl_buffer, wl_surface as wlsi};
 
-use super::super::vkcomp::wm;
+use crate::category5::vkcomp::wm;
+use super::shm::*;
 
 use std::sync::mpsc::Sender;
 
@@ -41,6 +42,10 @@ impl Surface {
         match req {
             wlsi::Request::Attach { buffer, x, y } =>
                 self.attach(surf, buffer, x, y),
+            wlsi::Request::Commit =>
+                self.commit(),
+            wlsi::Request::Destroy =>
+                self.destroy(),
             _ => unimplemented!(),
         }
     }
@@ -50,48 +55,56 @@ impl Surface {
     // The client crafts a buffer with care, and tells us that it will be
     // backing the surface represented by `resource`. `buffer` will be
     // placed in the private struct that the compositor made.
-    pub fn attach(&mut self,
-                  _surf: Main<wlsi::WlSurface>,
-                  buf: Option<wl_buffer::WlBuffer>,
-                  _x: i32,
-                  _y: i32)
+    fn attach(&mut self,
+              _surf: Main<wlsi::WlSurface>,
+              buf: Option<wl_buffer::WlBuffer>,
+              _x: i32,
+              _y: i32)
     {
         self.s_attached_buffer = buf;
     }
 
-    // pub extern "C" fn commit(client: *mut wl_client,
-    //                          resource: *mut wl_resource)
-    // {
-    //     // only do shm for now
-    //     let mut surface = get_userdata_of_type!(resource, Surface).unwrap();
-    //     // the wl_shm_buffer object, not the framebuffer
-    //     if !surface.s_attached_buffer.is_none() {
-    //         surface.s_committed_buffer = surface.s_attached_buffer;
-    //     }
+    fn commit(&mut self)
+    {
+        // If there was no surface attached, do nothing
+        if self.s_attached_buffer.is_none() {
+            return; // throw error?
+        }
+        self.s_committed_buffer = self.s_attached_buffer.take();
 
-    //     let shm_buff = ws_shm_buffer_get(
-    //         surface.s_committed_buffer.unwrap()
-    //     );
-    //     let fb = ws_shm_buffer_get_data(shm_buff);
-    //     let width = fb.width;
-    //     let height = fb.height;
+        // Get the ShmBuffer from the user data so we
+        // can read its contents
+        let shm_buf = self.s_committed_buffer
+            // this is a bit wonky, we need to get a reference
+            // to committed, but it is behind an option
+            .as_ref().unwrap()
+            // now we can call as_ref on the &WlBuffer
+            .as_ref()
+            .user_data()
+            .get::<ShmBuffer>()
+            .unwrap();
 
-    //     surface.s_wm_tx.send(
-    //         wm::task::Task::update_window_contents_from_mem(
-    //             surface.s_id, // ID of the new window
-    //             fb,
-    //             width, height, // window dimensions
-    //         )
-    //     ).unwrap();
-    // }
+        // ShmBuffer holds the base pointer and an offset, so
+        // we need to get the actual pointer, which will be
+        // wrapped in a MemImage
+        let fb = shm_buf.get_mem_image();
 
-    // pub extern "C" fn delete(resource: *mut wl_resource) {
-    //     let surface = get_userdata_of_type!(resource, Surface).unwrap();
+        self.s_wm_tx.send(
+            wm::task::Task::update_window_contents_from_mem(
+                self.s_id, // ID of the new window
+                fb,
+                // window dimensions
+                shm_buf.sb_width as usize,
+                shm_buf.sb_height as usize,
+            )
+        ).unwrap();
+    }
 
-    //     surface.s_wm_tx.send(
-    //         wm::task::Task::close_window(surface.s_id)
-    //     ).unwrap();
-    // }
+    pub fn destroy(&mut self) {
+        self.s_wm_tx.send(
+            wm::task::Task::close_window(self.s_id)
+        ).unwrap();
+    }
 
     // create a new visible surface at coordinates (x,y)
     // from the specified wayland resource
@@ -109,5 +122,11 @@ impl Surface {
             s_y: y,
             s_wm_tx: wm_tx,
         }
+    }
+}
+
+impl Drop for Surface {
+    fn drop(&mut self) {
+        self.destroy();
     }
 }

@@ -9,6 +9,9 @@ extern crate wayland_server as ws;
 use ws::Main;
 use ws::protocol::{wl_shm, wl_shm_pool};
 
+use crate::category5::utils::*;
+
+use std::rc::Rc;
 use std::os::unix::io::RawFd;
 use std::ffi::c_void;
 use nix::sys::mman;
@@ -69,7 +72,7 @@ pub fn shm_handle_request(req: wl_shm::Request,
                           shm: Main<wl_shm::WlShm>)
 {
     match req {
-        wl_shm::Request::CreatePool { id, fd, size } => {
+        wl_shm::Request::CreatePool { id: pool, fd, size } => {
             // We only handle valid sized pools
             if size <= 0 {
                 shm.as_ref().post_error(
@@ -78,27 +81,50 @@ pub fn shm_handle_request(req: wl_shm::Request,
                 ); 
             }
 
-            let reg = ShmRegion::new(fd, size as usize).unwrap();
+            let reg = Rc::new(ShmRegion::new(fd, size as usize).unwrap());
             // Register a callback for the wl_shm_pool interface
-            id.quick_assign(|p, r, _| {
+            pool.quick_assign(|p, r, _| {
                 shm_pool_handle_request(r, p);
             });
             // Add our ShmRegion as the private data for the pool
-            id.as_ref().user_data().set(move || reg);
+            pool.as_ref().user_data().set(move || reg);
         },
         _ => unimplemented!(),
+    }
+}
+
+#[allow(dead_code)]
+pub struct ShmBuffer {
+    sb_reg: Rc<ShmRegion>,
+    sb_offset: i32,
+    pub sb_width: i32,
+    pub sb_height: i32,
+    sb_stride: i32,
+    sb_format: wl_shm::Format,
+}
+
+impl ShmBuffer {
+    pub fn get_mem_image(&self) -> MemImage {
+        MemImage::new(
+            unsafe { self.sb_reg.sr_raw_ptr.offset(self.sb_offset as isize) }
+                as *mut u8,
+            4, // 4 bytes per pixel hardcoded
+            self.sb_width as usize,
+            self.sb_height as usize,
+        )
     }
 }
 
 pub fn shm_pool_handle_request(req: wl_shm_pool::Request,
                                pool: Main<wl_shm_pool::WlShmPool>)
 {
-    let _reg = pool.as_ref().user_data().get::<ShmRegion>().unwrap();
+    let reg = pool.as_ref().user_data().get::<Rc<ShmRegion>>().unwrap();
 
     match req {
         #[allow(unused_variables)]
         wl_shm_pool::Request::CreateBuffer {
-            id,
+            // id is actually translated to a buffer by wayland-rs
+            id: buffer,
             offset,
             width,
             height,
@@ -112,7 +138,18 @@ pub fn shm_pool_handle_request(req: wl_shm_pool::Request,
                 );
             }
 
-            id.quick_assign(|_, _, _| {});
+            let data = ShmBuffer {
+                sb_reg: reg.clone(),
+                sb_offset: offset,
+                sb_width: width,
+                sb_height: height,
+                sb_stride: stride,
+                sb_format: format,
+            };
+
+            buffer.quick_assign(|_, _, _| {});
+            // Add our buffer priv data to the userdata
+            buffer.as_ref().user_data().set(move || data);
         },
         wl_shm_pool::Request::Destroy => {},
         _ => unimplemented!(),

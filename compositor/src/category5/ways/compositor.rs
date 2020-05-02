@@ -4,7 +4,7 @@
 // Austin Shafer - 2019
 
 pub extern crate wayland_server as ws;
-use ws::{Filter,Main};
+use ws::{Filter,Main,Resource};
 
 use ws::protocol::{
     wl_compositor as wlci,
@@ -74,12 +74,15 @@ impl Compositor {
         // create an entry in the surfaces list
         let id = self.c_next_window_id;
         let wm_tx = self.c_wm_tx.clone();
+
         let new_surface = Rc::new(RefCell::new(
             Surface::new(
                 id,
                 wm_tx,
                 0, 0)
         ));
+        let ns_clone = new_surface.clone();
+
         self.c_surfaces.push(new_surface.clone());
 
         // wayland_server takes care of creating the resource for
@@ -88,6 +91,14 @@ impl Compositor {
             let mut nsurf = new_surface.borrow_mut();
             nsurf.handle_request(s, r);
         });
+        // We have to manually assign a destructor, or else
+        // Destroy request doesn't seem to proc
+        surf.assign_destructor(Filter::new(
+            move |_: Resource<wlsi::WlSurface>, _, _| {
+                let mut nsurf = ns_clone.borrow_mut();
+                nsurf.destroy();
+            }
+        ));
     }
 
     // Returns a new Compositor struct
