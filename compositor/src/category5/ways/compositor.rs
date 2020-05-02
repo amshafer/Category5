@@ -2,7 +2,7 @@
 //
 //
 // Austin Shafer - 2019
-
+extern crate kqueue;
 pub extern crate wayland_server as ws;
 use ws::{Filter,Main,Resource};
 
@@ -17,6 +17,7 @@ use super::shm::*;
 use super::surface::*;
 use super::super::vkcomp::wm;
 
+use kqueue::Watcher;
 use std::time::Duration;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -192,14 +193,38 @@ impl EventManager {
 
     pub fn worker_thread(&mut self) {
         loop {
-            // wait for the next event
-            self.em_display
-                .dispatch(Duration::from_millis(0), &mut ())
-                .unwrap();
-            self.em_display.flush_clients(&mut ());
+            // wayland-rs will not do blocking for us,
+            // so we need to use kqueue. This is the
+            // same approach as used by the input
+            // subsystem.
+            let fd = self.em_display.get_poll_fd();
 
-            //let task = self.rx.recv().unwrap();
-            //self.process_task(&task);
+            // Create a new kqueue
+            let mut kqueue = Watcher::new().unwrap();
+            // Add our file descriptor to the watchlist
+            kqueue.add_fd(
+                fd,
+                kqueue::EventFilter::EVFILT_READ,
+                kqueue::FilterFlag::empty(),
+            ).unwrap();
+
+            // This calls kevent(2) to let the kernel know that
+            // we are watching everything we have added
+            while kqueue.watch().is_ok() {
+                // next will call kevent(2), but this time to get
+                // any events that have happened. This blocks
+                for _kev in kqueue.iter().next() {
+
+                    // wait for the next event
+                    self.em_display
+                        .dispatch(Duration::from_millis(0), &mut ())
+                        .unwrap();
+                    self.em_display.flush_clients(&mut ());
+
+                    //let task = self.rx.recv().unwrap();
+                    //self.process_task(&task);
+                }
+            }
         }
     }
 }
