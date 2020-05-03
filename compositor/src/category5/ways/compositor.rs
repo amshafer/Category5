@@ -10,12 +10,14 @@ use ws::protocol::{
     wl_compositor as wlci,
     wl_surface as wlsi,
     wl_shm,
+    wl_shell,
 };
 
-use super::task::*;
 use super::shm::*;
 use super::surface::*;
+use super::task::*;
 use super::super::vkcomp::wm;
+use super::wl_shell::*;
 
 use kqueue::Watcher;
 use std::time::Duration;
@@ -136,6 +138,7 @@ impl Compositor {
 
         evman.create_surface_global(comp_cell);
         evman.create_shm_global();
+        evman.create_wl_shell_global();
 
         return evman;
     }
@@ -186,6 +189,21 @@ impl EventManager {
                         shm_handle_request(r, p);
                     });
                     r.format(wl_shm::Format::Xrgb8888);
+                }
+            ),
+        );
+    }
+
+    fn create_wl_shell_global(&mut self) {
+        self.em_display.create_global::<wl_shell::WlShell, _>(
+            1, // version
+            Filter::new(
+                // This closure will be called when wl_compositor_interface
+                // is bound. args are (resource, version)
+                move |(r, _): (ws::Main<wl_shell::WlShell>, u32), _, _| {
+                    r.quick_assign(move |p, r, _| {
+                        wl_shell_handle_request(r, p);
+                    });
                 }
             ),
         );
