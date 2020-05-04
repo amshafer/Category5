@@ -1,5 +1,9 @@
 // wl_surface interface
 //
+// The wayland surface represents an on screen buffer
+// this file processes surface events and sends tasks
+// to vkcomp
+//
 // Austin Shafer - 2020
 extern crate wayland_server as ws;
 use ws::Main;
@@ -9,7 +13,6 @@ use crate::category5::vkcomp::wm;
 use super::shm::*;
 
 use std::sync::mpsc::Sender;
-
 
 // Private structure for a wayland surface
 //
@@ -35,6 +38,8 @@ pub struct Surface {
 impl Surface {
     // Handle a request from a client
     //
+    // Called by wayland-rs, this function dispatches
+    // to the correct handling function.
     pub fn handle_request(&mut self,
                           surf: Main<wlsi::WlSurface>,
                           req: wlsi::Request)
@@ -44,6 +49,7 @@ impl Surface {
                 self.attach(surf, buffer, x, y),
             wlsi::Request::Commit =>
                 self.commit(),
+            // wayland-rs makes us register a destructor
             wlsi::Request::Destroy =>
                 self.destroy(),
             _ => unimplemented!(),
@@ -64,6 +70,12 @@ impl Surface {
         self.s_attached_buffer = buf;
     }
 
+    // Commit the current surface configuration to
+    // be displayed next frame
+    //
+    // The commit request tells the compositor that we have
+    // fully prepared this surface to be presented to the
+    // user. It commits the surface config to vkcomp
     fn commit(&mut self)
     {
         // If there was no surface attached, do nothing
@@ -100,6 +112,10 @@ impl Surface {
         ).unwrap();
     }
 
+    // Destroy this surface
+    //
+    // This must be registered explicitly as the destructor
+    // for wayland-rs to call it
     pub fn destroy(&mut self) {
         self.s_wm_tx.send(
             wm::task::Task::close_window(self.s_id)

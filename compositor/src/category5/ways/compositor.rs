@@ -1,5 +1,8 @@
-// Wayland binding fun fun fun
+// Wayland compositor singleton
 //
+// This is the "top" of the wayland heirarchy,
+// it is the initiating module of the wayland
+// protocols
 //
 // Austin Shafer - 2019
 extern crate kqueue;
@@ -27,13 +30,13 @@ use std::sync::mpsc::{Sender,Receiver};
 
 // A wayland compositor wrapper
 //
-// This class is point of first contact from higher levels in the stack.
-// It roughly holds the wl_compositor/wl_display/wl_event_loop objects.
-// There should be as little compositor logic in this as possible, most
-// of the design decisions and actions should be taken by higher levels,
-// using this API hides the unsafe bits.
+// This is the singleton of the wayland subsystem. It holds
+// all of the high level state and is passed and reference
+// counted to all of the protocol state objects. These objects
+// will perform their operations and update this state if needed.
 //
-// This is really the wayland compositor protocol object
+// Obviously anything that can be kept in protocol objects should,
+// for sake of parallelism.
 #[allow(dead_code)]
 pub struct Compositor {
     // A list of wayland client representations. These are the
@@ -45,6 +48,12 @@ pub struct Compositor {
     c_next_window_id: u64,
 }
 
+// The event manager
+//
+// This class the launching point of the wayland stack. It
+// is used by category5 to dispatch handling and listen
+// on the wayland fds. It also owns the wayland-rs top
+// level object in em_display
 #[allow(dead_code)]
 pub struct EventManager {
     // The wayland display object, this is the core
@@ -58,7 +67,9 @@ impl Compositor {
 
     // wl_compositor interface create surface
     //
-    //
+    // This request creates a new wl_surface and
+    // hooks up our surface handler. See the surface
+    // module
     pub fn create_surface(&mut self, surf: Main<wlsi::WlSurface>) {
         println!("Creating surface");
 
@@ -78,19 +89,23 @@ impl Compositor {
         let id = self.c_next_window_id;
         let wm_tx = self.c_wm_tx.clone();
 
+        // Create a reference counted object
+        // in charge of this new surface
         let new_surface = Rc::new(RefCell::new(
             Surface::new(
                 id,
                 wm_tx,
                 0, 0)
         ));
+        // This clone will be passed to the surface handler
         let ns_clone = new_surface.clone();
-
+        // Track this surface in the compositor state
         self.c_surfaces.push(new_surface.clone());
 
         // wayland_server takes care of creating the resource for
         // us, but we need to provide a function for it to call
         surf.quick_assign(move |s, r, _| {
+            // Get a reference to the Surface
             let mut nsurf = new_surface.borrow_mut();
             nsurf.handle_request(s, r);
         });
@@ -136,6 +151,8 @@ impl Compositor {
             em_rx: rx,
         });
 
+        // Register our global interfaces that
+        // will be advertised to all clients
         evman.create_surface_global(comp_cell);
         evman.create_shm_global();
         evman.create_wl_shell_global();
@@ -145,7 +162,12 @@ impl Compositor {
 }
 
 impl EventManager {
-    
+
+    // Create a new global object advertising the wl_surface interface
+    //
+    // In wayland we create global objects which tell the client
+    // what protocols we implement. Each of these methods initializes
+    // one such global
     fn create_surface_global(&mut self,
                              comp_cell: Rc<RefCell<Compositor>>) {
         // create interface for our compositor
@@ -175,14 +197,16 @@ impl EventManager {
         );
     }
 
+    // Create the shared memory globals
+    //
+    // This creates the wl_shm interface. It seems that
+    // wayland-rs does not handle this interface for us
+    // like the system library does, so we create it here
     fn create_shm_global(&mut self) {
-        // create interface for our compositor
-        // this global is independent of any one client, and
-        // will be the first thing they bind
         self.em_display.create_global::<wl_shm::WlShm, _>(
             1, // version
             Filter::new(
-                // This closure will be called when wl_compositor_interface
+                // This closure will be called when wl_shm_interface
                 // is bound. args are (resource, version)
                 move |(r, _): (ws::Main<wl_shm::WlShm>, u32), _, _| {
                     r.quick_assign(move |p, r, _| {
@@ -194,12 +218,15 @@ impl EventManager {
         );
     }
 
+    // Initialize the wl_shell interface
+    //
+    // the wl_shell interface handles the desktop window
+    // lifecycle. It handles the type of window and its position
     fn create_wl_shell_global(&mut self) {
         self.em_display.create_global::<wl_shell::WlShell, _>(
             1, // version
             Filter::new(
-                // This closure will be called when wl_compositor_interface
-                // is bound. args are (resource, version)
+                // This filter is called when wl_shell_interface is bound
                 move |(r, _): (ws::Main<wl_shell::WlShell>, u32), _, _| {
                     r.quick_assign(move |p, r, _| {
                         wl_shell_handle_request(r, p);
@@ -209,6 +236,8 @@ impl EventManager {
         );
     }
 
+    // Each subsystem has a function that implements its main
+    // loop. This is that function
     pub fn worker_thread(&mut self) {
         loop {
             // wayland-rs will not do blocking for us,
