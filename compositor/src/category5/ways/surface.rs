@@ -1,5 +1,9 @@
 // wl_surface interface
 //
+// The wayland surface represents an on screen buffer
+// this file processes surface events and sends tasks
+// to vkcomp
+//
 // Austin Shafer - 2020
 extern crate wayland_server as ws;
 use ws::Main;
@@ -13,7 +17,6 @@ use crate::category5::vkcomp::wm;
 use super::shm::*;
 
 use std::sync::mpsc::Sender;
-
 
 // Private structure for a wayland surface
 //
@@ -41,7 +44,10 @@ pub struct Surface {
 }
 
 impl Surface {
-    // Handle wayland requests for the wl_surface
+    // Handle a request from a client
+    //
+    // Called by wayland-rs, this function dispatches
+    // to the correct handling function.
     #[allow(unused_variables)]
     pub fn handle_request(&mut self,
                           surf: Main<wlsi::WlSurface>,
@@ -58,6 +64,7 @@ impl Surface {
             wlsi::Request::SetOpaqueRegion { region } => {},
             wlsi::Request::Frame { callback } =>
                 self.frame(callback),
+            // wayland-rs makes us register a destructor
             wlsi::Request::Destroy =>
                 self.destroy(),
             _ => unimplemented!(),
@@ -78,6 +85,12 @@ impl Surface {
         self.s_attached_buffer = buf;
     }
 
+    // Commit the current surface configuration to
+    // be displayed next frame
+    //
+    // The commit request tells the compositor that we have
+    // fully prepared this surface to be presented to the
+    // user. It commits the surface config to vkcomp
     fn commit(&mut self)
     {
         // If there was no surface attached, do nothing
@@ -114,12 +127,23 @@ impl Surface {
         ).unwrap();
     }
 
+    // Register a frame callback
+    //
+    // Frame callbacks are a power saving feature, we are going to
+    // tell the clients when to update their buffers instead of them
+    // guessing. If a client is hidden, then it will not have its
+    // callback called, conserving power.
     fn frame(&mut self, callback: Main<wl_callback::WlCallback>) {
         // Add this call to our current state, which will
         // be called at the appropriate time
         self.s_frame = Some(callback);
     }
 
+
+    // Destroy this surface
+    //
+    // This must be registered explicitly as the destructor
+    // for wayland-rs to call it
     pub fn destroy(&mut self) {
         self.s_wm_tx.send(
             wm::task::Task::close_window(self.s_id)

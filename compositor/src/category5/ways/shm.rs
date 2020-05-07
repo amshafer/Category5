@@ -31,6 +31,10 @@ struct ShmRegion {
 }
 
 impl ShmRegion {
+    // Create a new shared memory region from fd
+    //
+    // Maps size bytes of the fd as a shared memory region
+    // in which the clients can reference data
     fn new(fd: RawFd, size: usize) -> Option<ShmRegion> {
         unsafe {
             // To create the region we need to map size
@@ -68,6 +72,11 @@ impl Drop for ShmRegion {
     }
 }
 
+// Handles events for the wl_shm interface
+//
+// There is essentially only one thing going on here,
+// we immediately create a shared memory pool and
+// create a wl_shm_pool resource to represent it.
 pub fn shm_handle_request(req: wl_shm::Request,
                           shm: Main<wl_shm::WlShm>)
 {
@@ -93,9 +102,16 @@ pub fn shm_handle_request(req: wl_shm::Request,
     }
 }
 
+// A buffer in shared memory
+//
+// This represents a region of memory which
+// was carved from a ShmRegion. This struct
+// did not allocate the shared memory.
 #[allow(dead_code)]
 pub struct ShmBuffer {
+    // The region this buffer is a part of
     sb_reg: Rc<ShmRegion>,
+    // The offset into sb_reg where this is located
     sb_offset: i32,
     pub sb_width: i32,
     pub sb_height: i32,
@@ -104,6 +120,12 @@ pub struct ShmBuffer {
 }
 
 impl ShmBuffer {
+    // Convert a ShmBuffer to a MemImage
+    //
+    // subsystems use MemImage to represent raw pointers
+    // to memory. We need to find the raw pointer at
+    // the correct offset into the region and return
+    // it as a MemImage
     pub fn get_mem_image(&self) -> MemImage {
         MemImage::new(
             unsafe { self.sb_reg.sr_raw_ptr.offset(self.sb_offset as isize) }
@@ -115,9 +137,15 @@ impl ShmBuffer {
     }
 }
 
+// Handle events for the wl_shm_pool interface
+//
+// The shared memory pool is going to handle creation of
+// buffers, we will carve out a portion of the shared
+// memory region to supply one.
 pub fn shm_pool_handle_request(req: wl_shm_pool::Request,
                                pool: Main<wl_shm_pool::WlShmPool>)
 {
+    // Get the userdata from this resource
     let reg = pool.as_ref().user_data().get::<Rc<ShmRegion>>().unwrap();
 
     match req {
@@ -131,6 +159,7 @@ pub fn shm_pool_handle_request(req: wl_shm_pool::Request,
             stride,
             format,
         } => {
+            // Ensure that the requested format is supported
             if format != wl_shm::Format::Xrgb8888 {
                 pool.as_ref().post_error(
                     wl_shm::Error::InvalidFormat as u32,
@@ -147,6 +176,7 @@ pub fn shm_pool_handle_request(req: wl_shm_pool::Request,
                 sb_format: format,
             };
 
+            // We still need to register a void callback
             buffer.quick_assign(|_, _, _| {});
             // Add our buffer priv data to the userdata
             buffer.as_ref().user_data().set(move || data);
