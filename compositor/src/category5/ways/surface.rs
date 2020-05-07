@@ -3,7 +3,11 @@
 // Austin Shafer - 2020
 extern crate wayland_server as ws;
 use ws::Main;
-use ws::protocol::{wl_buffer, wl_surface as wlsi};
+use ws::protocol::{
+    wl_buffer,
+    wl_surface as wlsi,
+    wl_callback,
+};
 
 use crate::category5::vkcomp::wm;
 use super::shm::*;
@@ -30,11 +34,15 @@ pub struct Surface {
     s_x: u32,
     s_y: u32,
     s_wm_tx: Sender<wm::task::Task>,
+    // Frame callback
+    // This is a power saving feature, we will signal this when the
+    // client should redraw this surface
+    s_frame: Option<Main<wl_callback::WlCallback>>,
 }
 
 impl Surface {
-    // Handle a request from a client
-    //
+    // Handle wayland requests for the wl_surface
+    #[allow(unused_variables)]
     pub fn handle_request(&mut self,
                           surf: Main<wlsi::WlSurface>,
                           req: wlsi::Request)
@@ -44,6 +52,12 @@ impl Surface {
                 self.attach(surf, buffer, x, y),
             wlsi::Request::Commit =>
                 self.commit(),
+            // No damage tracking for now
+            wlsi::Request::Damage { x, y, width, height } => {},
+            wlsi::Request::DamageBuffer { x, y, width, height } => {},
+            wlsi::Request::SetOpaqueRegion { region } => {},
+            wlsi::Request::Frame { callback } =>
+                self.frame(callback),
             wlsi::Request::Destroy =>
                 self.destroy(),
             _ => unimplemented!(),
@@ -100,6 +114,12 @@ impl Surface {
         ).unwrap();
     }
 
+    fn frame(&mut self, callback: Main<wl_callback::WlCallback>) {
+        // Add this call to our current state, which will
+        // be called at the appropriate time
+        self.s_frame = Some(callback);
+    }
+
     pub fn destroy(&mut self) {
         self.s_wm_tx.send(
             wm::task::Task::close_window(self.s_id)
@@ -121,6 +141,7 @@ impl Surface {
             s_x: x,
             s_y: y,
             s_wm_tx: wm_tx,
+            s_frame: None,
         }
     }
 }

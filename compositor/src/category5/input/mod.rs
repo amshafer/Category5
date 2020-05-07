@@ -9,7 +9,7 @@
 #![allow(dead_code)]
 extern crate input;
 extern crate udev;
-extern crate kqueue;
+extern crate nix;
 
 use super::vkcomp::wm;
 use super::ways;
@@ -20,7 +20,7 @@ use input::{Libinput,LibinputInterface};
 use input::event::Event;
 use input::event::pointer::PointerEvent;
 
-use kqueue::Watcher;
+use nix::sys::event::*;
 
 use std::fs::{File,OpenOptions};
 use std::path::Path;
@@ -141,42 +141,58 @@ impl Input {
     }
 
     pub fn worker_thread(&mut self) {
-        // Create a new kqueue
-        let mut kqueue = Watcher::new().unwrap();
-        // Add a file descriptor to the watchlist
-        kqueue.add_fd(
-            self.libin.as_raw_fd(),
-            kqueue::EventFilter::EVFILT_READ,
-            kqueue::FilterFlag::empty(),
-        ).unwrap();
-        // This calls kevent(2) to let the kernel know that
-        // we are watching everything we have added
-        while kqueue.watch().is_ok() {
-            // next will call kevent(2), but this time to get
-            // any events that have happened. This blocks
-            for _kev in kqueue.iter().next() {
-                // dispatch will grab the latest available data
-                // from the devices and perform libinputs internal
-                // (time sensitive) operations on them
-	        self.libin.dispatch().unwrap();
+        // We want to save power by polling the
+        // fd provided by libinput
+        let fd = self.libin.as_raw_fd();
 
-                // TODO: need to fix this wrapper
-	        let ev = self.libin.next();
-                match ev {
-                    Some(Event::Pointer(PointerEvent::Motion(m))) => {
-                        println!("moving mouse by ({}, {})",
-                                 m.dx(), m.dy());
-                        self.wm_tx.send(
-                            wm::task::Task::move_cursor(
-                                m.dx(),
-                                m.dy(),
-                            )
-                        ).unwrap();
-                    },
-                    Some(e) => println!("Event: {:?}", e),
-                    None => (),
-                };
-            }
+        // Create a new kqueue
+        let kq = kqueue().expect("Could not create kqueue");
+
+        // Create an event that watches our fd
+        let kev_watch = KEvent::new(fd as usize,
+                                    EventFilter::EVFILT_READ,
+                                    EventFlag::EV_ADD,
+                                    FilterFlag::all(),
+                                    0,
+                                    0);
+
+        // Register our kevent with the kqueue to receive updates
+        kevent(kq, vec![kev_watch].as_slice(), &mut [], 0)
+            .expect("Could not register watch event with kqueue");
+
+        // This will be overwritten with the event which was triggered
+        // For now we just need something to initialize it with
+        let kev = KEvent::new(fd as usize,
+                              EventFilter::EVFILT_READ,
+                              EventFlag::EV_ADD,
+                              FilterFlag::all(),
+                              0,
+                              0);
+        // List of events to watch
+        let mut evlist = vec![kev];
+        // timeout after 15 ms (16 is the ms per frame at 60fps)
+        while kevent(kq, &[], evlist.as_mut_slice(), 15).is_ok() {
+            // dispatch will grab the latest available data
+            // from the devices and perform libinputs internal
+            // (time sensitive) operations on them
+	    self.libin.dispatch().unwrap();
+
+            // TODO: need to fix this wrapper
+	    let ev = self.libin.next();
+            match ev {
+                Some(Event::Pointer(PointerEvent::Motion(m))) => {
+                    println!("moving mouse by ({}, {})",
+                             m.dx(), m.dy());
+                    self.wm_tx.send(
+                        wm::task::Task::move_cursor(
+                            m.dx(),
+                            m.dy(),
+                        )
+                    ).unwrap();
+                },
+                Some(e) => println!("Event: {:?}", e),
+                None => (),
+            };
         }
     }
 }

@@ -2,7 +2,7 @@
 //
 //
 // Austin Shafer - 2019
-extern crate kqueue;
+extern crate nix;
 pub extern crate wayland_server as ws;
 use ws::{Filter,Main,Resource};
 
@@ -19,7 +19,7 @@ use super::task::*;
 use super::super::vkcomp::wm;
 use super::wl_shell::*;
 
-use kqueue::Watcher;
+use nix::sys::event::*;
 use std::time::Duration;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -210,39 +210,47 @@ impl EventManager {
     }
 
     pub fn worker_thread(&mut self) {
-        loop {
-            // wayland-rs will not do blocking for us,
-            // so we need to use kqueue. This is the
-            // same approach as used by the input
-            // subsystem.
-            let fd = self.em_display.get_poll_fd();
+        // wayland-rs will not do blocking for us,
+        // so we need to use kqueue. This is the
+        // same approach as used by the input
+        // subsystem.
+        let fd = self.em_display.get_poll_fd();
 
-            // Create a new kqueue
-            let mut kqueue = Watcher::new().unwrap();
-            // Add our file descriptor to the watchlist
-            kqueue.add_fd(
-                fd,
-                kqueue::EventFilter::EVFILT_READ,
-                kqueue::FilterFlag::empty(),
-            ).unwrap();
+        // Create a new kqueue
+        let kq = kqueue().expect("Could not create kqueue");
 
-            // This calls kevent(2) to let the kernel know that
-            // we are watching everything we have added
-            while kqueue.watch().is_ok() {
-                // next will call kevent(2), but this time to get
-                // any events that have happened. This blocks
-                for _kev in kqueue.iter().next() {
+        // Create an event that watches our fd
+        let kev_watch = KEvent::new(fd as usize,
+                                    EventFilter::EVFILT_READ,
+                                    EventFlag::EV_ADD,
+                                    FilterFlag::all(),
+                                    0,
+                                    0);
 
-                    // wait for the next event
-                    self.em_display
-                        .dispatch(Duration::from_millis(0), &mut ())
-                        .unwrap();
-                    self.em_display.flush_clients(&mut ());
+        // Register our kevent with the kqueue to receive updates
+        kevent(kq, vec![kev_watch].as_slice(), &mut [], 0)
+            .expect("Could not register watch event with kqueue");
 
-                    //let task = self.rx.recv().unwrap();
-                    //self.process_task(&task);
-                }
-            }
+        // This will be overwritten with the event which was triggered
+        // For now we just need something to initialize it with
+        let kev = KEvent::new(fd as usize,
+                              EventFilter::EVFILT_READ,
+                              EventFlag::EV_ADD,
+                              FilterFlag::all(),
+                              0,
+                              0);
+        // List of events to watch
+        let mut evlist = vec![kev];
+        // timeout after 15 ms (16 is the ms per frame at 60fps)
+        while kevent(kq, &[], evlist.as_mut_slice(), 15).is_ok() {
+            // wait for the next event
+            self.em_display
+                .dispatch(Duration::from_millis(0), &mut ())
+                .unwrap();
+            self.em_display.flush_clients(&mut ());
+
+            //let task = self.rx.recv().unwrap();
+            //self.process_task(&task);
         }
     }
 }

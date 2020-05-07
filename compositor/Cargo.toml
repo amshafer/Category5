@@ -16,5 +16,4 @@ serde = { version = "1.0", features = ["derive"] }
 bincode="1.2.1"
 input="0.4.1"
 udev="0.2.0"
-kqueue="0.2.3"
 nix="0.17"
