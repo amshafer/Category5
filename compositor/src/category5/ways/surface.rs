@@ -15,7 +15,10 @@ use ws::protocol::{
 
 use crate::category5::vkcomp::wm;
 use super::shm::*;
+use super::atmosphere::*;
 
+use std::rc::Rc;
+use std::cell::RefCell;
 use std::sync::mpsc::Sender;
 
 // Private structure for a wayland surface
@@ -26,6 +29,7 @@ use std::sync::mpsc::Sender;
 // will be displayed to the client when it is committed.
 #[allow(dead_code)]
 pub struct Surface {
+    s_atmos: Rc<RefCell<Atmosphere>>,
     s_id: u64, // The id of the window in the renderer
     // The currently attached buffer. Will be displayed on commit
     // When the window is created a buffer is not assigned, hence the option
@@ -152,13 +156,15 @@ impl Surface {
 
     // create a new visible surface at coordinates (x,y)
     // from the specified wayland resource
-    pub fn new(id: u64,
+    pub fn new(atmos: Rc<RefCell<Atmosphere>>,
+               id: u64,
                wm_tx: Sender<wm::task::Task>,
                x: u32,
                y: u32)
                -> Surface
     {
         Surface {
+            s_atmos: atmos,
             s_id: id,
             s_attached_buffer: None,
             s_committed_buffer: None,

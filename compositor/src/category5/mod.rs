@@ -27,20 +27,20 @@ pub struct Category5 {
     //
     // Category5 - Graphical desktop compositor
     // ways::Compositor - wayland protocol compositor object 
-    wc: Option<thread::JoinHandle<()>>,
-    wc_tx: Sender<ways::task::Task>,
+    c5_wc: Option<thread::JoinHandle<()>>,
+    c5_wc_tx: Sender<ways::task::Task>,
     // The graphics subsystem
     //
     // send channel to give the wayland subsystem work
     // wc_tx: Sender<ways::Task>,
     // The window manager (vulkan rendering backend)
-    wm: Option<thread::JoinHandle<()>>,
-    wm_tx: Sender<wm::task::Task>,
+    c5_wm: Option<thread::JoinHandle<()>>,
+    c5_wm_tx: Sender<wm::task::Task>,
     // The input sybsystem
     //
     // It does not have a channel because it only produces
     // events for the other subsystems.
-    input: Option<thread::JoinHandle<()>>,
+    c5_input: Option<thread::JoinHandle<()>>,
 }
 
 impl Category5 {
@@ -55,24 +55,25 @@ impl Category5 {
         // Clones used for input
         let wm_tx_clone2 = wm_tx.clone();
         let wc_tx_clone = wc_tx.clone();
+
         Category5 {
             // Get the wayland compositor
             // Note that the wayland compositor + vulkan renderer
             // is the complete compositor
-            wc: Some(thread::spawn(|| {
+            c5_wc: Some(thread::spawn(|| {
                 let mut ev = Compositor::new(wc_rx, wm_tx_clone);
                 ev.worker_thread();
             })),
-            wc_tx: wc_tx,
+            c5_wc_tx: wc_tx,
             // creates a context, swapchain, images, and others
             // initialize the pipeline, renderpasses, and
             // display engine.
-            wm: Some(thread::spawn(|| {
+            c5_wm: Some(thread::spawn(|| {
                 let mut wm = WindowManager::new(wm_rx);
                 wm.worker_thread();
             })),
-            wm_tx: wm_tx,
-            input: Some(thread::spawn(|| {
+            c5_wm_tx: wm_tx,
+            c5_input: Some(thread::spawn(|| {
                 let mut input = Input::new(wc_tx_clone, wm_tx_clone2);
                 input.worker_thread();
             })),
@@ -89,7 +90,7 @@ impl Category5 {
                                    tex_width: u32,
                                    tex_height: u32)
     {
-        self.wm_tx.send(
+        self.c5_wm_tx.send(
             wm::task::Task::set_background_from_mem(
                 tex, tex_width, tex_height
             )
@@ -99,8 +100,8 @@ impl Category5 {
     // This is the main loop of the entire system
     // We just wait for the other threads
     pub fn run_forever(&mut self) {
-        self.wc.take().unwrap().join().ok();
-        self.wm.take().unwrap().join().ok();
-        self.input.take().unwrap().join().ok();
+        self.c5_wc.take().unwrap().join().ok();
+        self.c5_wm.take().unwrap().join().ok();
+        self.c5_input.take().unwrap().join().ok();
     }
 }

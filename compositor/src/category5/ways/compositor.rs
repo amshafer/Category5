@@ -19,6 +19,7 @@ use ws::protocol::{
 use super::shm::*;
 use super::surface::*;
 use super::task::*;
+use super::atmosphere::*;
 use super::super::vkcomp::wm;
 use super::wl_shell::*;
 
@@ -39,12 +40,10 @@ use std::sync::mpsc::{Sender,Receiver};
 // for sake of parallelism.
 #[allow(dead_code)]
 pub struct Compositor {
-    // A list of wayland client representations. These are the
-    // currently connected clients.
-    c_clients: Vec<RefCell<u32>>,
-    // A list of surfaces which have been handed out to clients
-    c_surfaces: Vec<Rc<RefCell<Surface>>>,
+    c_atmos: Rc<RefCell<Atmosphere>>,
+    // transfer channel to speak to vkcomp::wm
     c_wm_tx: Sender<wm::task::Task>,
+    // counter for the next window id to hand out
     c_next_window_id: u64,
 }
 
@@ -56,6 +55,7 @@ pub struct Compositor {
 // level object in em_display
 #[allow(dead_code)]
 pub struct EventManager {
+    em_atmos: Rc<RefCell<Atmosphere>>,
     // The wayland display object, this is the core
     // global singleton for libwayland
     em_display: ws::Display,
@@ -93,6 +93,7 @@ impl Compositor {
         // in charge of this new surface
         let new_surface = Rc::new(RefCell::new(
             Surface::new(
+                self.c_atmos.clone(),
                 id,
                 wm_tx,
                 0, 0)
@@ -100,7 +101,7 @@ impl Compositor {
         // This clone will be passed to the surface handler
         let ns_clone = new_surface.clone();
         // Track this surface in the compositor state
-        self.c_surfaces.push(new_surface.clone());
+        self.c_atmos.borrow_mut().a_surfaces.push(new_surface.clone());
 
         // wayland_server takes care of creating the resource for
         // us, but we need to provide a function for it to call
@@ -120,6 +121,7 @@ impl Compositor {
     }
 
     // Returns a new Compositor struct
+    //    (okay well really an EventManager)
     //
     // This creates a new wayland compositor, setting up all 
     // the needed resources for the struct. It will create a
@@ -128,24 +130,28 @@ impl Compositor {
     //
     // This kicks off the global callback chain, starting with
     //    Compositor::bind_compositor_callback
-    pub fn new(rx: Receiver<Task>, wm_tx: Sender<wm::task::Task>)
+    pub fn new(rx: Receiver<Task>,
+               wm_tx: Sender<wm::task::Task>)
                -> Box<EventManager>
     {
         let mut display = ws::Display::new();
         display.add_socket_auto()
             .expect("Failed to add a socket to the wayland server");
 
+        // Do some teraforming and generate an atmosphere
+        let atmos = Rc::new(RefCell::new(Atmosphere::new()));
+
         // Later moved into the closure
         let comp_cell = Rc::new(RefCell::new(
             Compositor {
-                c_clients: Vec::new(),
-                c_surfaces: Vec::new(),
+                c_atmos: atmos.clone(),
                 c_wm_tx: wm_tx.clone(),
                 c_next_window_id: 1,
             }
         ));
 
         let mut evman = Box::new(EventManager {
+            em_atmos: atmos,
             em_display: display,
             em_wm_tx: wm_tx,
             em_rx: rx,
