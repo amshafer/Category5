@@ -159,7 +159,7 @@ impl Compositor {
 
         // Register our global interfaces that
         // will be advertised to all clients
-        evman.create_surface_global(comp_cell);
+        evman.create_compositor_global(comp_cell);
         evman.create_shm_global();
         evman.create_wl_shell_global();
 
@@ -174,13 +174,13 @@ impl EventManager {
     // In wayland we create global objects which tell the client
     // what protocols we implement. Each of these methods initializes
     // one such global
-    fn create_surface_global(&mut self,
-                             comp_cell: Rc<RefCell<Compositor>>) {
+    fn create_compositor_global(&mut self,
+                                comp_cell: Rc<RefCell<Compositor>>) {
         // create interface for our compositor
         // this global is independent of any one client, and
         // will be the first thing they bind
         self.em_display.create_global::<wlci::WlCompositor, _>(
-            3, // version
+            4, // version
             Filter::new(
                 // This closure will be called when wl_compositor_interface
                 // is bound. args are (resource, version)
@@ -278,6 +278,8 @@ impl EventManager {
         let mut evlist = vec![kev];
         // timeout after 15 ms (16 is the ms per frame at 60fps)
         while kevent(kq, &[], evlist.as_mut_slice(), 15).is_ok() {
+            self.em_atmos.borrow_mut().signal_frame_callbacks();
+
             // wait for the next event
             self.em_display
                 .dispatch(Duration::from_millis(0), &mut ())

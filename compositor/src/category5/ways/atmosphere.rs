@@ -6,6 +6,7 @@ use super::surface::*;
 use std::vec::Vec;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // Global state tracking
 //
@@ -29,6 +30,20 @@ impl Atmosphere {
         Atmosphere {
             a_desktop: 0,
             a_surfaces: Vec::new(),
+        }
+    }
+
+    pub fn signal_frame_callbacks(&mut self) {
+        for cell in &self.a_surfaces {
+            let surf = cell.borrow_mut();
+            if let Some(callback) = surf.s_frame_callback.as_ref() {
+                // frame callbacks return the current time
+                // in milliseconds.
+                callback.done(SystemTime::now()
+                              .duration_since(UNIX_EPOCH)
+                              .expect("Error getting system time")
+                              .as_millis() as u32);
+            }
         }
     }
 }

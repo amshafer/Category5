@@ -44,7 +44,7 @@ pub struct Surface {
     // Frame callback
     // This is a power saving feature, we will signal this when the
     // client should redraw this surface
-    s_frame: Option<Main<wl_callback::WlCallback>>,
+    pub s_frame_callback: Option<Main<wl_callback::WlCallback>>,
 }
 
 impl Surface {
@@ -101,6 +101,8 @@ impl Surface {
         if self.s_attached_buffer.is_none() {
             return; // throw error?
         }
+
+        // first we need to commit the attached state
         self.s_committed_buffer = self.s_attached_buffer.take();
 
         // Get the ShmBuffer from the user data so we
@@ -140,7 +142,7 @@ impl Surface {
     fn frame(&mut self, callback: Main<wl_callback::WlCallback>) {
         // Add this call to our current state, which will
         // be called at the appropriate time
-        self.s_frame = Some(callback);
+        self.s_frame_callback = Some(callback);
     }
 
 
@@ -171,7 +173,7 @@ impl Surface {
             s_x: x,
             s_y: y,
             s_wm_tx: wm_tx,
-            s_frame: None,
+            s_frame_callback: None,
         }
     }
 }
