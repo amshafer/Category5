@@ -6,7 +6,6 @@
 extern crate nix;
 extern crate wayland_server as ws;
 
-use ws::Main;
 use ws::protocol::{wl_shm, wl_shm_pool};
 
 use crate::category5::utils::*;
@@ -14,7 +13,8 @@ use crate::category5::utils::*;
 use std::rc::Rc;
 use std::os::unix::io::RawFd;
 use std::ffi::c_void;
-use nix::sys::mman;
+use nix::{unistd, sys::mman};
+use std::ops::Deref;
 
 // A ShmRegion is a mmapped anonymous region of
 // shared memory
@@ -65,8 +65,9 @@ impl Drop for ShmRegion {
         if !self.sr_raw_ptr.is_null() {
             unsafe {
                 // We need to manually unmap this region whenever
-                // it goes out of scope
+                // it goes out of scope. These prevent memory leaks
                 mman::munmap(self.sr_raw_ptr, self.sr_size).unwrap();
+                unistd::close(self.sr_fd).unwrap();
             }
         }
     }
@@ -78,7 +79,7 @@ impl Drop for ShmRegion {
 // we immediately create a shared memory pool and
 // create a wl_shm_pool resource to represent it.
 pub fn shm_handle_request(req: wl_shm::Request,
-                          shm: Main<wl_shm::WlShm>)
+                          shm: wl_shm::WlShm)
 {
     match req {
         wl_shm::Request::CreatePool { id: pool, fd, size } => {
@@ -93,7 +94,7 @@ pub fn shm_handle_request(req: wl_shm::Request,
             let reg = Rc::new(ShmRegion::new(fd, size as usize).unwrap());
             // Register a callback for the wl_shm_pool interface
             pool.quick_assign(|p, r, _| {
-                shm_pool_handle_request(r, p);
+                shm_pool_handle_request(r, p.deref().clone());
             });
             // Add our ShmRegion as the private data for the pool
             pool.as_ref().user_data().set(move || reg);
@@ -143,7 +144,7 @@ impl ShmBuffer {
 // buffers, we will carve out a portion of the shared
 // memory region to supply one.
 pub fn shm_pool_handle_request(req: wl_shm_pool::Request,
-                               pool: Main<wl_shm_pool::WlShmPool>)
+                               pool: wl_shm_pool::WlShmPool)
 {
     // Get the userdata from this resource
     let reg = pool.as_ref().user_data().get::<Rc<ShmRegion>>().unwrap();

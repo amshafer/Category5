@@ -204,6 +204,9 @@ pub struct AppContext {
     // Resources for the index buffer
     index_buffer: vk::Buffer,
     index_buffer_memory: vk::DeviceMemory,
+    // command buffer for copying shm images
+    copy_cbuf: vk::CommandBuffer,
+    copy_cbuf_sema: vk::Semaphore,
 }
 
 // Recording parameters
@@ -525,8 +528,8 @@ impl Renderer {
     // all they do. They just manage memory. Command buffers will be allocated
     // as part of the queue_family specified.
     unsafe fn create_command_pool(dev: &Device,
-                                      queue_family: u32)
-                                      -> vk::CommandPool
+                                  queue_family: u32)
+                                  -> vk::CommandPool
     {
         let pool_create_info = vk::CommandPoolCreateInfo::builder()
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
@@ -545,9 +548,9 @@ impl Renderer {
     // For now we are only allocating two: one to set up the resources
     // and one to do all the work.
     unsafe fn create_command_buffers(dev: &Device,
-                                         pool: vk::CommandPool,
-                                         count: u32)
-                                         -> Vec<vk::CommandBuffer>
+                                     pool: vk::CommandPool,
+                                     count: u32)
+                                     -> Vec<vk::CommandBuffer>
     {
         let cbuf_allocate_info = vk::CommandBufferAllocateInfo::builder()
             .command_buffer_count(count)
@@ -564,10 +567,10 @@ impl Renderer {
     // specify the image views, which specify how we want
     // to access our images
     unsafe fn select_images_and_views(swapchain_loader: &khr::Swapchain,
-                                          swapchain: vk::SwapchainKHR,
-                                          dev: &Device,
-                                          surface_format: vk::SurfaceFormatKHR)
-                                          -> (Vec<vk::Image>, Vec<vk::ImageView>)
+                                      swapchain: vk::SwapchainKHR,
+                                      dev: &Device,
+                                      surface_format: vk::SurfaceFormatKHR)
+                                      -> (Vec<vk::Image>, Vec<vk::ImageView>)
     {
         let images = swapchain_loader
             .get_swapchain_images(swapchain)
@@ -612,9 +615,9 @@ impl Renderer {
     // read from the system side. Both of these are part of the
     // vk::MemoryPropertyFlags type.
     fn find_memory_type_index(props: &vk::PhysicalDeviceMemoryProperties,
-                                  reqs: &vk::MemoryRequirements,
-                                  flags: vk::MemoryPropertyFlags)
-                                  -> Option<u32>
+                              reqs: &vk::MemoryRequirements,
+                              flags: vk::MemoryPropertyFlags)
+                              -> Option<u32>
     {
         // for each memory type
         for (i, ref mem_type) in props.memory_types.iter().enumerate() {
@@ -625,8 +628,8 @@ impl Renderer {
             // they can be found in `vk_bitflags_wrapped`
             if (reqs.memory_type_bits >> i) & 1 == 1
                 && mem_type.property_flags.contains(flags) {
-                    println!("Selected type with flags {:?}",
-                             mem_type.property_flags);
+                    // println!("Selected type with flags {:?}",
+                    //          mem_type.property_flags);
                     // return the index into the memory type array
                     return Some(i as u32);
             }
@@ -650,13 +653,13 @@ impl Renderer {
     // usage defines the role the image will serve (transfer, depth data, etc)
     // flags defines the memory type (probably DEVICE_LOCAL + others)
     unsafe fn create_image(dev: &Device,
-                               mem_props: &vk::PhysicalDeviceMemoryProperties,
-                               resolution: &vk::Extent2D,
-                               format: vk::Format,
-                               usage: vk::ImageUsageFlags,
-                               aspect: vk::ImageAspectFlags, 
-                               flags: vk::MemoryPropertyFlags)
-                               -> (vk::Image, vk::ImageView, vk::DeviceMemory)
+                           mem_props: &vk::PhysicalDeviceMemoryProperties,
+                           resolution: &vk::Extent2D,
+                           format: vk::Format,
+                           usage: vk::ImageUsageFlags,
+                           aspect: vk::ImageAspectFlags,
+                           flags: vk::MemoryPropertyFlags)
+                           -> (vk::Image, vk::ImageView, vk::DeviceMemory)
     {
         // we create the image now, but will have to bind
         // some memory to it later.
@@ -748,10 +751,10 @@ impl Renderer {
     // It is assumed this is for textures referenced from the fragment
     // shader, and so it is a bit specific.
     unsafe fn transition_image_layout(&self,
-                                          image: vk::Image,
-                                          cbuf: vk::CommandBuffer,
-                                          old: vk::ImageLayout,
-                                          new: vk::ImageLayout)
+                                      image: vk::Image,
+                                      cbuf: vk::CommandBuffer,
+                                      old: vk::ImageLayout,
+                                      new: vk::ImageLayout)
     {
         // use defaults here, and set them in the next section
         let mut layout_barrier = vk::ImageMemoryBarrier::builder()
@@ -815,11 +818,11 @@ impl Renderer {
     //
     // needs to be recorded in a cbuf
     unsafe fn copy_buf_to_img(&self,
-                                  cbuf: vk::CommandBuffer,
-                                  buffer: vk::Buffer,
-                                  image: vk::Image,
-                                  width: u32,
-                                  height: u32)
+                              cbuf: vk::CommandBuffer,
+                              buffer: vk::Buffer,
+                              image: vk::Image,
+                              width: u32,
+                              height: u32)
     {
         let region = vk::BufferImageCopy::builder()
             // 0 specifies that the pixels are tightly packed
@@ -926,6 +929,7 @@ impl Renderer {
             }
         );
 
+        self.dev.free_command_buffers(self.pool, &[new_cbuf]);
         self.dev.destroy_buffer(buffer, None);
         self.dev.free_memory(buf_mem, None);
     }
@@ -2021,6 +2025,18 @@ impl Renderer {
             // One image sampler is going to be used for everything
             let sampler = self.create_sampler();
 
+            // Create a cbuf for copying data to shm images
+            let copy_cbuf = Renderer::create_command_buffers(&self.dev,
+                                                             self.pool,
+                                                             1)[0];
+
+            // Make a semaphore which will be signalled after
+            // copies are completed
+            let sema_create_info = vk::SemaphoreCreateInfo::default();
+            let copy_sema = self.dev
+                .create_semaphore(&sema_create_info, None)
+                .unwrap();
+
             // The app context contains the scene specific data
             self.app_ctx = RefCell::new(Some(AppContext {
                 pass: pass,
@@ -2044,6 +2060,8 @@ impl Renderer {
                 vert_count: QUAD_INDICES.len() as u32 * 3,
                 index_buffer: ibuf,
                 index_buffer_memory: imem,
+                copy_cbuf: copy_cbuf,
+                copy_cbuf_sema: copy_sema,
             }));
         }
     }

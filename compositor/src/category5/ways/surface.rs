@@ -102,7 +102,7 @@ impl Surface {
             return; // throw error?
         }
 
-        // first we need to commit the attached state
+        // now we can commit the attached state
         self.s_committed_buffer = self.s_attached_buffer.take();
 
         // Get the ShmBuffer from the user data so we
@@ -125,7 +125,9 @@ impl Surface {
         self.s_wm_tx.send(
             wm::task::Task::update_window_contents_from_mem(
                 self.s_id, // ID of the new window
-                fb,
+                fb, // memimage of the contents
+                // pass the WlBuffer so it can be released
+                self.s_committed_buffer.as_ref().unwrap().clone(),
                 // window dimensions
                 shm_buf.sb_width as usize,
                 shm_buf.sb_height as usize,

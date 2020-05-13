@@ -15,8 +15,7 @@ use task::*;
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver};
-use std::time::Duration;
-use std::thread;
+use std::time::{SystemTime,UNIX_EPOCH};
 
 // This consolidates the multiple resources needed
 // to represent a titlebar
@@ -196,10 +195,6 @@ impl WindowManager {
     fn update_window_contents_from_mem(&mut self,
                                        info: &UpdateWindowContentsFromMem)
     {
-        println!("wm: Updating app mesh using texture of size {}x{}",
-                 info.width, info.height,
-        );
-
         // Find the app corresponding to that window id
         let app = match self.apps
             .iter_mut()
@@ -396,17 +391,19 @@ impl WindowManager {
     fn end_frame(&mut self) {
         self.rend.present();
     }
-    
+
     pub fn process_task(&mut self, task: &Task) {
         match task {
             Task::begin_frame => self.begin_frame(),
             Task::end_frame => self.end_frame(),
+            // move cursor
             Task::mc(mc) => {
                 let sensitivity = 2.4;
                 self.cursor_x += mc.x * sensitivity;
                 self.cursor_y += mc.y * sensitivity;
             },
             Task::close_window(id) => self.close_window(*id),
+            // set background from mem
             Task::sbfm(sb) => {
                 self.set_background_from_mem(
                     sb.pixels.as_ref(),
@@ -414,9 +411,11 @@ impl WindowManager {
                     sb.height,
                 );
             },
+            // create new window
             Task::cw(cw) => {
                 self.create_window(cw);
             },
+            // update window from shm
             Task::uwcfm(uw) => {
                 self.update_window_contents_from_mem(uw);
             }
@@ -427,6 +426,12 @@ impl WindowManager {
         loop {
             // Block for any new tasks
             let task = self.rx.recv().unwrap();
+            // We time every frame for debugging
+            let fstart_time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("Error getting system time")
+                .as_millis() as u32;
+
             self.process_task(&task);
 
             // We have already done one task, but the previous
@@ -444,7 +449,7 @@ impl WindowManager {
                         //
                         // It doesn't look like this bug will be fixed
                         // anytime soon
-                        thread::sleep(Duration::from_millis(8));
+                        //thread::sleep(Duration::from_millis(1));
                     },
                     Err(err) =>
                         panic!("Error while waiting for tasks: {:?}", err),
@@ -454,6 +459,14 @@ impl WindowManager {
             self.begin_frame();
             self.reap_dead_windows();
             self.end_frame();
+
+            let fend_time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("Error getting system time")
+                .as_millis() as u32;
+
+            println!("wm: this frame took {} mseconds",
+                     fend_time - fstart_time);
         }
     }
 }

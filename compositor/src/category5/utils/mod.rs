@@ -10,6 +10,7 @@ use std::ops::Deref;
 //
 // *Does Not* free the memory when it is dropped. This
 // is used to represent shm buffers from wayland.
+#[derive(Debug)]
 pub struct MemImage {
     ptr: *mut u8,
     // size of the pixel elements, in bytes

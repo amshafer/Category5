@@ -28,6 +28,7 @@ use std::time::Duration;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc::{Sender,Receiver};
+use std::ops::Deref;
 
 // A wayland compositor wrapper
 //
@@ -215,8 +216,10 @@ impl EventManager {
                 // This closure will be called when wl_shm_interface
                 // is bound. args are (resource, version)
                 move |(r, _): (ws::Main<wl_shm::WlShm>, u32), _, _| {
-                    r.quick_assign(move |p, r, _| {
-                        shm_handle_request(r, p);
+                    r.quick_assign(move |shm, r, _| {
+                        // clone the WlShm so it doesn't get dropped
+                        // prematurely
+                        shm_handle_request(r, shm.deref().clone());
                     });
                     r.format(wl_shm::Format::Xrgb8888);
                 }
