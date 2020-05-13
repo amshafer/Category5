@@ -339,7 +339,9 @@ impl WindowManager {
         self.apps.retain(|app| {
                 if app.marked_for_death {
                     // Destroy the rendering resources
-                    app.mesh.as_ref().map(|mesh| mesh.destroy(rend));
+                    app.mesh.as_ref().map(
+                        |mesh| mesh.destroy(rend)
+                    );
 
                     return false;
                 }

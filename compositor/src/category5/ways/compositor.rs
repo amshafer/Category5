@@ -82,7 +82,7 @@ impl Compositor {
                 self.c_next_window_id, // ID of the new window
                 0, 0, // position
                 // No texture yet, it will be added by Surface
-                64, 64, // window dimensions
+                640, 480, // window dimensions
             )
         ).unwrap();
 

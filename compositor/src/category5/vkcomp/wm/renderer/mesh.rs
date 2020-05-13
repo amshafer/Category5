@@ -41,6 +41,14 @@ impl Mesh {
             rend.dev.free_memory(self.image_mem, None);
             rend.dev.destroy_buffer(self.transfer_buf, None);
             rend.dev.free_memory(self.transfer_mem, None);
+            // get the descriptor pool
+            if let Some(ctx) = &mut *rend.app_ctx.borrow_mut() {
+                // free our descriptors
+                ctx.desc_pool.destroy_samplers(rend,
+                                               self.pool_handle,
+                                               self.sampler_descriptors
+                                               .as_slice());
+            }
         }
     }
 

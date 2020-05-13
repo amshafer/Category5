@@ -68,6 +68,8 @@ impl DescPool {
 
         let info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&sizes)
+            // we want to be able to free descriptor sets individually
+            .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
             .max_sets(POOL_SIZE);
 
         self.pools.push(
@@ -143,6 +145,22 @@ impl DescPool {
                 // Allocates a set for each layout specified
                 rend.dev.allocate_descriptor_sets(&info).unwrap()
             )
+        }
+    }
+
+    pub fn destroy_samplers(&mut self,
+                            rend: &Renderer,
+                            pool_handle: usize,
+                            samplers: &[vk::DescriptorSet])
+    {
+        assert!(pool_handle < self.pools.len());
+
+        unsafe {
+            for s in samplers {
+                rend.dev.free_descriptor_sets(
+                    self.pools[pool_handle], &[*s]
+                );
+            }
         }
     }
 
