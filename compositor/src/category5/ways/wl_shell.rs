@@ -7,6 +7,13 @@ extern crate wayland_server as ws;
 use ws::Main;
 use ws::protocol::{wl_shell,wl_shell_surface, wl_surface};
 
+use crate::category5::vkcomp::wm;
+use super::surface::*;
+use super::role::Role;
+
+use std::rc::Rc;
+use std::cell::RefCell;
+
 // Handle requests to a wl_shell interface
 //
 // The wl_shell interface implements functionality regarding
@@ -17,9 +24,17 @@ pub fn wl_shell_handle_request(req: wl_shell::Request,
 {
     match req {
         wl_shell::Request::GetShellSurface { id: shell_surface, surface } => {
-            let shsurf = ShellSurface {
-                ss_surface: surface,
-            };
+            // get category5's surface from the userdata
+            let surf = surface.as_ref()
+                .user_data()
+                .get::<Rc<RefCell<Surface>>>()
+                .unwrap();
+
+            let shsurf = RefCell::new(ShellSurface {
+                ss_surface: surf.clone(),
+                ss_surface_proxy: surface,
+                ss_toplevel: false,
+            });
 
             shell_surface.quick_assign(|s, r, _| {
                 wl_shell_surface_handle_request(s, r);
@@ -40,10 +55,15 @@ pub fn wl_shell_handle_request(req: wl_shell::Request,
 fn wl_shell_surface_handle_request(surf: Main<wl_shell_surface::WlShellSurface>,
                                    req: wl_shell_surface::Request)
 {
-    let _shsurf = surf.as_ref().user_data().get::<ShellSurface>().unwrap();
+    let mut shsurf = surf.as_ref()
+        .user_data()
+        .get::<RefCell<ShellSurface>>()
+        .unwrap()
+        .borrow_mut();
 
     match req {
-        wl_shell_surface::Request::SetToplevel => {},
+        wl_shell_surface::Request::SetToplevel =>
+            shsurf.set_toplevel(),
         _ => unimplemented!(),
     };
 }
@@ -54,6 +74,32 @@ fn wl_shell_surface_handle_request(surf: Main<wl_shell_surface::WlShellSurface>,
 // wl_shell_surface. It actually implements
 // all the functionality that the handler
 // dispatches
-struct ShellSurface {
-    ss_surface: wl_surface::WlSurface,
+#[allow(dead_code)]
+pub struct ShellSurface {
+    // Category5 surface state object
+    ss_surface: Rc<RefCell<Surface>>,
+    // the wayland proxy
+    ss_surface_proxy: wl_surface::WlSurface,
+    ss_toplevel: bool,
+}
+
+impl ShellSurface {
+    fn set_toplevel(&mut self) {
+        self.ss_toplevel = true;
+
+        // Tell vkcomp to create a new window
+        let mut surf = self.ss_surface.borrow_mut();
+        println!("Setting surface {} to toplevel", surf.s_id);
+        surf.s_wm_tx.send(
+            wm::task::Task::create_window(
+                surf.s_id, // ID of the new window
+                0, 0, // position
+                // No texture yet, it will be added by Surface
+                640, 480, // window dimensions
+            )
+        ).unwrap();
+
+        // Mark our surface as being a window handled by wl_shell
+        surf.s_role = Some(Role::wl_shell_toplevel);
+    }
 }

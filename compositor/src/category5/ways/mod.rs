@@ -8,4 +8,5 @@ mod atmosphere;
 mod shm;
 mod wl_shell;
 
+mod role;
 pub mod task;

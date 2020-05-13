@@ -77,14 +77,6 @@ impl Compositor {
         // Ask the window manage to create a new window
         // without contents
         self.c_next_window_id += 1;
-        self.c_wm_tx.send(
-            wm::task::Task::create_window(
-                self.c_next_window_id, // ID of the new window
-                0, 0, // position
-                // No texture yet, it will be added by Surface
-                640, 480, // window dimensions
-            )
-        ).unwrap();
 
         // create an entry in the surfaces list
         let id = self.c_next_window_id;
@@ -111,6 +103,11 @@ impl Compositor {
             let mut nsurf = new_surface.borrow_mut();
             nsurf.handle_request(s, r);
         });
+
+        // Add the new surface to the userdata so other
+        // protocols can see it
+        surf.as_ref().user_data().set(|| ns_clone.clone());
+
         // We have to manually assign a destructor, or else
         // Destroy request doesn't seem to proc
         surf.assign_destructor(Filter::new(

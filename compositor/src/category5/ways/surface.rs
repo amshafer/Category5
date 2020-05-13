@@ -16,6 +16,7 @@ use ws::protocol::{
 use crate::category5::vkcomp::wm;
 use super::shm::*;
 use super::atmosphere::*;
+use super::role::Role;
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -29,8 +30,8 @@ use std::sync::mpsc::Sender;
 // will be displayed to the client when it is committed.
 #[allow(dead_code)]
 pub struct Surface {
-    s_atmos: Rc<RefCell<Atmosphere>>,
-    s_id: u64, // The id of the window in the renderer
+    pub s_atmos: Rc<RefCell<Atmosphere>>,
+    pub s_id: u64, // The id of the window in the renderer
     // The currently attached buffer. Will be displayed on commit
     // When the window is created a buffer is not assigned, hence the option
     s_attached_buffer: Option<wl_buffer::WlBuffer>,
@@ -40,11 +41,13 @@ pub struct Surface {
     // the location of the surface in our compositor
     s_x: u32,
     s_y: u32,
-    s_wm_tx: Sender<wm::task::Task>,
+    pub s_wm_tx: Sender<wm::task::Task>,
     // Frame callback
     // This is a power saving feature, we will signal this when the
     // client should redraw this surface
     pub s_frame_callback: Option<Main<wl_callback::WlCallback>>,
+    // How this surface is being used
+    pub s_role: Option<Role>,
 }
 
 impl Surface {
@@ -104,6 +107,10 @@ impl Surface {
 
         // now we can commit the attached state
         self.s_committed_buffer = self.s_attached_buffer.take();
+        // if we don't have an assigned role, don't do any work
+        if self.s_role.is_none() {
+            return;
+        }
 
         // Get the ShmBuffer from the user data so we
         // can read its contents
@@ -176,6 +183,7 @@ impl Surface {
             s_y: y,
             s_wm_tx: wm_tx,
             s_frame_callback: None,
+            s_role: None,
         }
     }
 }

@@ -467,7 +467,7 @@ impl WindowManager {
                 .expect("Error getting system time")
                 .as_millis() as u32;
 
-            println!("wm: this frame took {} mseconds",
+            println!("wm: this frame took {} ms",
                      fend_time - fstart_time);
         }
     }
