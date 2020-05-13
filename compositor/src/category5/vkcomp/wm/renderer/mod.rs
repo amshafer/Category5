@@ -206,7 +206,7 @@ pub struct AppContext {
     index_buffer_memory: vk::DeviceMemory,
     // command buffer for copying shm images
     copy_cbuf: vk::CommandBuffer,
-    copy_cbuf_sema: vk::Semaphore,
+    copy_cbuf_fence: vk::Fence,
 }
 
 // Recording parameters
@@ -890,46 +890,62 @@ impl Renderer {
             &data,
         );
 
-        // allocate a new cbuf for us to work with
-        let new_cbuf = Renderer::create_command_buffers(
-            &self.dev,
-            self.pool,
-            // only get one
-            1)[0];
+        if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
+            // If a previous copy is still happening, wait for it
+            match self.dev.get_fence_status(ctx.copy_cbuf_fence) {
+                // true means vk::Result::SUCCESS
+                Ok(true) => {},
+                // false means vk::Result::NOT_READY
+                Ok(false) => {
+                    self.dev.wait_for_fences(&[ctx.copy_cbuf_fence],
+                                             true, // wait for all
+                                             std::u64::MAX, //timeout
+                    ).unwrap();
+                    // unsignal it, may be extraneous
+                    self.dev.reset_fences(&[ctx.copy_cbuf_fence]).unwrap();
+                }
+                Err(_) => panic!("Failed to get fence status"),
+            };
 
-        // now perform the copy
-        self.cbuf_onetime(
-            new_cbuf,
-            self.present_queue,
-            &[], // wait stages
-            &[], // wait semas
-            &[], // signal semas
-            |rend, cbuf| {
-                // transition our image to be a transfer destination
-                rend.transition_image_layout(
-                    image,
-                    cbuf,
-                    vk::ImageLayout::UNDEFINED,
-                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                );
+            // now perform the copy
+            self.cbuf_begin_recording(
+                ctx.copy_cbuf,
+                vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT
+            );
 
-                rend.copy_buf_to_img(cbuf,
-                                     buffer,
-                                     image,
-                                     width,
-                                     height);
+            // transition our image to be a transfer destination
+            self.transition_image_layout(
+                image,
+                ctx.copy_cbuf,
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            );
 
-                // transition back to the optimal color format
-                rend.transition_image_layout(
-                    image,
-                    cbuf,
-                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                );
-            }
-        );
+            self.copy_buf_to_img(ctx.copy_cbuf,
+                                 buffer,
+                                 image,
+                                 width,
+                                 height);
 
-        self.dev.free_command_buffers(self.pool, &[new_cbuf]);
+            // transition back to the optimal color format
+            self.transition_image_layout(
+                image,
+                ctx.copy_cbuf,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            );
+
+            self.cbuf_end_recording(ctx.copy_cbuf);
+            self.cbuf_submit_async(
+                ctx.copy_cbuf,
+                self.present_queue,
+                &[], // wait_stages
+                &[], // wait_semas
+                &[], // signal_semas
+                ctx.copy_cbuf_fence,
+            );
+        }
+
         self.dev.destroy_buffer(buffer, None);
         self.dev.free_memory(buf_mem, None);
     }
@@ -1158,6 +1174,11 @@ impl Renderer {
 
     // Submits a command buffer.
     //
+    // This is used for synchronized submits for graphical
+    // display operations. It waits for submit_fence before
+    // submitting to queue, and will signal it when the
+    // cbuf is executed. (see cbuf_sumbmit_async)
+    //
     // The buffer MUST have been recorded before this
     //
     // cbuf - the command buffer to use
@@ -1174,6 +1195,58 @@ impl Renderer {
          signal_semas: &[vk::Semaphore])
     {
         unsafe {
+            // If the app context has been initialized,
+            // then include the fence for copy operations
+            let fences = match self.app_ctx
+                .borrow_mut()
+                .as_ref() {
+                    Some(ctx) => vec![self.submit_fence,
+                                      ctx.copy_cbuf_fence],
+                    None => vec![self.submit_fence],
+                };
+
+            // Before we submit ourselves, we need to wait for the
+            // previous frame's execution and any copy commands to finish
+            self.dev.wait_for_fences(fences.as_slice(),
+			             true, // wait for all
+			             std::u64::MAX, //timeout
+            ).unwrap();
+
+            // we need to reset the fence since it has been signaled
+            // copy fence will be handled elsewhere
+            self.dev.reset_fences(&[self.submit_fence]).unwrap();
+
+            self.cbuf_submit_async(cbuf,
+                                   queue,
+                                   wait_stages,
+                                   wait_semas,
+                                   signal_semas,
+                                   self.submit_fence);
+        }
+    }
+
+    // Submits a command buffer asynchronously.
+    //
+    // Simple wrapper for queue submission. Does not
+    // wait for anything.
+    //
+    // The buffer MUST have been recorded before this
+    //
+    // cbuf - the command buffer to use
+    // queue - the queue to submit cbuf to
+    // wait_stages - a list of pipeline stages to wait on
+    // wait_semas - semaphores we consume
+    // signal_semas - semaphores we notify
+    fn cbuf_submit_async
+        (&self,
+         cbuf: vk::CommandBuffer,
+         queue: vk::Queue,
+         wait_stages: &[vk::PipelineStageFlags],
+         wait_semas: &[vk::Semaphore],
+         signal_semas: &[vk::Semaphore],
+         signal_fence: vk::Fence)
+    {
+        unsafe {
             // The buffer must have been recorded before we can submit
             // it for execution.
             let submit_info = vk::SubmitInfo::builder()
@@ -1183,22 +1256,13 @@ impl Renderer {
                 .signal_semaphores(signal_semas)
                 .build();
 
-            // Before we submit ourselves, we need to wait for the
-            // previous frame's execution command to finish
-            self.dev.wait_for_fences(&[self.submit_fence],
-			             true, // wait for all
-			             std::u64::MAX, //timeout
-            ).unwrap();
-
-            // we need to reset the fence since it has been signaled
-            self.dev.reset_fences(&[self.submit_fence]).unwrap();
-
             // create a fence to be notified when the commands have finished
-            // executing. Wait immediately for the fence.
-            self.dev.queue_submit(queue,
-                                  &[submit_info],
-                                  self.submit_fence)
-                .unwrap();
+            // executing.
+            self.dev.queue_submit(
+                queue,
+                &[submit_info],
+                signal_fence,
+            ).unwrap();
         }
     }
 
@@ -2030,12 +2094,13 @@ impl Renderer {
                                                              self.pool,
                                                              1)[0];
 
-            // Make a semaphore which will be signalled after
+            // Make a fence which will be signalled after
             // copies are completed
-            let sema_create_info = vk::SemaphoreCreateInfo::default();
-            let copy_sema = self.dev
-                .create_semaphore(&sema_create_info, None)
-                .unwrap();
+            let copy_fence = self.dev.create_fence(
+                &vk::FenceCreateInfo::builder()
+                    .flags(vk::FenceCreateFlags::SIGNALED),
+                None,
+            ).expect("Could not create fence");
 
             // The app context contains the scene specific data
             self.app_ctx = RefCell::new(Some(AppContext {
@@ -2061,7 +2126,7 @@ impl Renderer {
                 index_buffer: ibuf,
                 index_buffer_memory: imem,
                 copy_cbuf: copy_cbuf,
-                copy_cbuf_sema: copy_sema,
+                copy_cbuf_fence: copy_fence,
             }));
         }
     }
