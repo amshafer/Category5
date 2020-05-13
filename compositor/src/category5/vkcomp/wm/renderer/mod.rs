@@ -864,32 +864,26 @@ impl Renderer {
     {
         app.mesh.as_ref().map(|mesh| {
             unsafe {
+                // copy the data into the staging buffer
+                self.update_memory(mesh.transfer_mem,
+                                   data.as_slice());
+                // copy the staging buffer into the image
                 self.update_image_contents_from_mem(
+                    mesh.transfer_buf,
                     mesh.image,
                     mesh.image_resolution.width,
                     mesh.image_resolution.height,
-                    data.as_slice(),
                 );
             }
         });
     }
 
-    unsafe fn update_image_contents_from_mem<T: Copy>(&mut self,
-                                                      image: vk::Image,
-                                                      width: u32,
-                                                      height: u32,
-                                                      data: &[T])
+    unsafe fn update_image_contents_from_mem(&mut self,
+                                             buffer: vk::Buffer,
+                                             image: vk::Image,
+                                             width: u32,
+                                             height: u32)
     {
-        // The image is created with DEVICE_LOCAL memory types,
-        // so we need to make a staging buffer to copy the data from.
-        let (buffer, buf_mem) = self.create_buffer(
-            vk::BufferUsageFlags::TRANSFER_SRC,
-            vk::SharingMode::EXCLUSIVE,
-            vk::MemoryPropertyFlags::HOST_VISIBLE
-                | vk::MemoryPropertyFlags::HOST_COHERENT,
-            &data,
-        );
-
         if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
             // If a previous copy is still happening, wait for it
             match self.dev.get_fence_status(ctx.copy_cbuf_fence) {
@@ -945,9 +939,6 @@ impl Renderer {
                 ctx.copy_cbuf_fence,
             );
         }
-
-        self.dev.destroy_buffer(buffer, None);
-        self.dev.free_memory(buf_mem, None);
     }
 
     // Create a new image, and fill it with `data`
@@ -957,7 +948,7 @@ impl Renderer {
     // `update_memory`.
     //
     // The resulting image will be in the shader read layout
-    unsafe fn create_image_with_contents<T: Copy>(
+    unsafe fn create_image_with_contents(
         &mut self,
         mem_props: &vk::PhysicalDeviceMemoryProperties,
         resolution: &vk::Extent2D,
@@ -965,7 +956,7 @@ impl Renderer {
         usage: vk::ImageUsageFlags,
         aspect_flags: vk::ImageAspectFlags,
         mem_flags: vk::MemoryPropertyFlags,
-        data: &[T])
+        src_buf: vk::Buffer)
         -> (vk::Image, vk::ImageView, vk::DeviceMemory)
     {
         let (image, view, img_mem) = Renderer::create_image(&self.dev,
@@ -977,10 +968,10 @@ impl Renderer {
                                                             mem_flags);
 
         self.update_image_contents_from_mem(
+            src_buf,
             image,
             resolution.width,
             resolution.height,
-            data,
         );
 
         (image, view, img_mem)
@@ -2248,6 +2239,16 @@ impl Renderer {
             let mem_props = Renderer::get_pdev_mem_properties(&self.inst,
                                                               self.pdev);
 
+            // The image is created with DEVICE_LOCAL memory types,
+            // so we need to make a staging buffer to copy the data from.
+            let (buffer, buf_mem) = self.create_buffer(
+                vk::BufferUsageFlags::TRANSFER_SRC,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                texture,
+            );
+
             // This image will back the contents of the on-screen
             // client window.
             // TODO: this should eventually just use the image reported from
@@ -2260,7 +2261,7 @@ impl Renderer {
                     | vk::ImageUsageFlags::TRANSFER_DST,
                 vk::ImageAspectFlags::COLOR,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                texture,
+                buffer,
             );
 
             if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
@@ -2295,6 +2296,8 @@ impl Renderer {
                     },
                     pool_handle: handle,
                     sampler_descriptors: descriptors,
+                    transfer_buf: buffer,
+                    transfer_mem: buf_mem,
                 });
             }
             return None;

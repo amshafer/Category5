@@ -24,6 +24,8 @@ pub struct Mesh {
     pub image: vk::Image,
     pub image_view: vk::ImageView,
     pub image_mem: vk::DeviceMemory,
+    pub transfer_buf: vk::Buffer,
+    pub transfer_mem: vk::DeviceMemory,
     pub image_resolution: vk::Extent2D,
     pub pool_handle: usize,
     pub sampler_descriptors: Vec<vk::DescriptorSet>,
@@ -37,6 +39,8 @@ impl Mesh {
             rend.dev.destroy_image(self.image, None);
             rend.dev.destroy_image_view(self.image_view, None);
             rend.dev.free_memory(self.image_mem, None);
+            rend.dev.destroy_buffer(self.transfer_buf, None);
+            rend.dev.free_memory(self.transfer_mem, None);
         }
     }
 
