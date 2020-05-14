@@ -9,6 +9,8 @@ edition = "2018"
 [dependencies]
 ash="0.30.0"
 wayland-server={version="0.26.3", features=["use_system_lib"]}
+wayland-commons=""
+bitflags=""
 cgmath="0.17"
 memoffset="0.5"
 image="0.23"
@@ -17,3 +19,6 @@ bincode="1.2.1"
 input="0.4.1"
 udev="0.2.0"
 nix="0.17"
+
+[build-dependencies]
+wayland-scanner="0.26.4"

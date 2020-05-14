@@ -94,6 +94,7 @@ version = "0.1.0"
 dependencies = [
  "ash 0.30.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "bincode 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "cgmath 0.17.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "image 0.23.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "input 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -101,6 +102,8 @@ dependencies = [
  "nix 0.17.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.105 (registry+https://github.com/rust-lang/crates.io-index)",
  "udev 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wayland-commons 0.26.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wayland-scanner 0.26.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "wayland-server 0.26.3 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -657,7 +660,7 @@ dependencies = [
 
 [[package]]
 name = "wayland-scanner"
-version = "0.26.3"
+version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "proc-macro2 1.0.9 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -678,7 +681,7 @@ dependencies = [
  "parking_lot 0.10.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "scoped-tls 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "wayland-commons 0.26.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "wayland-scanner 0.26.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "wayland-scanner 0.26.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "wayland-sys 0.26.3 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -795,7 +798,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum unicode-xid 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "826e7639553986605ec5979c7dd957c7895e93eabed50ab2ffa7f6128a75097c"
 "checksum void 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
 "checksum wayland-commons 0.26.3 (registry+https://github.com/rust-lang/crates.io-index)" = "951aaed76c01185bff7ec68426769c94e88b36113dfe73f8e2356feaa5f09c1f"
-"checksum wayland-scanner 0.26.3 (registry+https://github.com/rust-lang/crates.io-index)" = "21ae379761543b2f41ce88010d0f4ee489218c8e8cfa42dd8f070fdb263aa971"
+"checksum wayland-scanner 0.26.4 (registry+https://github.com/rust-lang/crates.io-index)" = "e794b09da468acaeee5f21feb6148ff61a79a6614f6540fe513b060bbb03f1e3"
 "checksum wayland-server 0.26.3 (registry+https://github.com/rust-lang/crates.io-index)" = "5b59cf453b0d158a599da599c289a360a7c9f9f419d1117d609b3d078bdcf63a"
 "checksum wayland-sys 0.26.3 (registry+https://github.com/rust-lang/crates.io-index)" = "fab1f1d2ab35838c5fcbbeebee42cf15721c5fdc1add1f13d0e70e219b94e013"
 "checksum winapi 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)" = "8093091eeb260906a183e6ae1abdba2ef5ef2257a21801128899c3fc699229c6"

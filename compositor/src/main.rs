@@ -6,6 +6,8 @@ extern crate ash;
 extern crate cgmath;
 #[macro_use]
 extern crate memoffset;
+#[macro_use]
+extern crate bitflags;
 
 extern crate bincode;
 extern crate serde;
