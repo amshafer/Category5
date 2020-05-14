@@ -107,9 +107,14 @@ impl Surface {
 
         // now we can commit the attached state
         self.s_committed_buffer = self.s_attached_buffer.take();
-        // if we don't have an assigned role, don't do any work
-        if self.s_role.is_none() {
-            return;
+
+        // Commit any role state before we do our thing
+        match &self.s_role {
+            Some(Role::xdg_shell_toplevel(xs)) =>
+                xs.borrow_mut().commit(&self),
+            // if we don't have an assigned role, avoid doing
+            // any real work
+            None => return,
         }
 
         // Get the ShmBuffer from the user data so we

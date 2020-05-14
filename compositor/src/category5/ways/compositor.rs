@@ -13,7 +13,6 @@ use ws::protocol::{
     wl_compositor as wlci,
     wl_surface as wlsi,
     wl_shm,
-    wl_shell,
 };
 
 use super::shm::*;
@@ -21,7 +20,8 @@ use super::surface::*;
 use super::task::*;
 use super::atmosphere::*;
 use super::super::vkcomp::wm;
-use super::wl_shell::*;
+use super::xdg_shell::*;
+use super::protocol::xdg_shell::*;
 
 use nix::sys::event::*;
 use std::time::Duration;
@@ -159,7 +159,7 @@ impl Compositor {
         // will be advertised to all clients
         evman.create_compositor_global(comp_cell);
         evman.create_shm_global();
-        evman.create_wl_shell_global();
+        evman.create_xdg_shell_global();
 
         return evman;
     }
@@ -228,14 +228,14 @@ impl EventManager {
     //
     // the wl_shell interface handles the desktop window
     // lifecycle. It handles the type of window and its position
-    fn create_wl_shell_global(&mut self) {
-        self.em_display.create_global::<wl_shell::WlShell, _>(
+    fn create_xdg_shell_global(&mut self) {
+        self.em_display.create_global::<xdg_wm_base::XdgWmBase, _>(
             1, // version
             Filter::new(
-                // This filter is called when wl_shell_interface is bound
-                move |(r, _): (ws::Main<wl_shell::WlShell>, u32), _, _| {
-                    r.quick_assign(move |p, r, _| {
-                        wl_shell_handle_request(r, p);
+                // This filter is called when xdg_shell_interface is bound
+                move |(res, _): (ws::Main<xdg_wm_base::XdgWmBase>, u32), _, _| {
+                    res.quick_assign(move |x, r, _| {
+                        xdg_wm_base_handle_request(r, x);
                     });
                 }
             ),

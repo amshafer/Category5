@@ -8,7 +8,7 @@ pub mod compositor;
 mod surface;
 mod atmosphere;
 mod shm;
-mod wl_shell;
+mod xdg_shell;
 
 // Utils
 mod role;
