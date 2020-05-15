@@ -13,15 +13,23 @@ use ws::protocol::{
     wl_compositor as wlci,
     wl_surface as wlsi,
     wl_shm,
+    wl_shell,
 };
 
-use super::shm::*;
-use super::surface::*;
-use super::task::*;
-use super::atmosphere::*;
 use super::super::vkcomp::wm;
-use super::xdg_shell::*;
-use super::protocol::xdg_shell::*;
+use super::{
+    shm::*,
+    surface::*,
+    task::*,
+    atmosphere::*,
+    wl_shell::wl_shell_handle_request,
+    xdg_shell::xdg_wm_base_handle_request,
+    linux_dmabuf::*,
+};
+use super::protocol::{
+    xdg_shell::xdg_wm_base,
+    linux_dmabuf::zwp_linux_dmabuf_v1 as zldv1,
+};
 
 use nix::sys::event::*;
 use std::time::Duration;
@@ -159,7 +167,9 @@ impl Compositor {
         // will be advertised to all clients
         evman.create_compositor_global(comp_cell);
         evman.create_shm_global();
+        evman.create_wl_shell_global();
         evman.create_xdg_shell_global();
+        evman.create_linux_dmabuf_global();
 
         return evman;
     }
@@ -228,6 +238,24 @@ impl EventManager {
     //
     // the wl_shell interface handles the desktop window
     // lifecycle. It handles the type of window and its position
+    fn create_wl_shell_global(&mut self) {
+        self.em_display.create_global::<wl_shell::WlShell, _>(
+            1, // version
+            Filter::new(
+                // This filter is called when wl_shell_interface is bound
+                move |(r, _): (ws::Main<wl_shell::WlShell>, u32), _, _| {
+                    r.quick_assign(move |p, r, _| {
+                        wl_shell_handle_request(r, p);
+                    });
+                }
+            ),
+        );
+    }
+
+    // Initialize the wl_shell interface
+    //
+    // the wl_shell interface handles the desktop window
+    // lifecycle. It handles the type of window and its position
     fn create_xdg_shell_global(&mut self) {
         self.em_display.create_global::<xdg_wm_base::XdgWmBase, _>(
             1, // version
@@ -236,6 +264,24 @@ impl EventManager {
                 move |(res, _): (ws::Main<xdg_wm_base::XdgWmBase>, u32), _, _| {
                     res.quick_assign(move |x, r, _| {
                         xdg_wm_base_handle_request(r, x);
+                    });
+                }
+            ),
+        );
+    }
+
+    // Initialize the linux_dmabuf interface
+    //
+    // This interface provides a way to import GPU buffers from
+    // clients, avoiding lots of copies. It passes dmabuf fds.
+    fn create_linux_dmabuf_global(&mut self) {
+        self.em_display.create_global::<zldv1::ZwpLinuxDmabufV1, _>(
+            1, // version
+            Filter::new(
+                // This filter is called when xdg_shell_interface is bound
+                move |(res, _): (ws::Main<zldv1::ZwpLinuxDmabufV1>, u32), _, _| {
+                    res.quick_assign(move |l, r, _| {
+                        linux_dmabuf_handle_request(r, l);
                     });
                 }
             ),

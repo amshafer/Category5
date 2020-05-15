@@ -356,8 +356,8 @@ impl Renderer {
                               -> vk::PhysicalDevice
     {
         let pdevices = inst
-                .enumerate_physical_devices()
-                .expect("Physical device error");
+            .enumerate_physical_devices()
+            .expect("Physical device error");
 
         // for each physical device
         *pdevices

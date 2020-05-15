@@ -5,11 +5,12 @@
 // (window vs cursor vs ...)
 //
 // Austin Shafer 2020
-use super::xdg_shell::ShellSurface;
+use super::{wl_shell, xdg_shell};
 
 use std::rc::Rc;
 use std::cell::RefCell;
 
 pub enum Role {
-    xdg_shell_toplevel(Rc<RefCell<ShellSurface>>),
+    wl_shell_toplevel,
+    xdg_shell_toplevel(Rc<RefCell<xdg_shell::ShellSurface>>),
 }

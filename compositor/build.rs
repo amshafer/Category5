@@ -12,16 +12,34 @@ fn main() {
     println!("cargo:rustc-link-search=native=/usr/local/lib/");
     println!("cargo:rustc-link-lib=dylib=wayland-server");
 
-    // Location of the xml file, relative to the `Cargo.toml`
-    let protocol_file = "/usr/local/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml";
-
-    // Target directory for the generate files
     let out_dir_str = "src/category5/ways/protocol/";
-    let out_dir = Path::new(&out_dir_str);
+    let protocols_base = "/usr/local/share/wayland-protocols/";
+    // The protocols to generate bindings for
+    //
+    // These paths are relative to protocols_base.
+    let protocols = vec![
+        "unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml",
+        "stable/xdg-shell/xdg-shell.xml",
+    ];
+    // These are the names to be used when generating
+    // binding files.
+    let protocol_names = vec![
+        "linux_dmabuf",
+        "xdg_shell",
+    ];
 
-    generate_code(
-        protocol_file,
-        out_dir.join("xdg_shell_generated.rs"),
-        Side::Server, // Generate server-side code
-    );
+    for (i, p) in protocols.iter().enumerate() {
+        let protocol_file = format!("{}{}",
+                                    protocols_base,
+                                    p);
+
+        // Target directory for the generate files
+        let out_dir = Path::new(&out_dir_str);
+
+        generate_code(
+            protocol_file,
+            out_dir.join(format!("{}{}", protocol_names[i], "_generated.rs")),
+            Side::Server, // Generate server-side code
+        );
+    }
 }

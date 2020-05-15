@@ -7,9 +7,7 @@ extern crate wayland_server;
 extern crate wayland_commons;
 
 pub(crate) use wayland_server::sys;
-pub(crate) use wayland_server::{
-    Main, Resource, ResourceMap, AnonymousObject
-};
+pub(crate) use wayland_server::{Main, Resource, ResourceMap, AnonymousObject};
 pub(crate) use wayland_server::protocol::*;
 
 pub(crate) use wayland_commons::map::{Object, ObjectMetadata};
@@ -19,4 +17,4 @@ pub(crate) use wayland_commons::wire::{
 };
 pub(crate) use wayland_commons::smallvec;
 
-include!("xdg_shell_generated.rs");
+include!("linux_dmabuf_generated.rs");

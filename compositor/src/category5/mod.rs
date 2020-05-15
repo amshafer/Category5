@@ -60,23 +60,29 @@ impl Category5 {
             // Get the wayland compositor
             // Note that the wayland compositor + vulkan renderer
             // is the complete compositor
-            c5_wc: Some(thread::spawn(|| {
+            c5_wc: Some(thread::Builder::new()
+                        .name("wayland_handlers".to_string())
+                        .spawn(|| {
                 let mut ev = Compositor::new(wc_rx, wm_tx_clone);
                 ev.worker_thread();
-            })),
+            }).unwrap()),
             c5_wc_tx: wc_tx,
             // creates a context, swapchain, images, and others
             // initialize the pipeline, renderpasses, and
             // display engine.
-            c5_wm: Some(thread::spawn(|| {
+            c5_wm: Some(thread::Builder::new()
+                        .name("vulkan_compositor".to_string())
+                        .spawn(|| {
                 let mut wm = WindowManager::new(wm_rx);
                 wm.worker_thread();
-            })),
+            }).unwrap()),
             c5_wm_tx: wm_tx,
-            c5_input: Some(thread::spawn(|| {
+            c5_input: Some(thread::Builder::new()
+                        .name("input".to_string())
+                        .spawn(|| {
                 let mut input = Input::new(wc_tx_clone, wm_tx_clone2);
                 input.worker_thread();
-            })),
+            }).unwrap()),
         }
     }
 

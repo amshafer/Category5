@@ -112,6 +112,7 @@ impl Surface {
         match &self.s_role {
             Some(Role::xdg_shell_toplevel(xs)) =>
                 xs.borrow_mut().commit(&self),
+            Some(Role::wl_shell_toplevel) => {},
             // if we don't have an assigned role, avoid doing
             // any real work
             None => return,
