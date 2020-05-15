@@ -9,6 +9,7 @@ use ws::Main;
 use ws::protocol::wl_buffer;
 
 use crate::category5::vkcomp::wm;
+use super::sys::drm_fourcc::DRM_FORMAT_MOD_NONE;
 use super::surface::*;
 use super::protocol::linux_dmabuf::{
     zwp_linux_dmabuf_v1 as zldv1,
