@@ -5,7 +5,7 @@
 // (window vs cursor vs ...)
 //
 // Austin Shafer 2020
-use super::{wl_shell, xdg_shell};
+use super::xdg_shell;
 
 use std::rc::Rc;
 use std::cell::RefCell;

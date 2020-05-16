@@ -15,6 +15,7 @@ use ws::protocol::{
 
 use crate::category5::vkcomp::wm;
 use super::shm::*;
+use super::linux_dmabuf::*;
 use super::atmosphere::*;
 use super::role::Role;
 
@@ -118,34 +119,39 @@ impl Surface {
             None => return,
         }
 
-        // Get the ShmBuffer from the user data so we
-        // can read its contents
-        let shm_buf = self.s_committed_buffer
+        // We need to do different things depending on the
+        // type of buffer attached. We detect the type by
+        // trying to extract different types of userdat
+        let userdata = self.s_committed_buffer
             // this is a bit wonky, we need to get a reference
             // to committed, but it is behind an option
             .as_ref().unwrap()
             // now we can call as_ref on the &WlBuffer
             .as_ref()
-            .user_data()
-            .get::<ShmBuffer>()
-            .unwrap();
+            .user_data();
 
-        // ShmBuffer holds the base pointer and an offset, so
-        // we need to get the actual pointer, which will be
-        // wrapped in a MemImage
-        let fb = shm_buf.get_mem_image();
+        if let Some(dma_buf) = userdata.get::<DmaBuf>() {
+            // Do nothing for now
+            self.s_committed_buffer.as_ref().unwrap().release();
+            return;
+        } else if let Some(shm_buf) = userdata.get::<ShmBuffer>() {
+            // ShmBuffer holds the base pointer and an offset, so
+            // we need to get the actual pointer, which will be
+            // wrapped in a MemImage
+            let fb = shm_buf.get_mem_image();
 
-        self.s_wm_tx.send(
-            wm::task::Task::update_window_contents_from_mem(
-                self.s_id, // ID of the new window
-                fb, // memimage of the contents
-                // pass the WlBuffer so it can be released
-                self.s_committed_buffer.as_ref().unwrap().clone(),
-                // window dimensions
-                shm_buf.sb_width as usize,
-                shm_buf.sb_height as usize,
-            )
-        ).unwrap();
+            self.s_wm_tx.send(
+                wm::task::Task::update_window_contents_from_mem(
+                    self.s_id, // ID of the new window
+                    fb, // memimage of the contents
+                    // pass the WlBuffer so it can be released
+                    self.s_committed_buffer.as_ref().unwrap().clone(),
+                    // window dimensions
+                    shm_buf.sb_width as usize,
+                    shm_buf.sb_height as usize,
+                )
+            ).unwrap();
+        }
     }
 
     // Register a frame callback

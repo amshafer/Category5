@@ -19,6 +19,7 @@ use std::clone::Clone;
 // This is the set of outstanding
 // configuration changes which have not
 // been committed yet.
+#[allow(dead_code)]
 struct XdgState {
     // window title
     xs_title: Option<String>,

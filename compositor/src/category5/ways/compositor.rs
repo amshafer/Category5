@@ -276,10 +276,14 @@ impl EventManager {
     // clients, avoiding lots of copies. It passes dmabuf fds.
     fn create_linux_dmabuf_global(&mut self) {
         self.em_display.create_global::<zldv1::ZwpLinuxDmabufV1, _>(
-            1, // version
+            3, // version
             Filter::new(
                 // This filter is called when xdg_shell_interface is bound
                 move |(res, _): (ws::Main<zldv1::ZwpLinuxDmabufV1>, u32), _, _| {
+                    // We need to broadcast supported formats
+                    linux_dmabuf_setup(res.clone());
+
+                    // now we can handle the event
                     res.quick_assign(move |l, r, _| {
                         linux_dmabuf_handle_request(r, l);
                     });
