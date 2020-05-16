@@ -33,7 +33,7 @@ pub mod mesh;
 use mesh::Mesh;
 
 use super::App;
-use crate::category5::utils::MemImage;
+use crate::category5::utils::*;
 
 // This is the reference data for a normal quad
 // that will be used to draw client windows.
@@ -858,38 +858,32 @@ impl Renderer {
         );
     }
 
-    pub fn update_app_contents_from_mem(&mut self,
-                                        app: &App,
-                                        dmabuf: &Dmabuf)
+    pub fn update_app_contents(&mut self,
+                               app: &App,
+                               data: WindowContents)
     {
         app.mesh.as_ref().map(|mesh| {
-            unsafe {
-                
-            }
-        }
-    }
-
-    pub fn update_app_contents_from_mem(&mut self,
-                                        app: &App,
-                                        data: &MemImage)
-    {
-        app.mesh.as_ref().map(|mesh| {
-            unsafe {
-                // copy the data into the staging buffer
-                self.update_memory(mesh.transfer_mem,
-                                   data.as_slice());
-                // copy the staging buffer into the image
-                self.update_image_contents_from_mem(
-                    mesh.transfer_buf,
-                    mesh.image,
-                    mesh.image_resolution.width,
-                    mesh.image_resolution.height,
-                );
-            }
+            match data {
+                WindowContents::dmabuf(d) => {},
+                WindowContents::mem_image(mem) => {
+                    unsafe {
+                        // copy the data into the staging buffer
+                        self.update_memory(mesh.transfer_mem,
+                                           mem.as_slice());
+                        // copy the staging buffer into the image
+                        self.update_image_contents_from_buf(
+                            mesh.transfer_buf,
+                            mesh.image,
+                            mesh.image_resolution.width,
+                            mesh.image_resolution.height,
+                        );
+                    }
+                }
+            };
         });
     }
 
-    unsafe fn update_image_contents_from_mem(&mut self,
+    unsafe fn update_image_contents_from_buf(&mut self,
                                              buffer: vk::Buffer,
                                              image: vk::Image,
                                              width: u32,
@@ -978,7 +972,7 @@ impl Renderer {
                                                             aspect_flags,
                                                             mem_flags);
 
-        self.update_image_contents_from_mem(
+        self.update_image_contents_from_buf(
             src_buf,
             image,
             resolution.width,

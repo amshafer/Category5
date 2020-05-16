@@ -4,6 +4,12 @@
 
 use std::slice;
 use std::ops::Deref;
+use std::os::unix::io::RawFd;
+
+pub enum WindowContents<'a> {
+    dmabuf(&'a Dmabuf),
+    mem_image(&'a MemImage),
+}
 
 // Represents a raw pointer to a region of memory
 // containing an image buffer
@@ -75,11 +81,11 @@ impl Deref for MemImage {
 #[allow(dead_code)]
 #[derive(Debug,Copy,Clone)]
 pub struct Dmabuf {
-    db_fd: RawFd,
-    db_plane_idx: u32,
-    db_offset: u32,
-    db_stride: u32,
+    pub db_fd: RawFd,
+    pub db_plane_idx: u32,
+    pub db_offset: u32,
+    pub db_stride: u32,
     // These will be added later during creation
-    db_width: i32,
-    db_height: i32,
+    pub db_width: i32,
+    pub db_height: i32,
 }

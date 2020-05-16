@@ -10,6 +10,7 @@ mod renderer;
 use renderer::*;
 use renderer::mesh::Mesh;
 
+use crate::category5::utils::*;
 pub mod task;
 use task::*;
 
@@ -198,27 +199,27 @@ impl WindowManager {
         // Find the app corresponding to that window id
         let app = match self.apps
             .iter_mut()
-            .find(|app| app.id == info.id)
+            .find(|app| app.id == info.ufd_id)
         {
             Some(a) => a,
             // If the id is not found, then don't update anything
-            None => { println!("Could not find id {}", info.id); return; },
+            None => { println!("Could not find id {}", info.ufd_id); return; },
         };
 
         if !app.mesh.is_none() {
-            self.rend.update_app_contents_from_dmabuf(
+            self.rend.update_app_contents(
                 app,
-                &info.dmabuf,
+                WindowContents::dmabuf(&info.ufd_dmabuf),
             );
         } else {
             // If it does not have a mesh, then this must be the
             // first time contents were attached to it. Go ahead
             // and make one now
-            app.mesh = Some(self.rend.create_mesh(
-                info.pixels.as_ref(),
-                info.width as u32,
-                info.height as u32,
-            ).unwrap());
+            // app.mesh = Some(self.rend.create_mesh(
+            //     info.pixels.as_ref(),
+            //     info.width as u32,
+            //     info.height as u32,
+            // ).unwrap());
         }
     }
 
@@ -236,9 +237,9 @@ impl WindowManager {
         };
 
         if !app.mesh.is_none() {
-            self.rend.update_app_contents_from_mem(
+            self.rend.update_app_contents(
                 app,
-                &info.pixels,
+                WindowContents::mem_image(&info.pixels),
             );
         } else {
             // If it does not have a mesh, then this must be the

@@ -6,13 +6,12 @@
 extern crate wayland_server as ws;
 use ws::Main;
 
-use crate::category5::utils::{Dmabuf, MemImage};
+use crate::category5::utils::Dmabuf;
 use super::protocol::linux_dmabuf::{
     zwp_linux_dmabuf_v1 as zldv1,
     zwp_linux_buffer_params_v1 as zlbpv1,
 };
 
-use std::clone::Clone;
 use std::os::unix::io::RawFd;
 
 // drm modifier saying to implicitly infer
