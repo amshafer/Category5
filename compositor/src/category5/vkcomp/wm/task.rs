@@ -11,7 +11,7 @@
 extern crate wayland_server as ws;
 use ws::protocol::wl_buffer;
 
-use crate::category5::utils::MemImage;
+use crate::category5::utils::{Dmabuf, MemImage};
 
 // Tell wm the desktop background
 //
@@ -45,6 +45,21 @@ pub struct CreateWindow {
     pub window_height: u32,
 }
 
+pub struct UpdateWindowContentsFromDmabuf {
+    pub ufd_id: u64,
+    // dmabuf from linux_dmabuf protocol
+    pub ufd_dmabuf: Dmabuf,
+    // private: the wl_buffer to release when this
+    // is handled. pixels belongs to this.
+    ufd_wl_buffer: wl_buffer::WlBuffer,
+}
+
+impl Drop for UpdateWindowContentsFromDmabuf {
+    fn drop(&mut self) {
+        self.ufd_wl_buffer.release();
+    }
+}
+
 pub struct UpdateWindowContentsFromMem {
     pub id: u64,
     // The resolution of the texture
@@ -54,12 +69,12 @@ pub struct UpdateWindowContentsFromMem {
     pub pixels: MemImage,
     // private: the wl_buffer to release when this
     // is handled. pixels belongs to this.
-    uwcfm_wl_buffer: wl_buffer::WlBuffer,
+    ufm_wl_buffer: wl_buffer::WlBuffer,
 }
 
 impl Drop for UpdateWindowContentsFromMem {
     fn drop(&mut self) {
-        self.uwcfm_wl_buffer.release();
+        self.ufm_wl_buffer.release();
     }
 }
 
@@ -74,6 +89,7 @@ pub enum Task {
     mc(MoveCursor),
     sbfm(SetBackgroundFromMem),
     cw(CreateWindow),
+    uwcfd(UpdateWindowContentsFromDmabuf),
     uwcfm(UpdateWindowContentsFromMem),
 }
 
@@ -113,6 +129,18 @@ impl Task {
         })
     }
 
+    pub fn update_window_contents_from_dmabuf(id: u64,
+                                              dmabuf: Dmabuf,
+                                              buffer: wl_buffer::WlBuffer)
+                                              -> Task
+    {
+        Task::uwcfd(UpdateWindowContentsFromDmabuf {
+            ufd_id: id,
+            ufd_dmabuf: dmabuf,
+            ufd_wl_buffer: buffer,
+        })
+    }
+
     pub fn update_window_contents_from_mem(id: u64,
                                            tex: MemImage,
                                            buffer: wl_buffer::WlBuffer,
@@ -125,7 +153,7 @@ impl Task {
             width: tex_width,
             height: tex_height,
             pixels: tex,
-            uwcfm_wl_buffer: buffer,
+            ufm_wl_buffer: buffer,
         })
     }
 }

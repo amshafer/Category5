@@ -10,7 +10,7 @@ mod atmosphere;
 mod shm;
 mod xdg_shell;
 mod wl_shell;
-mod linux_dmabuf;
+pub mod linux_dmabuf;
 
 // Utils
 mod role;

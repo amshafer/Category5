@@ -192,6 +192,36 @@ impl WindowManager {
         });
     }
 
+    fn update_window_contents_from_dmabuf(&mut self,
+                                          info: &UpdateWindowContentsFromDmabuf)
+    {
+        // Find the app corresponding to that window id
+        let app = match self.apps
+            .iter_mut()
+            .find(|app| app.id == info.id)
+        {
+            Some(a) => a,
+            // If the id is not found, then don't update anything
+            None => { println!("Could not find id {}", info.id); return; },
+        };
+
+        if !app.mesh.is_none() {
+            self.rend.update_app_contents_from_dmabuf(
+                app,
+                &info.dmabuf,
+            );
+        } else {
+            // If it does not have a mesh, then this must be the
+            // first time contents were attached to it. Go ahead
+            // and make one now
+            app.mesh = Some(self.rend.create_mesh(
+                info.pixels.as_ref(),
+                info.width as u32,
+                info.height as u32,
+            ).unwrap());
+        }
+    }
+
     fn update_window_contents_from_mem(&mut self,
                                        info: &UpdateWindowContentsFromMem)
     {
@@ -417,6 +447,10 @@ impl WindowManager {
             Task::cw(cw) => {
                 self.create_window(cw);
             },
+            // update window from gpu buffer
+            Task::uwcfd(uw) => {
+                self.update_window_contents_from_dmabuf(uw);
+            }
             // update window from shm
             Task::uwcfm(uw) => {
                 self.update_window_contents_from_mem(uw);

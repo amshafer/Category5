@@ -67,3 +67,19 @@ impl Deref for MemImage {
         }
     }
 }
+
+// dmabuf from linux_dmabuf
+// Represents one dma buffer the client has added.
+// Will be referenced by Params during wl_buffer
+// creation.
+#[allow(dead_code)]
+#[derive(Debug,Copy,Clone)]
+pub struct Dmabuf {
+    db_fd: RawFd,
+    db_plane_idx: u32,
+    db_offset: u32,
+    db_stride: u32,
+    // These will be added later during creation
+    db_width: i32,
+    db_height: i32,
+}

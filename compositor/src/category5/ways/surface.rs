@@ -130,7 +130,7 @@ impl Surface {
             .as_ref()
             .user_data();
 
-        if let Some(dma_buf) = userdata.get::<DmaBuf>() {
+        if let Some(dma_buf) = userdata.get::<Dmabuf>() {
             // Do nothing for now
             self.s_committed_buffer.as_ref().unwrap().release();
             return;

@@ -860,6 +860,17 @@ impl Renderer {
 
     pub fn update_app_contents_from_mem(&mut self,
                                         app: &App,
+                                        dmabuf: &Dmabuf)
+    {
+        app.mesh.as_ref().map(|mesh| {
+            unsafe {
+                
+            }
+        }
+    }
+
+    pub fn update_app_contents_from_mem(&mut self,
+                                        app: &App,
                                         data: &MemImage)
     {
         app.mesh.as_ref().map(|mesh| {

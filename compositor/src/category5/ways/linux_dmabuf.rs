@@ -4,9 +4,9 @@
 //
 // Austin Shafer - 2020
 extern crate wayland_server as ws;
-
 use ws::Main;
 
+use crate::category5::utils::{Dmabuf, MemImage};
 use super::protocol::linux_dmabuf::{
     zwp_linux_dmabuf_v1 as zldv1,
     zwp_linux_buffer_params_v1 as zlbpv1,
@@ -61,24 +61,9 @@ pub fn linux_dmabuf_handle_request(req: zldv1::Request,
     };
 }
 
-// Represents one dma buf the client has added.
-// Will be referenced by Params during wl_buffer
-// creation.
-#[allow(dead_code)]
-#[derive(Debug,Copy,Clone)]
-pub struct DmaBuf {
-    db_fd: RawFd,
-    db_plane_idx: u32,
-    db_offset: u32,
-    db_stride: u32,
-    // These will be added later during creation
-    db_width: i32,
-    db_height: i32,
-}
-
 struct Params {
     // The list of added dma buffers
-    p_bufs: Vec<DmaBuf>,
+    p_bufs: Vec<Dmabuf>,
 }
 
 impl Params {
@@ -100,6 +85,8 @@ impl Params {
                 dmabuf.db_width = width;
                 dmabuf.db_height = height;
 
+                // Add our dmabuf to the userdata so Surface
+                // can later hand it to vkcomp
                 buffer_id.quick_assign(|_, _, _| {});
                 buffer_id.as_ref()
                     .user_data()
@@ -125,7 +112,7 @@ impl Params {
            stride: u32,
            _mod_hi: u32,
            _mod_low: u32) {
-        let d = DmaBuf{
+        let d = Dmabuf {
             db_fd: fd,
             db_plane_idx: plane_idx,
             db_offset: offset,
