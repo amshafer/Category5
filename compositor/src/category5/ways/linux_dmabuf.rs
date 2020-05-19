@@ -66,6 +66,7 @@ struct Params {
 }
 
 impl Params {
+    #[allow(unused_variables)]
     fn handle_request(&mut self,
                       req: zlbpv1::Request,
                       _params: Main<zlbpv1::ZwpLinuxBufferParamsV1>)
@@ -111,16 +112,7 @@ impl Params {
            stride: u32,
            _mod_hi: u32,
            _mod_low: u32) {
-        let d = Dmabuf {
-            db_fd: fd,
-            db_plane_idx: plane_idx,
-            db_offset: offset,
-            db_stride: stride,
-            // These are null for now, will be updated
-            // in creat/create_immed
-            db_width: -1,
-            db_height: -1,
-        };
+        let d = Dmabuf::new(fd, plane_idx, offset, stride);
         println!("linux_dmabuf_params:Adding {:?}", d);
         self.p_bufs.push(d);
     }

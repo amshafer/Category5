@@ -80,7 +80,7 @@ pub struct WindowManager {
 }
 
 impl WindowManager {
-    
+
     // Create a Titlebar resource
     //
     // The Titlebar will hold all of the components which make
@@ -89,20 +89,25 @@ impl WindowManager {
     fn get_default_titlebar(rend: &mut Renderer) -> Titlebar {
         let img = image::open("../bar.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
+
+        let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8,
+                                 4,
+                                 64,
+                                 64);
+
         let bar = rend.create_mesh(
             // TODO: make a way to change titlebar colors
-            pixels.as_slice(),
-            64,
-            64,
+            WindowContents::mem_image(&mimg),
         ).unwrap();
 
         let img = image::open("../dot.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
+        let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8,
+                                 4,
+                                 64,
+                                 64);
         let dot = rend.create_mesh(
-            // TODO: make a way to change titlebar colors
-            pixels.as_slice(),
-            64,
-            64,
+            WindowContents::mem_image(&mimg),
         ).unwrap();
 
         Titlebar {
@@ -114,12 +119,14 @@ impl WindowManager {
     fn get_default_cursor(rend: &mut Renderer) -> Option<Mesh> {
         let img = image::open("../cursor.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
+        let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8,
+                                 4,
+                                 64,
+                                 64);
 
         rend.create_mesh(
             // TODO: calculate correct cursor size
-            pixels.as_slice(),
-            64,
-            64,
+            WindowContents::mem_image(&mimg),
         )
     }
 
@@ -155,10 +162,13 @@ impl WindowManager {
                                tex_width: u32,
                                tex_height: u32)
     {
+        let mimg = MemImage::new(texture.as_ptr() as *mut u8,
+                                 4,
+                                 tex_width as usize,
+                                 tex_height as usize);
+
         let mesh = self.rend.create_mesh(
-            texture,
-            tex_width,
-            tex_height,
+            WindowContents::mem_image(&mimg),
         );
 
         self.background = mesh;
@@ -220,6 +230,9 @@ impl WindowManager {
             //     info.width as u32,
             //     info.height as u32,
             // ).unwrap());
+            self.rend.create_mesh(
+                WindowContents::dmabuf(&info.ufd_dmabuf),
+            );
         }
     }
 
@@ -246,9 +259,7 @@ impl WindowManager {
             // first time contents were attached to it. Go ahead
             // and make one now
             app.mesh = Some(self.rend.create_mesh(
-                info.pixels.as_ref(),
-                info.width as u32,
-                info.height as u32,
+                WindowContents::mem_image(&info.pixels),
             ).unwrap());
         }
     }

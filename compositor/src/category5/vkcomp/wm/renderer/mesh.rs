@@ -6,6 +6,7 @@
 #![allow(dead_code, non_camel_case_types)]
 extern crate ash;
 
+use crate::category5::utils::*;
 use super::*;
 use ash::version::{DeviceV1_0};
 use ash::vk;
@@ -32,6 +33,107 @@ pub struct Mesh {
 }
 
 impl Mesh {
+    // Create a mesh and its needed data
+    //
+    // All resources will be allocated by
+    // rend
+    pub fn new(rend: &mut Renderer,
+               texture: WindowContents)
+               -> Option<Mesh>
+    {
+        match texture {
+            WindowContents::mem_image(m) =>
+                Mesh::from_mem_image(rend, m),
+            WindowContents::dmabuf(d) =>
+                Mesh::from_dmabuf(rend, d),
+        }
+    }
+
+    fn from_mem_image(rend: &mut Renderer,
+                      img: &MemImage)
+                      -> Option<Mesh>
+    {
+        unsafe {
+            let tex_res = vk::Extent2D {
+                width: img.width as u32,
+                height: img.height as u32,
+            };
+
+            // TODO: make this cached in Renderer
+            let mem_props = Renderer::get_pdev_mem_properties(&rend.inst,
+                                                              rend.pdev);
+
+            // The image is created with DEVICE_LOCAL memory types,
+            // so we need to make a staging buffer to copy the data from.
+            let (buffer, buf_mem) = rend.create_buffer(
+                vk::BufferUsageFlags::TRANSFER_SRC,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                img.as_slice(),
+            );
+
+            // This image will back the contents of the on-screen
+            // client window.
+            // TODO: this should eventually just use the image reported from
+            // wayland.
+            let (image, view, img_mem) = rend.create_image_with_contents(
+                &mem_props,
+                &tex_res,
+                vk::Format::R8G8B8A8_SRGB,
+                vk::ImageUsageFlags::SAMPLED
+                    | vk::ImageUsageFlags::TRANSFER_DST,
+                vk::ImageAspectFlags::COLOR,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                buffer,
+            );
+
+            if let Some(ctx) = &mut *rend.app_ctx.borrow_mut() {
+                // each mesh holds a set of descriptors that it will
+                // bind before drawing itself. This set holds the
+                // image sampler.
+                //
+                // right now they only hold an image sampler
+                let (handle, descriptors) = ctx.desc_pool.allocate_samplers(
+                    &rend,
+                    rend.fb_count,
+                );
+
+                for i in 0..rend.fb_count {
+                    // bind the texture for our window
+                    rend.update_sampler_descriptor_set(
+                        descriptors[i],
+                        1, //n binding
+                        0, // element
+                        ctx.image_sampler,
+                        view,
+                    );
+                }
+
+                return Some(Mesh {
+                    image: image,
+                    image_view: view,
+                    image_mem: img_mem,
+                    image_resolution: tex_res,
+                    pool_handle: handle,
+                    sampler_descriptors: descriptors,
+                    transfer_buf: buffer,
+                    transfer_mem: buf_mem,
+                });
+            }
+            return None;
+        }
+    }
+
+    fn from_dmabuf(rend: &Renderer,
+                   dmabuf: &Dmabuf)
+                   -> Option<Mesh>
+    {
+        unsafe {
+            return None;
+        }
+    }
+
     // A simple teardown function. The renderer is needed since
     // it allocated all these objects.
     pub fn destroy(&self, rend: &Renderer) {

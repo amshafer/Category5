@@ -89,3 +89,22 @@ pub struct Dmabuf {
     pub db_width: i32,
     pub db_height: i32,
 }
+
+impl Dmabuf {
+    pub fn new(fd: RawFd,
+               plane: u32,
+               offset: u32,
+               stride: u32)
+               -> Dmabuf
+    {
+        Dmabuf {
+            db_fd: fd,
+            db_plane_idx: plane,
+            db_offset: offset,
+            db_stride: stride,
+            // these will be added later during creation
+            db_width: -1,
+            db_height: -1,
+        }
+    }
+}

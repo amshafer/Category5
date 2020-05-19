@@ -52,6 +52,7 @@ pub fn wl_shell_handle_request(req: wl_shell::Request,
 // tracks window characteristics and roles. It is
 // highly recommended to read wayland.xml for all
 // the gory details.
+#[allow(unused_variables)]
 fn wl_shell_surface_handle_request(surf: Main<wl_shell_surface::WlShellSurface>,
                                    req: wl_shell_surface::Request)
 {
