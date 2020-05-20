@@ -160,6 +160,8 @@ pub struct Renderer {
     // This fence coordinates draw call reuse. It will be signaled
     // when submitting the draw calls to the queue has finished
     submit_fence: vk::Fence,
+    // needed for VkGetMemoryFdPropertiesKHR
+    external_mem_fd_loader: khr::ExternalMemoryFd,
 }
 
 // an application specific set of resources to draw.
@@ -695,8 +697,6 @@ impl Renderer {
         dev.bind_image_memory(image, image_memory, 0)
             .expect("Unable to bind device memory to image");
 
-        // note the aspect here. This needs to be a parameter as
-        // we will want to create multiple types in the future
         let view_info = vk::ImageViewCreateInfo::builder()
             .subresource_range(
                 vk::ImageSubresourceRange::builder()
@@ -1068,6 +1068,8 @@ impl Renderer {
                 None,
             ).expect("Could not create fence");
 
+            let ext_mem_loader = khr::ExternalMemoryFd::new(&inst, &dev);
+
             // you are now the proud owner of a half complete
             // rendering context
             Renderer {
@@ -1100,6 +1102,7 @@ impl Renderer {
                 render_sema: render_sema,
                 submit_fence: fence,
                 app_ctx: RefCell::new(None),
+                external_mem_fd_loader: ext_mem_loader,
             }
         }
     }

@@ -34,6 +34,7 @@ pub struct Mesh {
 
 #[derive(Debug)]
 enum MeshPrivate {
+    dmabuf,
     mem_image(MemImagePrivate),
 }
 
@@ -101,18 +102,167 @@ impl Mesh {
                 buffer,
             );
 
-            if let Some(ctx) = &mut *rend.app_ctx.borrow_mut() {
-                // each mesh holds a set of descriptors that it will
-                // bind before drawing itself. This set holds the
-                // image sampler.
-                //
-                // right now they only hold an image sampler
-                let (handle, descriptors) = ctx.desc_pool.allocate_samplers(
-                    &rend,
-                    rend.fb_count,
-                );
+            return Mesh::create_common(rend,
+                                       MeshPrivate::mem_image(
+                                           MemImagePrivate {
+                                               transfer_buf: buffer,
+                                               transfer_mem: buf_mem,
+                                           }),
+                                       &tex_res,
+                                       image,
+                                       img_mem,
+                                       view,);
+        }
+    }
 
-                for i in 0..rend.fb_count {
+    // returns the index of the memory type to use
+    // similar to Renderer::find_memory_type_index
+    fn find_memtype_for_dmabuf(dmabuf_type_bits: u32,
+                               props: &vk::PhysicalDeviceMemoryProperties,
+                               reqs: &vk::MemoryRequirements)
+                               -> Option<u32>
+    {
+        // and find the first type which matches our image
+        for (i, ref mem_type) in props.memory_types.iter().enumerate() {
+            // Bit i of memoryBitTypes will be set if the resource supports
+            // the ith memory type in props.
+            //
+            // if this index is supported by dmabuf
+            if (dmabuf_type_bits >> i) & 1 == 1
+                // and by the image
+                && (reqs.memory_type_bits >> i) & 1 == 1
+                // make sure it is device local
+                &&  mem_type.property_flags
+                .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
+            {
+                return Some(i as u32);
+            }
+        }
+
+        return None;
+    }
+
+    fn from_dmabuf(rend: &mut Renderer,
+                   dmabuf: &Dmabuf)
+                   -> Option<Mesh>
+    {
+        // A lot of this is duplicated from Renderer::create_image
+        unsafe {
+            // we create the image now, but will have to bind
+            // some memory to it later.
+            let image_info = vk::ImageCreateInfo::builder()
+                .image_type(vk::ImageType::TYPE_2D)
+                // TODO: add other formats
+                .format(vk::Format::R8G8B8A8_SRGB)
+                .extent(vk::Extent3D {
+                    width: dmabuf.db_width as u32,
+                    height: dmabuf.db_height as u32,
+                    depth: 1,
+                })
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(vk::ImageUsageFlags::SAMPLED)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE);
+            let image = rend.dev.create_image(&image_info, None).unwrap();
+
+            // we need to find a memory type that matches the type our
+            // new image needs
+            let mem_reqs = rend.dev.get_image_memory_requirements(image);
+            let mem_props = Renderer::get_pdev_mem_properties(&rend.inst,
+                                                              rend.pdev);
+            // supported types we can import as
+            let dmabuf_type_bits = rend.external_mem_fd_loader
+                .get_memory_fd_properties_khr(
+                    vk::ExternalMemoryHandleTypeFlags
+                        ::EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF,
+                    dmabuf.db_fd)
+                .expect("Could not get memory fd properties")
+                // bitmask set for each supported memory type
+                .memory_type_bits;
+
+            let memtype_index = Mesh::find_memtype_for_dmabuf(
+                dmabuf_type_bits,
+                &mem_props,
+                &mem_reqs,
+            ).expect("Could not find a memtype for the dmabuf");
+
+            // use some of these to verify dmabuf imports:
+            //
+            // VkPhysicalDeviceExternalBufferInfo
+            // VkPhysicalDeviceExternalImageInfo
+
+            // This is where we differ from create_image
+            //
+            // We need to import from the dmabuf fd, so we will
+            // add a VkImportMemoryFdInfoKHR struct to the next ptr
+            // here to tell vulkan that we should import mem
+            // instead of allocating it.
+            let mut alloc_info = vk::MemoryAllocateInfo::builder()
+                .allocation_size(mem_reqs.size)
+                .memory_type_index(memtype_index);
+
+            alloc_info.p_next = &vk::ImportMemoryFdInfoKHR::builder()
+                .handle_type(vk::ExternalMemoryHandleTypeFlags
+                             ::EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF)
+                .fd(dmabuf.db_fd)
+                as *const _ as *const std::ffi::c_void;
+
+            // perform the import
+            let image_memory = rend.dev.allocate_memory(&alloc_info, None)
+                .unwrap();
+            rend.dev.bind_image_memory(image, image_memory, 0)
+                .expect("Unable to bind device memory to image");
+
+            // finally make a view to wrap the image
+            let view_info = vk::ImageViewCreateInfo::builder()
+                .subresource_range(
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .level_count(1)
+                        .layer_count(1)
+                        .build()
+                )
+                .image(image)
+                .format(image_info.format)
+                .view_type(vk::ImageViewType::TYPE_2D);
+
+            let view = rend.dev.create_image_view(&view_info, None).unwrap();
+
+            return Mesh::create_common(rend,
+                                       MeshPrivate::dmabuf,
+                                       &vk::Extent2D {
+                                           width: dmabuf.db_width as u32,
+                                           height: dmabuf.db_height as u32,
+                                       },
+                                       image,
+                                       image_memory,
+                                       view);
+        }
+    }
+
+    fn create_common(rend: &mut Renderer,
+                     private: MeshPrivate,
+                     res: &vk::Extent2D,
+                     image: vk::Image,
+                     image_mem: vk::DeviceMemory,
+                     view: vk::ImageView)
+                     -> Option<Mesh>
+    {
+        if let Some(ctx) = &mut *rend.app_ctx.borrow_mut() {
+            // each mesh holds a set of descriptors that it will
+            // bind before drawing itself. This set holds the
+            // image sampler.
+            //
+            // right now they only hold an image sampler
+            let (handle, descriptors) = ctx.desc_pool.allocate_samplers(
+                &rend,
+                rend.fb_count,
+            );
+
+            for i in 0..rend.fb_count {
+                unsafe {
                     // bind the texture for our window
                     rend.update_sampler_descriptor_set(
                         descriptors[i],
@@ -122,33 +272,19 @@ impl Mesh {
                         view,
                     );
                 }
-
-                return Some(Mesh {
-                    image: image,
-                    image_view: view,
-                    image_mem: img_mem,
-                    image_resolution: tex_res,
-                    pool_handle: handle,
-                    sampler_descriptors: descriptors,
-                    m_priv: MeshPrivate::mem_image(
-                        MemImagePrivate {
-                            transfer_buf: buffer,
-                            transfer_mem: buf_mem,
-                        }
-                    ),
-                });
             }
-            return None;
-        }
-    }
 
-    fn from_dmabuf(rend: &Renderer,
-                   dmabuf: &Dmabuf)
-                   -> Option<Mesh>
-    {
-        unsafe {
-            return None;
+            return Some(Mesh {
+                image: image,
+                image_view: view,
+                image_mem: image_mem,
+                image_resolution: *res,
+                pool_handle: handle,
+                sampler_descriptors: descriptors,
+                m_priv: private,
+            });
         }
+        return None;
     }
 
     // Create a mesh and its needed data
@@ -194,6 +330,8 @@ impl Mesh {
             rend.dev.destroy_image_view(self.image_view, None);
             rend.dev.free_memory(self.image_mem, None);
             match &self.m_priv {
+                // no dmabuf specific resources
+                MeshPrivate::dmabuf => {},
                 MeshPrivate::mem_image(m) => {
                     rend.dev.destroy_buffer(m.transfer_buf, None);
                     rend.dev.free_memory(m.transfer_mem, None);

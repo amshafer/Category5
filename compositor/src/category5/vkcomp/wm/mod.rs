@@ -225,11 +225,6 @@ impl WindowManager {
             // If it does not have a mesh, then this must be the
             // first time contents were attached to it. Go ahead
             // and make one now
-            // app.mesh = Some(self.rend.create_mesh(
-            //     info.pixels.as_ref(),
-            //     info.width as u32,
-            //     info.height as u32,
-            // ).unwrap());
             self.rend.create_mesh(
                 WindowContents::dmabuf(&info.ufd_dmabuf),
             );
