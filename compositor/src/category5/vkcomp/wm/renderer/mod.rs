@@ -859,27 +859,11 @@ impl Renderer {
     }
 
     pub fn update_app_contents(&mut self,
-                               app: &App,
+                               app: &mut App,
                                data: WindowContents)
     {
-        app.mesh.as_ref().map(|mesh| {
-            match data {
-                WindowContents::dmabuf(d) => {},
-                WindowContents::mem_image(mem) => {
-                    unsafe {
-                        // copy the data into the staging buffer
-                        self.update_memory(mesh.transfer_mem,
-                                           mem.as_slice());
-                        // copy the staging buffer into the image
-                        self.update_image_contents_from_buf(
-                            mesh.transfer_buf,
-                            mesh.image,
-                            mesh.image_resolution.width,
-                            mesh.image_resolution.height,
-                        );
-                    }
-                }
-            };
+        app.mesh.as_mut().map(|mesh| {
+            mesh.update_contents(self, data);
         });
     }
 

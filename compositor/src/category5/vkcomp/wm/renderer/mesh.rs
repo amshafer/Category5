@@ -25,11 +25,24 @@ pub struct Mesh {
     pub image: vk::Image,
     pub image_view: vk::ImageView,
     pub image_mem: vk::DeviceMemory,
-    pub transfer_buf: vk::Buffer,
-    pub transfer_mem: vk::DeviceMemory,
     pub image_resolution: vk::Extent2D,
     pub pool_handle: usize,
     pub sampler_descriptors: Vec<vk::DescriptorSet>,
+    // specific to the type of image
+    m_priv: MeshPrivate,
+}
+
+#[derive(Debug)]
+enum MeshPrivate {
+    mem_image(MemImagePrivate),
+}
+
+// Private data for shm images
+#[derive(Debug)]
+struct MemImagePrivate {
+    // The staging buffer for copies to mesh.image
+    transfer_buf: vk::Buffer,
+    transfer_mem: vk::DeviceMemory,
 }
 
 impl Mesh {
@@ -117,8 +130,12 @@ impl Mesh {
                     image_resolution: tex_res,
                     pool_handle: handle,
                     sampler_descriptors: descriptors,
-                    transfer_buf: buffer,
-                    transfer_mem: buf_mem,
+                    m_priv: MeshPrivate::mem_image(
+                        MemImagePrivate {
+                            transfer_buf: buffer,
+                            transfer_mem: buf_mem,
+                        }
+                    ),
                 });
             }
             return None;
@@ -134,6 +151,41 @@ impl Mesh {
         }
     }
 
+    // Create a mesh and its needed data
+    //
+    // All resources will be allocated by
+    // rend
+    pub fn update_contents(&mut self,
+                           rend: &mut Renderer,
+                           data: WindowContents)
+    {
+        match data {
+            WindowContents::mem_image(m) =>
+                self.update_from_mem_image(rend, m),
+            WindowContents::dmabuf(d) => {},
+        };
+    }
+
+    fn update_from_mem_image(&mut self,
+                             rend: &mut Renderer,
+                             img: &MemImage)
+    {
+        if let MeshPrivate::mem_image(m) = &self.m_priv {
+            unsafe {
+                // copy the data into the staging buffer
+                rend.update_memory(m.transfer_mem,
+                                   img.as_slice());
+                // copy the staging buffer into the image
+                rend.update_image_contents_from_buf(
+                    m.transfer_buf,
+                    self.image,
+                    self.image_resolution.width,
+                    self.image_resolution.height,
+                );
+            }
+        }
+    }
+
     // A simple teardown function. The renderer is needed since
     // it allocated all these objects.
     pub fn destroy(&self, rend: &Renderer) {
@@ -141,8 +193,13 @@ impl Mesh {
             rend.dev.destroy_image(self.image, None);
             rend.dev.destroy_image_view(self.image_view, None);
             rend.dev.free_memory(self.image_mem, None);
-            rend.dev.destroy_buffer(self.transfer_buf, None);
-            rend.dev.free_memory(self.transfer_mem, None);
+            match &self.m_priv {
+                MeshPrivate::mem_image(m) => {
+                    rend.dev.destroy_buffer(m.transfer_buf, None);
+                    rend.dev.free_memory(m.transfer_mem, None);
+                },
+                //MeshPrivate::dmabuf(d) => {},
+            }
             // get the descriptor pool
             if let Some(ctx) = &mut *rend.app_ctx.borrow_mut() {
                 // free our descriptors
