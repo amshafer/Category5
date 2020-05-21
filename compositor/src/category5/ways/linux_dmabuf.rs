@@ -37,11 +37,9 @@ pub fn linux_dmabuf_setup(dma: Main<zldv1::ZwpLinuxDmabufV1>) {
     // The above format events are legacy and will be ignored,
     // these modifier events do the real work
     dma.modifier(WL_DRM_FORMAT_XRGB8888,
-                 DRM_FORMAT_MOD_INVALID_HI,
-                 DRM_FORMAT_MOD_INVALID_LOW);
+                 0, 0);
     dma.modifier(WL_DRM_FORMAT_ARGB8888,
-                 DRM_FORMAT_MOD_INVALID_HI,
-                 DRM_FORMAT_MOD_INVALID_LOW);
+                 0, 0);
 }
 
 

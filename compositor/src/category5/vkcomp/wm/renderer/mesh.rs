@@ -146,6 +146,7 @@ impl Mesh {
                    dmabuf: &Dmabuf)
                    -> Option<Mesh>
     {
+        println!("Creating mesh from dmabuf {:?}", dmabuf);
         // A lot of this is duplicated from Renderer::create_image
         unsafe {
             // we create the image now, but will have to bind
@@ -162,7 +163,8 @@ impl Mesh {
                 .mip_levels(1)
                 .array_layers(1)
                 .samples(vk::SampleCountFlags::TYPE_1)
-                .tiling(vk::ImageTiling::OPTIMAL)
+                // we are only doing the linear format for now
+                .tiling(vk::ImageTiling::LINEAR)
                 .usage(vk::ImageUsageFlags::SAMPLED)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
             let image = rend.dev.create_image(&image_info, None).unwrap();

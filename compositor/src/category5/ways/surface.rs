@@ -130,9 +130,15 @@ impl Surface {
             .as_ref()
             .user_data();
 
-        if let Some(dma_buf) = userdata.get::<Dmabuf>() {
-            // Do nothing for now
-            self.s_committed_buffer.as_ref().unwrap().release();
+        if let Some(dmabuf) = userdata.get::<Dmabuf>() {
+            self.s_wm_tx.send(
+                wm::task::Task::update_window_contents_from_dmabuf(
+                    self.s_id, // ID of the new window
+                    *dmabuf, // fd of the gpu buffer
+                    // pass the WlBuffer so it can be released
+                    self.s_committed_buffer.as_ref().unwrap().clone(),
+                )
+            ).unwrap();
             return;
         } else if let Some(shm_buf) = userdata.get::<ShmBuffer>() {
             // ShmBuffer holds the base pointer and an offset, so

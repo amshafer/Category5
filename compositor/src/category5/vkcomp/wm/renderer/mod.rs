@@ -429,7 +429,9 @@ impl Renderer {
                                 queues: &[u32])
                                 -> Device
     {
-        let dev_extension_names = [khr::Swapchain::name().as_ptr()];
+        let dev_extension_names = [khr::Swapchain::name().as_ptr(),
+                                   khr::ExternalMemoryFd::name().as_ptr()];
+
         let features = vk::PhysicalDeviceFeatures {
             shader_clip_distance: 1,
             ..Default::default()
