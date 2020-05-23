@@ -51,13 +51,7 @@ pub struct UpdateWindowContentsFromDmabuf {
     pub ufd_dmabuf: Dmabuf,
     // private: the wl_buffer to release when this
     // is handled. pixels belongs to this.
-    ufd_wl_buffer: wl_buffer::WlBuffer,
-}
-
-impl Drop for UpdateWindowContentsFromDmabuf {
-    fn drop(&mut self) {
-        self.ufd_wl_buffer.release();
-    }
+    pub ufd_wl_buffer: wl_buffer::WlBuffer,
 }
 
 pub struct UpdateWindowContentsFromMem {

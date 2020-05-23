@@ -2,12 +2,14 @@
 // graphics
 //
 // Austin Shafer - 2020
-
 #![allow(dead_code, non_camel_case_types)]
+extern crate nix;
 extern crate ash;
 
 use crate::category5::utils::*;
 use super::*;
+
+use nix::unistd::dup;
 use ash::version::{DeviceV1_0};
 use ash::vk;
 
@@ -34,7 +36,7 @@ pub struct Mesh {
 
 #[derive(Debug)]
 enum MeshPrivate {
-    dmabuf,
+    dmabuf(DmabufPrivate),
     mem_image(MemImagePrivate),
 }
 
@@ -46,20 +48,35 @@ struct MemImagePrivate {
     transfer_mem: vk::DeviceMemory,
 }
 
+// Private data for gpu buffers
+#[derive(Debug)]
+struct DmabufPrivate {
+    // we need to cache the params to import memory with
+    //
+    // memory reqs for the mesh image
+    dp_mem_reqs: vk::MemoryRequirements,
+    // the type of memory to use
+    dp_memtype_index: u32,
+    // Stuff to release when we are no longer using
+    // this gpu buffer (release the wl_buffer)
+    dp_release_info: ReleaseInfo,
+}
+
 impl Mesh {
     // Create a mesh and its needed data
     //
     // All resources will be allocated by
     // rend
     pub fn new(rend: &mut Renderer,
-               texture: WindowContents)
+               texture: WindowContents,
+               release: ReleaseInfo)
                -> Option<Mesh>
     {
         match texture {
             WindowContents::mem_image(m) =>
                 Mesh::from_mem_image(rend, m),
             WindowContents::dmabuf(d) =>
-                Mesh::from_dmabuf(rend, d),
+                Mesh::from_dmabuf(rend, d, release),
         }
     }
 
@@ -143,7 +160,8 @@ impl Mesh {
     }
 
     fn from_dmabuf(rend: &mut Renderer,
-                   dmabuf: &Dmabuf)
+                   dmabuf: &Dmabuf,
+                   release: ReleaseInfo)
                    -> Option<Mesh>
     {
         println!("Creating mesh from dmabuf {:?}", dmabuf);
@@ -208,7 +226,9 @@ impl Mesh {
             alloc_info.p_next = &vk::ImportMemoryFdInfoKHR::builder()
                 .handle_type(vk::ExternalMemoryHandleTypeFlags
                              ::EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF)
-                .fd(dmabuf.db_fd)
+                // need to dup the fd since it seems the implementation will
+                // internally free it
+                .fd(dup(dmabuf.db_fd).unwrap())
                 as *const _ as *const std::ffi::c_void;
 
             // perform the import
@@ -233,7 +253,11 @@ impl Mesh {
             let view = rend.dev.create_image_view(&view_info, None).unwrap();
 
             return Mesh::create_common(rend,
-                                       MeshPrivate::dmabuf,
+                                       MeshPrivate::dmabuf(DmabufPrivate {
+                                           dp_mem_reqs: mem_reqs,
+                                           dp_memtype_index: memtype_index,
+                                           dp_release_info: release,
+                                       }),
                                        &vk::Extent2D {
                                            width: dmabuf.db_width as u32,
                                            height: dmabuf.db_height as u32,
@@ -295,12 +319,14 @@ impl Mesh {
     // rend
     pub fn update_contents(&mut self,
                            rend: &mut Renderer,
-                           data: WindowContents)
+                           data: WindowContents,
+                           release: ReleaseInfo)
     {
         match data {
             WindowContents::mem_image(m) =>
                 self.update_from_mem_image(rend, m),
-            WindowContents::dmabuf(d) => {},
+            WindowContents::dmabuf(d) =>
+                self.update_from_dmabuf(rend, d, release),
         };
     }
 
@@ -308,18 +334,63 @@ impl Mesh {
                              rend: &mut Renderer,
                              img: &MemImage)
     {
-        if let MeshPrivate::mem_image(m) = &self.m_priv {
+        if let MeshPrivate::mem_image(mp) = &self.m_priv {
             unsafe {
                 // copy the data into the staging buffer
-                rend.update_memory(m.transfer_mem,
+                rend.update_memory(mp.transfer_mem,
                                    img.as_slice());
                 // copy the staging buffer into the image
                 rend.update_image_contents_from_buf(
-                    m.transfer_buf,
+                    mp.transfer_buf,
                     self.image,
                     self.image_resolution.width,
                     self.image_resolution.height,
                 );
+            }
+        }
+    }
+
+    fn update_from_dmabuf(&mut self,
+                          rend: &mut Renderer,
+                          dmabuf: &Dmabuf,
+                          release: ReleaseInfo)
+    {
+        println!("Updating mesh with dmabuf {:?}", dmabuf);
+        if let MeshPrivate::dmabuf(dp) = &mut self.m_priv {
+            unsafe {
+                // We need to update and rebind the memory
+                // for image
+                //
+                // see from_dmabuf for a complete example
+                let mut alloc_info = vk::MemoryAllocateInfo::builder()
+                    .allocation_size(dp.dp_mem_reqs.size)
+                    .memory_type_index(dp.dp_memtype_index);
+
+                alloc_info.p_next = &vk::ImportMemoryFdInfoKHR::builder()
+                    .handle_type(vk::ExternalMemoryHandleTypeFlags
+                                 ::EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF)
+                    // Need to dup the fd, since I think the implementation
+                    // will internally free whatever we give it
+                    .fd(dup(dmabuf.db_fd).unwrap())
+                    as *const _ as *const std::ffi::c_void;
+
+                // perform the import
+                let image_memory = rend.dev.allocate_memory(&alloc_info,
+                                                            None)
+                    .unwrap();
+
+                // Release the old frame's resources
+                //
+                // Free the old memory and replace it with the new one
+                rend.dev.free_memory(self.image_mem, None);
+                self.image_mem = image_memory;
+
+                // update the image header with the new import
+                rend.dev.bind_image_memory(self.image, self.image_mem, 0)
+                    .expect("Unable to rebind device memory to image");
+
+                // the old release info will be implicitly dropped
+                dp.dp_release_info = release;
             }
         }
     }
@@ -332,13 +403,12 @@ impl Mesh {
             rend.dev.destroy_image_view(self.image_view, None);
             rend.dev.free_memory(self.image_mem, None);
             match &self.m_priv {
-                // no dmabuf specific resources
-                MeshPrivate::dmabuf => {},
+                // dma has nothing dynamic to free
+                MeshPrivate::dmabuf(_) => {},
                 MeshPrivate::mem_image(m) => {
                     rend.dev.destroy_buffer(m.transfer_buf, None);
                     rend.dev.free_memory(m.transfer_mem, None);
                 },
-                //MeshPrivate::dmabuf(d) => {},
             }
             // get the descriptor pool
             if let Some(ctx) = &mut *rend.app_ctx.borrow_mut() {

@@ -862,10 +862,11 @@ impl Renderer {
 
     pub fn update_app_contents(&mut self,
                                app: &mut App,
-                               data: WindowContents)
+                               data: WindowContents,
+                               release: ReleaseInfo)
     {
         app.mesh.as_mut().map(|mesh| {
-            mesh.update_contents(self, data);
+            mesh.update_contents(self, data, release);
         });
     }
 
@@ -2218,10 +2219,11 @@ impl Renderer {
     // tex_res is the resolution of `texture`
     // window_res is the size of the on screen window
     pub fn create_mesh(&mut self,
-                       data: WindowContents)
+                       data: WindowContents,
+                       release: ReleaseInfo)
                        -> Option<Mesh>
     {
-        return Mesh::new(self, data);
+        return Mesh::new(self, data, release);
     }
 
     // Apply a transform matrix to all meshes

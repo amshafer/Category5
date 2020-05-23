@@ -1,14 +1,24 @@
 // A set of helper structs for common operations
 //
 // Austin Shafer - 2020
+extern crate wayland_server as ws;
 
-use std::slice;
+use ws::protocol::wl_buffer;
+
+use std::{slice,fmt};
 use std::ops::Deref;
 use std::os::unix::io::RawFd;
 
 pub enum WindowContents<'a> {
     dmabuf(&'a Dmabuf),
     mem_image(&'a MemImage),
+}
+
+#[derive(Debug)]
+pub enum ReleaseInfo {
+    none,
+    mem_image,
+    dmabuf(DmabufReleaseInfo),
 }
 
 // Represents a raw pointer to a region of memory
@@ -88,6 +98,25 @@ pub struct Dmabuf {
     // These will be added later during creation
     pub db_width: i32,
     pub db_height: i32,
+}
+
+pub struct DmabufReleaseInfo {
+    pub dr_wl_buffer: wl_buffer::WlBuffer,
+}
+
+impl Drop for DmabufReleaseInfo {
+    fn drop(&mut self) {
+        println!("Deleting wl_buffer for a dmabuf");
+        self.dr_wl_buffer.release();
+    }
+}
+
+impl fmt::Debug for DmabufReleaseInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DmabufReleaseInfo")
+         .field("dr_wl_buffer", &"<wl_buffer omitted>".to_string())
+         .finish()
+    }
 }
 
 impl Dmabuf {

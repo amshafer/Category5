@@ -3,8 +3,12 @@
 // vkcomp.
 //
 // Austin Shafer - 2020
+extern crate nix;
 extern crate wayland_server as ws;
-use ws::Main;
+
+use nix::unistd::close;
+use ws::{Filter,Main,Resource};
+use ws::protocol::wl_buffer;
 
 use crate::category5::utils::Dmabuf;
 use super::protocol::linux_dmabuf::{
@@ -18,7 +22,9 @@ use std::os::unix::io::RawFd;
 // the modifier from the dmabuf
 //
 // specified in linux-dmabuf-unstable-v1.xml
+#[allow(dead_code)]
 const DRM_FORMAT_MOD_INVALID_HI: u32 = 0x00ffffff;
+#[allow(dead_code)]
 const DRM_FORMAT_MOD_INVALID_LOW: u32 = 0xffffffff;
 
 // drm formats specified in mesa's private wl_drm
@@ -86,6 +92,13 @@ impl Params {
                 // Add our dmabuf to the userdata so Surface
                 // can later hand it to vkcomp
                 buffer_id.quick_assign(|_, _, _| {});
+                buffer_id.assign_destructor(Filter::new(
+                    move |r: Resource<wl_buffer::WlBuffer>, _, _| {
+                        let ud = r.user_data().get::<Dmabuf>().unwrap();
+                        close(ud.db_fd).unwrap();
+                    }
+                ));
+
                 buffer_id.as_ref()
                     .user_data()
                     .set(move || dmabuf);

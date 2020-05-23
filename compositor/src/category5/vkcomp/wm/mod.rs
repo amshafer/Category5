@@ -98,6 +98,7 @@ impl WindowManager {
         let bar = rend.create_mesh(
             // TODO: make a way to change titlebar colors
             WindowContents::mem_image(&mimg),
+            ReleaseInfo::none,
         ).unwrap();
 
         let img = image::open("../dot.png").unwrap().to_rgba();
@@ -108,6 +109,7 @@ impl WindowManager {
                                  64);
         let dot = rend.create_mesh(
             WindowContents::mem_image(&mimg),
+            ReleaseInfo::none,
         ).unwrap();
 
         Titlebar {
@@ -127,6 +129,7 @@ impl WindowManager {
         rend.create_mesh(
             // TODO: calculate correct cursor size
             WindowContents::mem_image(&mimg),
+            ReleaseInfo::none,
         )
     }
 
@@ -169,6 +172,7 @@ impl WindowManager {
 
         let mesh = self.rend.create_mesh(
             WindowContents::mem_image(&mimg),
+            ReleaseInfo::none,
         );
 
         self.background = mesh;
@@ -220,13 +224,19 @@ impl WindowManager {
             self.rend.update_app_contents(
                 app,
                 WindowContents::dmabuf(&info.ufd_dmabuf),
+                ReleaseInfo::dmabuf(DmabufReleaseInfo {
+                    dr_wl_buffer: info.ufd_wl_buffer.clone(),
+                }),
             );
         } else {
             // If it does not have a mesh, then this must be the
             // first time contents were attached to it. Go ahead
             // and make one now
-            self.rend.create_mesh(
+            app.mesh = self.rend.create_mesh(
                 WindowContents::dmabuf(&info.ufd_dmabuf),
+                ReleaseInfo::dmabuf(DmabufReleaseInfo {
+                    dr_wl_buffer: info.ufd_wl_buffer.clone(),
+                }),
             );
         }
     }
@@ -248,6 +258,7 @@ impl WindowManager {
             self.rend.update_app_contents(
                 app,
                 WindowContents::mem_image(&info.pixels),
+                ReleaseInfo::mem_image,
             );
         } else {
             // If it does not have a mesh, then this must be the
@@ -255,6 +266,7 @@ impl WindowManager {
             // and make one now
             app.mesh = Some(self.rend.create_mesh(
                 WindowContents::mem_image(&info.pixels),
+                ReleaseInfo::mem_image,
             ).unwrap());
         }
     }
