@@ -162,6 +162,14 @@ pub struct Renderer {
     submit_fence: vk::Fence,
     // needed for VkGetMemoryFdPropertiesKHR
     external_mem_fd_loader: khr::ExternalMemoryFd,
+    // resources to be freed at the end of this frame
+    // This is 0 or 1, for which vec we are using
+    r_release_index: usize,
+    // We have two pending release lists, the list for
+    // the previous frame and the list we are adding
+    // to for this frame. See WindowManger's worker_thread
+    // for more
+    r_release: [Vec<ReleaseInfo> ; 2],
 }
 
 // an application specific set of resources to draw.
@@ -860,6 +868,33 @@ impl Renderer {
         );
     }
 
+    // Returns true if there are any resources in
+    // the current release list.
+    pub fn will_release_this_frame(&mut self) -> bool {
+        return !self.r_release[self.r_release_index]
+            .is_empty();
+    }
+
+    // Drop all of the resources, this is used to
+    // release wl_buffers after they have been drawn.
+    // We should not deal with wayland structs
+    // directly, just with releaseinfo
+    pub fn release_pending_resources(&mut self) {
+        println!("releasing pending resources from list {}",
+                 self.r_release_index);
+        // flip index between 0 and 1
+        self.r_release_index = (!self.r_release_index) & 1;
+        // now that we have flipped the index, we will be
+        // clearing the previous frames's resource list
+        self.r_release[self.r_release_index].clear();
+    }
+
+    pub fn register_for_release(&mut self,
+                                release: ReleaseInfo)
+    {
+       self.r_release[self.r_release_index].push(release);
+    }
+
     pub fn update_app_contents(&mut self,
                                app: &mut App,
                                data: WindowContents,
@@ -1106,6 +1141,8 @@ impl Renderer {
                 submit_fence: fence,
                 app_ctx: RefCell::new(None),
                 external_mem_fd_loader: ext_mem_loader,
+                r_release_index: 0,
+                r_release: [Vec::new(), Vec::new()],
             }
         }
     }

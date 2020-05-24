@@ -390,7 +390,11 @@ impl Mesh {
                     .expect("Unable to rebind device memory to image");
 
                 // the old release info will be implicitly dropped
-                dp.dp_release_info = release;
+                // after it has been drawn and presented
+                let mut old_release = release;
+                // swap our new release info into dp
+                mem::swap(&mut dp.dp_release_info, &mut old_release);
+                rend.register_for_release(old_release);
             }
         }
     }

@@ -479,15 +479,30 @@ impl WindowManager {
 
     pub fn worker_thread(&mut self) {
         loop {
-            // Block for any new tasks
-            let task = self.rx.recv().unwrap();
             // We time every frame for debugging
-            let fstart_time = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("Error getting system time")
-                .as_millis() as u32;
+            let mut fstart_time = 0;
 
-            self.process_task(&task);
+            // We can't block if there are resources to
+            // release, as this will hang the client
+            // waiting for them
+            if !self.rend.will_release_this_frame() {
+                // Block for any new tasks
+                let task = self.rx.recv().unwrap();
+                // We time every frame for debugging
+                fstart_time = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Error getting system time")
+                    .as_millis() as u32;
+
+                self.process_task(&task);
+            }
+
+            if fstart_time == 0 {
+                fstart_time = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Error getting system time")
+                    .as_millis() as u32;
+            }
 
             // We have already done one task, but the previous
             // frame might not be done. We should keep processing
@@ -513,6 +528,10 @@ impl WindowManager {
 
             self.begin_frame();
             self.reap_dead_windows();
+            // Now that we have completed the previous frame, we can
+            // release all the resources used to construct it
+            // note: -bad- this probably calls wayland locks
+            self.rend.release_pending_resources();
             self.end_frame();
 
             let fend_time = SystemTime::now()
