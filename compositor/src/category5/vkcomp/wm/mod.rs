@@ -207,6 +207,11 @@ impl WindowManager {
         });
     }
 
+    // Handles an update from dmabuf task
+    //
+    // Translates the task update structure into lower
+    // level calls to import a dmabuf and update a mesh.
+    // Creates a new mesh if one doesn't exist yet.
     fn update_window_contents_from_dmabuf(&mut self,
                                           info: &UpdateWindowContentsFromDmabuf)
     {
@@ -241,6 +246,10 @@ impl WindowManager {
         }
     }
 
+    // Handle update from memimage task
+    //
+    // Copies the shm buffer into the app's mesh.
+    // Creates a new mesh if one doesn't exist yet.
     fn update_window_contents_from_mem(&mut self,
                                        info: &UpdateWindowContentsFromMem)
     {

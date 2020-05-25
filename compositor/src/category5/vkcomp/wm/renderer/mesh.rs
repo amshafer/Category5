@@ -34,6 +34,14 @@ pub struct Mesh {
     m_priv: MeshPrivate,
 }
 
+// Private data specific to a mesh type.
+//
+// There are two types of meshes: memimages, and dmabufs
+// MemImages represent shared memory that is copied
+// and used as the mesh's texture
+//
+// Dmabufs are GPU buffers passed by fd. They will be
+// imported (copyless) and bound to the mesh's image
 #[derive(Debug)]
 enum MeshPrivate {
     dmabuf(DmabufPrivate),
@@ -80,6 +88,7 @@ impl Mesh {
         }
     }
 
+    // Create a new mesh from a shm buffer
     fn from_mem_image(rend: &mut Renderer,
                       img: &MemImage)
                       -> Option<Mesh>
@@ -159,6 +168,11 @@ impl Mesh {
         return None;
     }
 
+    // Create a new mesh from a dmabuf
+    //
+    // This is used during the first update of window
+    // contents on an app. It will import the dmabuf
+    // and create an image/view pair representing it.
     fn from_dmabuf(rend: &mut Renderer,
                    dmabuf: &Dmabuf,
                    release: ReleaseInfo)
@@ -268,6 +282,11 @@ impl Mesh {
         }
     }
 
+    // Create a mesh
+    //
+    // This logic is the same no matter what type of
+    // resources the mesh was made from. It allocates
+    // descriptors and constructs the mesh struct
     fn create_common(rend: &mut Renderer,
                      private: MeshPrivate,
                      res: &vk::Extent2D,
@@ -330,6 +349,7 @@ impl Mesh {
         };
     }
 
+    // Update mesh contents from a shm buffer
     fn update_from_mem_image(&mut self,
                              rend: &mut Renderer,
                              img: &MemImage)
@@ -350,6 +370,10 @@ impl Mesh {
         }
     }
 
+    // Update mesh contents from a GPU buffer
+    //
+    // GPU buffers are passed as dmabuf fds, we will perform
+    // an import using vulkan's external memory extensions
     fn update_from_dmabuf(&mut self,
                           rend: &mut Renderer,
                           dmabuf: &Dmabuf,

@@ -9,11 +9,28 @@ use std::{slice,fmt};
 use std::ops::Deref;
 use std::os::unix::io::RawFd;
 
+// Window Contents
+//
+// This allows for easy abstraction of the type
+// of data being used to update a mesh.
 pub enum WindowContents<'a> {
     dmabuf(&'a Dmabuf),
     mem_image(&'a MemImage),
 }
 
+// Release Info
+//
+// Sometimes one subsystem hands data to
+// another subsystem for processing. When
+// complete those resources need to be freed.
+//
+// The receiving subsystem will drop this
+// whenever it is done completing a task,
+// releasing any resources.
+//
+// This is separate from WindowContents so
+// we can mix and match. Task handlers usually
+// accept this alongside some info struct
 #[derive(Debug)]
 pub enum ReleaseInfo {
     none,
@@ -65,6 +82,7 @@ impl MemImage {
     }
 }
 
+// WARNING
 // While it is safe according to the language, it is not actually
 // safe to use. This is needed so that a MemImage can be sent from
 // the wayland thread to the rendering thread. The rendering thread
@@ -100,7 +118,14 @@ pub struct Dmabuf {
     pub db_height: i32,
 }
 
+// Dmabuf release info
+//
+// Should be paired with a Dmabuf while it is being
+// imported. Once the import is complete AND it is
+// replaced by the next commit, the dmabuf's wl_buffer
+// should be released so the client can reuse it.
 pub struct DmabufReleaseInfo {
+    // The wl_buffer that represents this dmabuf
     pub dr_wl_buffer: wl_buffer::WlBuffer,
 }
 

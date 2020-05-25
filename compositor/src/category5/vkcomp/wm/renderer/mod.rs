@@ -889,12 +889,17 @@ impl Renderer {
         self.r_release[self.r_release_index].clear();
     }
 
+    // Add a ReleaseInfo to the list of resources to be
+    // freed this frame
+    //
+    // Takes care of choosing what list to add info to
     pub fn register_for_release(&mut self,
                                 release: ReleaseInfo)
     {
        self.r_release[self.r_release_index].push(release);
     }
 
+    // Find an app's mesh and update its contents
     pub fn update_app_contents(&mut self,
                                app: &mut App,
                                data: WindowContents,
@@ -905,6 +910,11 @@ impl Renderer {
         });
     }
 
+    // Update an image from a VkBuffer
+    //
+    // It is common to copy host data into an image
+    // to initialize it. This function initializes
+    // image by copying buffer to it.
     unsafe fn update_image_contents_from_buf(&mut self,
                                              buffer: vk::Buffer,
                                              image: vk::Image,
