@@ -388,14 +388,18 @@ impl Mesh {
                 // see from_dmabuf for a complete example
                 let mut alloc_info = vk::MemoryAllocateInfo::builder()
                     .allocation_size(dp.dp_mem_reqs.size)
-                    .memory_type_index(dp.dp_memtype_index);
+                    .memory_type_index(dp.dp_memtype_index)
+                    .build();
 
-                alloc_info.p_next = &vk::ImportMemoryFdInfoKHR::builder()
+                let import_info = vk::ImportMemoryFdInfoKHR::builder()
                     .handle_type(vk::ExternalMemoryHandleTypeFlags
                                  ::EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF)
                     // Need to dup the fd, since I think the implementation
                     // will internally free whatever we give it
                     .fd(dup(dmabuf.db_fd).unwrap())
+                    .build();
+
+                alloc_info.p_next = &import_info
                     as *const _ as *const std::ffi::c_void;
 
                 // perform the import

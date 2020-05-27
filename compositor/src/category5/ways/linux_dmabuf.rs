@@ -95,6 +95,8 @@ impl Params {
                 buffer_id.assign_destructor(Filter::new(
                     move |r: Resource<wl_buffer::WlBuffer>, _, _| {
                         let ud = r.user_data().get::<Dmabuf>().unwrap();
+                        println!("Destroying wl_buffer: closing dmabuf with fd {}",
+                                 ud.db_fd);
                         close(ud.db_fd).unwrap();
                     }
                 ));
