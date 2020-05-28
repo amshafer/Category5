@@ -462,6 +462,8 @@ impl WindowManager {
                 self.cursor_x += mc.x * sensitivity;
                 self.cursor_y += mc.y * sensitivity;
             },
+            Task::gr(gr) => {},
+            Task::ungr(ugr) => {},
             Task::close_window(id) => self.close_window(*id),
             // set background from mem
             Task::sbfm(sb) => {

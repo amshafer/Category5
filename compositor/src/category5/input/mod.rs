@@ -190,6 +190,9 @@ impl Input {
                         )
                     ).unwrap();
                 },
+                Some(Event::Pointer(PointerEvent::Button(b))) => {
+                    println!("Button Event {:?}", b);
+                },
                 Some(e) => println!("Event: {:?}", e),
                 None => (),
             };
