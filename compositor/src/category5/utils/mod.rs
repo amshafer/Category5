@@ -1,6 +1,7 @@
 // A set of helper structs for common operations
 //
 // Austin Shafer - 2020
+pub mod timing;
 extern crate wayland_server as ws;
 
 use ws::protocol::wl_buffer;

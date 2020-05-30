@@ -500,19 +500,13 @@ impl WindowManager {
                 // Block for any new tasks
                 let task = self.rx.recv().unwrap();
                 // We time every frame for debugging
-                fstart_time = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("Error getting system time")
-                    .as_millis() as u32;
+                fstart_time = timing::get_current_millis();
 
                 self.process_task(&task);
             }
 
             if fstart_time == 0 {
-                fstart_time = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("Error getting system time")
-                    .as_millis() as u32;
+                fstart_time = timing::get_current_millis();
             }
 
             // We have already done one task, but the previous
@@ -545,10 +539,7 @@ impl WindowManager {
             self.rend.release_pending_resources();
             self.end_frame();
 
-            let fend_time = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("Error getting system time")
-                .as_millis() as u32;
+            let fend_time = timing::get_current_millis();
 
             println!("wm: this frame took {} ms",
                      fend_time - fstart_time);

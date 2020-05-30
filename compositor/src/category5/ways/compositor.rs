@@ -16,7 +16,8 @@ use ws::protocol::{
     wl_shell,
 };
 
-use super::super::vkcomp::wm;
+use crate::category5::utils::timing::*;
+use crate::category5::vkcomp::wm;
 use super::{
     shm::*,
     surface::*,
@@ -295,6 +296,12 @@ impl EventManager {
     // Each subsystem has a function that implements its main
     // loop. This is that function
     pub fn worker_thread(&mut self) {
+        // We want to track every 15ms. This is a little less than
+        // once per 60fps frame. It doesn't have to be exact, but
+        // we need to send certain updates to vkcomp roughly once per
+        // frame
+        let mut tm = TimingManager::new(15);
+
         // wayland-rs will not do blocking for us,
         // so we need to use kqueue. This is the
         // same approach as used by the input
@@ -324,20 +331,27 @@ impl EventManager {
                               FilterFlag::all(),
                               0,
                               0);
-        // List of events to watch
+        // List of triggered events
         let mut evlist = vec![kev];
-        // timeout after 15 ms (16 is the ms per frame at 60fps)
-        while kevent(kq, &[], evlist.as_mut_slice(), 15).is_ok() {
-            self.em_atmos.borrow_mut().signal_frame_callbacks();
+
+        tm.reset();
+        while kevent(kq, &[], evlist.as_mut_slice(),
+                     // timeout after 15 ms (16 is the ms per frame at 60fps)
+                     tm.time_remaining()).is_ok() {
+
+            // if it has been roughly one frame, fire the frame callbacks
+            // so clients can draw
+            // TODO: This might not be the most accurate
+            if tm.is_overdue() {
+                tm.reset();
+                self.em_atmos.borrow_mut().signal_frame_callbacks();
+            }
 
             // wait for the next event
             self.em_display
                 .dispatch(Duration::from_millis(0), &mut ())
                 .unwrap();
             self.em_display.flush_clients(&mut ());
-
-            //let task = self.rx.recv().unwrap();
-            //self.process_task(&task);
         }
     }
 }

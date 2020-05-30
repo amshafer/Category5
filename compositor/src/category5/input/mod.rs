@@ -168,7 +168,7 @@ impl Input {
                               FilterFlag::all(),
                               0,
                               0);
-        // List of events to watch
+        // List of triggered events
         let mut evlist = vec![kev];
         // timeout after 15 ms (16 is the ms per frame at 60fps)
         while kevent(kq, &[], evlist.as_mut_slice(), 15).is_ok() {
