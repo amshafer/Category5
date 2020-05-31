@@ -10,7 +10,6 @@ mod input;
 use vkcomp::wm;
 use vkcomp::wm::*;
 use ways::compositor::Compositor;
-use self::input::Input;
 
 use std::thread;
 use std::sync::mpsc;
@@ -36,11 +35,6 @@ pub struct Category5 {
     // The window manager (vulkan rendering backend)
     c5_wm: Option<thread::JoinHandle<()>>,
     c5_wm_tx: Sender<wm::task::Task>,
-    // The input sybsystem
-    //
-    // It does not have a channel because it only produces
-    // events for the other subsystems.
-    c5_input: Option<thread::JoinHandle<()>>,
 }
 
 impl Category5 {
@@ -52,9 +46,6 @@ impl Category5 {
         let (wm_tx, wm_rx) = mpsc::channel();
         // A clone used for ways
         let wm_tx_clone = wm_tx.clone();
-        // Clones used for input
-        let wm_tx_clone2 = wm_tx.clone();
-        let wc_tx_clone = wc_tx.clone();
 
         Category5 {
             // Get the wayland compositor
@@ -77,12 +68,6 @@ impl Category5 {
                 wm.worker_thread();
             }).unwrap()),
             c5_wm_tx: wm_tx,
-            c5_input: Some(thread::Builder::new()
-                        .name("input".to_string())
-                        .spawn(|| {
-                let mut input = Input::new(wc_tx_clone, wm_tx_clone2);
-                input.worker_thread();
-            }).unwrap()),
         }
     }
 
@@ -108,6 +93,5 @@ impl Category5 {
     pub fn run_forever(&mut self) {
         self.c5_wc.take().unwrap().join().ok();
         self.c5_wm.take().unwrap().join().ok();
-        self.c5_input.take().unwrap().join().ok();
     }
 }

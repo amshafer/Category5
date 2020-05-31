@@ -17,6 +17,7 @@ use ws::protocol::{
 };
 
 use crate::category5::utils::timing::*;
+use crate::category5::input::Input;
 use crate::category5::vkcomp::wm;
 use super::{
     shm::*,
@@ -69,8 +70,35 @@ pub struct EventManager {
     // The wayland display object, this is the core
     // global singleton for libwayland
     em_display: ws::Display,
+    // The input subsystem
+    //
+    // This is not in its own thread since it generates a
+    // huge amount of updates, which performs poorly with
+    // channel-based message passing.
+    em_input: Input,
+    // How much the mouse has moved in this frame
+    // aggregates input pointer events
+    em_pointer_dx: u32,
+    em_pointer_dy: u32,
+    // Channel to speak to vkcomp
     em_wm_tx: Sender<wm::task::Task>,
     em_rx: Receiver<Task>,
+}
+
+// Helper for creating an empty KEvent for kqueue
+// This is just for placeholders when we need
+// an initialized kevent
+fn empty_kevent() -> KEvent {
+   read_fd_kevent(0)
+}
+
+// Helper for creating a kevent for reading an fd
+fn read_fd_kevent(fd: RawFd) -> KEvent {
+    KEvent::new(fd as usize,
+                EventFilter::EVFILT_READ,
+                EventFlag::EV_ADD,
+                FilterFlag::all(),
+                0, 0)
 }
 
 impl Compositor {
@@ -126,7 +154,9 @@ impl Compositor {
             }
         ));
     }
+}
 
+impl EventManager {
     // Returns a new Compositor struct
     //    (okay well really an EventManager)
     //
@@ -160,6 +190,7 @@ impl Compositor {
         let mut evman = Box::new(EventManager {
             em_atmos: atmos,
             em_display: display,
+            em_input: Input::new(),
             em_wm_tx: wm_tx,
             em_rx: rx,
         });
@@ -174,9 +205,6 @@ impl Compositor {
 
         return evman;
     }
-}
-
-impl EventManager {
 
     // Create a new global object advertising the wl_surface interface
     //
@@ -306,45 +334,63 @@ impl EventManager {
         // so we need to use kqueue. This is the
         // same approach as used by the input
         // subsystem.
-        let fd = self.em_display.get_poll_fd();
+        let ways_fd = self.em_display.get_poll_fd();
 
         // Create a new kqueue
         let kq = kqueue().expect("Could not create kqueue");
 
-        // Create an event that watches our fd
-        let kev_watch = KEvent::new(fd as usize,
-                                    EventFilter::EVFILT_READ,
-                                    EventFlag::EV_ADD,
-                                    FilterFlag::all(),
-                                    0,
-                                    0);
+        // Create read events for ways and input
+        // When registered, these will tell kqueue to notify
+        // use when the wayland or libinput fds are readable
+        let kev_ways = read_fd_kevent(waysfd);
+        let kev_input = read_fd_kevent(input_fd);
 
         // Register our kevent with the kqueue to receive updates
-        kevent(kq, vec![kev_watch].as_slice(), &mut [], 0)
+        kevent(kq, vec![kev_ways, kev_input].as_slice(), &mut [], 0)
             .expect("Could not register watch event with kqueue");
 
-        // This will be overwritten with the event which was triggered
-        // For now we just need something to initialize it with
-        let kev = KEvent::new(fd as usize,
-                              EventFilter::EVFILT_READ,
-                              EventFlag::EV_ADD,
-                              FilterFlag::all(),
-                              0,
-                              0);
         // List of triggered events
-        let mut evlist = vec![kev];
+        // one for wayland and one for input
+        let mut evlist = vec![empty_kevent(), empty_kevent()];
 
+        // reset the timer before we start
         tm.reset();
         while kevent(kq, &[], evlist.as_mut_slice(),
                      // timeout after 15 ms (16 is the ms per frame at 60fps)
                      tm.time_remaining()).is_ok() {
+            // First thing to do is to dispatch libinput
+            // It has time sensitive operations which need to take
+            // place as soon as the fd is readable
+            self.em_input.dispatch();
+            while let Some(iev) = self.em_input.next_available() {
+                match iev {
+                    InputEvent::pointer_motion(m) => {
+                        // Coalesce movement so we only send one message
+                        // to vkcomp per frame for efficiency
+                        self.em_pointer_dx += m.pm_dx;
+                        self.em_pointer_dy += m.pm_dy;
+                    },
+                }
+            }
 
-            // if it has been roughly one frame, fire the frame callbacks
-            // so clients can draw
             // TODO: This might not be the most accurate
             if tm.is_overdue() {
+                // reset our timer
                 tm.reset();
+                // if it has been roughly one frame, fire the frame callbacks
+                // so clients can draw
                 self.em_atmos.borrow_mut().signal_frame_callbacks();
+                // Send our coalesced movement updates
+                self.wm_tx.send(
+                    wm::task::Task::move_cursor(
+                        self.em_pointer_dx,
+                        self.em_pointer_dy,
+                    )
+                ).unwrap();
+
+                // reset our aggregate movement deltas
+                self.em_pointer_dx = 0;
+                self.em_pointer_dy = 0;
             }
 
             // wait for the next event

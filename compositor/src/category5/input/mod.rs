@@ -99,18 +99,11 @@ pub struct Input {
     uctx: Context,
     // libinput context
     libin: Libinput,
-    // Channel for the wayland subsystem
-    wc_tx: Sender<ways::task::Task>,
-    // Channel for the window management subsystem
-    wm_tx: Sender<wm::task::Task>,
 }
 
 impl Input {
     // Setup the libinput library from a udev context
-    pub fn new(wc_tx: Sender<ways::task::Task>,
-               wm_tx: Sender<wm::task::Task>)
-               -> Input
-    {
+    pub fn new() -> Input {
         // Make a new context for ourselves
         let uctx = Context::new().unwrap();
 
@@ -140,62 +133,42 @@ impl Input {
         }
     }
 
-    pub fn worker_thread(&mut self) {
-        // We want to save power by polling the
-        // fd provided by libinput
-        let fd = self.libin.as_raw_fd();
-
-        // Create a new kqueue
-        let kq = kqueue().expect("Could not create kqueue");
-
-        // Create an event that watches our fd
-        let kev_watch = KEvent::new(fd as usize,
-                                    EventFilter::EVFILT_READ,
-                                    EventFlag::EV_ADD,
-                                    FilterFlag::all(),
-                                    0,
-                                    0);
-
-        // Register our kevent with the kqueue to receive updates
-        kevent(kq, vec![kev_watch].as_slice(), &mut [], 0)
-            .expect("Could not register watch event with kqueue");
-
-        // This will be overwritten with the event which was triggered
-        // For now we just need something to initialize it with
-        let kev = KEvent::new(fd as usize,
-                              EventFilter::EVFILT_READ,
-                              EventFlag::EV_ADD,
-                              FilterFlag::all(),
-                              0,
-                              0);
-        // List of triggered events
-        let mut evlist = vec![kev];
-        // timeout after 15 ms (16 is the ms per frame at 60fps)
-        while kevent(kq, &[], evlist.as_mut_slice(), 15).is_ok() {
-            // dispatch will grab the latest available data
-            // from the devices and perform libinputs internal
-            // (time sensitive) operations on them
-	    self.libin.dispatch().unwrap();
-
-            // TODO: need to fix this wrapper
-	    let ev = self.libin.next();
-            match ev {
-                Some(Event::Pointer(PointerEvent::Motion(m))) => {
-                    println!("moving mouse by ({}, {})",
-                             m.dx(), m.dy());
-                    self.wm_tx.send(
-                        wm::task::Task::move_cursor(
-                            m.dx(),
-                            m.dy(),
-                        )
-                    ).unwrap();
-                },
-                Some(Event::Pointer(PointerEvent::Button(b))) => {
-                    println!("Button Event {:?}", b);
-                },
-                Some(e) => println!("Event: {:?}", e),
-                None => (),
-            };
-        }
+    // Get a pollable fd
+    //
+    // This saves power and is monitored by kqueue in
+    // the ways event loop
+    pub fn get_fd(&mut self) {
+        self.libin.as_raw_fd()
     }
+
+    // dispatch will grab the latest available data
+    // from the devices and perform libinputs internal
+    // (time sensitive) operations on them
+    pub fn dispatch(&mut self) {
+	self.libin.dispatch().unwrap();
+    }
+
+    // Get the next available event from libinput
+    //
+    // Dispatch should be called before this so libinput can
+    // internally read and prepare all events.
+    pub fn next_available(&mut self) -> Option<InputEvent> {
+         // TODO: need to fix this wrapper
+	 let ev = self.libin.next();
+         match ev {
+             Some(Event::Pointer(PointerEvent::Motion(m))) => {
+                 println!("moving mouse by ({}, {})",
+                          m.dx(), m.dy());
+
+                 return InputEvent::pointer_motion(PointerMotion {
+                     m.dx(),
+                     m.dy(),
+                 });
+             },
+             Some(e) => println!("Unhandled Input Event: {:?}", e),
+             None => (),
+         };
+
+        return None;
+     }
 }
