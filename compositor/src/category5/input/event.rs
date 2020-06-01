@@ -13,6 +13,6 @@ pub enum InputEvent {
 // Movement of the pointer relative to
 // the previous position
 pub struct PointerMove {
-    pm_dx: u32,
-    pm_dy: u32,
+    pub pm_dx: f64,
+    pub pm_dy: f64,
 }

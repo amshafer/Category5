@@ -16,7 +16,6 @@ use task::*;
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver};
-use std::time::{SystemTime,UNIX_EPOCH};
 
 // This consolidates the multiple resources needed
 // to represent a titlebar
@@ -496,7 +495,7 @@ impl WindowManager {
             // We can't block if there are resources to
             // release, as this will hang the client
             // waiting for them
-            if !self.rend.will_release_this_frame() {
+            if self.rend.release_is_empty() {
                 // Block for any new tasks
                 let task = self.rx.recv().unwrap();
                 // We time every frame for debugging

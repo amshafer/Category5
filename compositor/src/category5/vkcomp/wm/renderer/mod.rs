@@ -870,8 +870,8 @@ impl Renderer {
 
     // Returns true if there are any resources in
     // the current release list.
-    pub fn will_release_this_frame(&mut self) -> bool {
-        return !self.r_release[self.r_release_index]
+    pub fn release_is_empty(&mut self) -> bool {
+        return self.r_release[self.r_release_index]
             .is_empty();
     }
 

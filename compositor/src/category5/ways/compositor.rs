@@ -17,7 +17,7 @@ use ws::protocol::{
 };
 
 use crate::category5::utils::timing::*;
-use crate::category5::input::Input;
+use crate::category5::input::{Input, event::*};
 use crate::category5::vkcomp::wm;
 use super::{
     shm::*,
@@ -39,6 +39,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc::{Sender,Receiver};
 use std::ops::Deref;
+use std::os::unix::io::RawFd;
 
 // A wayland compositor wrapper
 //
@@ -78,8 +79,8 @@ pub struct EventManager {
     em_input: Input,
     // How much the mouse has moved in this frame
     // aggregates input pointer events
-    em_pointer_dx: u32,
-    em_pointer_dy: u32,
+    em_pointer_dx: f64,
+    em_pointer_dy: f64,
     // Channel to speak to vkcomp
     em_wm_tx: Sender<wm::task::Task>,
     em_rx: Receiver<Task>,
@@ -193,6 +194,8 @@ impl EventManager {
             em_input: Input::new(),
             em_wm_tx: wm_tx,
             em_rx: rx,
+            em_pointer_dx: 0.0,
+            em_pointer_dy: 0.0,
         });
 
         // Register our global interfaces that
@@ -335,6 +338,7 @@ impl EventManager {
         // same approach as used by the input
         // subsystem.
         let ways_fd = self.em_display.get_poll_fd();
+        let input_fd = self.em_input.get_poll_fd();
 
         // Create a new kqueue
         let kq = kqueue().expect("Could not create kqueue");
@@ -342,7 +346,7 @@ impl EventManager {
         // Create read events for ways and input
         // When registered, these will tell kqueue to notify
         // use when the wayland or libinput fds are readable
-        let kev_ways = read_fd_kevent(waysfd);
+        let kev_ways = read_fd_kevent(ways_fd);
         let kev_input = read_fd_kevent(input_fd);
 
         // Register our kevent with the kqueue to receive updates
@@ -364,7 +368,7 @@ impl EventManager {
             self.em_input.dispatch();
             while let Some(iev) = self.em_input.next_available() {
                 match iev {
-                    InputEvent::pointer_motion(m) => {
+                    InputEvent::pointer_move(m) => {
                         // Coalesce movement so we only send one message
                         // to vkcomp per frame for efficiency
                         self.em_pointer_dx += m.pm_dx;
@@ -375,22 +379,28 @@ impl EventManager {
 
             // TODO: This might not be the most accurate
             if tm.is_overdue() {
+                println!("EventManager: Timer expired with movement update {} {}",
+                         self.em_pointer_dx,
+                         self.em_pointer_dy,
+                );
                 // reset our timer
                 tm.reset();
                 // if it has been roughly one frame, fire the frame callbacks
                 // so clients can draw
                 self.em_atmos.borrow_mut().signal_frame_callbacks();
-                // Send our coalesced movement updates
-                self.wm_tx.send(
-                    wm::task::Task::move_cursor(
-                        self.em_pointer_dx,
-                        self.em_pointer_dy,
-                    )
-                ).unwrap();
+                if self.em_pointer_dx != 0.0 || self.em_pointer_dy != 0.0 {
+                    // Send our coalesced movement updates
+                    self.em_wm_tx.send(
+                        wm::task::Task::move_cursor(
+                            self.em_pointer_dx,
+                            self.em_pointer_dy,
+                        )
+                    ).unwrap();
 
-                // reset our aggregate movement deltas
-                self.em_pointer_dx = 0;
-                self.em_pointer_dy = 0;
+                    // reset our aggregate movement deltas
+                    self.em_pointer_dx = 0.0;
+                    self.em_pointer_dy = 0.0;
+                }
             }
 
             // wait for the next event
@@ -398,6 +408,8 @@ impl EventManager {
                 .dispatch(Duration::from_millis(0), &mut ())
                 .unwrap();
             self.em_display.flush_clients(&mut ());
+
+            //println!("EventManager: Blocking for max {} ms", tm.time_remaining());
         }
     }
 }

@@ -9,7 +9,7 @@ mod input;
 
 use vkcomp::wm;
 use vkcomp::wm::*;
-use ways::compositor::Compositor;
+use ways::compositor::EventManager;
 
 use std::thread;
 use std::sync::mpsc;
@@ -54,7 +54,7 @@ impl Category5 {
             c5_wc: Some(thread::Builder::new()
                         .name("wayland_handlers".to_string())
                         .spawn(|| {
-                let mut ev = Compositor::new(wc_rx, wm_tx_clone);
+                let mut ev = EventManager::new(wc_rx, wm_tx_clone);
                 ev.worker_thread();
             }).unwrap()),
             c5_wc_tx: wc_tx,

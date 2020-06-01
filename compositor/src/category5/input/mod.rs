@@ -11,16 +11,14 @@ extern crate input;
 extern crate udev;
 extern crate nix;
 
-use super::vkcomp::wm;
-use super::ways;
-use std::sync::mpsc::Sender;
+pub mod event;
+use event::*;
 
 use udev::{Enumerator,Context};
 use input::{Libinput,LibinputInterface};
 use input::event::Event;
 use input::event::pointer::PointerEvent;
-
-use nix::sys::event::*;
+use input::event::keyboard::KeyboardEvent;
 
 use std::fs::{File,OpenOptions};
 use std::path::Path;
@@ -128,8 +126,6 @@ impl Input {
         Input {
             uctx: uctx,
             libin: libin,
-            wc_tx: wc_tx,
-            wm_tx: wm_tx,
         }
     }
 
@@ -137,7 +133,7 @@ impl Input {
     //
     // This saves power and is monitored by kqueue in
     // the ways event loop
-    pub fn get_fd(&mut self) {
+    pub fn get_poll_fd(&mut self) -> RawFd {
         self.libin.as_raw_fd()
     }
 
@@ -160,11 +156,13 @@ impl Input {
                  println!("moving mouse by ({}, {})",
                           m.dx(), m.dy());
 
-                 return InputEvent::pointer_motion(PointerMotion {
-                     m.dx(),
-                     m.dy(),
-                 });
+                 return Some(InputEvent::pointer_move(PointerMove {
+                     pm_dx: m.dx(),
+                     pm_dy: m.dy(),
+                 }));
              },
+             Some(Event::Keyboard(KeyboardEvent::Key(_))) =>
+                 std::process::exit(0),
              Some(e) => println!("Unhandled Input Event: {:?}", e),
              None => (),
          };

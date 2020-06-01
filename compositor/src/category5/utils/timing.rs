@@ -3,11 +3,15 @@
 // Austin Shafer - 2020
 use std::time::{Duration,SystemTime,UNIX_EPOCH};
 
-// Helper to get the current time in milliseconds
-pub fn get_current_millis() -> u32 {
+fn get_current_time() -> Duration {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("Error getting system time")
+}
+
+// Helper to get the current time in milliseconds
+pub fn get_current_millis() -> u32 {
+    get_current_time()
         .as_millis() as u32
 }
 
@@ -24,7 +28,7 @@ pub fn get_current_millis() -> u32 {
 // for tracking timing information.
 pub struct TimingManager {
     // length of time we are counting down from
-    tm_period: u32,
+    tm_period: Duration,
     // the last time we reset this manager
     tm_start: Duration,
 }
@@ -34,20 +38,20 @@ impl TimingManager {
     // periods of length `period`
     pub fn new(period: u32) -> TimingManager {
         TimingManager {
-            tm_period: u32,
-            tm_start: get_current_millis(),
+            tm_period: Duration::from_millis(period as u64),
+            tm_start: get_current_time(),
         }
     }
 
     // Reset the manager to the current time
     pub fn reset(&mut self) {
-        self.tm_start = get_current_millis();
+        self.tm_start = get_current_time();
     }
 
     // Returns true if period ms have passed
     // since this manager was reset
     pub fn is_overdue(&mut self) -> bool {
-        let time = get_current_millis();
+        let time = get_current_time();
 
         // If it has been period ms
         if time - self.tm_start >= self.tm_period {
@@ -61,8 +65,11 @@ impl TimingManager {
     //
     // If 0 is returned, it is overdue and we
     // should reset it.
-    pub fn time_remaining(&mut self) -> u32 {
-        let time_elapsed = get_current_millis() - self.tm_start;
-        return self.tm_period - time_elapsed;
+    pub fn time_remaining(&mut self) -> usize {
+        let time_elapsed = get_current_time() - self.tm_start;
+	if self.is_overdue() {
+		return 0;
+	}
+        return (self.tm_period - time_elapsed).as_millis() as usize;
     }
 }
