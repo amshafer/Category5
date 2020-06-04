@@ -13,6 +13,8 @@ extern crate nix;
 
 pub mod event;
 use event::*;
+use crate::category5::utils::{timing::*, logging::LogLevel};
+use crate::log;
 
 use udev::{Enumerator,Context};
 use input::{Libinput,LibinputInterface};
@@ -51,7 +53,7 @@ impl LibinputInterface for Inkit {
     fn open_restricted(&mut self, path: &Path, flags: i32)
                        -> Result<RawFd, i32>
     {
-	println!("Opening device {:?}", path);
+	log!(LogLevel::debug, "Opening device {:?}", path);
 	match OpenOptions::new()
             // the unix extension's custom_flag field below
             // masks out O_ACCMODE, i.e. read/write, so add
@@ -67,12 +69,12 @@ impl LibinputInterface for Inkit {
                 // don't need to worry about the File's
                 // lifetime.
 		let fd = f.into_raw_fd();
-		println!("Returning raw fd {}", fd);
+		log!(LogLevel::error, "Returning raw fd {}", fd);
 		Ok(fd)
 	    },
 	    Err(e) => {
                 // leave this in, it gives great error msgs
-                println!("Error on opening {:?}", e);
+                log!(LogLevel::error, "Error on opening {:?}", e);
                 Err(-1)
             },
 	}
@@ -111,9 +113,9 @@ impl Input {
         let mut udev_enum = Enumerator::new(&uctx).unwrap();
         let devices = udev_enum.scan_devices().unwrap();
 
-        println!("Printing all input devices:");
+        log!(LogLevel::debug, "Printing all input devices:");
         for dev in devices {
-            println!(" - {:?}", dev.syspath());
+            log!(LogLevel::debug, " - {:?}", dev.syspath());
         }
 
         let kit: Inkit = Inkit { _inner: 0 };
@@ -153,7 +155,7 @@ impl Input {
 	 let ev = self.libin.next();
          match ev {
              Some(Event::Pointer(PointerEvent::Motion(m))) => {
-                 println!("moving mouse by ({}, {})",
+                 log!(LogLevel::debug, "moving mouse by ({}, {})",
                           m.dx(), m.dy());
 
                  return Some(InputEvent::pointer_move(PointerMove {
@@ -163,7 +165,7 @@ impl Input {
              },
              Some(Event::Keyboard(KeyboardEvent::Key(_))) =>
                  std::process::exit(0),
-             Some(e) => println!("Unhandled Input Event: {:?}", e),
+             Some(e) => log!(LogLevel::error, "Unhandled Input Event: {:?}", e),
              None => (),
          };
 

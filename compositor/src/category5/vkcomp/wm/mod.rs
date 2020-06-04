@@ -10,7 +10,8 @@ mod renderer;
 use renderer::*;
 use renderer::mesh::Mesh;
 
-use crate::category5::utils::*;
+use crate::category5::utils::{*, timing::*, logging::*};
+use crate::log; // utils::logging::log
 pub mod task;
 use task::*;
 
@@ -187,8 +188,9 @@ impl WindowManager {
     // tex_res is the resolution of `texture`
     // window_res is the size of the on screen window
     fn create_window(&mut self, info: &CreateWindow) {
-        println!("wm: Creating new window of size {}x{}",
-                 info.window_width, info.window_height,
+        log!(LogLevel::info,
+             "wm: Creating new window of size {}x{}",
+             info.window_width, info.window_height,
         );
 
         self.apps.insert(0, App {
@@ -221,7 +223,7 @@ impl WindowManager {
         {
             Some(a) => a,
             // If the id is not found, then don't update anything
-            None => { println!("Could not find id {}", info.ufd_id); return; },
+            None => { log!(LogLevel::error, "Could not find id {}", info.ufd_id); return; },
         };
 
         if !app.mesh.is_none() {
@@ -259,7 +261,7 @@ impl WindowManager {
         {
             Some(a) => a,
             // If the id is not found, then don't update anything
-            None => { println!("Could not find id {}", info.id); return; },
+            None => { log!(LogLevel::error, "Could not find id {}", info.id); return; },
         };
 
         if !app.mesh.is_none() {
@@ -452,6 +454,7 @@ impl WindowManager {
     }
 
     pub fn process_task(&mut self, task: &Task) {
+        log!(LogLevel::info, "wm: got task {:?}", task);
         match task {
             Task::begin_frame => self.begin_frame(),
             Task::end_frame => self.end_frame(),
@@ -488,9 +491,13 @@ impl WindowManager {
     }
 
     pub fn worker_thread(&mut self) {
+        // We time every frame for debugging
+        let mut stop = StopWatch::new();
+        // how much time is spent drawing/presenting
+        let mut draw_stop = StopWatch::new();
+
         loop {
-            // We time every frame for debugging
-            let mut fstart_time = 0;
+            let mut started_recording = false;
 
             // We can't block if there are resources to
             // release, as this will hang the client
@@ -498,14 +505,14 @@ impl WindowManager {
             if self.rend.release_is_empty() {
                 // Block for any new tasks
                 let task = self.rx.recv().unwrap();
-                // We time every frame for debugging
-                fstart_time = timing::get_current_millis();
+                stop.start();
+                started_recording = true;
 
                 self.process_task(&task);
             }
 
-            if fstart_time == 0 {
-                fstart_time = timing::get_current_millis();
+            if !started_recording {
+                stop.start();
             }
 
             // We have already done one task, but the previous
@@ -530,6 +537,11 @@ impl WindowManager {
                 };
             }
 
+            // stop the stopwatch for task handing
+            stop.end();
+
+            // start recording how much time we spent doing graphics
+            draw_stop.start();
             self.begin_frame();
             self.reap_dead_windows();
             // Now that we have completed the previous frame, we can
@@ -537,11 +549,12 @@ impl WindowManager {
             // note: -bad- this probably calls wayland locks
             self.rend.release_pending_resources();
             self.end_frame();
+            draw_stop.end();
 
-            let fend_time = timing::get_current_millis();
-
-            println!("wm: this frame took {} ms",
-                     fend_time - fstart_time);
+            log!(LogLevel::profiling, "spent {} ms processing tasks this frame",
+                 stop.get_duration().as_millis());
+            log!(LogLevel::profiling, "spent {} ms drawing this frame",
+                 draw_stop.get_duration().as_millis());
         }
     }
 }

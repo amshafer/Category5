@@ -16,7 +16,8 @@ use ws::protocol::{
     wl_shell,
 };
 
-use crate::category5::utils::timing::*;
+use crate::category5::utils::{timing::*, logging::LogLevel};
+use crate::log;
 use crate::category5::input::{Input, event::*};
 use crate::category5::vkcomp::wm;
 use super::{
@@ -110,8 +111,6 @@ impl Compositor {
     // hooks up our surface handler. See the surface
     // module
     pub fn create_surface(&mut self, surf: Main<wlsi::WlSurface>) {
-        println!("Creating surface");
-
         // Ask the window manage to create a new window
         // without contents
         self.c_next_window_id += 1;
@@ -331,7 +330,7 @@ impl EventManager {
         // once per 60fps frame. It doesn't have to be exact, but
         // we need to send certain updates to vkcomp roughly once per
         // frame
-        let mut tm = TimingManager::new(15);
+        let mut tm = TimingManager::new(4);
 
         // wayland-rs will not do blocking for us,
         // so we need to use kqueue. This is the
@@ -379,16 +378,16 @@ impl EventManager {
 
             // TODO: This might not be the most accurate
             if tm.is_overdue() {
-                println!("EventManager: Timer expired with movement update {} {}",
-                         self.em_pointer_dx,
-                         self.em_pointer_dy,
-                );
                 // reset our timer
                 tm.reset();
                 // if it has been roughly one frame, fire the frame callbacks
                 // so clients can draw
                 self.em_atmos.borrow_mut().signal_frame_callbacks();
                 if self.em_pointer_dx != 0.0 || self.em_pointer_dy != 0.0 {
+                    log!(LogLevel::debug, "EventManager: Sending movement update {} {}",
+                             self.em_pointer_dx,
+                             self.em_pointer_dy,
+                    );
                     // Send our coalesced movement updates
                     self.em_wm_tx.send(
                         wm::task::Task::move_cursor(

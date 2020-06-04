@@ -2,6 +2,8 @@
 //
 // Austin Shafer - 2020
 pub mod timing;
+#[macro_use]
+pub mod logging;
 extern crate wayland_server as ws;
 
 use ws::protocol::wl_buffer;

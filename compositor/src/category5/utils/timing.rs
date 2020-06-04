@@ -3,13 +3,14 @@
 // Austin Shafer - 2020
 use std::time::{Duration,SystemTime,UNIX_EPOCH};
 
-fn get_current_time() -> Duration {
+pub fn get_current_time() -> Duration {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("Error getting system time")
 }
 
 // Helper to get the current time in milliseconds
+#[allow(dead_code)]
 pub fn get_current_millis() -> u32 {
     get_current_time()
         .as_millis() as u32
@@ -71,5 +72,38 @@ impl TimingManager {
 		return 0;
 	}
         return (self.tm_period - time_elapsed).as_millis() as usize;
+    }
+}
+
+// A stopclock for measuring time intervals
+//
+// The order of use MUST be `new`, `start`, `end`
+// after that the recorded duration can be
+// got with `get_duration`
+#[allow(dead_code)]
+pub struct StopWatch {
+    sw_start: Duration,
+    sw_end: Duration,
+}
+
+impl StopWatch {
+    // Create an empty stopwatch
+    pub fn new() -> StopWatch {
+        StopWatch {
+            sw_start: Duration::from_millis(0),
+            sw_end: Duration::from_millis(0),
+        }
+    }
+
+    pub fn start(&mut self) {
+        self.sw_start = get_current_time();
+    }
+
+    pub fn end(&mut self) {
+        self.sw_end = get_current_time();
+    }
+
+    pub fn get_duration(&mut self) -> Duration {
+        self.sw_end - self.sw_start
     }
 }

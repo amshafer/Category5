@@ -4,6 +4,7 @@
 //
 // Austin Shafer - 2020
 #![allow(dead_code)]
+use std::fmt;
 
 // This is the only place in vkcomp allowed to reference
 // wayland. We will be sticking wayland objects in tasks
@@ -18,6 +19,7 @@ use crate::category5::utils::{Dmabuf, MemImage};
 // This basically just creates a mesh with the max
 // depth that takes up the entire screen. We use
 // the channel to dispatch work
+#[derive(Debug)]
 pub struct SetBackgroundFromMem {
     pub pixels: Vec<u8>,
     pub width: u32,
@@ -27,6 +29,7 @@ pub struct SetBackgroundFromMem {
 // Move the cursor
 //
 // This will implicitly move any grabbed resources
+#[derive(Debug)]
 pub struct MoveCursor {
     pub x: f64,
     pub y: f64,
@@ -38,6 +41,7 @@ pub struct MoveCursor {
 // focus to the target application.
 // If a MoveCursor occurs while grabbed, then the
 // application will also be moved.
+#[derive(Debug)]
 pub struct Grab {
     // id of the App to grab
     pub g_id: u64,
@@ -46,6 +50,7 @@ pub struct Grab {
 // Stop Grabbing an application
 //
 // This is the uppress on the mouse.
+#[derive(Debug)]
 pub struct UnGrab {
     // id of the App to stop grabbing
     pub ug_id: u64,
@@ -56,6 +61,7 @@ pub struct UnGrab {
 // Similar to how arguments are passed in vulkan, here
 // we have a structure that holds all the arguments
 // for creating a window.
+#[derive(Debug)]
 pub struct CreateWindow {
     // ID of the window
     pub id: u64,
@@ -76,6 +82,16 @@ pub struct UpdateWindowContentsFromDmabuf {
     pub ufd_wl_buffer: wl_buffer::WlBuffer,
 }
 
+impl fmt::Debug for UpdateWindowContentsFromDmabuf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UpdateWindowContentsFromDmabuf")
+            .field("ufd_id", &format!("{:?}", self.ufd_id))
+            .field("ufd_dmabuf", &format!("{:?}", self.ufd_dmabuf))
+            .field("ufd_wl_buffer", &"<wl_buffer omitted>".to_string())
+            .finish()
+    }
+}
+
 pub struct UpdateWindowContentsFromMem {
     pub id: u64,
     // The resolution of the texture
@@ -88,6 +104,15 @@ pub struct UpdateWindowContentsFromMem {
     ufm_wl_buffer: wl_buffer::WlBuffer,
 }
 
+impl fmt::Debug for UpdateWindowContentsFromMem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UpdateWindowContentsFromMem")
+            .field("id", &format!("{:?}", self.id))
+            .field("ufm_wl_buffer", &"<wl_buffer omitted>".to_string())
+            .finish()
+    }
+}
+
 impl Drop for UpdateWindowContentsFromMem {
     fn drop(&mut self) {
         self.ufm_wl_buffer.release();
@@ -98,6 +123,7 @@ impl Drop for UpdateWindowContentsFromMem {
 //
 // This is usually an action that needs to
 // be performed
+#[derive(Debug)]
 pub enum Task {
     begin_frame,
     end_frame,
