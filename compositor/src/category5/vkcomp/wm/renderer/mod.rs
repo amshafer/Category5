@@ -2334,6 +2334,17 @@ impl Renderer {
         );
     }
 
+    // Returns true if we are ready to call present
+    pub fn frame_submission_complete(&mut self) -> bool {
+        match unsafe { self.dev.get_fence_status(self.submit_fence) } {
+            // true means vk::Result::SUCCESS
+            // false means vk::Result::NOT_READY
+            Ok(complete) => return complete,
+            Err(_) => panic!("Failed to get fence status"),
+        };
+        
+    }
+
     // Present the current swapchain image to the screen
     //
     // Finally we can actually flip the buffers and present

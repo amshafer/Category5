@@ -548,6 +548,19 @@ impl WindowManager {
             // release all the resources used to construct it
             // note: -bad- this probably calls wayland locks
             self.rend.release_pending_resources();
+
+            // Nvidia seems to block here instead of in acquiring the
+            // next swapchain image. We should handle incoming tasks
+            // here to prevent getting behind
+            while !self.rend.frame_submission_complete() {
+                match self.rx.try_recv() {
+                    Ok(task) => self.process_task(&task),
+                    // If it times out just continue
+                    Err(mpsc::TryRecvError::Empty) => {},
+                    Err(err) =>
+                        panic!("Error while waiting for tasks: {:?}", err),
+                };
+            }
             self.end_frame();
             draw_stop.end();
 
