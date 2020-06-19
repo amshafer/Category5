@@ -75,9 +75,6 @@ pub struct WindowManager {
     background: Option<Mesh>,
     // Image representing the software cursor
     cursor: Option<Mesh>,
-    // The location of the cursor
-    cursor_x: f64,
-    cursor_y: f64,
     // Title bar to draw above the windows
     titlebar: Titlebar,
 }
@@ -154,8 +151,6 @@ impl WindowManager {
             wm_atmos: Atmosphere::new(tx, rx),
             titlebar: WindowManager::get_default_titlebar(&mut rend),
             cursor: WindowManager::get_default_cursor(&mut rend),
-            cursor_x: 0.0,
-            cursor_y: 0.0,
             rend: rend,
             apps: Vec::new(),
             background: None,
@@ -370,6 +365,9 @@ impl WindowManager {
             );
         });
 
+        // get the latest cursor position
+        let (cursor_x, cursor_y) = self.wm_atmos.get_cursor_pos();
+
         self.cursor.as_ref().map(|cursor| {
             cursor.record_draw(
                 &self.rend,
@@ -377,8 +375,8 @@ impl WindowManager {
                 &PushConstants {
                     order: 0.0001, // make it the min depth
                     // put it in the center
-                    x: self.cursor_x as u32,
-                    y: self.cursor_y as u32,
+                    x: cursor_x as u32,
+                    y: cursor_y as u32,
                     // TODO: calculate cursor size
                     width: 16.0,
                     height: 16.0,
@@ -464,12 +462,6 @@ impl WindowManager {
         match task {
             Task::begin_frame => self.begin_frame(),
             Task::end_frame => self.end_frame(),
-            // move cursor
-            Task::mc(mc) => {
-                let sensitivity = 2.4;
-                self.cursor_x += mc.x * sensitivity;
-                self.cursor_y += mc.y * sensitivity;
-            },
             Task::gr(gr) => {},
             Task::ungr(ugr) => {},
             Task::close_window(id) => self.close_window(*id),

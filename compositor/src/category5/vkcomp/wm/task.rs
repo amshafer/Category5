@@ -26,20 +26,11 @@ pub struct SetBackgroundFromMem {
     pub height: u32,
 }
 
-// Move the cursor
-//
-// This will implicitly move any grabbed resources
-#[derive(Debug)]
-pub struct MoveCursor {
-    pub x: f64,
-    pub y: f64,
-}
-
 // Grab an application
 //
 // This is the downpress on the mouse. It brings
 // focus to the target application.
-// If a MoveCursor occurs while grabbed, then the
+// If a cursor move occurs while grabbed, then the
 // application will also be moved.
 #[derive(Debug)]
 pub struct Grab {
@@ -128,7 +119,6 @@ pub enum Task {
     begin_frame,
     end_frame,
     close_window(u32),
-    mc(MoveCursor),
     gr(Grab),
     ungr(UnGrab),
     sbfm(SetBackgroundFromMem),
@@ -147,13 +137,6 @@ impl Task {
             pixels: tex,
             width: tex_width,
             height: tex_height,
-        })
-    }
-
-    pub fn move_cursor(x: f64, y: f64) -> Task {
-        Task::mc(MoveCursor {
-            x: x,
-            y: y,
         })
     }
 

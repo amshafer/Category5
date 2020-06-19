@@ -357,10 +357,8 @@ impl EventManager {
             while let Some(iev) = self.em_input.next_available() {
                 match iev {
                     InputEvent::pointer_move(m) => {
-                        // Coalesce movement so we only send one message
-                        // to vkcomp per frame for efficiency
-                        self.em_pointer_dx += m.pm_dx;
-                        self.em_pointer_dy += m.pm_dy;
+                        // Update the atmosphere with the new cursor pos
+                        self.em_atmos.borrow_mut().set_cursor_pos(m.pm_dx, m.pm_dy);
                     },
                     InputEvent::left_click(_) => {
                         // TODO: start grab

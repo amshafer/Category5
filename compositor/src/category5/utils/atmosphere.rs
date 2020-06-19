@@ -116,6 +116,14 @@ impl Atmosphere {
         self.a_hemi.as_mut().unwrap().wm_task_pop()
     }
 
+    pub fn set_cursor_pos(&mut self, dx: f64, dy: f64) {
+        self.a_hemi.as_mut().unwrap().set_cursor_pos(dx, dy)
+    }
+
+    pub fn get_cursor_pos(&self) -> (f64, f64) {
+        self.a_hemi.as_ref().unwrap().get_cursor_pos()
+    }
+
     // -- subsystem specific handlers --
 
     pub fn add_surface(&mut self, surf: Rc<RefCell<Surface>>) {
@@ -163,6 +171,8 @@ impl Atmosphere {
 // and potentially resize the vec to fit a new one.
 #[allow(dead_code)]
 pub struct Hemisphere {
+    h_cursor_x: f64,
+    h_cursor_y: f64,
     // A list of surfaces which have been handed out to clients
     // Recorded here so we can perform interesting DE interactions
     h_windows: Vec<u32>,
@@ -181,6 +191,8 @@ pub struct Hemisphere {
 impl Hemisphere {
     fn new() -> Hemisphere {
         Hemisphere {
+            h_cursor_x: 0.0,
+            h_cursor_y: 0.0,
             h_windows: Vec::new(),
             h_window_heir: Vec::new(),
             h_wm_tasks: Vec::new(),
@@ -197,5 +209,14 @@ impl Hemisphere {
 
     pub fn wm_task_pop(&mut self) -> Option<wm::task::Task> {
         self.h_wm_tasks.pop()
+    }
+
+    pub fn set_cursor_pos(&mut self, dx: f64, dy: f64) {
+        self.h_cursor_x += dx;
+        self.h_cursor_y += dy;
+    }
+
+    pub fn get_cursor_pos(&self) -> (f64, f64) {
+        (self.h_cursor_x, self.h_cursor_y)
     }
 }
