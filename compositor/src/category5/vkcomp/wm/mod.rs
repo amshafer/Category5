@@ -530,6 +530,9 @@ impl WindowManager {
             // start recording how much time we spent doing graphics
             draw_stop.start();
 
+            // get the next frame to draw into
+            self.rend.get_next_swapchain_image();
+
             // Create a frame out of the hemisphere we got from ways
             self.begin_frame();
             self.reap_dead_windows();

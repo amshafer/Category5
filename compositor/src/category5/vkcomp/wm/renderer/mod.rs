@@ -2294,11 +2294,11 @@ impl Renderer {
     //
     // Returns if the next image index was successfully obtained
     // false means try again later, the next image is not ready
-    pub fn try_get_next_swapchain_image(&mut self) -> bool {
+    pub fn get_next_swapchain_image(&mut self) -> bool {
         unsafe {
             match self.swapchain_loader.acquire_next_image(
                 self.swapchain,
-                0, // use a zero timeout to immediately get the state
+                std::u64::MAX, // use a zero timeout to immediately get the state
                 self.present_sema, // signals presentation
                 vk::Fence::null())
             {
@@ -2350,6 +2350,13 @@ impl Renderer {
     // Finally we can actually flip the buffers and present
     // this image. 
     pub fn present(&mut self) {
+        unsafe {
+            self.dev.wait_for_fences(&[self.submit_fence],
+                                     true, // wait for all
+                                     std::u64::MAX, //timeout
+            ).unwrap();
+        }
+
         let wait_semas = [self.render_sema];
         let swapchains = [self.swapchain];
         let indices = [self.current_image];
