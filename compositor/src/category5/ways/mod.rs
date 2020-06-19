@@ -5,8 +5,7 @@
 
 // Supported protocols
 pub mod compositor;
-mod surface;
-mod atmosphere;
+pub mod surface;
 mod shm;
 mod xdg_shell;
 mod wl_shell;

@@ -7,13 +7,11 @@ mod ways;
 mod utils;
 mod input;
 
-use vkcomp::wm;
 use vkcomp::wm::*;
 use ways::compositor::EventManager;
 
 use std::thread;
 use std::sync::mpsc;
-use std::sync::mpsc::{Sender};
 
 // The category5 compositor
 //
@@ -27,25 +25,20 @@ pub struct Category5 {
     // Category5 - Graphical desktop compositor
     // ways::Compositor - wayland protocol compositor object 
     c5_wc: Option<thread::JoinHandle<()>>,
-    c5_wc_tx: Sender<ways::task::Task>,
     // The graphics subsystem
     //
-    // send channel to give the wayland subsystem work
-    // wc_tx: Sender<ways::Task>,
     // The window manager (vulkan rendering backend)
     c5_wm: Option<thread::JoinHandle<()>>,
-    c5_wm_tx: Sender<wm::task::Task>,
 }
 
 impl Category5 {
     // This is a cooler way of saying new
     // I got bored of writing new constantly
     pub fn spin() -> Category5 {
-        // The original channels
-        let (wc_tx, wc_rx) = mpsc::channel();
-        let (wm_tx, wm_rx) = mpsc::channel();
-        // A clone used for ways
-        let wm_tx_clone = wm_tx.clone();
+        // vkcomp to ways channel
+        let (v2w_tx, v2w_rx) = mpsc::channel();
+        // ways to vkcomp channel
+        let (w2v_tx, w2v_rx) = mpsc::channel();
 
         Category5 {
             // Get the wayland compositor
@@ -54,38 +47,19 @@ impl Category5 {
             c5_wc: Some(thread::Builder::new()
                         .name("wayland_handlers".to_string())
                         .spawn(|| {
-                let mut ev = EventManager::new(wc_rx, wm_tx_clone);
+                let mut ev = EventManager::new(w2v_tx, v2w_rx);
                 ev.worker_thread();
             }).unwrap()),
-            c5_wc_tx: wc_tx,
             // creates a context, swapchain, images, and others
             // initialize the pipeline, renderpasses, and
             // display engine.
             c5_wm: Some(thread::Builder::new()
                         .name("vulkan_compositor".to_string())
                         .spawn(|| {
-                let mut wm = WindowManager::new(wm_rx);
+                let mut wm = WindowManager::new(v2w_tx, w2v_rx);
                 wm.worker_thread();
             }).unwrap()),
-            c5_wm_tx: wm_tx,
         }
-    }
-
-    // Tell wm the desktop background
-    //
-    // This basically just creates a mesh with the max
-    // depth that takes up the entire screen. We use
-    // the channel to dispatch work
-    pub fn set_background_from_mem(&self,
-                                   tex: Vec<u8>,
-                                   tex_width: u32,
-                                   tex_height: u32)
-    {
-        self.c5_wm_tx.send(
-            wm::task::Task::set_background_from_mem(
-                tex, tex_width, tex_height
-            )
-        ).unwrap();
     }
 
     // This is the main loop of the entire system

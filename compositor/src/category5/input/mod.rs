@@ -163,6 +163,13 @@ impl Input {
                      pm_dy: m.dy(),
                  }));
              },
+             Some(Event::Pointer(PointerEvent::Button(b))) => {
+                 log!(LogLevel::debug, "pointer button {:?}", b);
+
+                 return Some(InputEvent::left_click(LeftClick {
+                     pb_state: b.button_state(),
+                 }));
+             },
              Some(Event::Keyboard(KeyboardEvent::Key(_))) =>
                  std::process::exit(0),
              Some(e) => log!(LogLevel::error, "Unhandled Input Event: {:?}", e),

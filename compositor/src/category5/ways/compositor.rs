@@ -16,15 +16,14 @@ use ws::protocol::{
     wl_shell,
 };
 
-use crate::category5::utils::{timing::*, logging::LogLevel};
+use crate::category5::utils::{
+    timing::*, logging::LogLevel, atmosphere::*
+};
 use crate::log;
 use crate::category5::input::{Input, event::*};
-use crate::category5::vkcomp::wm;
 use super::{
     shm::*,
     surface::*,
-    task::*,
-    atmosphere::*,
     wl_shell::wl_shell_handle_request,
     xdg_shell::xdg_wm_base_handle_request,
     linux_dmabuf::*,
@@ -54,10 +53,8 @@ use std::os::unix::io::RawFd;
 #[allow(dead_code)]
 pub struct Compositor {
     c_atmos: Rc<RefCell<Atmosphere>>,
-    // transfer channel to speak to vkcomp::wm
-    c_wm_tx: Sender<wm::task::Task>,
     // counter for the next window id to hand out
-    c_next_window_id: u64,
+    c_next_window_id: u32,
 }
 
 // The event manager
@@ -82,9 +79,6 @@ pub struct EventManager {
     // aggregates input pointer events
     em_pointer_dx: f64,
     em_pointer_dy: f64,
-    // Channel to speak to vkcomp
-    em_wm_tx: Sender<wm::task::Task>,
-    em_rx: Receiver<Task>,
 }
 
 // Helper for creating an empty KEvent for kqueue
@@ -117,7 +111,6 @@ impl Compositor {
 
         // create an entry in the surfaces list
         let id = self.c_next_window_id;
-        let wm_tx = self.c_wm_tx.clone();
 
         // Create a reference counted object
         // in charge of this new surface
@@ -125,13 +118,12 @@ impl Compositor {
             Surface::new(
                 self.c_atmos.clone(),
                 id,
-                wm_tx,
                 0, 0)
         ));
         // This clone will be passed to the surface handler
         let ns_clone = new_surface.clone();
         // Track this surface in the compositor state
-        self.c_atmos.borrow_mut().a_surfaces.push(new_surface.clone());
+        self.c_atmos.borrow_mut().add_window_id(id);
 
         // wayland_server takes care of creating the resource for
         // us, but we need to provide a function for it to call
@@ -167,8 +159,8 @@ impl EventManager {
     //
     // This kicks off the global callback chain, starting with
     //    Compositor::bind_compositor_callback
-    pub fn new(rx: Receiver<Task>,
-               wm_tx: Sender<wm::task::Task>)
+    pub fn new(tx: Sender<Box<Hemisphere>>,
+               rx: Receiver<Box<Hemisphere>>)
                -> Box<EventManager>
     {
         let mut display = ws::Display::new();
@@ -176,13 +168,12 @@ impl EventManager {
             .expect("Failed to add a socket to the wayland server");
 
         // Do some teraforming and generate an atmosphere
-        let atmos = Rc::new(RefCell::new(Atmosphere::new()));
+        let atmos = Rc::new(RefCell::new(Atmosphere::new(tx, rx)));
 
         // Later moved into the closure
         let comp_cell = Rc::new(RefCell::new(
             Compositor {
                 c_atmos: atmos.clone(),
-                c_wm_tx: wm_tx.clone(),
                 c_next_window_id: 1,
             }
         ));
@@ -191,8 +182,6 @@ impl EventManager {
             em_atmos: atmos,
             em_display: display,
             em_input: Input::new(),
-            em_wm_tx: wm_tx,
-            em_rx: rx,
             em_pointer_dx: 0.0,
             em_pointer_dy: 0.0,
         });
@@ -373,6 +362,9 @@ impl EventManager {
                         self.em_pointer_dx += m.pm_dx;
                         self.em_pointer_dy += m.pm_dy;
                     },
+                    InputEvent::left_click(_) => {
+                        // TODO: start grab
+                    }
                 }
             }
 
@@ -380,26 +372,14 @@ impl EventManager {
             if tm.is_overdue() {
                 // reset our timer
                 tm.reset();
-                // if it has been roughly one frame, fire the frame callbacks
+                // Flip hemispheres to push our updates to vkcomp
+                // this must be terrible for the local fauna
+                //
+                // This is a synchronization point. It will block
+                self.em_atmos.borrow_mut().flip_hemispheres();
+                // it has been roughly one frame, so fire the frame callbacks
                 // so clients can draw
                 self.em_atmos.borrow_mut().signal_frame_callbacks();
-                if self.em_pointer_dx != 0.0 || self.em_pointer_dy != 0.0 {
-                    log!(LogLevel::debug, "EventManager: Sending movement update {} {}",
-                             self.em_pointer_dx,
-                             self.em_pointer_dy,
-                    );
-                    // Send our coalesced movement updates
-                    self.em_wm_tx.send(
-                        wm::task::Task::move_cursor(
-                            self.em_pointer_dx,
-                            self.em_pointer_dy,
-                        )
-                    ).unwrap();
-
-                    // reset our aggregate movement deltas
-                    self.em_pointer_dx = 0.0;
-                    self.em_pointer_dy = 0.0;
-                }
             }
 
             // wait for the next event

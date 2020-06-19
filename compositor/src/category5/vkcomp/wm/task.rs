@@ -44,7 +44,7 @@ pub struct MoveCursor {
 #[derive(Debug)]
 pub struct Grab {
     // id of the App to grab
-    pub g_id: u64,
+    pub g_id: u32,
 }
 
 // Stop Grabbing an application
@@ -53,7 +53,7 @@ pub struct Grab {
 #[derive(Debug)]
 pub struct UnGrab {
     // id of the App to stop grabbing
-    pub ug_id: u64,
+    pub ug_id: u32,
 }
 
 // Window creation parameters
@@ -64,7 +64,7 @@ pub struct UnGrab {
 #[derive(Debug)]
 pub struct CreateWindow {
     // ID of the window
-    pub id: u64,
+    pub id: u32,
     // Window position
     pub x: u32,
     pub y: u32,
@@ -74,7 +74,7 @@ pub struct CreateWindow {
 }
 
 pub struct UpdateWindowContentsFromDmabuf {
-    pub ufd_id: u64,
+    pub ufd_id: u32,
     // dmabuf from linux_dmabuf protocol
     pub ufd_dmabuf: Dmabuf,
     // private: the wl_buffer to release when this
@@ -93,7 +93,7 @@ impl fmt::Debug for UpdateWindowContentsFromDmabuf {
 }
 
 pub struct UpdateWindowContentsFromMem {
-    pub id: u64,
+    pub id: u32,
     // The resolution of the texture
     pub width: usize,
     pub height: usize,
@@ -127,7 +127,7 @@ impl Drop for UpdateWindowContentsFromMem {
 pub enum Task {
     begin_frame,
     end_frame,
-    close_window(u64),
+    close_window(u32),
     mc(MoveCursor),
     gr(Grab),
     ungr(UnGrab),
@@ -157,19 +157,19 @@ impl Task {
         })
     }
 
-    pub fn grab(id: u64) -> Task {
+    pub fn grab(id: u32) -> Task {
         Task::gr(Grab {
             g_id: id,
         })
     }
 
-    pub fn ungrab(id: u64) -> Task {
+    pub fn ungrab(id: u32) -> Task {
         Task::ungr(UnGrab {
             ug_id: id,
         })
     }
 
-    pub fn create_window(id: u64,
+    pub fn create_window(id: u32,
                          x: u32,
                          y: u32,
                          window_width: u32,
@@ -185,7 +185,7 @@ impl Task {
         })
     }
 
-    pub fn update_window_contents_from_dmabuf(id: u64,
+    pub fn update_window_contents_from_dmabuf(id: u32,
                                               dmabuf: Dmabuf,
                                               buffer: wl_buffer::WlBuffer)
                                               -> Task
@@ -197,7 +197,7 @@ impl Task {
         })
     }
 
-    pub fn update_window_contents_from_mem(id: u64,
+    pub fn update_window_contents_from_mem(id: u32,
                                            tex: MemImage,
                                            buffer: wl_buffer::WlBuffer,
                                            tex_width: usize,

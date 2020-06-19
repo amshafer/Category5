@@ -1,22 +1,25 @@
 // A window management API for the vulkan backend
 //
-// Austin Shafer - 2020
-#![allow(dead_code)]
-
 // Renderer: This is basically a big engine that
 // drives the vulkan drawing commands.
 // This is the slimy unsafe bit
+//
+// Austin Shafer - 2020
+#![allow(dead_code)]
+extern crate image;
+
 mod renderer;
 use renderer::*;
 use renderer::mesh::Mesh;
 
-use crate::category5::utils::{*, timing::*, logging::*};
+use crate::category5::utils::{
+    *, atmosphere::*, timing::*, logging::*
+};
 use crate::log; // utils::logging::log
 pub mod task;
 use task::*;
 
-use std::sync::mpsc;
-use std::sync::mpsc::{Receiver};
+use std::sync::mpsc::{Receiver, Sender};
 
 // This consolidates the multiple resources needed
 // to represent a titlebar
@@ -36,7 +39,7 @@ struct Titlebar {
 // See WindowManager::record_draw for how this is displayed.
 pub struct App {
     // This id uniquely identifies the App
-    id: u64,
+    id: u32,
     // Because the images for meshes are used for both
     // buffers in a double buffer system, when an App is
     // deleted we need to avoid recording it in the next
@@ -61,11 +64,11 @@ pub struct App {
 // as notifications. Sprites are not owned by a client
 // whereas windows are.
 pub struct WindowManager {
+    // The channel to recieve work over
+    wm_atmos: Atmosphere,
     // The vulkan renderer. It implements the draw logic,
     // whereas WindowManager implements organizational logic
     rend: Renderer,
-    // The channel to recieve work over
-    rx: Receiver<Task>,
     // This is the set of applications in this scene
     apps: Vec<App>,
     // The background picture of the desktop
@@ -138,13 +141,17 @@ impl WindowManager {
     // This will create all the graphical resources needed for
     // the compositor. The WindowManager will create and own
     // the Renderer, thereby readying the display to draw.
-    pub fn new(rx: Receiver<Task>) -> WindowManager {
+    pub fn new(tx: Sender<Box<Hemisphere>>,
+               rx: Receiver<Box<Hemisphere>>)
+               -> WindowManager
+    {
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
         let mut rend = Renderer::new();
         rend.setup();
 
         WindowManager {
+            wm_atmos: Atmosphere::new(tx, rx),
             titlebar: WindowManager::get_default_titlebar(&mut rend),
             cursor: WindowManager::get_default_cursor(&mut rend),
             cursor_x: 0.0,
@@ -152,7 +159,6 @@ impl WindowManager {
             rend: rend,
             apps: Vec::new(),
             background: None,
-            rx: rx,
         }
     }
 
@@ -381,7 +387,7 @@ impl WindowManager {
         });
     }
 
-    fn close_window(&mut self, id: u64) {
+    fn close_window(&mut self, id: u32) {
         // if it exists, mark it for death
         self.apps.iter_mut().find(|app| app.id == id).map(|app| {
             app.marked_for_death = true;
@@ -491,81 +497,52 @@ impl WindowManager {
     }
 
     pub fn worker_thread(&mut self) {
-        // We time every frame for debugging
-        let mut stop = StopWatch::new();
+        // first set the background
+        let img =
+            image::open("/home/ashafer/git/compositor_playground/hurricane.png")
+            .unwrap()
+            .to_rgba();
+        let pixels: Vec<u8> = img.into_vec();
+        self.set_background_from_mem(
+            pixels.as_slice(),
+            // dimensions of the texture
+            512,
+            512,
+        );
+
         // how much time is spent drawing/presenting
         let mut draw_stop = StopWatch::new();
 
         loop {
-            let mut started_recording = false;
+            // Flip hemispheres to push our updates to vkcomp
+            // this must be terrible for the local fauna
+            //
+            // This is a synchronization point. It will block
+            self.wm_atmos.flip_hemispheres();
 
-            // We can't block if there are resources to
-            // release, as this will hang the client
-            // waiting for them
-            if self.rend.release_is_empty() {
-                // Block for any new tasks
-                let task = self.rx.recv().unwrap();
-                stop.start();
-                started_recording = true;
-
+            // iterate through all the tasks that ways left
+            // us in this hemisphere
+            //  (aka process the work queue)
+            while let Some(task) = self.wm_atmos.get_next_wm_task() {
                 self.process_task(&task);
             }
 
-            if !started_recording {
-                stop.start();
-            }
-
-            // We have already done one task, but the previous
-            // frame might not be done. We should keep processing
-            // tasks until it is ready
-            while !self.rend.try_get_next_swapchain_image() {
-                match self.rx.try_recv() {
-                    Ok(task) => self.process_task(&task),
-                    // If it times out just continue
-                    Err(mpsc::TryRecvError::Empty) => {
-                        // We are not able to use recv_timeout due
-                        // to https://github.com/rust-lang/rust/issues/39364
-                        // Instead we need to try to recv and wait
-                        // some number of ms if it was not successful
-                        //
-                        // It doesn't look like this bug will be fixed
-                        // anytime soon
-                        //thread::sleep(Duration::from_millis(1));
-                    },
-                    Err(err) =>
-                        panic!("Error while waiting for tasks: {:?}", err),
-                };
-            }
-
-            // stop the stopwatch for task handing
-            stop.end();
-
             // start recording how much time we spent doing graphics
             draw_stop.start();
+
+            // Create a frame out of the hemisphere we got from ways
             self.begin_frame();
             self.reap_dead_windows();
             // Now that we have completed the previous frame, we can
-            // release all the resources used to construct it
+            // release all the resources used to construct it while
+            // we wait for our draw calls
             // note: -bad- this probably calls wayland locks
             self.rend.release_pending_resources();
 
-            // Nvidia seems to block here instead of in acquiring the
-            // next swapchain image. We should handle incoming tasks
-            // here to prevent getting behind
-            while !self.rend.frame_submission_complete() {
-                match self.rx.try_recv() {
-                    Ok(task) => self.process_task(&task),
-                    // If it times out just continue
-                    Err(mpsc::TryRecvError::Empty) => {},
-                    Err(err) =>
-                        panic!("Error while waiting for tasks: {:?}", err),
-                };
-            }
+            // present our frame
             self.end_frame();
             draw_stop.end();
 
-            log!(LogLevel::profiling, "spent {} ms processing tasks this frame",
-                 stop.get_duration().as_millis());
             log!(LogLevel::profiling, "spent {} ms drawing this frame",
                  draw_stop.get_duration().as_millis());
         }

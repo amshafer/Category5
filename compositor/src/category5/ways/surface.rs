@@ -13,15 +13,13 @@ use ws::protocol::{
     wl_callback,
 };
 
-use crate::category5::utils::Dmabuf;
+use crate::category5::utils::{atmosphere::*,Dmabuf};
 use crate::category5::vkcomp::wm;
 use super::shm::*;
-use super::atmosphere::*;
 use super::role::Role;
 
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::sync::mpsc::Sender;
 
 // Private structure for a wayland surface
 //
@@ -32,7 +30,7 @@ use std::sync::mpsc::Sender;
 #[allow(dead_code)]
 pub struct Surface {
     pub s_atmos: Rc<RefCell<Atmosphere>>,
-    pub s_id: u64, // The id of the window in the renderer
+    pub s_id: u32, // The id of the window in the renderer
     // The currently attached buffer. Will be displayed on commit
     // When the window is created a buffer is not assigned, hence the option
     s_attached_buffer: Option<wl_buffer::WlBuffer>,
@@ -42,7 +40,6 @@ pub struct Surface {
     // the location of the surface in our compositor
     s_x: u32,
     s_y: u32,
-    pub s_wm_tx: Sender<wm::task::Task>,
     // Frame callback
     // This is a power saving feature, we will signal this when the
     // client should redraw this surface
@@ -131,14 +128,14 @@ impl Surface {
             .user_data();
 
         if let Some(dmabuf) = userdata.get::<Dmabuf>() {
-            self.s_wm_tx.send(
+            self.s_atmos.borrow_mut().add_wm_task(
                 wm::task::Task::update_window_contents_from_dmabuf(
                     self.s_id, // ID of the new window
                     *dmabuf, // fd of the gpu buffer
                     // pass the WlBuffer so it can be released
                     self.s_committed_buffer.as_ref().unwrap().clone(),
                 )
-            ).unwrap();
+            );
             return;
         } else if let Some(shm_buf) = userdata.get::<ShmBuffer>() {
             // ShmBuffer holds the base pointer and an offset, so
@@ -146,7 +143,7 @@ impl Surface {
             // wrapped in a MemImage
             let fb = shm_buf.get_mem_image();
 
-            self.s_wm_tx.send(
+            self.s_atmos.borrow_mut().add_wm_task(
                 wm::task::Task::update_window_contents_from_mem(
                     self.s_id, // ID of the new window
                     fb, // memimage of the contents
@@ -156,7 +153,7 @@ impl Surface {
                     shm_buf.sb_width as usize,
                     shm_buf.sb_height as usize,
                 )
-            ).unwrap();
+            );
         }
     }
 
@@ -178,16 +175,15 @@ impl Surface {
     // This must be registered explicitly as the destructor
     // for wayland-rs to call it
     pub fn destroy(&mut self) {
-        self.s_wm_tx.send(
+        self.s_atmos.borrow_mut().add_wm_task(
             wm::task::Task::close_window(self.s_id)
-        ).unwrap();
+        );
     }
 
     // create a new visible surface at coordinates (x,y)
     // from the specified wayland resource
     pub fn new(atmos: Rc<RefCell<Atmosphere>>,
-               id: u64,
-               wm_tx: Sender<wm::task::Task>,
+               id: u32,
                x: u32,
                y: u32)
                -> Surface
@@ -199,7 +195,6 @@ impl Surface {
             s_committed_buffer: None,
             s_x: x,
             s_y: y,
-            s_wm_tx: wm_tx,
             s_frame_callback: None,
             s_role: None,
         }

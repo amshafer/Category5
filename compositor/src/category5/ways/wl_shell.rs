@@ -92,14 +92,14 @@ impl ShellSurface {
         // Tell vkcomp to create a new window
         let mut surf = self.ss_surface.borrow_mut();
         println!("Setting surface {} to toplevel", surf.s_id);
-        surf.s_wm_tx.send(
+        surf.s_atmos.borrow_mut().add_wm_task(
             wm::task::Task::create_window(
                 surf.s_id, // ID of the new window
                 0, 0, // position
                 // No texture yet, it will be added by Surface
                 640, 480, // window dimensions
             )
-        ).unwrap();
+        );
 
         // Mark our surface as being a window handled by wl_shell
         surf.s_role = Some(Role::wl_shell_toplevel);

@@ -7,10 +7,11 @@ extern crate wayland_server as ws;
 use ws::Main;
 use ws::protocol::wl_surface;
 
-use crate::category5::vkcomp::wm;
 use super::surface::*;
-use super::protocol::xdg_shell::*;
 use super::role::Role;
+use crate::category5::vkcomp::wm;
+use super::protocol::xdg_shell::*;
+use crate::category5::utils::atmosphere::Atmosphere;
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -52,8 +53,10 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request,
                 .user_data()
                 .get::<Rc<RefCell<Surface>>>()
                 .unwrap();
+            let atmos = surf.borrow_mut().s_atmos.clone();
 
             let shsurf = Rc::new(RefCell::new(ShellSurface {
+                ss_atmos: atmos,
                 ss_surface: surf.clone(),
                 ss_surface_proxy: surface,
                 ss_attached_state: XdgState::empty(),
@@ -108,6 +111,7 @@ fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>,
 // dispatches
 #[allow(dead_code)]
 pub struct ShellSurface {
+    ss_atmos: Rc<RefCell<Atmosphere>>,
     // Category5 surface state object
     ss_surface: Rc<RefCell<Surface>>,
     // the wayland proxy
@@ -127,14 +131,14 @@ impl ShellSurface {
         if xs.xs_make_toplevel {
             // Tell vkcomp to create a new window
             println!("Setting surface {} to toplevel", surf.s_id);
-            surf.s_wm_tx.send(
+            surf.s_atmos.borrow_mut().add_wm_task(
                 wm::task::Task::create_window(
                     surf.s_id, // ID of the new window
                     0, 0, // position
                     // No texture yet, it will be added by Surface
                     640, 480, // window dimensions
                 )
-            ).unwrap();
+            );
         }
 
         // Reset the state now that it is complete

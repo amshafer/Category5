@@ -4,6 +4,7 @@
 pub mod timing;
 #[macro_use]
 pub mod logging;
+pub mod atmosphere;
 extern crate wayland_server as ws;
 
 use ws::protocol::wl_buffer;
