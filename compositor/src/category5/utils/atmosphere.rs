@@ -3,6 +3,7 @@
 // Austin Shafer - 2020
 use crate::category5::ways::surface::*;
 use crate::category5::vkcomp::wm;
+use super::WindowId;
 
 use std::rc::Rc;
 use std::vec::Vec;
@@ -10,6 +11,16 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::mpsc::{Sender,Receiver};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// Different shared property ids in the ECS
+//
+// We use this to show which property will be
+// updated by an action. All hashmaps are indexed
+// using the window id, and therefore another
+// method is needed to identify the property to update
+enum Property {
+    MAKE_FOCUS, // user has selected a toplevel window
+}
 
 // Represents updating one property in the ECS
 //
@@ -24,7 +35,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 //    map<(window id, property id), Patch>
 #[allow(dead_code)]
 enum Patch {
-    cursor_position(f64, f64),
+    make_focus(WindowId),
 }
 
 // Global state tracking
@@ -61,6 +72,22 @@ pub struct Atmosphere {
     // -- ways --
     // a list of surfaces to have their callbacks called
     a_ways_surfaces: Vec<Rc<RefCell<Surface>>>,
+    // A hashmap of patches based on the window id and the
+    // property name
+    //
+    // This needs to be a hashmap since we want to quickly
+    // update information. Searching would take too long.
+    //
+    // ways performs patch replay:
+    // Changes will be accrued in a batch here during hemisphere
+    // construction, and will then be applied before flipping.
+    // when receiving the other hemisphere, first replay all
+    // patches before constructing a new changeset.
+    a_patches: HashMap<(WindowId, Property), Patch>,
+    // The cursor is the number one thing we will have to
+    // patch. There's no point having the overhead of a_patches
+    // when it is only 2 floats, so just add it here.
+    a_cursor_patch: (f64, f64),
 }
 
 impl Atmosphere {
@@ -83,13 +110,33 @@ impl Atmosphere {
         }
     }
 
+    // Commit all our patches into the hemisphere
+    fn replay(&mut self, hemi: &Hemisphere) {
+        for (window_id, prop) in self.a_patches.keys() {
+            match self.a_patches.get(&(window_id, prop)) {
+                Some(patch) =>
+                    hemi.apply_patch(window_id, prop, patch);
+                None => (),
+            }
+        }
+    }
+
     pub fn flip_hemispheres(&mut self) {
         // first grab our own hemi
         if let Some(h) = self.a_hemi.take() {
+            // second, we need to apply our changes to
+            // our own hemisphere before we send it
+            self.replay(&mut new_hemi);
+
+            // actually flip hemispheres
             self.a_tx.send(h)
                 .expect("Could not send hemisphere");
             let new_hemi = self.a_rx.recv()
                 .expect("Could not recv hemisphere");
+
+            // while we have the new one, go ahead and apply the
+            // patches to make it up to date
+            self.replay(&mut new_hemi);
 
             // Replace with the hemisphere from the
             // other subsystem
@@ -104,7 +151,7 @@ impl Atmosphere {
     // to the hemisphere
     // ------------------------------
 
-    pub fn add_window_id(&mut self, id: u32) {
+    pub fn add_window_id(&mut self, id: WindowId) {
         self.a_hemi.as_mut().map(|h| h.add_window_id(id));
     }
 
@@ -175,11 +222,12 @@ pub struct Hemisphere {
     h_cursor_y: f64,
     // A list of surfaces which have been handed out to clients
     // Recorded here so we can perform interesting DE interactions
-    h_windows: Vec<u32>,
+    h_windows: Vec<WindowId>,
     // a list of the window ids from front to back
     // index 0 is the current focus
-    h_window_heir: Vec<u32>,
+    h_window_heir: Vec<WindowId>,
     // A list of tasks to be completed by vkcomp this frame
+    // - does not need to be patched
     //
     // Tasks are one time events. Anything related to state should
     // be added elsewhere. A task is a transfer of ownership from
@@ -199,11 +247,40 @@ impl Hemisphere {
         }
     }
 
+    // Apply a patch to this hemisphere
+    // This is used to commit a changeset
+    //
+    // Changes are accrued in the patch list. Before
+    // flipping hemispheres we will apply the patch
+    // list to the current hemisphere, and then again
+    // to the new one to keep things up to date.
+    fn apply_patch(&mut self,
+                   id: WindowId,
+                   prop: Property,
+                   patch: &Patch)
+    {
+        match Patch {
+            Patch::make_focus(mf) => {},
+        };
+    }
+
+    // This should be called after all patches are applied
+    // and signifies that we have brought this hemisphere
+    // up to date (minus the cursor, which this applies)
+    fn commit(&mut self,
+              cursor_x: f64,
+              cursor_y: f64)
+    {
+        // quirk: update the cursor
+        self.h_cursor_x = cursor_x;
+        self.h_cursor_y = cursor_y;
+    }
+
     fn add_wm_task(&mut self, task: wm::task::Task) {
         self.h_wm_tasks.push(task);
     }
 
-    fn add_window_id(&mut self, id: u32) {
+    fn add_window_id(&mut self, id: WindowId) {
         self.h_windows.push(id);
     }
 

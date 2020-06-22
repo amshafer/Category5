@@ -13,6 +13,14 @@ use std::{slice,fmt};
 use std::ops::Deref;
 use std::os::unix::io::RawFd;
 
+// Window ID
+//
+// Every on screen surface has a window id which
+// is used as an ECS property id to tie data to
+// the resource. For now it is a u32 since there
+// is no way we have 4 million windows open
+type WindowId = u32;
+
 // Window Contents
 //
 // This allows for easy abstraction of the type
