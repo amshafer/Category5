@@ -105,6 +105,7 @@ impl Compositor {
     // hooks up our surface handler. See the surface
     // module
     pub fn create_surface(&mut self, surf: Main<wlsi::WlSurface>) {
+        log!(LogLevel::debug, "Creating a new surface");
         // Ask the window manage to create a new window
         // without contents
         self.c_next_window_id += 1;
@@ -319,7 +320,7 @@ impl EventManager {
         // once per 60fps frame. It doesn't have to be exact, but
         // we need to send certain updates to vkcomp roughly once per
         // frame
-        let mut tm = TimingManager::new(4);
+        let mut tm = TimingManager::new(15);
 
         // wayland-rs will not do blocking for us,
         // so we need to use kqueue. This is the
@@ -350,6 +351,7 @@ impl EventManager {
         while kevent(kq, &[], evlist.as_mut_slice(),
                      // timeout after 15 ms (16 is the ms per frame at 60fps)
                      tm.time_remaining()).is_ok() {
+            log!(LogLevel::profiling, "starting loop");
             // First thing to do is to dispatch libinput
             // It has time sensitive operations which need to take
             // place as soon as the fd is readable
@@ -358,7 +360,8 @@ impl EventManager {
                 match iev {
                     InputEvent::pointer_move(m) => {
                         // Update the atmosphere with the new cursor pos
-                        self.em_atmos.borrow_mut().set_cursor_pos(m.pm_dx, m.pm_dy);
+                        self.em_atmos.borrow_mut()
+                            .set_cursor_pos(m.pm_dx, m.pm_dy);
                     },
                     InputEvent::left_click(_) => {
                         // TODO: start grab
@@ -368,13 +371,20 @@ impl EventManager {
 
             // TODO: This might not be the most accurate
             if tm.is_overdue() {
+                log!(LogLevel::profiling, "timer out");
                 // reset our timer
                 tm.reset();
-                // Flip hemispheres to push our updates to vkcomp
-                // this must be terrible for the local fauna
-                //
-                // This is a synchronization point. It will block
-                self.em_atmos.borrow_mut().flip_hemispheres();
+                // Only flip hemispheres if we have updates to push
+                // this saves a little power
+                if self.em_atmos.borrow_mut().is_changed() {
+                    log!(LogLevel::profiling, "finished frame");
+                    // Flip hemispheres to push our updates to vkcomp
+                    // this must be terrible for the local fauna
+                    //
+                    // This is a synchronization point. It will block
+                    self.em_atmos.borrow_mut().flip_hemispheres();
+                }
+
                 // it has been roughly one frame, so fire the frame callbacks
                 // so clients can draw
                 self.em_atmos.borrow_mut().signal_frame_callbacks();
@@ -386,7 +396,10 @@ impl EventManager {
                 .unwrap();
             self.em_display.flush_clients(&mut ());
 
-            //println!("EventManager: Blocking for max {} ms", tm.time_remaining());
+            evlist = vec![empty_kevent(), empty_kevent()];
+
+            log!(LogLevel::profiling, "EventManager: Blocking for max {} ms",
+                 tm.time_remaining());
         }
     }
 }

@@ -18,6 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // updated by an action. All hashmaps are indexed
 // using the window id, and therefore another
 // method is needed to identify the property to update
+#[derive(PartialEq, Eq, Hash, Copy, Clone)]
 enum Property {
     MAKE_FOCUS, // user has selected a toplevel window
 }
@@ -107,31 +108,48 @@ impl Atmosphere {
             a_hemi: Some(Box::new(Hemisphere::new())),
             // TODO: only do this for ways
             a_ways_surfaces: Vec::new(),
+            a_patches: HashMap::new(),
+            a_cursor_patch: (0.0, 0.0),
         }
     }
 
     // Commit all our patches into the hemisphere
-    fn replay(&mut self, hemi: &Hemisphere) {
+    fn replay(&mut self, hemi: &mut Hemisphere) {
+        // If we are the consumer and we do not have
+        // any patches to add, bail so we do not overwrite
+        // the incoming data
+        if self.a_patches.keys().len() == 0
+            && self.a_cursor_patch == (0.0, 0.0) {
+                // Mark the hemisphere as not changed in case
+                // just to be safe
+                hemi.clear_changed();
+                return;
+            }
+
         for (window_id, prop) in self.a_patches.keys() {
-            match self.a_patches.get(&(window_id, prop)) {
+            match self.a_patches.get(&(*window_id, *prop)) {
                 Some(patch) =>
-                    hemi.apply_patch(window_id, prop, patch);
+                    hemi.apply_patch(*window_id, *prop, patch),
                 None => (),
             }
         }
+
+        // Apply any remaining constant state like cursor
+        // positions
+        hemi.commit(self.a_cursor_patch.0, self.a_cursor_patch.1);
     }
 
     pub fn flip_hemispheres(&mut self) {
         // first grab our own hemi
-        if let Some(h) = self.a_hemi.take() {
+        if let Some(mut h) = self.a_hemi.take() {
             // second, we need to apply our changes to
             // our own hemisphere before we send it
-            self.replay(&mut new_hemi);
+            self.replay(&mut h);
 
             // actually flip hemispheres
             self.a_tx.send(h)
                 .expect("Could not send hemisphere");
-            let new_hemi = self.a_rx.recv()
+            let mut new_hemi = self.a_rx.recv()
                 .expect("Could not recv hemisphere");
 
             // while we have the new one, go ahead and apply the
@@ -142,6 +160,10 @@ impl Atmosphere {
             // other subsystem
             self.a_hemi = Some(new_hemi);
         }
+    }
+
+    pub fn is_changed(&mut self) -> bool {
+        self.a_hemi.as_mut().map(|h| h.is_changed()).unwrap()
     }
 
     // ------------------------------
@@ -164,7 +186,9 @@ impl Atmosphere {
     }
 
     pub fn set_cursor_pos(&mut self, dx: f64, dy: f64) {
-        self.a_hemi.as_mut().unwrap().set_cursor_pos(dx, dy)
+        self.a_hemi.as_mut().map(|h| h.mark_changed());
+        self.a_cursor_patch.0 += dx;
+        self.a_cursor_patch.1 += dy;
     }
 
     pub fn get_cursor_pos(&self) -> (f64, f64) {
@@ -218,6 +242,10 @@ impl Atmosphere {
 // and potentially resize the vec to fit a new one.
 #[allow(dead_code)]
 pub struct Hemisphere {
+    // Will be true if there is new data in this hemisphere,
+    // false if this hemi can be safely ignored
+    h_has_changed: bool,
+    // software cursor position
     h_cursor_x: f64,
     h_cursor_y: f64,
     // A list of surfaces which have been handed out to clients
@@ -239,6 +267,7 @@ pub struct Hemisphere {
 impl Hemisphere {
     fn new() -> Hemisphere {
         Hemisphere {
+            h_has_changed: true,
             h_cursor_x: 0.0,
             h_cursor_y: 0.0,
             h_windows: Vec::new(),
@@ -259,7 +288,7 @@ impl Hemisphere {
                    prop: Property,
                    patch: &Patch)
     {
-        match Patch {
+        match patch {
             Patch::make_focus(mf) => {},
         };
     }
@@ -274,24 +303,51 @@ impl Hemisphere {
         // quirk: update the cursor
         self.h_cursor_x = cursor_x;
         self.h_cursor_y = cursor_y;
+
+        // clear the changed flag
+        self.h_has_changed = false;
     }
 
+    fn is_changed(&self) -> bool {
+        self.h_has_changed
+    }
+
+    fn mark_changed(&mut self) {
+        self.h_has_changed = true;
+    }
+
+    fn clear_changed(&mut self) {
+        self.h_has_changed = false;
+    }
+
+    // ----------------
+    // modifiers
+    // ----------------
+
     fn add_wm_task(&mut self, task: wm::task::Task) {
+        self.mark_changed();
         self.h_wm_tasks.push(task);
     }
 
     fn add_window_id(&mut self, id: WindowId) {
+        self.mark_changed();
         self.h_windows.push(id);
     }
 
     pub fn wm_task_pop(&mut self) -> Option<wm::task::Task> {
+        self.mark_changed();
         self.h_wm_tasks.pop()
     }
 
     pub fn set_cursor_pos(&mut self, dx: f64, dy: f64) {
+        self.mark_changed();
         self.h_cursor_x += dx;
         self.h_cursor_y += dy;
     }
+
+    // ----------------
+    // accessors
+    // ----------------
 
     pub fn get_cursor_pos(&self) -> (f64, f64) {
         (self.h_cursor_x, self.h_cursor_y)

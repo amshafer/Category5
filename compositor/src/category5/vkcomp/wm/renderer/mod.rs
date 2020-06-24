@@ -33,7 +33,8 @@ pub mod mesh;
 use mesh::Mesh;
 
 use super::App;
-use crate::category5::utils::*;
+use crate::log;
+use crate::category5::utils::{*, timing::*, logging::LogLevel};
 
 // This is the reference data for a normal quad
 // that will be used to draw client windows.
@@ -880,8 +881,8 @@ impl Renderer {
     // We should not deal with wayland structs
     // directly, just with releaseinfo
     pub fn release_pending_resources(&mut self) {
-        println!("releasing pending resources from list {}",
-                 self.r_release_index);
+        log!(LogLevel::profiling, "releasing pending resources from list {}",
+             self.r_release_index);
         // flip index between 0 and 1
         self.r_release_index = (!self.r_release_index) & 1;
         // now that we have flipped the index, we will be

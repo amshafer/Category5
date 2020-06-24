@@ -12,7 +12,9 @@ use std::fmt;
 extern crate wayland_server as ws;
 use ws::protocol::wl_buffer;
 
+use crate::log;
 use crate::category5::utils::{Dmabuf, MemImage};
+use crate::category5::utils::{timing::*, logging::*};
 
 // Tell wm the desktop background
 //
@@ -106,6 +108,7 @@ impl fmt::Debug for UpdateWindowContentsFromMem {
 
 impl Drop for UpdateWindowContentsFromMem {
     fn drop(&mut self) {
+        log!(LogLevel::profiling, "Releasing shm buffer");
         self.ufm_wl_buffer.release();
     }
 }
