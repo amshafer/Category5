@@ -131,14 +131,7 @@ impl ShellSurface {
         if xs.xs_make_toplevel {
             // Tell vkcomp to create a new window
             println!("Setting surface {} to toplevel", surf.s_id);
-            surf.s_atmos.borrow_mut().add_wm_task(
-                wm::task::Task::create_window(
-                    surf.s_id, // ID of the new window
-                    0, 0, // position
-                    // No texture yet, it will be added by Surface
-                    640, 480, // window dimensions
-                )
-            );
+            surf.s_atmos.borrow_mut().create_new_window(surf.s_id);
         }
 
         // Reset the state now that it is complete

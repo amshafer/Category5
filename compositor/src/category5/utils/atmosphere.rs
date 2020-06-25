@@ -20,7 +20,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // method is needed to identify the property to update
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
 enum Property {
-    MAKE_FOCUS, // user has selected a toplevel window
+    ADD_WINDOW_ID,
+    ADD_NEW_TOPLEVEL,
+    SET_WINDOW_DIMENSIONS,
+    GRAB, // user has selected window for movement
 }
 
 // Represents updating one property in the ECS
@@ -35,8 +38,13 @@ enum Property {
 // These will be collected in a hashmap for replay
 //    map<(window id, property id), Patch>
 #[allow(dead_code)]
+#[derive(Copy, Clone)]
 enum Patch {
-    make_focus(WindowId),
+    add_window_id(WindowId),
+    add_new_toplevel(WindowId),
+    set_window_dimensions((u32, u32, f32, f32)),
+    grab(WindowId),
+    ungrab,
 }
 
 // Global state tracking
@@ -137,6 +145,7 @@ impl Atmosphere {
         // Apply any remaining constant state like cursor
         // positions
         hemi.commit(self.a_cursor_patch.0, self.a_cursor_patch.1);
+        hemi.mark_changed();
     }
 
     pub fn flip_hemispheres(&mut self) {
@@ -166,6 +175,14 @@ impl Atmosphere {
         self.a_hemi.as_mut().map(|h| h.is_changed()).unwrap()
     }
 
+    fn add_patch(&mut self,
+                 id: WindowId,
+                 prop: Property,
+                 patch: &Patch)
+    {
+        self.a_patches.insert((id, prop), *patch);
+    }
+
     // ------------------------------
     // For the sake of abstraction, the atmosphere will be the
     // point of contact for modifying global state. We will
@@ -173,8 +190,35 @@ impl Atmosphere {
     // to the hemisphere
     // ------------------------------
 
+    // TODO: make atmosphere in charge of ids
+    pub fn create_new_window(&mut self, id: WindowId) {
+        self.add_wm_task(
+            wm::task::Task::create_window(id)
+        );
+
+        self.add_patch(
+            id,
+            Property::SET_WINDOW_DIMENSIONS,
+            &Patch::set_window_dimensions(
+                (0, 0, // (x, y)
+                 640.0, 480.0) // (width, height)
+            )
+        );
+
+        // make this the new toplevel window
+        self.add_patch(id,
+                       Property::ADD_NEW_TOPLEVEL,
+                       &Patch::add_new_toplevel(id));
+    }
+
     pub fn add_window_id(&mut self, id: WindowId) {
-        self.a_hemi.as_mut().map(|h| h.add_window_id(id));
+        self.add_patch(id,
+                       Property::ADD_WINDOW_ID,
+                       &Patch::add_window_id(id));
+    }
+
+    pub fn get_window_order(&self, id: WindowId) -> u32 {
+        self.a_hemi.as_ref().unwrap().get_window_order(id)
     }
 
     pub fn add_wm_task(&mut self, task: wm::task::Task) {
@@ -194,6 +238,25 @@ impl Atmosphere {
     pub fn get_cursor_pos(&self) -> (f64, f64) {
         self.a_hemi.as_ref().unwrap().get_cursor_pos()
     }
+
+    pub fn get_window_dimensions(&self, id: WindowId)
+                                 -> (u32, u32, f32, f32)
+    {
+        self.a_hemi.as_ref().unwrap().get_window_dimensions(id)
+    }
+
+    pub fn set_window_dimensions(&mut self,
+                                 id: WindowId,
+                                 x: u32,
+                                 y: u32,
+                                 width: f32,
+                                 height: f32)
+    {
+        self.add_patch(id,
+                       Property::SET_WINDOW_DIMENSIONS,
+                       &Patch::set_window_dimensions((x, y, width, height)));
+    }
+
 
     // -- subsystem specific handlers --
 
@@ -248,12 +311,22 @@ pub struct Hemisphere {
     // software cursor position
     h_cursor_x: f64,
     h_cursor_y: f64,
+    // A window that has been grabbed by the user and is being
+    // drug around by the mouse.
+    //
+    // Any movements to the cursor will also move this window
+    // automagically.
+    h_grabbed: Option<WindowId>,
     // A list of surfaces which have been handed out to clients
     // Recorded here so we can perform interesting DE interactions
     h_windows: Vec<WindowId>,
     // a list of the window ids from front to back
     // index 0 is the current focus
     h_window_heir: Vec<WindowId>,
+    // The position of each window's top left corner, and it's width
+    // Indexed by WindowId
+    // (base_x, base_y, width, height)
+    h_window_dimensions: Vec<(u32, u32, f32, f32)>,
     // A list of tasks to be completed by vkcomp this frame
     // - does not need to be patched
     //
@@ -270,8 +343,10 @@ impl Hemisphere {
             h_has_changed: true,
             h_cursor_x: 0.0,
             h_cursor_y: 0.0,
+            h_grabbed: None,
             h_windows: Vec::new(),
             h_window_heir: Vec::new(),
+            h_window_dimensions: Vec::new(),
             h_wm_tasks: Vec::new(),
         }
     }
@@ -289,7 +364,16 @@ impl Hemisphere {
                    patch: &Patch)
     {
         match patch {
-            Patch::make_focus(mf) => {},
+            Patch::add_window_id(id) =>
+                self.add_window_id(*id),
+            Patch::add_new_toplevel(id) =>
+                self.add_new_toplevel(*id),
+            Patch::set_window_dimensions(dims) =>
+                self.set_window_dimensions(
+                    id, dims.0, dims.1, dims.2, dims.3
+                ),
+            Patch::grab(id) => self.grab(*id),
+            Patch::ungrab => self.ungrab(),
         };
     }
 
@@ -345,11 +429,55 @@ impl Hemisphere {
         self.h_cursor_y += dy;
     }
 
+    pub fn grab(&mut self, id: WindowId) {
+        self.h_grabbed = Some(id);
+    }
+
+    pub fn ungrab(&mut self) {
+        self.h_grabbed = None;
+    }
+
+    pub fn add_new_toplevel(&mut self, id: WindowId) {
+        self.h_window_heir.insert(0, id);
+    }
+
+    pub fn set_window_dimensions(&mut self,
+                                 id: WindowId,
+                                 x: u32,
+                                 y: u32,
+                                 width: f32,
+                                 height: f32)
+    {
+        if (id as usize) >= self.h_window_dimensions.len() {
+            self.h_window_dimensions.resize(id as usize + 1, (0, 0, 0.0, 0.0));
+        }
+
+        self.h_window_dimensions[id as usize] =
+            (x, y, width, height);
+    }
+
     // ----------------
     // accessors
     // ----------------
 
+    pub fn get_window_order(&self, id: WindowId) -> u32 {
+        for (i, win) in self.h_window_heir.iter().enumerate() {
+            if *win == id {
+                return i as u32;
+            }
+        }
+        panic!("Could not find window with id {}", id);
+    }
+
     pub fn get_cursor_pos(&self) -> (f64, f64) {
         (self.h_cursor_x, self.h_cursor_y)
+    }
+
+    pub fn get_window_dimensions(&self, id: WindowId)
+                                 -> (u32, u32, f32, f32)
+    {
+        assert!((id as usize) < self.h_window_dimensions.len());
+
+        self.h_window_dimensions[id as usize]
     }
 }

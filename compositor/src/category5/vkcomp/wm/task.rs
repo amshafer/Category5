@@ -28,44 +28,6 @@ pub struct SetBackgroundFromMem {
     pub height: u32,
 }
 
-// Grab an application
-//
-// This is the downpress on the mouse. It brings
-// focus to the target application.
-// If a cursor move occurs while grabbed, then the
-// application will also be moved.
-#[derive(Debug)]
-pub struct Grab {
-    // id of the App to grab
-    pub g_id: u32,
-}
-
-// Stop Grabbing an application
-//
-// This is the uppress on the mouse.
-#[derive(Debug)]
-pub struct UnGrab {
-    // id of the App to stop grabbing
-    pub ug_id: u32,
-}
-
-// Window creation parameters
-//
-// Similar to how arguments are passed in vulkan, here
-// we have a structure that holds all the arguments
-// for creating a window.
-#[derive(Debug)]
-pub struct CreateWindow {
-    // ID of the window
-    pub id: u32,
-    // Window position
-    pub x: u32,
-    pub y: u32,
-    // The size of the window (in pixels)
-    pub window_width: u32,
-    pub window_height: u32,
-}
-
 pub struct UpdateWindowContentsFromDmabuf {
     pub ufd_id: u32,
     // dmabuf from linux_dmabuf protocol
@@ -121,11 +83,9 @@ impl Drop for UpdateWindowContentsFromMem {
 pub enum Task {
     begin_frame,
     end_frame,
+    create_window(u32),
     close_window(u32),
-    gr(Grab),
-    ungr(UnGrab),
     sbfm(SetBackgroundFromMem),
-    cw(CreateWindow),
     uwcfd(UpdateWindowContentsFromDmabuf),
     uwcfm(UpdateWindowContentsFromMem),
 }
@@ -140,34 +100,6 @@ impl Task {
             pixels: tex,
             width: tex_width,
             height: tex_height,
-        })
-    }
-
-    pub fn grab(id: u32) -> Task {
-        Task::gr(Grab {
-            g_id: id,
-        })
-    }
-
-    pub fn ungrab(id: u32) -> Task {
-        Task::ungr(UnGrab {
-            ug_id: id,
-        })
-    }
-
-    pub fn create_window(id: u32,
-                         x: u32,
-                         y: u32,
-                         window_width: u32,
-                         window_height: u32)
-                         -> Task
-    {
-        Task::cw(CreateWindow {
-            id: id,
-            x: x,
-            y: y,
-            window_width: window_width,
-            window_height: window_height,
         })
     }
 

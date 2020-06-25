@@ -34,7 +34,7 @@ struct Titlebar {
 //
 // All drawn components are tracked with Mesh, this struct
 // keeps track of the window components (content meshes and
-// titlebar mesh) and the location/size (push constants).
+// titlebar mesh).
 //
 // See WindowManager::record_draw for how this is displayed.
 pub struct App {
@@ -50,8 +50,6 @@ pub struct App {
     marked_for_death: bool,
     // This is the set of geometric objects in the application
     mesh: Option<Mesh>,
-    // The position and size of the window
-    push: PushConstants,
 }
 
 // Encapsulates vkcomp and provides a sensible windowing API
@@ -188,24 +186,13 @@ impl WindowManager {
     //
     // tex_res is the resolution of `texture`
     // window_res is the size of the on screen window
-    fn create_window(&mut self, info: &CreateWindow) {
-        log!(LogLevel::info,
-             "wm: Creating new window of size {}x{}",
-             info.window_width, info.window_height,
-        );
+    fn create_window(&mut self, id: u32) {
+        log!(LogLevel::info, "wm: Creating new window {}", id);
 
         self.apps.insert(0, App {
-            id: info.id,
+            id: id,
             marked_for_death: false,
             mesh: None,
-            // TODO: properly track window orderings
-            push: PushConstants {
-                order: 0.005,
-                x: info.x,
-                y: info.y,
-                width: info.window_width as f32,
-                height: info.window_height as f32,
-            },
         });
     }
 
@@ -304,15 +291,19 @@ impl WindowManager {
                 self.rend.resolution.height as f32 * 0.02;
             // The dotsize should be just slightly smaller
             let dotsize = barsize * 0.95;
+            let window_dims = self.wm_atmos.get_window_dimensions(a.id);
+            // Convert the order into a float from 0.0 to 1.0
+            let order = ((self.wm_atmos.get_window_order(a.id) + 1) as f32) / 100.0;
+
             // now render the bar itself, as wide as the window
             // the bar needs to be behind the dots
             let push = PushConstants {
-                order: a.push.order - 0.001, // depth
+                order: order - 0.001, // depth
                 // align it at the top right
-                x: a.push.x,
-                y: a.push.y,
+                x: window_dims.0,
+                y: window_dims.1,
                 // the bar is as wide as the window
-                width: a.push.width,
+                width: window_dims.2,
                 // use a percentage of the screen size
                 height: barsize,
             };
@@ -322,15 +313,15 @@ impl WindowManager {
             // We should render the dot second, so alpha blending
             // has a color to use
             let push = PushConstants {
-                order: a.push.order - 0.002, // depth
+                order: order - 0.002, // depth
                 // the x position needs to be all the way to the
                 // right side of the bar
-                x: a.push.x
+                x: window_dims.0
                 // Multiply by 2 (see vert shader for details)
-                    + a.push.width as u32 * 2
+                    + window_dims.2 as u32 * 2
                 // we don't want to go past the end of the bar
                     - barsize as u32 * 2,
-                y: a.push.y,
+                y: window_dims.1,
                 // align it at the top right
                 width: dotsize,
                 height: dotsize,
@@ -344,7 +335,17 @@ impl WindowManager {
             // and other window decorations will be drawn
             if let Some(mesh) = &a.mesh {
                 // TODO: else draw blank mesh?
-                mesh.record_draw(&self.rend, params, &a.push);
+                let push = PushConstants {
+                    order: order, // depth
+                    // the x position needs to be all the way to the
+                    // right side of the bar
+                    x: window_dims.0,
+                    y: window_dims.1,
+                    // align it at the top right
+                    width: window_dims.2,
+                    height: window_dims.3,
+                };
+                mesh.record_draw(&self.rend, params, &push);
             }
         }
 
@@ -462,9 +463,6 @@ impl WindowManager {
         match task {
             Task::begin_frame => self.begin_frame(),
             Task::end_frame => self.end_frame(),
-            Task::gr(gr) => {},
-            Task::ungr(ugr) => {},
-            Task::close_window(id) => self.close_window(*id),
             // set background from mem
             Task::sbfm(sb) => {
                 self.set_background_from_mem(
@@ -474,9 +472,10 @@ impl WindowManager {
                 );
             },
             // create new window
-            Task::cw(cw) => {
-                self.create_window(cw);
+            Task::create_window(id) => {
+                self.create_window(*id);
             },
+            Task::close_window(id) => self.close_window(*id),
             // update window from gpu buffer
             Task::uwcfd(uw) => {
                 self.update_window_contents_from_dmabuf(uw);
