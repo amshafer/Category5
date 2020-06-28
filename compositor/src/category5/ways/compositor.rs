@@ -6,6 +6,7 @@
 //
 // Austin Shafer - 2019
 extern crate nix;
+extern crate input;
 pub extern crate wayland_server as ws;
 use ws::{Filter,Main,Resource};
 
@@ -40,6 +41,7 @@ use std::rc::Rc;
 use std::sync::mpsc::{Sender,Receiver};
 use std::ops::Deref;
 use std::os::unix::io::RawFd;
+use input::event::pointer::ButtonState;
 
 // A wayland compositor wrapper
 //
@@ -313,6 +315,41 @@ impl EventManager {
         );
     }
 
+    fn handle_input_event(&mut self, iev: &InputEvent) {
+        match iev {
+            InputEvent::pointer_move(m) => {
+                // Update the atmosphere with the new cursor pos
+                self.em_atmos.borrow_mut()
+                    .add_cursor_pos(m.pm_dx, m.pm_dy);
+            },
+            InputEvent::left_click(lc) => {
+                let cursor = self.em_atmos.borrow_mut()
+                    .get_cursor_pos();
+
+                let mut atmos = self.em_atmos.borrow_mut();
+
+                // find the window under the cursor
+                if let Some(id) = atmos.find_window_at_point(cursor.0 as u32,
+                                                             cursor.1 as u32)
+                {
+                    // now check if we are over the titlebar
+                    // if so we will grab the bar
+                    if atmos.point_is_on_titlebar(id, cursor.0 as u32,
+                                                  cursor.1 as u32)
+                    {
+                        log!(LogLevel::debug, "Grabbing window {}", id);
+                        match lc.lc_state {
+                            ButtonState::Pressed =>
+                                atmos.grab(id),
+                            ButtonState::Released =>
+                                atmos.ungrab(),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Each subsystem has a function that implements its main
     // loop. This is that function
     pub fn worker_thread(&mut self) {
@@ -357,16 +394,7 @@ impl EventManager {
             // place as soon as the fd is readable
             self.em_input.dispatch();
             while let Some(iev) = self.em_input.next_available() {
-                match iev {
-                    InputEvent::pointer_move(m) => {
-                        // Update the atmosphere with the new cursor pos
-                        self.em_atmos.borrow_mut()
-                            .set_cursor_pos(m.pm_dx, m.pm_dy);
-                    },
-                    InputEvent::left_click(_) => {
-                        // TODO: start grab
-                    }
-                }
+                self.handle_input_event(&iev);
             }
 
             // TODO: This might not be the most accurate

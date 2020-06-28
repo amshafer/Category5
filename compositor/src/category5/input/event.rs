@@ -22,5 +22,5 @@ pub struct PointerMove {
 
 // Pressing or unpressing a the main mouse button
 pub struct LeftClick {
-    pub pb_state: ButtonState,
+    pub lc_state: ButtonState,
 }

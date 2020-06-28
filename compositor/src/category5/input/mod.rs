@@ -167,7 +167,7 @@ impl Input {
                  log!(LogLevel::debug, "pointer button {:?}", b);
 
                  return Some(InputEvent::left_click(LeftClick {
-                     pb_state: b.button_state(),
+                     lc_state: b.button_state(),
                  }));
              },
              Some(Event::Keyboard(KeyboardEvent::Key(_))) =>

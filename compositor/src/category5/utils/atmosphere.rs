@@ -1,6 +1,7 @@
 // Global atmosphere
 //
 // Austin Shafer - 2020
+#![allow(dead_code)]
 use crate::category5::ways::surface::*;
 use crate::category5::vkcomp::wm;
 use super::WindowId;
@@ -23,7 +24,6 @@ enum Property {
     ADD_WINDOW_ID,
     ADD_NEW_TOPLEVEL,
     SET_WINDOW_DIMENSIONS,
-    GRAB, // user has selected window for movement
 }
 
 // Represents updating one property in the ECS
@@ -43,8 +43,6 @@ enum Patch {
     add_window_id(WindowId),
     add_new_toplevel(WindowId),
     set_window_dimensions((u32, u32, f32, f32)),
-    grab(WindowId),
-    ungrab,
 }
 
 // Global state tracking
@@ -96,7 +94,10 @@ pub struct Atmosphere {
     // The cursor is the number one thing we will have to
     // patch. There's no point having the overhead of a_patches
     // when it is only 2 floats, so just add it here.
-    a_cursor_patch: (f64, f64),
+    a_cursor_patch: Option<(f64, f64)>,
+    // Same idea as the cursor patch but for the grabbed window
+    a_grab_patch: Option<WindowId>,
+    a_resolution_patch: Option<(u32, u32)>,
 }
 
 impl Atmosphere {
@@ -117,23 +118,20 @@ impl Atmosphere {
             // TODO: only do this for ways
             a_ways_surfaces: Vec::new(),
             a_patches: HashMap::new(),
-            a_cursor_patch: (0.0, 0.0),
+            a_cursor_patch: None,
+            a_grab_patch: None,
+            a_resolution_patch: None,
         }
     }
 
     // Commit all our patches into the hemisphere
+    //
+    // We are batching all the changes into patches. We
+    // then need to apply those patches to the current
+    // hemisphere before we send it to update it. We also
+    // need to replay the patches on the new hemisphere to
+    // update it will all the info it's missing
     fn replay(&mut self, hemi: &mut Hemisphere) {
-        // If we are the consumer and we do not have
-        // any patches to add, bail so we do not overwrite
-        // the incoming data
-        if self.a_patches.keys().len() == 0
-            && self.a_cursor_patch == (0.0, 0.0) {
-                // Mark the hemisphere as not changed in case
-                // just to be safe
-                hemi.clear_changed();
-                return;
-            }
-
         for (window_id, prop) in self.a_patches.keys() {
             match self.a_patches.get(&(*window_id, *prop)) {
                 Some(patch) =>
@@ -141,13 +139,25 @@ impl Atmosphere {
                 None => (),
             }
         }
+        hemi.grab(self.a_grab_patch);
+        if let Some(res) = self.a_resolution_patch {
+            hemi.set_resolution(res.0, res.1);
+        }
+        if let Some(cursor) = self.a_cursor_patch {
+            hemi.set_cursor_pos(cursor.0, cursor.1);
+        }
 
         // Apply any remaining constant state like cursor
         // positions
-        hemi.commit(self.a_cursor_patch.0, self.a_cursor_patch.1);
+        hemi.commit();
         hemi.mark_changed();
     }
 
+    // Exchange hemisphores between the two subsystems
+    //
+    // This is in charge of sending and receiving hemisphere
+    // boxes over the channels. It also organizes the replays
+    // and clears the patches
     pub fn flip_hemispheres(&mut self) {
         // first grab our own hemi
         if let Some(mut h) = self.a_hemi.take() {
@@ -168,18 +178,33 @@ impl Atmosphere {
             // Replace with the hemisphere from the
             // other subsystem
             self.a_hemi = Some(new_hemi);
+
+            // Clear the patches
+            self.a_resolution_patch = None;
+            self.a_grab_patch = None;
+            self.a_cursor_patch = None;
         }
     }
 
+    // Has the current hemisphere been changed
+    //
+    // Ways will use this to know if it should flip
+    // hemispheres and wake up vkcomp
     pub fn is_changed(&mut self) -> bool {
         self.a_hemi.as_mut().map(|h| h.is_changed()).unwrap()
     }
 
+    // Add a patch to be replayed on a flip
+    //
+    // All changes to the current hemisphere will get
+    // batched up into a set of patches. This is needed to
+    // keep both hemispheres in sync.
     fn add_patch(&mut self,
                  id: WindowId,
                  prop: Property,
                  patch: &Patch)
     {
+        self.a_hemi.as_mut().map(|h| h.mark_changed());
         self.a_patches.insert((id, prop), *patch);
     }
 
@@ -191,6 +216,9 @@ impl Atmosphere {
     // ------------------------------
 
     // TODO: make atmosphere in charge of ids
+    //
+    // This wraps a couple actions into one helper
+    // since there are multiple 
     pub fn create_new_window(&mut self, id: WindowId) {
         self.add_wm_task(
             wm::task::Task::create_window(id)
@@ -211,28 +239,75 @@ impl Atmosphere {
                        &Patch::add_new_toplevel(id));
     }
 
+    // TODO: remove this
     pub fn add_window_id(&mut self, id: WindowId) {
         self.add_patch(id,
                        Property::ADD_WINDOW_ID,
                        &Patch::add_window_id(id));
     }
 
+    // Get the window order from [0..n windows)
+    //
+    // TODO: Make this a more efficient tree
     pub fn get_window_order(&self, id: WindowId) -> u32 {
         self.a_hemi.as_ref().unwrap().get_window_order(id)
     }
 
+    // this is one of the few updates from vkcomp
+    pub fn set_resolution(&mut self, x: u32, y: u32) {
+        self.a_hemi.as_mut().map(|h| h.mark_changed());
+        self.a_resolution_patch = Some((x, y));
+    }
+
+    // Get the screen resolution as set by vkcomp
+    pub fn get_resolution(&self) -> (u32, u32) {
+        self.a_hemi.as_ref().unwrap().get_resolution()
+    }
+
+    // Find if there is a toplevel window under (x,y)
+    //
+    // This is used first to find if the cursor intersects
+    // with a window. If it does, point_is_on_titlebar is
+    // used to check for a grab or relay input event.
+    pub fn find_window_at_point(&self, x: u32, y: u32)
+                                -> Option<WindowId>
+    {
+        self.a_hemi.as_ref().unwrap().find_window_at_point(x, y)
+    }
+
+    // Is the current point over the titlebar of the window
+    //
+    // Id should have first been found with find_window_at_point
+    pub fn point_is_on_titlebar(&self, id: WindowId, x: u32, y: u32)
+                                -> bool
+    {
+        self.a_hemi.as_ref().unwrap().point_is_on_titlebar(id, x, y)
+    }
+
+    // Adds a one-time task to the queue
     pub fn add_wm_task(&mut self, task: wm::task::Task) {
         self.a_hemi.as_mut().map(|h| h.add_wm_task(task));
     }
 
+    // pulls a one-time task off the queue
     pub fn get_next_wm_task(&mut self) -> Option<wm::task::Task> {
         self.a_hemi.as_mut().unwrap().wm_task_pop()
     }
 
-    pub fn set_cursor_pos(&mut self, dx: f64, dy: f64) {
+    // Add an offset to the cursor patch
+    //
+    // This increments the cursor position, which will later
+    // get replayed into the hemisphere
+    pub fn add_cursor_pos(&mut self, dx: f64, dy: f64) {
         self.a_hemi.as_mut().map(|h| h.mark_changed());
-        self.a_cursor_patch.0 += dx;
-        self.a_cursor_patch.1 += dy;
+        if let Some(mut cursor) = self.a_cursor_patch.as_mut() {
+            cursor.0 += dx;
+            cursor.1 += dy;
+        } else {
+            let cursor = self.a_hemi.as_mut().unwrap()
+                .get_cursor_pos();
+            self.a_cursor_patch = Some((cursor.0 + dx, cursor.1 + dy));
+        }
     }
 
     pub fn get_cursor_pos(&self) -> (f64, f64) {
@@ -245,6 +320,9 @@ impl Atmosphere {
         self.a_hemi.as_ref().unwrap().get_window_dimensions(id)
     }
 
+    // Set the dimensions of the window
+    //
+    // This includes the base coordinate, plus the width and height
     pub fn set_window_dimensions(&mut self,
                                  id: WindowId,
                                  x: u32,
@@ -257,6 +335,18 @@ impl Atmosphere {
                        &Patch::set_window_dimensions((x, y, width, height)));
     }
 
+    // Grab the window by the specified id
+    // it will get moved around as the cursor does
+    pub fn grab(&mut self, id: WindowId) {
+        self.a_hemi.as_mut().map(|h| h.mark_changed());
+        self.a_grab_patch = Some(id);
+    }
+
+    pub fn ungrab(&mut self) {
+        self.a_hemi.as_mut().map(|h| h.mark_changed());
+        self.a_grab_patch = None;
+    }
+
 
     // -- subsystem specific handlers --
 
@@ -264,6 +354,12 @@ impl Atmosphere {
         self.a_ways_surfaces.push(surf);
     }
 
+    // Signal any registered frame callbacks
+    // TODO: actually do optimizations
+    //
+    // Wayland uses these callbacks to tell apps when they should
+    // redraw themselves. If they aren't on screen we don't send
+    // the callback so it doesn't use the power.
     pub fn signal_frame_callbacks(&mut self) {
         for cell in &self.a_ways_surfaces {
             let surf = cell.borrow_mut();
@@ -334,6 +430,9 @@ pub struct Hemisphere {
     // be added elsewhere. A task is a transfer of ownership from
     // ways to vkcommp
     h_wm_tasks: Vec<wm::task::Task>,
+    // The resolution of the screen
+    // TODO: multimonitor support
+    h_resolution: (u32, u32),
 }
 
 
@@ -348,6 +447,7 @@ impl Hemisphere {
             h_window_heir: Vec::new(),
             h_window_dimensions: Vec::new(),
             h_wm_tasks: Vec::new(),
+            h_resolution: (0, 0),
         }
     }
 
@@ -360,7 +460,7 @@ impl Hemisphere {
     // to the new one to keep things up to date.
     fn apply_patch(&mut self,
                    id: WindowId,
-                   prop: Property,
+                   _prop: Property,
                    patch: &Patch)
     {
         match patch {
@@ -372,22 +472,13 @@ impl Hemisphere {
                 self.set_window_dimensions(
                     id, dims.0, dims.1, dims.2, dims.3
                 ),
-            Patch::grab(id) => self.grab(*id),
-            Patch::ungrab => self.ungrab(),
         };
     }
 
     // This should be called after all patches are applied
     // and signifies that we have brought this hemisphere
     // up to date (minus the cursor, which this applies)
-    fn commit(&mut self,
-              cursor_x: f64,
-              cursor_y: f64)
-    {
-        // quirk: update the cursor
-        self.h_cursor_x = cursor_x;
-        self.h_cursor_y = cursor_y;
-
+    fn commit(&mut self) {
         // clear the changed flag
         self.h_has_changed = false;
     }
@@ -423,18 +514,20 @@ impl Hemisphere {
         self.h_wm_tasks.pop()
     }
 
-    pub fn set_cursor_pos(&mut self, dx: f64, dy: f64) {
+    pub fn add_cursor_pos(&mut self, dx: f64, dy: f64) {
         self.mark_changed();
         self.h_cursor_x += dx;
         self.h_cursor_y += dy;
     }
 
-    pub fn grab(&mut self, id: WindowId) {
-        self.h_grabbed = Some(id);
+    pub fn set_cursor_pos(&mut self, dx: f64, dy: f64) {
+        self.mark_changed();
+        self.h_cursor_x = dx;
+        self.h_cursor_y = dy;
     }
 
-    pub fn ungrab(&mut self) {
-        self.h_grabbed = None;
+    pub fn grab(&mut self, id: Option<WindowId>) {
+        self.h_grabbed = id;
     }
 
     pub fn add_new_toplevel(&mut self, id: WindowId) {
@@ -456,9 +549,18 @@ impl Hemisphere {
             (x, y, width, height);
     }
 
+    // this is one of the few updates from vkcomp
+    pub fn set_resolution(&mut self, x: u32, y: u32) {
+        self.h_resolution = (x, y);
+    }
+
     // ----------------
     // accessors
     // ----------------
+
+    pub fn get_resolution(&self) -> (u32, u32) {
+        self.h_resolution
+    }
 
     pub fn get_window_order(&self, id: WindowId) -> u32 {
         for (i, win) in self.h_window_heir.iter().enumerate() {
@@ -467,6 +569,50 @@ impl Hemisphere {
             }
         }
         panic!("Could not find window with id {}", id);
+    }
+
+    // Used to find what window is under the cursor
+    // returns None if the point is not over a window
+    pub fn find_window_at_point(&self, x: u32, y: u32)
+                                -> Option<WindowId>
+    {
+        // This needs to be the same as wm/mod.rs
+        let barsize =
+            (self.h_resolution.1 as f32 * 0.02) as u32;
+
+        for win in self.h_window_heir.iter() {
+            let pos = self.h_window_dimensions[*win as usize];
+
+            // If this window contains (x, y) then return it
+            if x > pos.0 && y > pos.1
+                && x < (pos.0 + pos.2 as u32)
+                && y < (pos.1 + pos.3 as u32 + barsize)
+            {
+                return Some(*win);
+            }
+        }
+        return None;
+    }
+
+    // Used to find if the point is over this windows titlebar
+    // returns true if the point is
+    pub fn point_is_on_titlebar(&self, id: WindowId, x: u32, y: u32)
+                          -> bool
+    {
+        // This needs to be the same as wm/mod.rs
+        let barsize =
+            self.h_resolution.1 as f32 * 0.02;
+
+        let pos = self.h_window_dimensions[id as usize];
+
+        // If this window contains (x, y) then return it
+        if x > pos.0 && y > pos.1
+            && x < (pos.0 + pos.2 as u32)
+            && y < pos.1 + barsize as u32
+        {
+            return true;
+        }
+        return false;
     }
 
     pub fn get_cursor_pos(&self) -> (f64, f64) {

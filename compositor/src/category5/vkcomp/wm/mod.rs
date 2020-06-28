@@ -145,14 +145,19 @@ impl WindowManager {
         let mut rend = Renderer::new();
         rend.setup();
 
-        WindowManager {
+        let mut wm = WindowManager {
             wm_atmos: Atmosphere::new(tx, rx),
             titlebar: WindowManager::get_default_titlebar(&mut rend),
             cursor: WindowManager::get_default_cursor(&mut rend),
             rend: rend,
             apps: Vec::new(),
             background: None,
-        }
+        };
+
+        // Tell the atmosphere rend's resolution
+        wm.wm_atmos.set_resolution(wm.rend.resolution.width,
+                                   wm.rend.resolution.height);
+        return wm;
     }
 
     // Set the desktop background for the renderer
@@ -337,10 +342,9 @@ impl WindowManager {
                 // TODO: else draw blank mesh?
                 let push = PushConstants {
                     order: order, // depth
-                    // the x position needs to be all the way to the
-                    // right side of the bar
                     x: window_dims.0,
-                    y: window_dims.1,
+                    // The actual window will be drawn below the bar
+                    y: window_dims.1 + barsize as u32,
                     // align it at the top right
                     width: window_dims.2,
                     height: window_dims.3,
