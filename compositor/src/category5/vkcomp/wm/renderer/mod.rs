@@ -4,7 +4,6 @@
 // unsafe/vulkan/ash/etc should be exposed to upper layers
 //
 // Austin Shafer - 2020
-
 #![allow(dead_code, non_camel_case_types)]
 use serde::{Serialize, Deserialize};
 
@@ -74,7 +73,7 @@ unsafe extern "system" fn vulkan_debug_callback(
     p_message: *const c_char,
     _: *mut c_void,
 ) -> u32 {
-    println!("[RENDERER] {:?}", CStr::from_ptr(p_message));
+    log!(LogLevel::profiling, "[RENDERER] {:?}", CStr::from_ptr(p_message));
     vk::FALSE
 }
 
@@ -268,8 +267,8 @@ pub struct PushConstants {
     // the z-ordering of the window being drawn
     pub order: f32,
     // this is [0,resolution]
-    pub x: u32,
-    pub y: u32,
+    pub x: f32,
+    pub y: f32,
     // Maybe these should be floats for HiDPI?
     pub width: f32,
     pub height: f32,
@@ -641,7 +640,7 @@ impl Renderer {
             // they can be found in `vk_bitflags_wrapped`
             if (reqs.memory_type_bits >> i) & 1 == 1
                 && mem_type.property_flags.contains(flags) {
-                    // println!("Selected type with flags {:?}",
+                    // log!(LogLevel::profiling, "Selected type with flags {:?}",
                     //          mem_type.property_flags);
                     // return the index into the memory type array
                     return Some(i as u32);
@@ -1062,7 +1061,7 @@ impl Renderer {
             let surface_resolution = display.select_resolution(
                 &surface_caps
             );
-            println!("Rendering with resolution {:?}", surface_resolution);
+            log!(LogLevel::profiling, "Rendering with resolution {:?}", surface_resolution);
 
             let dev = Renderer::create_device(&inst, pdev, &[graphics_queue_family]);
             let present_queue = dev.get_device_queue(graphics_queue_family, 0);
@@ -2385,7 +2384,7 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
-            println!("Stoping the renderer");
+            log!(LogLevel::profiling, "Stoping the renderer");
 
             // first wait for the device to finish working
             self.dev.device_wait_idle().unwrap();

@@ -323,9 +323,9 @@ impl WindowManager {
                 // right side of the bar
                 x: window_dims.0
                 // Multiply by 2 (see vert shader for details)
-                    + window_dims.2 as u32 * 2
+                    + window_dims.2
                 // we don't want to go past the end of the bar
-                    - barsize as u32 * 2,
+                    - barsize,
                 y: window_dims.1,
                 // align it at the top right
                 width: dotsize,
@@ -344,7 +344,7 @@ impl WindowManager {
                     order: order, // depth
                     x: window_dims.0,
                     // The actual window will be drawn below the bar
-                    y: window_dims.1 + barsize as u32,
+                    y: (window_dims.1 + barsize),
                     // align it at the top right
                     width: window_dims.2,
                     height: window_dims.3,
@@ -361,8 +361,8 @@ impl WindowManager {
                 &PushConstants {
                     order: 0.99999, // make it the max depth
                     // size of the window on screen
-                    x: 0,
-                    y: 0,
+                    x: 0.0,
+                    y: 0.0,
                     // align it at the top left
                     width: self.rend.resolution.width as f32,
                     height: self.rend.resolution.height as f32,
@@ -372,6 +372,9 @@ impl WindowManager {
 
         // get the latest cursor position
         let (cursor_x, cursor_y) = self.wm_atmos.get_cursor_pos();
+        log!(LogLevel::profiling, "Drawing cursor at ({}, {})",
+             cursor_x,
+             cursor_y);
 
         self.cursor.as_ref().map(|cursor| {
             cursor.record_draw(
@@ -380,8 +383,8 @@ impl WindowManager {
                 &PushConstants {
                     order: 0.0001, // make it the min depth
                     // put it in the center
-                    x: cursor_x as u32,
-                    y: cursor_y as u32,
+                    x: cursor_x as f32,
+                    y: cursor_y as f32,
                     // TODO: calculate cursor size
                     width: 16.0,
                     height: 16.0,

@@ -14,8 +14,8 @@ float height;
 
 layout(push_constant) uniform PushConstants {
 float order;
-int x;
-int y;
+float x;
+float y;
 float width;
 float height;
 } push;
@@ -26,10 +26,12 @@ void main() {
      // 3. multiply by the percentage of the screen that the window
      //    should take up. Any 1's in loc will be scaled by this amount.
      // 4. add the (x,y) offset for the window.
+     // 5. also multiply the base by 2 for the same reason
      vec2 adjusted = loc
           * vec2(2, 2)
 	  * (vec2(push.width, push.height) / vec2(ubo.width, ubo.height))
-	  + (vec2(push.x, push.y) / vec2(ubo.width, ubo.height));
+	  + (vec2(push.x, push.y) / vec2(ubo.width, ubo.height))
+	  * vec2(2, 2);
 
      // The model transform will align x,y = (0, 0) with the top left of
      // the screen. It should stubtract 1.0 from x and y.

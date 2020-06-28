@@ -9,6 +9,11 @@ extern crate wayland_server as ws;
 
 use ws::protocol::wl_buffer;
 
+use crate::category5::utils::{
+    timing::*, logging::LogLevel,
+};
+use crate::log;
+
 use std::{slice,fmt};
 use std::ops::Deref;
 use std::os::unix::io::RawFd;
@@ -143,7 +148,7 @@ pub struct DmabufReleaseInfo {
 
 impl Drop for DmabufReleaseInfo {
     fn drop(&mut self) {
-        println!("Deleting wl_buffer for a dmabuf");
+        log!(LogLevel::profiling, "Deleting wl_buffer for a dmabuf");
         self.dr_wl_buffer.release();
     }
 }

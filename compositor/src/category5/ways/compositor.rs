@@ -329,20 +329,23 @@ impl EventManager {
                 let mut atmos = self.em_atmos.borrow_mut();
 
                 // find the window under the cursor
-                if let Some(id) = atmos.find_window_at_point(cursor.0 as u32,
-                                                             cursor.1 as u32)
+                if let Some(id) = atmos.find_window_at_point(cursor.0 as f32,
+                                                             cursor.1 as f32)
                 {
                     // now check if we are over the titlebar
                     // if so we will grab the bar
-                    if atmos.point_is_on_titlebar(id, cursor.0 as u32,
-                                                  cursor.1 as u32)
+                    if atmos.point_is_on_titlebar(id, cursor.0 as f32,
+                                                  cursor.1 as f32)
                     {
-                        log!(LogLevel::debug, "Grabbing window {}", id);
                         match lc.lc_state {
-                            ButtonState::Pressed =>
-                                atmos.grab(id),
-                            ButtonState::Released =>
-                                atmos.ungrab(),
+                            ButtonState::Pressed => {
+                                log!(LogLevel::debug, "Grabbing window {}", id);
+                                atmos.grab(id);
+                            },
+                            ButtonState::Released => {
+                                log!(LogLevel::debug, "Ungrabbing window {}", id);
+                                atmos.ungrab();
+                            }
                         }
                     }
                 }

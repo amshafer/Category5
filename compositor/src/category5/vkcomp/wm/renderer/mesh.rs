@@ -6,6 +6,11 @@
 extern crate nix;
 extern crate ash;
 
+use crate::log;
+use crate::category5::utils::{
+    timing::*, logging::LogLevel
+};
+
 use crate::category5::utils::*;
 use super::*;
 
@@ -178,7 +183,7 @@ impl Mesh {
                    release: ReleaseInfo)
                    -> Option<Mesh>
     {
-        println!("Creating mesh from dmabuf {:?}", dmabuf);
+        log!(LogLevel::profiling, "Creating mesh from dmabuf {:?}", dmabuf);
         // A lot of this is duplicated from Renderer::create_image
         unsafe {
             // we create the image now, but will have to bind
@@ -379,7 +384,7 @@ impl Mesh {
                           dmabuf: &Dmabuf,
                           release: ReleaseInfo)
     {
-        println!("Updating mesh with dmabuf {:?}", dmabuf);
+        log!(LogLevel::profiling, "Updating mesh with dmabuf {:?}", dmabuf);
         if let MeshPrivate::dmabuf(dp) = &mut self.m_priv {
             unsafe {
                 // We need to update and rebind the memory

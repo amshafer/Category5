@@ -42,7 +42,7 @@ enum Property {
 enum Patch {
     add_window_id(WindowId),
     add_new_toplevel(WindowId),
-    set_window_dimensions((u32, u32, f32, f32)),
+    set_window_dimensions((f32, f32, f32, f32)),
 }
 
 // Global state tracking
@@ -96,7 +96,9 @@ pub struct Atmosphere {
     // when it is only 2 floats, so just add it here.
     a_cursor_patch: Option<(f64, f64)>,
     // Same idea as the cursor patch but for the grabbed window
-    a_grab_patch: Option<WindowId>,
+    // The outer option tells us if we have an update. The inner
+    // is the value of the hemi.h_grabbed
+    a_grab_patch: Option<Option<WindowId>>,
     a_resolution_patch: Option<(u32, u32)>,
 }
 
@@ -132,14 +134,12 @@ impl Atmosphere {
     // need to replay the patches on the new hemisphere to
     // update it will all the info it's missing
     fn replay(&mut self, hemi: &mut Hemisphere) {
-        for (window_id, prop) in self.a_patches.keys() {
-            match self.a_patches.get(&(*window_id, *prop)) {
-                Some(patch) =>
-                    hemi.apply_patch(*window_id, *prop, patch),
-                None => (),
-            }
+        for ((window_id, prop), patch) in self.a_patches.iter() {
+            hemi.apply_patch(*window_id, *prop, patch);
         }
-        hemi.grab(self.a_grab_patch);
+        if let Some(grab) = self.a_grab_patch {
+            hemi.grab(grab);
+        }
         if let Some(res) = self.a_resolution_patch {
             hemi.set_resolution(res.0, res.1);
         }
@@ -183,6 +183,7 @@ impl Atmosphere {
             self.a_resolution_patch = None;
             self.a_grab_patch = None;
             self.a_cursor_patch = None;
+            self.a_patches.clear();
         }
     }
 
@@ -228,7 +229,7 @@ impl Atmosphere {
             id,
             Property::SET_WINDOW_DIMENSIONS,
             &Patch::set_window_dimensions(
-                (0, 0, // (x, y)
+                (0.0, 0.0, // (x, y)
                  640.0, 480.0) // (width, height)
             )
         );
@@ -269,7 +270,7 @@ impl Atmosphere {
     // This is used first to find if the cursor intersects
     // with a window. If it does, point_is_on_titlebar is
     // used to check for a grab or relay input event.
-    pub fn find_window_at_point(&self, x: u32, y: u32)
+    pub fn find_window_at_point(&self, x: f32, y: f32)
                                 -> Option<WindowId>
     {
         self.a_hemi.as_ref().unwrap().find_window_at_point(x, y)
@@ -278,7 +279,7 @@ impl Atmosphere {
     // Is the current point over the titlebar of the window
     //
     // Id should have first been found with find_window_at_point
-    pub fn point_is_on_titlebar(&self, id: WindowId, x: u32, y: u32)
+    pub fn point_is_on_titlebar(&self, id: WindowId, x: f32, y: f32)
                                 -> bool
     {
         self.a_hemi.as_ref().unwrap().point_is_on_titlebar(id, x, y)
@@ -308,16 +309,49 @@ impl Atmosphere {
                 .get_cursor_pos();
             self.a_cursor_patch = Some((cursor.0 + dx, cursor.1 + dy));
         }
+
+        // Now update the grabbed window if it exists
+        let grabbed = match self.get_grabbed() {
+            Some(g) => g,
+            None => return,
+        };
+
+        let mut gpos = self.get_window_dimensions(grabbed);
+        gpos.0 += dx as f32;
+        gpos.1 += dy as f32;
+
+        self.set_window_dimensions(grabbed, gpos.0, gpos.1,
+                                   gpos.2, gpos.3);
+    }
+
+    // gets the id of the currently grabbed window
+    pub fn get_grabbed(&self) -> Option<WindowId> {
+        // check if we have cached it
+        match self.a_grab_patch {
+            Some(grabbed) => grabbed,
+            // or just grab it
+            None => self.a_hemi.as_ref().unwrap().get_grabbed(),
+        }
     }
 
     pub fn get_cursor_pos(&self) -> (f64, f64) {
         self.a_hemi.as_ref().unwrap().get_cursor_pos()
     }
 
+    // Get the window dimensions
+    // grab them from the patchmap first, and fetch them from the
+    // hemisphere if they aren't currently patched.
     pub fn get_window_dimensions(&self, id: WindowId)
-                                 -> (u32, u32, f32, f32)
+                                 -> (f32, f32, f32, f32)
     {
-        self.a_hemi.as_ref().unwrap().get_window_dimensions(id)
+        if let Some(Patch::set_window_dimensions(patch))
+            = self.a_patches.get(&(id, Property::SET_WINDOW_DIMENSIONS))
+        {
+            return *patch;
+        } else {
+            return self.a_hemi.as_ref().unwrap()
+                .get_window_dimensions(id);
+        }
     }
 
     // Set the dimensions of the window
@@ -325,8 +359,8 @@ impl Atmosphere {
     // This includes the base coordinate, plus the width and height
     pub fn set_window_dimensions(&mut self,
                                  id: WindowId,
-                                 x: u32,
-                                 y: u32,
+                                 x: f32,
+                                 y: f32,
                                  width: f32,
                                  height: f32)
     {
@@ -339,12 +373,12 @@ impl Atmosphere {
     // it will get moved around as the cursor does
     pub fn grab(&mut self, id: WindowId) {
         self.a_hemi.as_mut().map(|h| h.mark_changed());
-        self.a_grab_patch = Some(id);
+        self.a_grab_patch = Some(Some(id));
     }
 
     pub fn ungrab(&mut self) {
         self.a_hemi.as_mut().map(|h| h.mark_changed());
-        self.a_grab_patch = None;
+        self.a_grab_patch = Some(None);
     }
 
 
@@ -422,7 +456,7 @@ pub struct Hemisphere {
     // The position of each window's top left corner, and it's width
     // Indexed by WindowId
     // (base_x, base_y, width, height)
-    h_window_dimensions: Vec<(u32, u32, f32, f32)>,
+    h_window_dimensions: Vec<(f32, f32, f32, f32)>,
     // A list of tasks to be completed by vkcomp this frame
     // - does not need to be patched
     //
@@ -536,13 +570,14 @@ impl Hemisphere {
 
     pub fn set_window_dimensions(&mut self,
                                  id: WindowId,
-                                 x: u32,
-                                 y: u32,
+                                 x: f32,
+                                 y: f32,
                                  width: f32,
                                  height: f32)
     {
         if (id as usize) >= self.h_window_dimensions.len() {
-            self.h_window_dimensions.resize(id as usize + 1, (0, 0, 0.0, 0.0));
+            self.h_window_dimensions.resize(id as usize + 1,
+                                            (0.0, 0.0, 0.0, 0.0));
         }
 
         self.h_window_dimensions[id as usize] =
@@ -562,6 +597,10 @@ impl Hemisphere {
         self.h_resolution
     }
 
+    fn get_grabbed(&self) -> Option<WindowId> {
+        self.h_grabbed
+    }
+
     pub fn get_window_order(&self, id: WindowId) -> u32 {
         for (i, win) in self.h_window_heir.iter().enumerate() {
             if *win == id {
@@ -573,20 +612,20 @@ impl Hemisphere {
 
     // Used to find what window is under the cursor
     // returns None if the point is not over a window
-    pub fn find_window_at_point(&self, x: u32, y: u32)
+    pub fn find_window_at_point(&self, x: f32, y: f32)
                                 -> Option<WindowId>
     {
         // This needs to be the same as wm/mod.rs
         let barsize =
-            (self.h_resolution.1 as f32 * 0.02) as u32;
+            self.h_resolution.1 as f32 * 0.02;
 
         for win in self.h_window_heir.iter() {
             let pos = self.h_window_dimensions[*win as usize];
 
             // If this window contains (x, y) then return it
             if x > pos.0 && y > pos.1
-                && x < (pos.0 + pos.2 as u32)
-                && y < (pos.1 + pos.3 as u32 + barsize)
+                && x < (pos.0 + pos.2)
+                && y < (pos.1 + pos.3 + barsize)
             {
                 return Some(*win);
             }
@@ -596,7 +635,7 @@ impl Hemisphere {
 
     // Used to find if the point is over this windows titlebar
     // returns true if the point is
-    pub fn point_is_on_titlebar(&self, id: WindowId, x: u32, y: u32)
+    pub fn point_is_on_titlebar(&self, id: WindowId, x: f32, y: f32)
                           -> bool
     {
         // This needs to be the same as wm/mod.rs
@@ -607,8 +646,8 @@ impl Hemisphere {
 
         // If this window contains (x, y) then return it
         if x > pos.0 && y > pos.1
-            && x < (pos.0 + pos.2 as u32)
-            && y < pos.1 + barsize as u32
+            && x < (pos.0 + pos.2)
+            && y < pos.1 + barsize
         {
             return true;
         }
@@ -620,7 +659,7 @@ impl Hemisphere {
     }
 
     pub fn get_window_dimensions(&self, id: WindowId)
-                                 -> (u32, u32, f32, f32)
+                                 -> (f32, f32, f32, f32)
     {
         assert!((id as usize) < self.h_window_dimensions.len());
 

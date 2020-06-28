@@ -6,6 +6,11 @@
 extern crate nix;
 extern crate wayland_server as ws;
 
+use crate::log;
+use crate::category5::utils::{
+    timing::*, logging::LogLevel
+};
+
 use nix::unistd::close;
 use ws::{Filter,Main,Resource};
 use ws::protocol::wl_buffer;
@@ -81,7 +86,8 @@ impl Params {
                                            height,
                                            format,
                                            flags } => {
-                println!("linux_dmabuf_params: Creating a new wl_buffer");
+                log!(LogLevel::profiling,
+                     "linux_dmabuf_params: Creating a new wl_buffer");
 
                 // TODO
                 // for now just only assign the first dmabuf
@@ -95,8 +101,9 @@ impl Params {
                 buffer_id.assign_destructor(Filter::new(
                     move |r: Resource<wl_buffer::WlBuffer>, _, _| {
                         let ud = r.user_data().get::<Dmabuf>().unwrap();
-                        println!("Destroying wl_buffer: closing dmabuf with fd {}",
-                                 ud.db_fd);
+                        log!(LogLevel::profiling,
+                             "Destroying wl_buffer: closing dmabuf with fd {}",
+                             ud.db_fd);
                         close(ud.db_fd).unwrap();
                     }
                 ));
@@ -126,7 +133,7 @@ impl Params {
            _mod_hi: u32,
            _mod_low: u32) {
         let d = Dmabuf::new(fd, plane_idx, offset, stride);
-        println!("linux_dmabuf_params:Adding {:?}", d);
+        log!(LogLevel::profiling, "linux_dmabuf_params:Adding {:?}", d);
         self.p_bufs.push(d);
     }
 }
