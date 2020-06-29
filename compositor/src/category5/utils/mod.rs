@@ -24,7 +24,7 @@ use std::os::unix::io::RawFd;
 // is used as an ECS property id to tie data to
 // the resource. For now it is a u32 since there
 // is no way we have 4 million windows open
-type WindowId = u32;
+pub type WindowId = u32;
 
 // Window Contents
 //

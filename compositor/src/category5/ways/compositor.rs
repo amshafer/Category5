@@ -21,7 +21,7 @@ use crate::category5::utils::{
     timing::*, logging::LogLevel, atmosphere::*
 };
 use crate::log;
-use crate::category5::input::{Input, event::*};
+use crate::category5::input::Input;
 use super::{
     shm::*,
     surface::*,
@@ -41,7 +41,6 @@ use std::rc::Rc;
 use std::sync::mpsc::{Sender,Receiver};
 use std::ops::Deref;
 use std::os::unix::io::RawFd;
-use input::event::pointer::ButtonState;
 
 // A wayland compositor wrapper
 //
@@ -182,9 +181,9 @@ impl EventManager {
         ));
 
         let mut evman = Box::new(EventManager {
-            em_atmos: atmos,
+            em_atmos: atmos.clone(),
             em_display: display,
-            em_input: Input::new(),
+            em_input: Input::new(atmos),
             em_pointer_dx: 0.0,
             em_pointer_dy: 0.0,
         });
@@ -315,44 +314,6 @@ impl EventManager {
         );
     }
 
-    fn handle_input_event(&mut self, iev: &InputEvent) {
-        match iev {
-            InputEvent::pointer_move(m) => {
-                // Update the atmosphere with the new cursor pos
-                self.em_atmos.borrow_mut()
-                    .add_cursor_pos(m.pm_dx, m.pm_dy);
-            },
-            InputEvent::left_click(lc) => {
-                let cursor = self.em_atmos.borrow_mut()
-                    .get_cursor_pos();
-
-                let mut atmos = self.em_atmos.borrow_mut();
-
-                // find the window under the cursor
-                if let Some(id) = atmos.find_window_at_point(cursor.0 as f32,
-                                                             cursor.1 as f32)
-                {
-                    // now check if we are over the titlebar
-                    // if so we will grab the bar
-                    if atmos.point_is_on_titlebar(id, cursor.0 as f32,
-                                                  cursor.1 as f32)
-                    {
-                        match lc.lc_state {
-                            ButtonState::Pressed => {
-                                log!(LogLevel::debug, "Grabbing window {}", id);
-                                atmos.grab(id);
-                            },
-                            ButtonState::Released => {
-                                log!(LogLevel::debug, "Ungrabbing window {}", id);
-                                atmos.ungrab();
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // Each subsystem has a function that implements its main
     // loop. This is that function
     pub fn worker_thread(&mut self) {
@@ -396,9 +357,6 @@ impl EventManager {
             // It has time sensitive operations which need to take
             // place as soon as the fd is readable
             self.em_input.dispatch();
-            while let Some(iev) = self.em_input.next_available() {
-                self.handle_input_event(&iev);
-            }
 
             // TODO: This might not be the most accurate
             if tm.is_overdue() {

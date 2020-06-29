@@ -13,20 +13,26 @@ extern crate nix;
 
 pub mod event;
 use event::*;
-use crate::category5::utils::{timing::*, logging::LogLevel};
+use crate::category5::utils::{
+    timing::*, logging::LogLevel, atmosphere::*
+};
 use crate::log;
 
 use udev::{Enumerator,Context};
 use input::{Libinput,LibinputInterface};
 use input::event::Event;
-use input::event::pointer::PointerEvent;
+use input::event::pointer::{ButtonState, PointerEvent};
 use input::event::keyboard::KeyboardEvent;
+
 
 use std::fs::{File,OpenOptions};
 use std::path::Path;
 use std::os::unix::io::RawFd;
 use std::os::unix::io::{AsRawFd,IntoRawFd,FromRawFd};
 use std::os::unix::fs::OpenOptionsExt;
+
+use std::rc::Rc;
+use std::cell::RefCell;
 
 use std::mem::drop;
 
@@ -95,6 +101,7 @@ impl LibinputInterface for Inkit {
 // any method should be applicable. It just feeds
 // the ways and wm subsystems input events
 pub struct Input {
+    i_atmos: Rc<RefCell<Atmosphere>>,
     // The udev context
     uctx: Context,
     // libinput context
@@ -103,7 +110,7 @@ pub struct Input {
 
 impl Input {
     // Setup the libinput library from a udev context
-    pub fn new() -> Input {
+    pub fn new(atmos: Rc<RefCell<Atmosphere>>) -> Input {
         // Make a new context for ourselves
         let uctx = Context::new().unwrap();
 
@@ -126,6 +133,7 @@ impl Input {
         libin.udev_assign_seat("seat0").unwrap();
 
         Input {
+            i_atmos: atmos,
             uctx: uctx,
             libin: libin,
         }
@@ -139,18 +147,27 @@ impl Input {
         self.libin.as_raw_fd()
     }
 
+    // Processs any pending input events
+    //
     // dispatch will grab the latest available data
     // from the devices and perform libinputs internal
     // (time sensitive) operations on them
+    // It will then handle all the available input events
+    // before returning.
     pub fn dispatch(&mut self) {
 	self.libin.dispatch().unwrap();
+
+        // now go through each event
+        while let Some(iev) = self.next_available() {
+            self.handle_input_event(&iev);
+        }
     }
 
     // Get the next available event from libinput
     //
     // Dispatch should be called before this so libinput can
     // internally read and prepare all events.
-    pub fn next_available(&mut self) -> Option<InputEvent> {
+    fn next_available(&mut self) -> Option<InputEvent> {
          // TODO: need to fix this wrapper
 	 let ev = self.libin.next();
          match ev {
@@ -177,5 +194,60 @@ impl Input {
          };
 
         return None;
-     }
+    }
+
+    // Does what it says
+    //
+    // This is the bug ugly state machine for processing an input
+    // token that was the result of clicking the pointer. We need
+    // to find what the cursor is over and perform the appropriate
+    // action.
+    fn handle_click_on_window(&mut self,
+                              lc: &LeftClick)
+    {
+        let mut atmos = self.i_atmos.borrow_mut();
+        let cursor = atmos.get_cursor_pos();
+
+        // find the window under the cursor
+        if let Some(id) = atmos.find_window_at_point(cursor.0 as f32,
+                                                     cursor.1 as f32)
+        {
+            // now check if we are over the titlebar
+            // if so we will grab the bar
+            if atmos.point_is_on_titlebar(id, cursor.0 as f32,
+                                          cursor.1 as f32)
+            {
+                match lc.lc_state {
+                    ButtonState::Pressed => {
+                        log!(LogLevel::debug, "Grabbing window {}", id);
+                        atmos.grab(id);
+                    },
+                    ButtonState::Released => {
+                        log!(LogLevel::debug, "Ungrabbing window {}", id);
+                        atmos.ungrab();
+                    }
+                }
+            } else {
+                // else the click was over the meat of the window, so
+                // deliver the event to the wayland client
+            }
+        }
+    }
+
+    // Dispatch an arbitrary input event
+    //
+    // Input events are either handled by us or by the wayland client
+    // we need to figure out the appropriate destination and perform
+    // the right action.
+    pub fn handle_input_event(&mut self, iev: &InputEvent) {
+        match iev {
+            InputEvent::pointer_move(m) => {
+                // Update the atmosphere with the new cursor pos
+                self.i_atmos.borrow_mut()
+                    .add_cursor_pos(m.pm_dx, m.pm_dy);
+            },
+            InputEvent::left_click(lc) =>
+                self.handle_click_on_window(lc) ,
+        }
+    }
 }
