@@ -347,6 +347,8 @@ impl EventManager {
         // one for wayland and one for input
         let mut evlist = vec![empty_kevent(), empty_kevent()];
 
+        let mut needs_send = true;
+
         // reset the timer before we start
         tm.reset();
         while kevent(kq, &[], evlist.as_mut_slice(),
@@ -361,22 +363,30 @@ impl EventManager {
             // TODO: This might not be the most accurate
             if tm.is_overdue() {
                 log!(LogLevel::profiling, "timer out");
-                // reset our timer
-                tm.reset();
                 // Only flip hemispheres if we have updates to push
                 // this saves a little power
                 if self.em_atmos.borrow_mut().is_changed() {
                     log!(LogLevel::profiling, "finished frame");
+
                     // Flip hemispheres to push our updates to vkcomp
                     // this must be terrible for the local fauna
                     //
                     // This is a synchronization point. It will block
-                    self.em_atmos.borrow_mut().flip_hemispheres();
-                }
+                    if needs_send {
+                        needs_send = false;
+                        self.em_atmos.borrow_mut().send_hemisphere(); 
+                    }
+                    if self.em_atmos.borrow_mut().recv_hemisphere() {
+                        // reset our timer
+                        tm.reset();
 
-                // it has been roughly one frame, so fire the frame callbacks
-                // so clients can draw
-                self.em_atmos.borrow_mut().signal_frame_callbacks();
+                        // it has been roughly one frame, so fire the frame callbacks
+                        // so clients can draw
+                        self.em_atmos.borrow_mut().signal_frame_callbacks();
+
+                        needs_send = true;
+                    }
+                }
             }
 
             // wait for the next event

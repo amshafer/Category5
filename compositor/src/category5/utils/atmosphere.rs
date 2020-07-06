@@ -153,12 +153,8 @@ impl Atmosphere {
         hemi.mark_changed();
     }
 
-    // Exchange hemisphores between the two subsystems
-    //
-    // This is in charge of sending and receiving hemisphere
-    // boxes over the channels. It also organizes the replays
-    // and clears the patches
-    pub fn flip_hemispheres(&mut self) {
+    // Must be called before recv_hemisphere
+    pub fn send_hemisphere(&mut self) {
         // first grab our own hemi
         if let Some(mut h) = self.a_hemi.take() {
             // second, we need to apply our changes to
@@ -168,23 +164,43 @@ impl Atmosphere {
             // actually flip hemispheres
             self.a_tx.send(h)
                 .expect("Could not send hemisphere");
-            let mut new_hemi = self.a_rx.recv()
-                .expect("Could not recv hemisphere");
-
-            // while we have the new one, go ahead and apply the
-            // patches to make it up to date
-            self.replay(&mut new_hemi);
-
-            // Replace with the hemisphere from the
-            // other subsystem
-            self.a_hemi = Some(new_hemi);
-
-            // Clear the patches
-            self.a_resolution_patch = None;
-            self.a_grab_patch = None;
-            self.a_cursor_patch = None;
-            self.a_patches.clear();
         }
+    }
+
+    // Must be called after recv_hemisphere
+    // returns true if we were able to get the other hemisphere
+    // if returns false, this needs to be called again
+    pub fn recv_hemisphere(&mut self) -> bool {
+        let mut new_hemi = match self.a_rx.recv() {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+
+        // while we have the new one, go ahead and apply the
+        // patches to make it up to date
+        self.replay(&mut new_hemi);
+
+        // Replace with the hemisphere from the
+        // other subsystem
+        self.a_hemi = Some(new_hemi);
+
+        // Clear the patches
+        self.a_resolution_patch = None;
+        self.a_grab_patch = None;
+        self.a_cursor_patch = None;
+        self.a_patches.clear();
+
+        return true;
+    }
+
+    // Exchange hemispheres between the two subsystems
+    //
+    // This is in charge of sending and receiving hemisphere
+    // boxes over the channels. It also organizes the replays
+    // and clears the patches
+    pub fn flip_hemispheres(&mut self) {
+        self.send_hemisphere();
+        self.recv_hemisphere();
     }
 
     // Has the current hemisphere been changed
