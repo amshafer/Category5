@@ -160,6 +160,8 @@ pub struct Renderer {
     // This fence coordinates draw call reuse. It will be signaled
     // when submitting the draw calls to the queue has finished
     submit_fence: vk::Fence,
+    // Will be signaled when the frame is being scanned out
+    display_event_fence: vk::Fence,
     // needed for VkGetMemoryFdPropertiesKHR
     external_mem_fd_loader: khr::ExternalMemoryFd,
     // resources to be freed at the end of this frame
@@ -438,7 +440,8 @@ impl Renderer {
                                 -> Device
     {
         let dev_extension_names = [khr::Swapchain::name().as_ptr(),
-                                   khr::ExternalMemoryFd::name().as_ptr()];
+                                   khr::ExternalMemoryFd::name().as_ptr(),
+                                   "VK_EXT_display_control".as_ptr() as *const i8];
 
         let features = vk::PhysicalDeviceFeatures {
             shader_clip_distance: 1,
@@ -1116,6 +1119,20 @@ impl Renderer {
                 None,
             ).expect("Could not create fence");
 
+            let mut display_fence = vk::Fence::null();
+            let extfn = vk::ExtDisplayControlFn::load(|name| {
+                mem::transmute(entry.get_instance_proc_addr(inst.handle(), name.as_ptr()))
+            });
+            extfn.register_display_event_ext(
+                dev.handle(),
+                display.display,
+                &vk::DisplayEventInfoEXT::builder()
+                    .display_event(vk::DisplayEventTypeEXT::FIRST_PIXEL_OUT)
+                    .build(),
+                std::ptr::null(),
+                &mut display_fence,
+            );
+
             let ext_mem_loader = khr::ExternalMemoryFd::new(&inst, &dev);
 
             // you are now the proud owner of a half complete
@@ -1149,6 +1166,7 @@ impl Renderer {
                 present_sema: present_sema,
                 render_sema: render_sema,
                 submit_fence: fence,
+                display_event_fence: display_fence,
                 app_ctx: RefCell::new(None),
                 external_mem_fd_loader: ext_mem_loader,
                 r_release_index: 0,
@@ -2369,6 +2387,15 @@ impl Renderer {
             self.swapchain_loader
                 .queue_present(self.present_queue, &info)
                 .unwrap();
+        }
+
+        unsafe {
+            // Wait for the previous frame to hit the display
+            self.dev.wait_for_fences(&[self.display_event_fence],
+                                     true, // wait for all
+                                     std::u64::MAX, //timeout
+            ).unwrap();
+            self.dev.reset_fences(&[self.display_event_fence]).unwrap();
         }
     }
 }
