@@ -2369,6 +2369,24 @@ impl Renderer {
     // this image. 
     pub fn present(&mut self) {
         unsafe {
+            // remake the fence. gross.
+            self.dev.destroy_fence(self.display_event_fence, None);
+            let extfn = vk::ExtDisplayControlFn::load(|name| {
+                mem::transmute(self.loader.get_instance_proc_addr(self.inst.handle(), name.as_ptr()))
+            });
+            extfn.register_display_event_ext(
+                self.dev.handle(),
+                self.display.display,
+                &vk::DisplayEventInfoEXT::builder()
+                    .display_event(vk::DisplayEventTypeEXT::FIRST_PIXEL_OUT)
+                    .build(),
+                std::ptr::null(),
+                &mut self.display_event_fence,
+            );
+
+        }
+
+        unsafe {
             self.dev.wait_for_fences(&[self.submit_fence],
                                      true, // wait for all
                                      std::u64::MAX, //timeout

@@ -18,7 +18,7 @@ use ws::protocol::{
 };
 
 use crate::category5::utils::{
-    timing::*, logging::LogLevel, atmosphere::*
+    timing::*, logging::LogLevel, atmosphere::*, fdwatch::FdWatch,
 };
 use crate::log;
 use crate::category5::input::Input;
@@ -34,13 +34,11 @@ use super::protocol::{
     linux_dmabuf::zwp_linux_dmabuf_v1 as zldv1,
 };
 
-use nix::sys::event::*;
 use std::time::Duration;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc::{Sender,Receiver};
 use std::ops::Deref;
-use std::os::unix::io::RawFd;
 
 // A wayland compositor wrapper
 //
@@ -80,22 +78,6 @@ pub struct EventManager {
     // aggregates input pointer events
     em_pointer_dx: f64,
     em_pointer_dy: f64,
-}
-
-// Helper for creating an empty KEvent for kqueue
-// This is just for placeholders when we need
-// an initialized kevent
-fn empty_kevent() -> KEvent {
-   read_fd_kevent(0)
-}
-
-// Helper for creating a kevent for reading an fd
-fn read_fd_kevent(fd: RawFd) -> KEvent {
-    KEvent::new(fd as usize,
-                EventFilter::EVFILT_READ,
-                EventFlag::EV_ADD,
-                FilterFlag::all(),
-                0, 0)
 }
 
 impl Compositor {
@@ -324,36 +306,19 @@ impl EventManager {
         let mut tm = TimingManager::new(15);
 
         // wayland-rs will not do blocking for us,
-        // so we need to use kqueue. This is the
-        // same approach as used by the input
-        // subsystem.
-        let ways_fd = self.em_display.get_poll_fd();
-        let input_fd = self.em_input.get_poll_fd();
-
-        // Create a new kqueue
-        let kq = kqueue().expect("Could not create kqueue");
-
-        // Create read events for ways and input
         // When registered, these will tell kqueue to notify
         // use when the wayland or libinput fds are readable
-        let kev_ways = read_fd_kevent(ways_fd);
-        let kev_input = read_fd_kevent(input_fd);
-
-        // Register our kevent with the kqueue to receive updates
-        kevent(kq, vec![kev_ways, kev_input].as_slice(), &mut [], 0)
-            .expect("Could not register watch event with kqueue");
-
-        // List of triggered events
-        // one for wayland and one for input
-        let mut evlist = vec![empty_kevent(), empty_kevent()];
+        let mut fdw = FdWatch::new();
+        fdw.add_fd(self.em_display.get_poll_fd());
+        fdw.add_fd(self.em_input.get_poll_fd());
+        // now register the fds we added
+        fdw.register_events();
 
         let mut needs_send = true;
 
         // reset the timer before we start
         tm.reset();
-        while kevent(kq, &[], evlist.as_mut_slice(),
-                     // timeout after 15 ms (16 is the ms per frame at 60fps)
-                     tm.time_remaining()).is_ok() {
+        while fdw.wait_for_events(tm.time_remaining()) {
             log!(LogLevel::profiling, "starting loop");
             // First thing to do is to dispatch libinput
             // It has time sensitive operations which need to take
@@ -394,8 +359,6 @@ impl EventManager {
                 .dispatch(Duration::from_millis(0), &mut ())
                 .unwrap();
             self.em_display.flush_clients(&mut ());
-
-            evlist = vec![empty_kevent(), empty_kevent()];
 
             log!(LogLevel::profiling, "EventManager: Blocking for max {} ms",
                  tm.time_remaining());
