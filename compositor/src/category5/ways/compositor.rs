@@ -15,6 +15,7 @@ use ws::protocol::{
     wl_surface as wlsi,
     wl_shm,
     wl_shell,
+    wl_seat,
 };
 
 use crate::category5::utils::{
@@ -26,6 +27,7 @@ use super::{
     shm::*,
     surface::*,
     wl_shell::wl_shell_handle_request,
+    seat::wl_seat_handle_request,
     xdg_shell::xdg_wm_base_handle_request,
     linux_dmabuf::*,
 };
@@ -177,6 +179,7 @@ impl EventManager {
         evman.create_wl_shell_global();
         evman.create_xdg_shell_global();
         evman.create_linux_dmabuf_global();
+        evman.create_wl_seat_global();
 
         return evman;
     }
@@ -290,6 +293,24 @@ impl EventManager {
                     // now we can handle the event
                     res.quick_assign(move |l, r, _| {
                         linux_dmabuf_handle_request(r, l);
+                    });
+                }
+            ),
+        );
+    }
+
+    // Initialize the wl_seat interface
+    //
+    // A wl_seat represents a group of input devices that a human
+    // is sitting in front of. This provisions the input interfaces
+    fn create_wl_seat_global(&mut self) {
+        self.em_display.create_global::<wl_seat::WlSeat, _>(
+            5, // version
+            Filter::new(
+                move |(res, _): (ws::Main<wl_seat::WlSeat>, u32), _, _| {
+                    // now we can handle the event
+                    res.quick_assign(move |s, r, _| {
+                        wl_seat_handle_request(r, s);
                     });
                 }
             ),
