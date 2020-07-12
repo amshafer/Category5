@@ -2,7 +2,10 @@
 //
 // Austin Shafer - 2020
 #![allow(dead_code)]
-use crate::category5::ways::surface::*;
+use crate::category5::ways::{
+    surface::*,
+    seat::Seat,
+};
 use crate::category5::vkcomp::wm;
 use super::WindowId;
 
@@ -45,6 +48,19 @@ enum Patch {
     set_window_dimensions((f32, f32, f32, f32)),
 }
 
+// private data used by ways only
+//
+// This holds all of the protocol resources
+// that ways needs. An array of these are used (indexed
+// by the window id) to tie an id to a set of protocol
+// objects. i.e. find the surface/seat/etc for this id.
+pub struct Priv {
+    // a surface to have its callbacks called
+    p_surf: Option<Rc<RefCell<Surface>>>,
+    // a collection of input resources
+    p_seat: Option<Seat>,
+}
+
 // Global state tracking
 //
 // Don't make fun of my naming convention pls. We need a
@@ -77,8 +93,8 @@ pub struct Atmosphere {
     // -- private subsystem specific resources --
 
     // -- ways --
-    // a list of surfaces to have their callbacks called
-    a_ways_surfaces: Vec<Rc<RefCell<Surface>>>,
+    
+    a_ways_priv: Vec<Priv>,
     // A hashmap of patches based on the window id and the
     // property name
     //
