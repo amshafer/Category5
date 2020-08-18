@@ -27,7 +27,6 @@ use super::{
     shm::*,
     surface::*,
     wl_shell::wl_shell_handle_request,
-    seat::wl_seat_handle_request,
     xdg_shell::xdg_wm_base_handle_request,
     linux_dmabuf::*,
 };
@@ -36,6 +35,7 @@ use super::protocol::{
     linux_dmabuf::zwp_linux_dmabuf_v1 as zldv1,
 };
 use super::seat::Seat;
+use super::utils;
 
 use std::time::Duration;
 use std::cell::RefCell;
@@ -55,8 +55,6 @@ use std::ops::Deref;
 #[allow(dead_code)]
 pub struct Compositor {
     c_atmos: Rc<RefCell<Atmosphere>>,
-    // counter for the next window id to hand out
-    c_next_window_id: u32,
 }
 
 // The event manager
@@ -92,12 +90,11 @@ impl Compositor {
     // module
     pub fn create_surface(&mut self, surf: Main<wlsi::WlSurface>) {
         log!(LogLevel::debug, "Creating a new surface");
-        // Ask the window manage to create a new window
-        // without contents
-        self.c_next_window_id += 1;
-
-        // create an entry in the surfaces list
-        let id = self.c_next_window_id;
+        let id = utils::get_id_from_client(
+            self.c_atmos.clone(),
+            surf.as_ref().client()
+                .expect("client for this surface seems to have disappeared")
+        );
 
         // Create a reference counted object
         // in charge of this new surface
@@ -109,8 +106,6 @@ impl Compositor {
         ));
         // This clone will be passed to the surface handler
         let ns_clone = new_surface.clone();
-        // Track this surface in the compositor state
-        self.c_atmos.borrow_mut().add_window_id(id);
 
         // wayland_server takes care of creating the resource for
         // us, but we need to provide a function for it to call
@@ -136,8 +131,7 @@ impl Compositor {
 }
 
 impl EventManager {
-    // Returns a new Compositor struct
-    //    (okay well really an EventManager)
+    // Returns a new struct in charge of running the main event loop
     //
     // This creates a new wayland compositor, setting up all 
     // the needed resources for the struct. It will create a
@@ -161,7 +155,6 @@ impl EventManager {
         let comp_cell = Rc::new(RefCell::new(
             Compositor {
                 c_atmos: atmos.clone(),
-                c_next_window_id: 1,
             }
         ));
 
@@ -305,20 +298,24 @@ impl EventManager {
     // A wl_seat represents a group of input devices that a human
     // is sitting in front of. This provisions the input interfaces
     fn create_wl_seat_global(&mut self) {
+        // for some reason we need to do two clones to make the lifetime
+        // inference happy with the closures below
+        let atmos = self.em_atmos.clone();
+
         self.em_display.create_global::<wl_seat::WlSeat, _>(
             5, // version
             Filter::new(
                 move |(res, _): (ws::Main<wl_seat::WlSeat>, u32), _, _| {
                     // as_ref turns the Main into a Resource
                     let client = res.as_ref().client().unwrap();
-                    let seat = Seat {
-                        s_keyboard: None,
-                    };
-                    client.data_map().insert_if_missing(move || seat);
+                    // get the id representing this client in the atmos
+                    let id = utils::get_id_from_client(atmos.clone(), client);
 
+                    // add a new seat to this client
+                    let seat = Rc::new(RefCell::new(Seat::new(id, res.clone())));
                     // now we can handle the event
                     res.quick_assign(move |s, r, _| {
-                        wl_seat_handle_request(r, s);
+                        seat.borrow_mut().handle_request(r, s);
                     });
                 }
             ),

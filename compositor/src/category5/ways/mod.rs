@@ -14,6 +14,7 @@ mod wl_shell;
 pub mod linux_dmabuf;
 
 // Utils
+pub mod utils;
 mod role;
 pub mod sys;
 pub mod task;

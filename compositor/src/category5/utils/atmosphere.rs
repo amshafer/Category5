@@ -94,6 +94,10 @@ pub struct Atmosphere {
 
     // -- private subsystem specific resources --
 
+    // The next id to hand out
+    // TODO: make this an id map?
+    a_next_id: u32,
+
     // -- ways --
     
     a_ways_priv: Vec<Option<Priv>>,
@@ -136,12 +140,23 @@ impl Atmosphere {
             a_rx: rx,
             a_hemi: Some(Box::new(Hemisphere::new())),
             // TODO: only do this for ways
+            a_next_id: 0,
             a_ways_priv: Vec::new(),
             a_patches: HashMap::new(),
             a_cursor_patch: None,
             a_grab_patch: None,
             a_resolution_patch: None,
         }
+    }
+
+    // Get the next id
+    //
+    // Find a free id if one is available, if not then
+    // add a new one
+    pub fn mint_client_id(&mut self) -> WindowId {
+        let ret = self.a_next_id;
+        self.a_next_id += 1;
+        ret
     }
 
     // Commit all our patches into the hemisphere
@@ -274,17 +289,21 @@ impl Atmosphere {
                        &Patch::add_new_toplevel(id));
     }
 
-    // TODO: remove this
+    // TODO: add window map
     pub fn add_window_id(&mut self, id: WindowId) {
         self.add_patch(id,
                        Property::ADD_WINDOW_ID,
                        &Patch::add_window_id(id));
 
         // Add a new priv entry
-        self.a_ways_priv[id as usize] = Some(Priv {
+        self.a_ways_priv.insert(id as usize, Some(Priv {
             p_surf: None,
             p_seat: None,
-        });
+        }));
+    }
+
+    pub fn free_window_id(&mut self, id: WindowId) {
+        // TODO: add window map
     }
 
     // Get the window order from [0..n windows)
@@ -604,6 +623,10 @@ impl Hemisphere {
     fn add_window_id(&mut self, id: WindowId) {
         self.mark_changed();
         self.h_windows.push(id);
+    }
+
+    fn free_window_id(&mut self, id: WindowId) {
+        // TODO: add window id map
     }
 
     pub fn wm_task_pop(&mut self) -> Option<wm::task::Task> {
