@@ -35,6 +35,7 @@ use super::protocol::{
     xdg_shell::xdg_wm_base,
     linux_dmabuf::zwp_linux_dmabuf_v1 as zldv1,
 };
+use super::seat::Seat;
 
 use std::time::Duration;
 use std::cell::RefCell;
@@ -308,6 +309,13 @@ impl EventManager {
             5, // version
             Filter::new(
                 move |(res, _): (ws::Main<wl_seat::WlSeat>, u32), _, _| {
+                    // as_ref turns the Main into a Resource
+                    let client = res.as_ref().client().unwrap();
+                    let seat = Seat {
+                        s_keyboard: None,
+                    };
+                    client.data_map().insert_if_missing(move || seat);
+
                     // now we can handle the event
                     res.quick_assign(move |s, r, _| {
                         wl_seat_handle_request(r, s);

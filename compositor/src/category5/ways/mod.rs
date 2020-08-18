@@ -7,7 +7,7 @@
 pub mod compositor;
 pub mod surface;
 mod shm;
-mod seat;
+pub mod seat;
 mod keyboard;
 mod xdg_shell;
 mod wl_shell;

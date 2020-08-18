@@ -22,7 +22,7 @@ use udev::{Enumerator,Context};
 use input::{Libinput,LibinputInterface};
 use input::event::Event;
 use input::event::pointer::{ButtonState, PointerEvent};
-use input::event::keyboard::KeyboardEvent;
+use input::event::keyboard::{KeyboardEvent, KeyboardEventTrait};
 
 
 use std::fs::{File,OpenOptions};
@@ -187,8 +187,13 @@ impl Input {
                      lc_state: b.button_state(),
                  }));
              },
-             Some(Event::Keyboard(KeyboardEvent::Key(_))) =>
-                 std::process::exit(0),
+             Some(Event::Keyboard(KeyboardEvent::Key(k))) => {
+                 log!(LogLevel::debug, "keyboard event: {:?}", k);
+                 return Some(InputEvent::key(Key {
+                     k_code: k.key(),
+                     k_state: k.key_state(),
+                 }));
+             },
              Some(e) => log!(LogLevel::error, "Unhandled Input Event: {:?}", e),
              None => (),
          };
@@ -198,13 +203,11 @@ impl Input {
 
     // Does what it says
     //
-    // This is the bug ugly state machine for processing an input
+    // This is the big ugly state machine for processing an input
     // token that was the result of clicking the pointer. We need
     // to find what the cursor is over and perform the appropriate
     // action.
-    fn handle_click_on_window(&mut self,
-                              lc: &LeftClick)
-    {
+    fn handle_click_on_window(&mut self, lc: &LeftClick) {
         let mut atmos = self.i_atmos.borrow_mut();
         let cursor = atmos.get_cursor_pos();
 
@@ -234,6 +237,17 @@ impl Input {
         }
     }
 
+    // Handle the user typing on the keyboard
+    //
+    //
+    pub fn handle_keyboard(&mut self, key: &Key) {
+        // find the client in use
+
+        // get the seat for this client
+
+        // deliver the event
+    }
+
     // Dispatch an arbitrary input event
     //
     // Input events are either handled by us or by the wayland client
@@ -247,7 +261,9 @@ impl Input {
                     .add_cursor_pos(m.pm_dx, m.pm_dy);
             },
             InputEvent::left_click(lc) =>
-                self.handle_click_on_window(lc) ,
+                self.handle_click_on_window(lc),
+            InputEvent::key(k) =>
+                self.handle_keyboard(k),
         }
     }
 }

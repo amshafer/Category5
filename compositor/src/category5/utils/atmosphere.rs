@@ -2,6 +2,8 @@
 //
 // Austin Shafer - 2020
 #![allow(dead_code)]
+extern crate wayland_server as ws;
+
 use crate::category5::ways::{
     surface::*,
     seat::Seat,
@@ -58,7 +60,7 @@ pub struct Priv {
     // a surface to have its callbacks called
     p_surf: Option<Rc<RefCell<Surface>>>,
     // a collection of input resources
-    p_seat: Option<Seat>,
+    p_seat: Option<Rc<RefCell<Seat>>>,
 }
 
 // Global state tracking
@@ -94,7 +96,7 @@ pub struct Atmosphere {
 
     // -- ways --
     
-    a_ways_priv: Vec<Priv>,
+    a_ways_priv: Vec<Option<Priv>>,
     // A hashmap of patches based on the window id and the
     // property name
     //
@@ -134,7 +136,7 @@ impl Atmosphere {
             a_rx: rx,
             a_hemi: Some(Box::new(Hemisphere::new())),
             // TODO: only do this for ways
-            a_ways_surfaces: Vec::new(),
+            a_ways_priv: Vec::new(),
             a_patches: HashMap::new(),
             a_cursor_patch: None,
             a_grab_patch: None,
@@ -277,6 +279,12 @@ impl Atmosphere {
         self.add_patch(id,
                        Property::ADD_WINDOW_ID,
                        &Patch::add_window_id(id));
+
+        // Add a new priv entry
+        self.a_ways_priv[id as usize] = Some(Priv {
+            p_surf: None,
+            p_seat: None,
+        });
     }
 
     // Get the window order from [0..n windows)
@@ -284,6 +292,11 @@ impl Atmosphere {
     // TODO: Make this a more efficient tree
     pub fn get_window_order(&self, id: WindowId) -> u32 {
         self.a_hemi.as_ref().unwrap().get_window_order(id)
+    }
+
+    // Get the window currently in use
+    pub fn get_window_in_focus(&self) -> WindowId {
+        self.a_hemi.as_ref().unwrap().get_window_in_focus()
     }
 
     // this is one of the few updates from vkcomp
@@ -416,8 +429,21 @@ impl Atmosphere {
 
     // -- subsystem specific handlers --
 
-    pub fn add_surface(&mut self, surf: Rc<RefCell<Surface>>) {
-        self.a_ways_surfaces.push(surf);
+    pub fn add_surface(&mut self, id: WindowId,
+                       surf: Rc<RefCell<Surface>>)
+    {
+        if let Some(private) = self.a_ways_priv[id as usize].as_mut() {
+            private.p_surf = Some(surf);
+        }
+    }
+
+    pub fn get_seat_from_id(&mut self, id: WindowId)
+                            -> Option<Rc<RefCell<Seat>>>
+    {
+        if let Some(private) = self.a_ways_priv[id as usize].as_mut() {
+            return private.p_seat.clone();
+        }
+        return None;
     }
 
     // Signal any registered frame callbacks
@@ -427,15 +453,20 @@ impl Atmosphere {
     // redraw themselves. If they aren't on screen we don't send
     // the callback so it doesn't use the power.
     pub fn signal_frame_callbacks(&mut self) {
-        for cell in &self.a_ways_surfaces {
-            let surf = cell.borrow_mut();
-            if let Some(callback) = surf.s_frame_callback.as_ref() {
-                // frame callbacks return the current time
-                // in milliseconds.
-                callback.done(SystemTime::now()
-                              .duration_since(UNIX_EPOCH)
-                              .expect("Error getting system time")
-                              .as_millis() as u32);
+        for private in self.a_ways_priv
+            .iter()
+            .filter(|p| p.is_some())
+        {
+            if let Some(cell) = private.as_ref().unwrap().p_surf.as_ref() {
+                let surf = cell.borrow_mut();
+                if let Some(callback) = surf.s_frame_callback.as_ref() {
+                    // frame callbacks return the current time
+                    // in milliseconds.
+                    callback.done(SystemTime::now()
+                                  .duration_since(UNIX_EPOCH)
+                                  .expect("Error getting system time")
+                                  .as_millis() as u32);
+                }
             }
         }
     }
@@ -624,6 +655,13 @@ impl Hemisphere {
     // ----------------
     // accessors
     // ----------------
+
+    // Get the window currently in use
+    // The window heir is sorted, so the first one will
+    // be the top level
+    pub fn get_window_in_focus(&self) -> WindowId {
+        self.h_window_heir[0]
+    }
 
     pub fn get_resolution(&self) -> (u32, u32) {
         self.h_resolution

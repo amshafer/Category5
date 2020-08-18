@@ -6,9 +6,13 @@
 // Austin Shafer - 2020
 extern crate wayland_server as ws;
 use ws::Main;
-use ws::protocol::wl_seat;
+use ws::protocol::{wl_seat, wl_keyboard};
 
 use super::keyboard::wl_keyboard_handle_request;
+
+pub struct Seat {
+    pub s_keyboard: Option<wl_keyboard::WlKeyboard>,
+}
 
 pub fn wl_seat_handle_request(req: wl_seat::Request,
                               _seat: Main<wl_seat::WlSeat>)
@@ -19,5 +23,13 @@ pub fn wl_seat_handle_request(req: wl_seat::Request,
                 wl_keyboard_handle_request(r, k);
             }),
         _ => {},
+    }
+}
+
+impl Seat {
+    pub fn new() -> Seat {
+        Seat {
+            s_keyboard: None,
+        }
     }
 }
