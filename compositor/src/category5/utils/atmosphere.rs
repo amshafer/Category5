@@ -26,7 +26,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // method is needed to identify the property to update
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
 enum Property {
-    ADD_WINDOW_ID,
+    RESERVE_WINDOW_ID,
     ADD_NEW_TOPLEVEL,
     SET_WINDOW_DIMENSIONS,
 }
@@ -45,7 +45,7 @@ enum Property {
 #[allow(dead_code)]
 #[derive(Copy, Clone)]
 enum Patch {
-    add_window_id(WindowId),
+    reserve_window_id(WindowId),
     add_new_toplevel(WindowId),
     set_window_dimensions((f32, f32, f32, f32)),
 }
@@ -95,8 +95,8 @@ pub struct Atmosphere {
     // -- private subsystem specific resources --
 
     // The next id to hand out
-    // TODO: make this an id map?
-    a_next_id: u32,
+    // each index is marked true if that id is handed out
+    a_id_map: Vec<bool>
 
     // -- ways --
     
@@ -140,7 +140,7 @@ impl Atmosphere {
             a_rx: rx,
             a_hemi: Some(Box::new(Hemisphere::new())),
             // TODO: only do this for ways
-            a_next_id: 0,
+            a_id_map: Vec::new(),
             a_ways_priv: Vec::new(),
             a_patches: HashMap::new(),
             a_cursor_patch: None,
@@ -154,9 +154,13 @@ impl Atmosphere {
     // Find a free id if one is available, if not then
     // add a new one
     pub fn mint_client_id(&mut self) -> WindowId {
-        let ret = self.a_next_id;
-        self.a_next_id += 1;
-        ret
+        for (i, in_use) in self.a_id_map.iter().enumerate() {
+            if !*in_use {
+                *in_use = true;
+                self.reserve_window_id(i);
+                return i;
+            }
+        }
     }
 
     // Commit all our patches into the hemisphere
@@ -289,21 +293,35 @@ impl Atmosphere {
                        &Patch::add_new_toplevel(id));
     }
 
-    // TODO: add window map
-    pub fn add_window_id(&mut self, id: WindowId) {
+    // Mark the specified id as in-use
+    //
+    // Ids are used as indexes for most of the vecs
+    // in the hemisphere, and we need to mark this as
+    // no longer available
+    pub fn reserve_window_id(&mut self, id: WindowId) {
         self.add_patch(id,
-                       Property::ADD_WINDOW_ID,
-                       &Patch::add_window_id(id));
+                       Property::RESERVE_WINDOW_ID,
+                       &Patch::reserve_window_id(id));
 
         // Add a new priv entry
-        self.a_ways_priv.insert(id as usize, Some(Priv {
+        let private = Some(Priv {
             p_surf: None,
             p_seat: None,
-        }));
+        });
+        if id < self.a_ways_priv.len() {
+            assert!(!self.a_ways_priv[id as usize].is_none());
+            self.a_ways_privs[id as usize] = true;
+        } else {
+            // otherwise make a new one
+            assert!(id == self.a_ways_priv.len());
+            self.a_ways_priv.push(private);
+        }
     }
 
+    // Mark the id as available
     pub fn free_window_id(&mut self, id: WindowId) {
-        // TODO: add window map
+        assert!(!self.a_ways_priv[id as usize].is_none());
+        self.a_ways_priv[id as usize] = None;
     }
 
     // Get the window order from [0..n windows)
@@ -531,14 +549,16 @@ pub struct Hemisphere {
     h_grabbed: Option<WindowId>,
     // A list of surfaces which have been handed out to clients
     // Recorded here so we can perform interesting DE interactions
-    h_windows: Vec<WindowId>,
+    // These are indexed by window id, and marked true if they are
+    // in use. (aka h_windows[0] == false means this id is available)
+    h_windows: Vec<bool>,
     // a list of the window ids from front to back
     // index 0 is the current focus
     h_window_heir: Vec<WindowId>,
     // The position of each window's top left corner, and it's width
     // Indexed by WindowId
     // (base_x, base_y, width, height)
-    h_window_dimensions: Vec<(f32, f32, f32, f32)>,
+    h_window_dimensions: Vec<Option<(f32, f32, f32, f32)>>,
     // A list of tasks to be completed by vkcomp this frame
     // - does not need to be patched
     //
@@ -580,8 +600,8 @@ impl Hemisphere {
                    patch: &Patch)
     {
         match patch {
-            Patch::add_window_id(id) =>
-                self.add_window_id(*id),
+            Patch::reserve_window_id(id) =>
+                self.reserve_window_id(*id),
             Patch::add_new_toplevel(id) =>
                 self.add_new_toplevel(*id),
             Patch::set_window_dimensions(dims) =>
@@ -620,13 +640,34 @@ impl Hemisphere {
         self.h_wm_tasks.push(task);
     }
 
-    fn add_window_id(&mut self, id: WindowId) {
+    // Returns the lowest allocated client id
+    // does not handle any heirarchy or other stuff
+    fn reserve_window_id(&mut self, wid: WindowId) {
         self.mark_changed();
-        self.h_windows.push(id);
+        let id = wid as usize;
+
+        // Check if we can reuse the id
+        if id < self.h_windows.len() {
+            assert!(!self.h_windows[id].is_none());
+            self.h_windows[id] = true;
+        } else {
+            // otherwise make a new one
+            assert!(id == self.h_windows.len());
+            self.h_windows.push(true);
+        }
     }
 
+    // Marks id as free and removes all references to it
     fn free_window_id(&mut self, id: WindowId) {
-        // TODO: add window id map
+        assert!(id < self.h_windows.len());
+        self.mark_changed();
+
+        self.h_windows[id as usize] = false;
+        // remove this id from the heirarchy
+        self.h_window_heir
+            .iter()
+            .filter(|wid| wid == id)
+            .collect();
     }
 
     pub fn wm_task_pop(&mut self) -> Option<wm::task::Task> {
@@ -662,12 +703,11 @@ impl Hemisphere {
                                  height: f32)
     {
         if (id as usize) >= self.h_window_dimensions.len() {
-            self.h_window_dimensions.resize(id as usize + 1,
-                                            (0.0, 0.0, 0.0, 0.0));
+            self.h_window_dimensions.resize(id as usize + 1, None);
         }
 
         self.h_window_dimensions[id as usize] =
-            (x, y, width, height);
+            Some((x, y, width, height));
     }
 
     // this is one of the few updates from vkcomp
@@ -713,7 +753,7 @@ impl Hemisphere {
             self.h_resolution.1 as f32 * 0.02;
 
         for win in self.h_window_heir.iter() {
-            let pos = self.h_window_dimensions[*win as usize];
+            let pos = self.h_window_dimensions[*win as usize].unwrap();
 
             // If this window contains (x, y) then return it
             if x > pos.0 && y > pos.1
@@ -735,7 +775,7 @@ impl Hemisphere {
         let barsize =
             self.h_resolution.1 as f32 * 0.02;
 
-        let pos = self.h_window_dimensions[id as usize];
+        let pos = self.h_window_dimensions[id as usize].unwrap();
 
         // If this window contains (x, y) then return it
         if x > pos.0 && y > pos.1
@@ -756,6 +796,6 @@ impl Hemisphere {
     {
         assert!((id as usize) < self.h_window_dimensions.len());
 
-        self.h_window_dimensions[id as usize]
+        self.h_window_dimensions[id as usize].unwrap()
     }
 }
