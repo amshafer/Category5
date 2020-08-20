@@ -14,7 +14,7 @@ use super::WindowId;
 use std::rc::Rc;
 use std::vec::Vec;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap,VecDeque};
 use std::sync::mpsc::{Sender,Receiver};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -96,7 +96,7 @@ pub struct Atmosphere {
 
     // The next id to hand out
     // each index is marked true if that id is handed out
-    a_id_map: Vec<bool>
+    a_id_map: Vec<bool>,
 
     // -- ways --
     
@@ -154,13 +154,20 @@ impl Atmosphere {
     // Find a free id if one is available, if not then
     // add a new one
     pub fn mint_client_id(&mut self) -> WindowId {
-        for (i, in_use) in self.a_id_map.iter().enumerate() {
+        for (i, in_use) in self.a_id_map.iter_mut().enumerate() {
             if !*in_use {
                 *in_use = true;
-                self.reserve_window_id(i);
-                return i;
+                self.reserve_window_id(i as u32);
+                return i as u32;
             }
         }
+
+        // grow the mapping
+        self.reserve_window_id(self.a_id_map.len() as u32);
+        // this should come separately so we don't mess with the len
+        // used in the line above
+        self.a_id_map.push(true);
+        return (self.a_id_map.len() - 1) as u32;
     }
 
     // Commit all our patches into the hemisphere
@@ -308,12 +315,12 @@ impl Atmosphere {
             p_surf: None,
             p_seat: None,
         });
-        if id < self.a_ways_priv.len() {
+        if (id as usize) < self.a_ways_priv.len() {
             assert!(!self.a_ways_priv[id as usize].is_none());
-            self.a_ways_privs[id as usize] = true;
+            self.a_ways_priv[id as usize] = private;
         } else {
             // otherwise make a new one
-            assert!(id == self.a_ways_priv.len());
+            assert!(id as usize == self.a_ways_priv.len());
             self.a_ways_priv.push(private);
         }
     }
@@ -565,7 +572,7 @@ pub struct Hemisphere {
     // Tasks are one time events. Anything related to state should
     // be added elsewhere. A task is a transfer of ownership from
     // ways to vkcommp
-    h_wm_tasks: Vec<wm::task::Task>,
+    h_wm_tasks: VecDeque<wm::task::Task>,
     // The resolution of the screen
     // TODO: multimonitor support
     h_resolution: (u32, u32),
@@ -582,7 +589,7 @@ impl Hemisphere {
             h_windows: Vec::new(),
             h_window_heir: Vec::new(),
             h_window_dimensions: Vec::new(),
-            h_wm_tasks: Vec::new(),
+            h_wm_tasks: VecDeque::new(),
             h_resolution: (0, 0),
         }
     }
@@ -637,7 +644,7 @@ impl Hemisphere {
 
     fn add_wm_task(&mut self, task: wm::task::Task) {
         self.mark_changed();
-        self.h_wm_tasks.push(task);
+        self.h_wm_tasks.push_back(task);
     }
 
     // Returns the lowest allocated client id
@@ -648,7 +655,7 @@ impl Hemisphere {
 
         // Check if we can reuse the id
         if id < self.h_windows.len() {
-            assert!(!self.h_windows[id].is_none());
+            assert!(!self.h_windows[id]);
             self.h_windows[id] = true;
         } else {
             // otherwise make a new one
@@ -659,20 +666,17 @@ impl Hemisphere {
 
     // Marks id as free and removes all references to it
     fn free_window_id(&mut self, id: WindowId) {
-        assert!(id < self.h_windows.len());
+        assert!((id as usize) < self.h_windows.len());
         self.mark_changed();
 
         self.h_windows[id as usize] = false;
         // remove this id from the heirarchy
-        self.h_window_heir
-            .iter()
-            .filter(|wid| wid == id)
-            .collect();
+        self.h_window_heir.retain(|&wid| wid != id);
     }
 
     pub fn wm_task_pop(&mut self) -> Option<wm::task::Task> {
         self.mark_changed();
-        self.h_wm_tasks.pop()
+        self.h_wm_tasks.pop_front()
     }
 
     pub fn add_cursor_pos(&mut self, dx: f64, dy: f64) {

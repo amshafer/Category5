@@ -14,6 +14,8 @@ use crate::category5::utils::{
 use crate::category5::utils::*;
 use super::*;
 
+use nix::Error;
+use nix::errno::Errno;
 use nix::unistd::dup;
 use ash::version::{DeviceV1_0};
 use ash::vk;
@@ -386,6 +388,19 @@ impl Mesh {
     {
         log!(LogLevel::profiling, "Updating mesh with dmabuf {:?}", dmabuf);
         if let MeshPrivate::dmabuf(dp) = &mut self.m_priv {
+            // Since we are VERY async/threading friendly here, it is
+            // possible that the fd may be bad since the program that
+            // owns it was killed. If that is the case just return and
+            // don't update the texture.
+            let fd = match dup(dmabuf.db_fd) {
+                Ok(f) => f,
+                Err(Error::Sys(Errno::EBADF)) => return,
+                Err(e) => {
+                    log!(LogLevel::debug, "could not dup fd {:?}", e);
+                    return;
+                },
+            };
+
             unsafe {
                 // We need to update and rebind the memory
                 // for image
@@ -401,7 +416,7 @@ impl Mesh {
                                  ::EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF)
                     // Need to dup the fd, since I think the implementation
                     // will internally free whatever we give it
-                    .fd(dup(dmabuf.db_fd).unwrap())
+                    .fd(fd)
                     .build();
 
                 alloc_info.p_next = &import_info

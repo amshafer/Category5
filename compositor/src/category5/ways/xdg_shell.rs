@@ -152,6 +152,7 @@ impl ShellSurface {
         self.ss_attached_state.xs_make_toplevel = true;
 
         // Now add ourselves to the xdg_toplevel
+        // TODO: implement toplevel
         toplevel.quick_assign(|_,_,_| {});
         toplevel.as_ref().user_data().set(move || userdata);
     }

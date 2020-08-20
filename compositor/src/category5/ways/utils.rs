@@ -36,7 +36,7 @@ pub fn register_new_client(atmos_cell: Rc<RefCell<Atmosphere>>, client: Client)
         }
 
         // Track this surface in the compositor state
-        atmos.add_window_id(id);
+        atmos.reserve_window_id(id);
     }
 
     // when the client is destroyed we need to tell the atmosphere
