@@ -19,10 +19,45 @@ use std::clone::Clone;
 // This is the set of outstanding
 // configuration changes which have not
 // been committed yet.
+//
+// Configuration is a bit weird, I think it looks like:
+// first: any role interfaces will send their own configure events, which
+//   request the client to set itself to match a certain state (size, maximized, etc)
+// second: once that is done, the xdg_wm_base will send a configure event
+//   saying that the configuration requests are over with.
+// thirdish: the client will start making requests that update each part
+//   of the window state (i.e. set the size/title)
+// fourth: the client will do the ack_configure request to tell the server
+//   that it is done.
+// finally: the client will commit the surface, causing the server to apply
+//   all of the attached state
 #[allow(dead_code)]
 struct XdgState {
+    xs_acked: bool,
     // window title
     xs_title: Option<String>,
+    // the width and height of the window
+    xs_width: i32,
+    xs_height: i32,
+    // self-explanitory I think
+    xs_maximized: bool,
+    // guess what this one means
+    xs_fullscreen: bool,
+    // who would have thought
+    xs_resizing: bool,
+    // Is the window currently in focus?
+    xs_activated: bool,
+    // Is this window against a tile boundary?
+    xs_tiled_left: bool,
+    xs_tiled_right: bool,
+    xs_tiled_top: bool,
+    xs_tiled_bottom: bool,
+
+    // ------------------
+    // The following are "meta" configuration changes
+    // aka making new role objects, not related to the
+    // window itself
+    // ------------------
     // Should we create a new window
     xs_make_toplevel: bool,
 }
@@ -31,7 +66,18 @@ impl XdgState {
     // Return a state with no changes
     fn empty() -> XdgState {
         XdgState {
+            xs_acked: false,
             xs_title: None,
+            xs_width: 0,
+            xs_height: 0,
+            xs_maximized: false,
+            xs_fullscreen: false,
+            xs_resizing: false,
+            xs_activated: false,
+            xs_tiled_left: false,
+            xs_tiled_right: false,
+            xs_tiled_top: false,
+            xs_tiled_bottom: false,
             xs_make_toplevel: false,
         }
     }
@@ -58,7 +104,9 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request,
                 ss_atmos: atmos,
                 ss_surface: surf.clone(),
                 ss_surface_proxy: surface,
+                ss_xdg_surface: xdg.clone(),
                 ss_attached_state: XdgState::empty(),
+                ss_serial: 0,
             }));
 
             xdg.quick_assign(|s, r, _| {
@@ -98,6 +146,8 @@ fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>,
     match req {
         xdg_surface::Request::GetToplevel { id: xdg } =>
             shsurf.get_toplevel(xdg, ss_clone),
+        xdg_surface::Request::AckConfigure { serial } =>
+            shsurf.ack_configure(serial),
         _ => unimplemented!(),
     };
 }
@@ -115,8 +165,14 @@ pub struct ShellSurface {
     ss_surface: Rc<RefCell<Surface>>,
     // the wayland proxy
     ss_surface_proxy: wl_surface::WlSurface,
+    // The object this belongs to
+    ss_xdg_surface: Main<xdg_surface::XdgSurface>,
     // Outstanding changes to be applied in commit
-    ss_attached_state: XdgState
+    ss_attached_state: XdgState,
+    // A serial for tracking config updates
+    // every time we request a configuration this is the
+    // serial number used
+    ss_serial: u32,
 }
 
 impl ShellSurface {
@@ -125,6 +181,10 @@ impl ShellSurface {
     // to prevent causing a refcell panic.
     pub fn commit(&mut self, surf: &Surface) {
         let xs = &self.ss_attached_state;
+        // do nothing if the client has yet to ack these changes
+        if !xs.xs_acked {
+            return;
+        }
 
         // This has just been assigned role of toplevel
         if xs.xs_make_toplevel {
@@ -132,9 +192,19 @@ impl ShellSurface {
             println!("Setting surface {} to toplevel", surf.s_id);
             surf.s_atmos.borrow_mut().create_new_window(surf.s_id);
         }
-
         // Reset the state now that it is complete
         self.ss_attached_state = XdgState::empty();
+    }
+
+    // Check if this serial is the currently loaned out one,
+    // and if so set the existing state to be applied
+    pub fn ack_configure(&mut self, serial: u32) {
+        if serial == self.ss_serial {
+            // mark this as acked so it is applied in commit
+            self.ss_attached_state.xs_acked = true;
+            // increment the serial for next timme
+            self.ss_serial += 1;
+        }
     }
 
     // userdata is a Rc ref of ourselves which should
@@ -150,6 +220,14 @@ impl ShellSurface {
 
         // Record our state
         self.ss_attached_state.xs_make_toplevel = true;
+
+        // send configuration requests to the client
+        toplevel.configure(
+            // width and height 0 means client picks a size
+            0, 0,
+            Vec::new(), // TODO: specify our requirements?
+        );
+        self.ss_xdg_surface.configure(self.ss_serial);
 
         // Now add ourselves to the xdg_toplevel
         // TODO: implement toplevel

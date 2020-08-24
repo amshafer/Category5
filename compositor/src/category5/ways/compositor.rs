@@ -104,6 +104,8 @@ impl Compositor {
                 id,
                 0, 0)
         ));
+        // Add the new surface to the atmosphere
+        self.c_atmos.borrow_mut().add_surface(id, new_surface.clone());
         // This clone will be passed to the surface handler
         let ns_clone = new_surface.clone();
 
