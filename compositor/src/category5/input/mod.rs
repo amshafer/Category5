@@ -10,6 +10,7 @@
 extern crate input;
 extern crate udev;
 extern crate nix;
+extern crate xkbcommon;
 
 pub mod event;
 use event::*;
@@ -24,6 +25,8 @@ use input::event::Event;
 use input::event::pointer::{ButtonState, PointerEvent};
 use input::event::keyboard::{KeyboardEvent, KeyboardEventTrait};
 
+use xkbcommon::xkb;
+pub use xkbcommon::xkb::{keysyms, Keysym};
 
 use std::fs::{File,OpenOptions};
 use std::path::Path;
@@ -100,12 +103,23 @@ impl LibinputInterface for Inkit {
 // Input is grabbed from the udev interface, but
 // any method should be applicable. It just feeds
 // the ways and wm subsystems input events
+//
+// We will also stash our xkb resources here, and
+// will consult this before sending out keymaps/syms
 pub struct Input {
     i_atmos: Rc<RefCell<Atmosphere>>,
     // The udev context
     uctx: Context,
     // libinput context
     libin: Libinput,
+    // xkb goodies
+    i_xkb_ctx: xkb::Context,
+    i_xkb_keymap: xkb::Keymap,
+    // this is referenced by Seat, which needs to map and
+    // share it with the clients
+    pub i_xkb_keymap_name: String,
+    // xkb state machine
+    i_xkb_state: xkb::State,
 }
 
 impl Input {
@@ -132,10 +146,28 @@ impl Input {
         // the default seat is seat0, which is all input devs
         libin.udev_assign_seat("seat0").unwrap();
 
+        // Create all the components for xkb
+        // A description of this can be found in the xkb
+        // section of wayland-book.com
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let keymap = xkb::Keymap::new_from_names(
+            &context,
+            &"", &"", &"", &"", // These should be env vars
+            None,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        ).expect("Could not initialize a xkb keymap");
+        let km_name = keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
+
+        let state = xkb::State::new(&keymap);
+
         Input {
             i_atmos: atmos,
             uctx: uctx,
             libin: libin,
+            i_xkb_ctx: context,
+            i_xkb_keymap: keymap,
+            i_xkb_keymap_name: km_name,
+            i_xkb_state: state,
         }
     }
 
@@ -233,6 +265,7 @@ impl Input {
             } else {
                 // else the click was over the meat of the window, so
                 // deliver the event to the wayland client
+                // TODO: implement wl_pointer
             }
         }
     }
@@ -242,10 +275,28 @@ impl Input {
     //
     pub fn handle_keyboard(&mut self, key: &Key) {
         // find the client in use
+        let mut atmos = self.i_atmos.borrow_mut();
+        // if there is a window in focus
+        if let Some(id) = atmos.get_window_in_focus() {
+            // get the seat for this client
+            if let Some(cell) = atmos.get_seat_from_id(id) {
+                let mut seat = cell.borrow_mut();
+                if let Some(keyboard) = &seat.s_keyboard {
+                    // deliver the event
+                    let time = get_current_millis();
+                    let state = map_key_state(key.k_state);
 
-        // get the seat for this client
+                    // TODO: check if this is a modifier key
 
-        // deliver the event
+                    // give the sym to the client
+                    keyboard.key(seat.s_serial, time, key.k_code, state);
+                    // increment the serial for next time
+                    seat.s_serial += 1;
+                }
+            }
+        }
+        // otherwise the click is over the background, so
+        // ignore it
     }
 
     // Dispatch an arbitrary input event

@@ -1,9 +1,12 @@
 // Input event representation
 //
 // Austin Shafer - 2020
+extern crate wayland_server as ws;
 extern crate input;
 use input::event::pointer::ButtonState;
 use input::event::keyboard::KeyState;
+
+use ws::protocol::wl_keyboard;
 
 // This is our internal representation of input
 //
@@ -31,4 +34,15 @@ pub struct LeftClick {
 pub struct Key {
     pub k_code: u32,
     pub k_state: KeyState,
+}
+
+// A helper function to map a KeyState from the input event
+// into a KeyState from wl_keyboard
+pub fn map_key_state(state: KeyState) -> wl_keyboard::KeyState {
+    match state {
+        KeyState::Pressed =>
+            wl_keyboard::KeyState::Pressed,
+        KeyState::Released =>
+            wl_keyboard::KeyState::Released,
+    }
 }

@@ -5,7 +5,6 @@
 // protocols
 //
 // Austin Shafer - 2019
-extern crate nix;
 extern crate input;
 pub extern crate wayland_server as ws;
 use ws::{Filter,Main,Resource};
@@ -74,7 +73,7 @@ pub struct EventManager {
     // This is not in its own thread since it generates a
     // huge amount of updates, which performs poorly with
     // channel-based message passing.
-    em_input: Input,
+    em_input: Rc<RefCell<Input>>,
     // How much the mouse has moved in this frame
     // aggregates input pointer events
     em_pointer_dx: f64,
@@ -163,7 +162,7 @@ impl EventManager {
         let mut evman = Box::new(EventManager {
             em_atmos: atmos.clone(),
             em_display: display,
-            em_input: Input::new(atmos),
+            em_input: Rc::new(RefCell::new(Input::new(atmos))),
             em_pointer_dx: 0.0,
             em_pointer_dy: 0.0,
         });
@@ -303,6 +302,7 @@ impl EventManager {
         // for some reason we need to do two clones to make the lifetime
         // inference happy with the closures below
         let atmos = self.em_atmos.clone();
+        let input_sys = self.em_input.clone();
 
         self.em_display.create_global::<wl_seat::WlSeat, _>(
             5, // version
@@ -314,7 +314,10 @@ impl EventManager {
                     let id = utils::get_id_from_client(atmos.clone(), client);
 
                     // add a new seat to this client
-                    let seat = Rc::new(RefCell::new(Seat::new(id, res.clone())));
+                    let seat = Rc::new(RefCell::new(
+                        Seat::new(input_sys.clone(), id, res.clone())
+                    ));
+                    atmos.borrow_mut().add_seat(id, seat.clone());
                     // now we can handle the event
                     res.quick_assign(move |s, r, _| {
                         seat.borrow_mut().handle_request(r, s);
@@ -338,7 +341,7 @@ impl EventManager {
         // use when the wayland or libinput fds are readable
         let mut fdw = FdWatch::new();
         fdw.add_fd(self.em_display.get_poll_fd());
-        fdw.add_fd(self.em_input.get_poll_fd());
+        fdw.add_fd(self.em_input.borrow_mut().get_poll_fd());
         // now register the fds we added
         fdw.register_events();
 
@@ -351,7 +354,7 @@ impl EventManager {
             // First thing to do is to dispatch libinput
             // It has time sensitive operations which need to take
             // place as soon as the fd is readable
-            self.em_input.dispatch();
+            self.em_input.borrow_mut().dispatch();
 
             // TODO: This might not be the most accurate
             if tm.is_overdue() {

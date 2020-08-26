@@ -339,7 +339,7 @@ impl Atmosphere {
     }
 
     // Get the window currently in use
-    pub fn get_window_in_focus(&self) -> WindowId {
+    pub fn get_window_in_focus(&self) -> Option<WindowId> {
         self.a_hemi.as_ref().unwrap().get_window_in_focus()
     }
 
@@ -478,6 +478,14 @@ impl Atmosphere {
     {
         if let Some(private) = self.a_ways_priv[id as usize].as_mut() {
             private.p_surf = Some(surf);
+        }
+    }
+
+    pub fn add_seat(&mut self, id: WindowId,
+                    seat: Rc<RefCell<Seat>>)
+    {
+        if let Some(private) = self.a_ways_priv[id as usize].as_mut() {
+            private.p_seat = Some(seat);
         }
     }
 
@@ -726,8 +734,11 @@ impl Hemisphere {
     // Get the window currently in use
     // The window heir is sorted, so the first one will
     // be the top level
-    pub fn get_window_in_focus(&self) -> WindowId {
-        self.h_window_heir[0]
+    pub fn get_window_in_focus(&self) -> Option<WindowId> {
+        if self.h_window_heir.len() > 0 {
+            return Some(self.h_window_heir[0]);
+        }
+        return None;
     }
 
     pub fn get_resolution(&self) -> (u32, u32) {
