@@ -435,8 +435,7 @@ impl Renderer {
                                 -> Device
     {
         let dev_extension_names = [khr::Swapchain::name().as_ptr(),
-                                   khr::ExternalMemoryFd::name().as_ptr(),
-                                   "VK_EXT_display_control".as_ptr() as *const i8];
+                                   khr::ExternalMemoryFd::name().as_ptr()];
 
         let features = vk::PhysicalDeviceFeatures {
             shader_clip_distance: 1,
