@@ -345,7 +345,10 @@ impl EventManager {
         // now register the fds we added
         fdw.register_events();
 
+        // Do we need to send our hemisphere
         let mut needs_send = true;
+        // do we need to send frame callbacks
+        let mut needs_frame = true;
 
         // reset the timer before we start
         tm.reset();
@@ -359,15 +362,20 @@ impl EventManager {
             // TODO: This might not be the most accurate
             if tm.is_overdue() {
                 log!(LogLevel::profiling, "timer out");
-                // Only flip hemispheres if we have updates to push
-                // this saves a little power
+                if needs_frame {
+                    needs_frame = false;
+                    // it has been roughly one frame, so fire the frame callbacks
+                    // so clients can draw
+                    self.em_atmos.borrow_mut().signal_frame_callbacks();
+                }
+
+                // Try to flip hemispheres to push our updates to vkcomp
+                // First we need to send our hemisphere, then we can
+                // try to recv it later. If we can't recieve it, then
+                // continue processing wayland updates so the system
+                // doesn't lag
                 if self.em_atmos.borrow_mut().is_changed() {
                     log!(LogLevel::profiling, "finished frame");
-
-                    // Flip hemispheres to push our updates to vkcomp
-                    // this must be terrible for the local fauna
-                    //
-                    // This is a synchronization point. It will block
                     if needs_send {
                         needs_send = false;
                         self.em_atmos.borrow_mut().send_hemisphere(); 
@@ -375,13 +383,14 @@ impl EventManager {
                     if self.em_atmos.borrow_mut().recv_hemisphere() {
                         // reset our timer
                         tm.reset();
-
-                        // it has been roughly one frame, so fire the frame callbacks
-                        // so clients can draw
-                        self.em_atmos.borrow_mut().signal_frame_callbacks();
-
                         needs_send = true;
+                        needs_frame = true;
                     }
+                } else {
+                    // The atmosphere was not changed, 
+                    tm.reset();
+                    needs_frame = true;
+                    needs_send = true;
                 }
             }
 

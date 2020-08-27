@@ -224,6 +224,7 @@ impl WindowManager {
                 app,
                 WindowContents::dmabuf(&info.ufd_dmabuf),
                 ReleaseInfo::dmabuf(DmabufReleaseInfo {
+                    dr_fd: info.ufd_dmabuf.db_fd,
                     dr_wl_buffer: info.ufd_wl_buffer.clone(),
                 }),
             );
@@ -234,6 +235,7 @@ impl WindowManager {
             app.mesh = self.rend.create_mesh(
                 WindowContents::dmabuf(&info.ufd_dmabuf),
                 ReleaseInfo::dmabuf(DmabufReleaseInfo {
+                    dr_fd: info.ufd_dmabuf.db_fd,
                     dr_wl_buffer: info.ufd_wl_buffer.clone(),
                 }),
             );
@@ -512,6 +514,12 @@ impl WindowManager {
         let mut draw_stop = StopWatch::new();
 
         loop {
+            // Now that we have completed the previous frame, we can
+            // release all the resources used to construct it while
+            // we wait for our draw calls
+            // note: -bad- this probably calls wayland locks
+            self.rend.release_pending_resources();
+
             // Flip hemispheres to push our updates to vkcomp
             // this must be terrible for the local fauna
             //
@@ -534,12 +542,6 @@ impl WindowManager {
             // Create a frame out of the hemisphere we got from ways
             self.begin_frame();
             self.reap_dead_windows();
-            // Now that we have completed the previous frame, we can
-            // release all the resources used to construct it while
-            // we wait for our draw calls
-            // note: -bad- this probably calls wayland locks
-            self.rend.release_pending_resources();
-
             // present our frame
             self.end_frame();
             draw_stop.end();

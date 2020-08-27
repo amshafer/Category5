@@ -162,14 +162,11 @@ pub struct Renderer {
     submit_fence: vk::Fence,
     // needed for VkGetMemoryFdPropertiesKHR
     external_mem_fd_loader: khr::ExternalMemoryFd,
-    // resources to be freed at the end of this frame
-    // This is 0 or 1, for which vec we are using
-    r_release_index: usize,
-    // We have two pending release lists, the list for
-    // the previous frame and the list we are adding
-    // to for this frame. See WindowManger's worker_thread
-    // for more
-    r_release: [Vec<ReleaseInfo> ; 2],
+    // The pending release list
+    // This is the set of wayland resources used last frame
+    // for rendering that should now be released
+    // See WindowManger's worker_thread for more
+    r_release: Vec<ReleaseInfo>,
 }
 
 // an application specific set of resources to draw.
@@ -459,7 +456,8 @@ impl Renderer {
         let dev_create_info = vk::DeviceCreateInfo::builder()
             .queue_create_infos(queue_infos.as_ref())
             .enabled_extension_names(&dev_extension_names)
-            .enabled_features(&features);
+            .enabled_features(&features)
+            .build();
 
         // return a newly created device
         inst.create_device(pdev, &dev_create_info, None)
@@ -872,8 +870,7 @@ impl Renderer {
     // Returns true if there are any resources in
     // the current release list.
     pub fn release_is_empty(&mut self) -> bool {
-        return self.r_release[self.r_release_index]
-            .is_empty();
+        return self.r_release.is_empty();
     }
 
     // Drop all of the resources, this is used to
@@ -881,13 +878,11 @@ impl Renderer {
     // We should not deal with wayland structs
     // directly, just with releaseinfo
     pub fn release_pending_resources(&mut self) {
-        log!(LogLevel::profiling, "releasing pending resources from list {}",
-             self.r_release_index);
-        // flip index between 0 and 1
-        self.r_release_index = (!self.r_release_index) & 1;
-        // now that we have flipped the index, we will be
-        // clearing the previous frames's resource list
-        self.r_release[self.r_release_index].clear();
+        log!(LogLevel::profiling, "releasing pending resources --> {:?}",
+             self.r_release);
+        // This is the previous frames's pending release list
+        // We will clear it, therefore dropping all the relinfos
+        self.r_release.clear();
     }
 
     // Add a ReleaseInfo to the list of resources to be
@@ -897,7 +892,7 @@ impl Renderer {
     pub fn register_for_release(&mut self,
                                 release: ReleaseInfo)
     {
-       self.r_release[self.r_release_index].push(release);
+       self.r_release.push(release);
     }
 
     // Find an app's mesh and update its contents
@@ -1152,8 +1147,7 @@ impl Renderer {
                 submit_fence: fence,
                 app_ctx: RefCell::new(None),
                 external_mem_fd_loader: ext_mem_loader,
-                r_release_index: 0,
-                r_release: [Vec::new(), Vec::new()],
+                r_release: Vec::new(),
             }
         }
     }

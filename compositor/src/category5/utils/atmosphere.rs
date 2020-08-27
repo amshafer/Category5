@@ -194,7 +194,6 @@ impl Atmosphere {
         // Apply any remaining constant state like cursor
         // positions
         hemi.commit();
-        hemi.mark_changed();
     }
 
     // Must be called before recv_hemisphere
@@ -211,7 +210,7 @@ impl Atmosphere {
         }
     }
 
-    // Must be called after recv_hemisphere
+    // Must be called after send_hemisphere
     // returns true if we were able to get the other hemisphere
     // if returns false, this needs to be called again
     pub fn recv_hemisphere(&mut self) -> bool {
@@ -252,7 +251,13 @@ impl Atmosphere {
     // Ways will use this to know if it should flip
     // hemispheres and wake up vkcomp
     pub fn is_changed(&mut self) -> bool {
-        self.a_hemi.as_mut().map(|h| h.is_changed()).unwrap()
+        match self.a_hemi.as_mut() {
+            Some(h) => h.is_changed(),
+            // If the hemisphere doesn't exist, we have sent ours
+            // and are waiting for the other side, so say we
+            // are changed so evman will keep calling recv
+            None => true,
+        }
     }
 
     // Add a patch to be replayed on a flip

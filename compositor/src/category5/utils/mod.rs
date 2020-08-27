@@ -143,14 +143,22 @@ pub struct Dmabuf {
 // replaced by the next commit, the dmabuf's wl_buffer
 // should be released so the client can reuse it.
 pub struct DmabufReleaseInfo {
+    // the drm fd for debugging purposes
+    pub dr_fd: RawFd,
     // The wl_buffer that represents this dmabuf
     pub dr_wl_buffer: wl_buffer::WlBuffer,
 }
 
+impl DmabufReleaseInfo {
+    pub fn release(&mut self) {
+        log!(LogLevel::profiling, "Releasing wl_buffer for dmabuf {}", self.dr_fd);
+        self.dr_wl_buffer.release();
+    }
+}
+
 impl Drop for DmabufReleaseInfo {
     fn drop(&mut self) {
-        log!(LogLevel::profiling, "Deleting wl_buffer for a dmabuf");
-        self.dr_wl_buffer.release();
+        self.release();
     }
 }
 
