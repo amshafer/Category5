@@ -23,7 +23,7 @@ use udev::{Enumerator,Context};
 use input::{Libinput,LibinputInterface};
 use input::event::Event;
 use input::event::pointer::{ButtonState, PointerEvent};
-use input::event::keyboard::{KeyboardEvent, KeyboardEventTrait};
+use input::event::keyboard::{KeyboardEvent, KeyboardEventTrait, KeyState};
 
 use xkbcommon::xkb;
 pub use xkbcommon::xkb::{keysyms, Keysym};
@@ -120,6 +120,15 @@ pub struct Input {
     pub i_xkb_keymap_name: String,
     // xkb state machine
     i_xkb_state: xkb::State,
+
+    // Tracking info for the modifier keys
+    // These keys are sent separately in the modifiers event
+    pub i_mod_ctrl: bool,
+    pub i_mod_alt: bool,
+    pub i_mod_shift: bool,
+    pub i_mod_caps: bool,
+    pub i_mod_meta: bool,
+    pub i_mod_num: bool,
 }
 
 impl Input {
@@ -168,6 +177,12 @@ impl Input {
             i_xkb_keymap: keymap,
             i_xkb_keymap_name: km_name,
             i_xkb_state: state,
+            i_mod_ctrl: false,
+            i_mod_alt: false,
+            i_mod_shift: false,
+            i_mod_caps: false,
+            i_mod_meta: false,
+            i_mod_num: false,
         }
     }
 
@@ -282,14 +297,43 @@ impl Input {
             if let Some(cell) = atmos.get_seat_from_id(id) {
                 let mut seat = cell.borrow_mut();
                 if let Some(keyboard) = &seat.s_keyboard {
-                    // deliver the event
+                    // let xkb keep track of the keyboard state
+                    let changed = self.i_xkb_state.update_key(
+                        // add 8 to account for differences between evdev and x11
+                        key.k_code + 8,
+                        match key.k_state {
+                            KeyState::Pressed => xkb::KeyDirection::Down,
+                            KeyState::Released => xkb::KeyDirection::Up,
+                        }
+                    );
+                    // if any modifiers were touched we should send their event
+                    if changed != 0 {
+                        // First we need to update our own tracking of what keys are held down
+                        self.i_mod_ctrl = self.i_xkb_state.mod_name_is_active(&xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
+                        self.i_mod_alt = self.i_xkb_state.mod_name_is_active(&xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
+                        self.i_mod_shift = self.i_xkb_state.mod_name_is_active(&xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
+                        self.i_mod_caps = self.i_xkb_state.mod_name_is_active(&xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
+                        self.i_mod_meta = self.i_xkb_state.mod_name_is_active(&xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
+                        self.i_mod_num = self.i_xkb_state.mod_name_is_active(&xkb::MOD_NAME_NUM, xkb::STATE_MODS_EFFECTIVE);
+
+                        // Now we can serialize the modifiers into a format suitable
+                        // for sending to the client
+                        let depressed = self.i_xkb_state.serialize_mods(xkb::STATE_MODS_DEPRESSED);
+                        let latched = self.i_xkb_state.serialize_mods(xkb::STATE_MODS_LATCHED);
+                        let locked = self.i_xkb_state.serialize_mods(xkb::STATE_MODS_LOCKED);
+                        let layout = self.i_xkb_state.serialize_layout(xkb::STATE_LAYOUT_LOCKED);
+
+                        // Finally fire the wayland event
+                        keyboard.modifiers(
+                            seat.s_serial,
+                            depressed, latched, locked, layout,
+                        );
+                    }
+                    // give the keycode to the client
                     let time = get_current_millis();
                     let state = map_key_state(key.k_state);
-
-                    // TODO: check if this is a modifier key
-
-                    // give the sym to the client
                     keyboard.key(seat.s_serial, time, key.k_code, state);
+
                     // increment the serial for next time
                     seat.s_serial += 1;
                 }
