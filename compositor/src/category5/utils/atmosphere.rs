@@ -359,6 +359,13 @@ impl Atmosphere {
         self.a_hemi.as_ref().unwrap().get_resolution()
     }
 
+    // This is the thickness of the titlebar
+    // It is based on the resolution, but hidden behind this
+    // function so it can easily be changed
+    pub fn get_barsize(&self) -> f32 {
+        self.a_hemi.as_ref().unwrap().get_barsize()
+    }
+
     // Find if there is a toplevel window under (x,y)
     //
     // This is used first to find if the cursor intersects
@@ -768,9 +775,7 @@ impl Hemisphere {
     pub fn find_window_at_point(&self, x: f32, y: f32)
                                 -> Option<WindowId>
     {
-        // This needs to be the same as wm/mod.rs
-        let barsize =
-            self.h_resolution.1 as f32 * 0.02;
+        let barsize = self.get_barsize();
 
         for win in self.h_window_heir.iter() {
             let pos = self.h_window_dimensions[*win as usize].unwrap();
@@ -791,9 +796,7 @@ impl Hemisphere {
     pub fn point_is_on_titlebar(&self, id: WindowId, x: f32, y: f32)
                           -> bool
     {
-        // This needs to be the same as wm/mod.rs
-        let barsize =
-            self.h_resolution.1 as f32 * 0.02;
+        let barsize = self.get_barsize();
 
         let pos = self.h_window_dimensions[id as usize].unwrap();
 
@@ -809,6 +812,10 @@ impl Hemisphere {
 
     pub fn get_cursor_pos(&self) -> (f64, f64) {
         (self.h_cursor_x, self.h_cursor_y)
+    }
+
+    pub fn get_barsize(&self) -> f32 {
+        self.h_resolution.1 as f32 * 0.02
     }
 
     pub fn get_window_dimensions(&self, id: WindowId)

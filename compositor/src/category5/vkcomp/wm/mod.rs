@@ -294,8 +294,7 @@ impl WindowManager {
             }
 
             // The bar should be a percentage of the screen height
-            let barsize =
-                self.rend.resolution.height as f32 * 0.02;
+            let barsize = self.wm_atmos.get_barsize();
             // The dotsize should be just slightly smaller
             let dotsize = barsize * 0.95;
             let window_dims = self.wm_atmos.get_window_dimensions(a.id);

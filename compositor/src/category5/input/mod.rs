@@ -254,6 +254,46 @@ impl Input {
         return None;
     }
 
+    // Move the pointer
+    //
+    // Also generates wl_pointer.motion events to the surface
+    // in focus if the cursor is on that surface
+    fn handle_pointer_move(&mut self, m: &PointerMove) {
+        let mut atmos = self.i_atmos.borrow_mut();
+        // Update the atmosphere with the new cursor pos
+        atmos.add_cursor_pos(m.pm_dx, m.pm_dy);
+
+        // Find the active window
+        if let Some(id) = atmos.get_window_in_focus() {
+            // get the seat for this client
+            if let Some(cell) = atmos.get_seat_from_id(id) {
+                let seat = cell.borrow();
+                // Get the pointer
+                if let Some(pointer) = &seat.s_pointer {
+                    // Get the cursor position
+                    let (cx, cy) = atmos.get_cursor_pos();
+
+                    // get the surface-local position
+                    let (wx, mut wy, ww, wh) = atmos.get_window_dimensions(id);
+                    // we need to add the barsize to the window y to account
+                    // for where the surface will actually be drawn
+                    wy += atmos.get_barsize();
+
+                    // offset into the surface
+                    let (sx, sy) = (cx - wx as f64, cy - wy as f64);
+                    // if the cursor is out of the valid bounds for the surface
+                    // offset, the cursor is not over this surface
+                    if sx < 0.0 || sy < 0.0 || sx >= ww as f64 || sy >= wh as f64 {
+                        return;
+                    }
+
+                    // deliver the motion event
+                    pointer.motion(get_current_millis(), sx, sy);
+                }
+            }
+        }
+    }
+
     // Does what it says
     //
     // This is the big ugly state machine for processing an input
@@ -374,11 +414,8 @@ impl Input {
     // the right action.
     pub fn handle_input_event(&mut self, iev: &InputEvent) {
         match iev {
-            InputEvent::pointer_move(m) => {
-                // Update the atmosphere with the new cursor pos
-                self.i_atmos.borrow_mut()
-                    .add_cursor_pos(m.pm_dx, m.pm_dy);
-            },
+            InputEvent::pointer_move(m) =>
+                self.handle_pointer_move(m),
             InputEvent::click(c) =>
                 self.handle_click_on_window(c),
             InputEvent::key(k) =>
