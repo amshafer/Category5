@@ -14,7 +14,7 @@ use ws::protocol::wl_keyboard;
 // keycodes to any input without modifying other subsystems
 pub enum InputEvent {
     pointer_move(PointerMove),
-    left_click(LeftClick),
+    click(Click),
     key(Key),
 }
 
@@ -25,9 +25,11 @@ pub struct PointerMove {
     pub pm_dy: f64,
 }
 
-// Pressing or unpressing a the main mouse button
-pub struct LeftClick {
-    pub lc_state: ButtonState,
+// Pressing or unpressing a mouse button
+pub struct Click {
+    // from the codes mod
+    pub c_code: u32,
+    pub c_state: ButtonState,
 }
 
 // represents using the keyboard

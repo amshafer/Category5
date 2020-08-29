@@ -16,6 +16,7 @@ use ws::protocol::wl_seat::Capability;
 use crate::category5::utils::WindowId;
 use crate::category5::input::Input;
 use super::keyboard::wl_keyboard_handle_request;
+use super::pointer::wl_pointer_handle_request;
 
 use std::io::Write;
 use std::os::unix::io::FromRawFd;
@@ -54,8 +55,7 @@ impl Seat {
     {
         // broadcast the types of input we have available
         // TODO: don't just default to keyboard + mouse
-        //seat.capabilities(Capability::Keyboard | Capability::Pointer);
-        seat.capabilities(Capability::Keyboard);
+        seat.capabilities(Capability::Keyboard | Capability::Pointer);
 
         Seat {
             s_input: input,
@@ -70,7 +70,9 @@ impl Seat {
     // Add a keyboard to this seat
     //
     // This also sends the modifier event
-    fn get_keyboard(&mut self, keyboard: Main<wl_keyboard::WlKeyboard>) {
+    fn get_keyboard(&mut self,
+                    keyboard: Main<wl_keyboard::WlKeyboard>) {
+        let input = self.s_input.borrow();
         // Make a temp fd to share with the client
         let fd = unsafe {
             libc::shm_open(libc::SHM_ANON,
@@ -88,13 +90,13 @@ impl Seat {
             .expect("Could not write to the temp xkb keymap file");
         file.flush().unwrap();
         // Broadcast our keymap map
-        id.keymap(wl_keyboard::KeymapFormat::XkbV1,
-                  fd,
-                  input.i_xkb_keymap_name.as_bytes().len() as u32
+        keyboard.keymap(wl_keyboard::KeymapFormat::XkbV1,
+                        fd,
+                        input.i_xkb_keymap_name.as_bytes().len() as u32
         );
 
         // add the keyboard to this seat
-        self.s_keyboard = Some(id);
+        self.s_keyboard = Some(keyboard);
     }
 
     // Handle client requests
@@ -105,7 +107,6 @@ impl Seat {
                           req: wl_seat::Request,
                           _seat: Main<wl_seat::WlSeat>)
     {
-        let input = self.s_input.borrow();
 
         match req {
             wl_seat::Request::GetKeyboard { id } => {

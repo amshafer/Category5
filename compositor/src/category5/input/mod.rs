@@ -7,12 +7,17 @@
 // ::input::*, because the line below imports an
 // external input crate.
 #![allow(dead_code)]
+pub mod codes;
+pub mod event;
+
+extern crate wayland_server as ws;
 extern crate input;
 extern crate udev;
 extern crate nix;
 extern crate xkbcommon;
 
-pub mod event;
+use ws::protocol::wl_pointer;
+
 use event::*;
 use crate::category5::utils::{
     timing::*, logging::LogLevel, atmosphere::*
@@ -230,8 +235,9 @@ impl Input {
              Some(Event::Pointer(PointerEvent::Button(b))) => {
                  log!(LogLevel::debug, "pointer button {:?}", b);
 
-                 return Some(InputEvent::left_click(LeftClick {
-                     lc_state: b.button_state(),
+                 return Some(InputEvent::click(Click {
+                     c_code: b.button(),
+                     c_state: b.button_state(),
                  }));
              },
              Some(Event::Keyboard(KeyboardEvent::Key(k))) => {
@@ -254,7 +260,7 @@ impl Input {
     // token that was the result of clicking the pointer. We need
     // to find what the cursor is over and perform the appropriate
     // action.
-    fn handle_click_on_window(&mut self, lc: &LeftClick) {
+    fn handle_click_on_window(&mut self, c: &Click) {
         let mut atmos = self.i_atmos.borrow_mut();
         let cursor = atmos.get_cursor_pos();
 
@@ -267,7 +273,7 @@ impl Input {
             if atmos.point_is_on_titlebar(id, cursor.0 as f32,
                                           cursor.1 as f32)
             {
-                match lc.lc_state {
+                match c.c_state {
                     ButtonState::Pressed => {
                         log!(LogLevel::debug, "Grabbing window {}", id);
                         atmos.grab(id);
@@ -280,7 +286,25 @@ impl Input {
             } else {
                 // else the click was over the meat of the window, so
                 // deliver the event to the wayland client
-                // TODO: implement wl_pointer
+
+                // get the seat for this client
+                if let Some(cell) = atmos.get_seat_from_id(id) {
+                    let seat = cell.borrow_mut();
+                    if let Some(pointer) = &seat.s_pointer {
+                        // Trigger a button event
+                        pointer.button(
+                            seat.s_serial,
+                            get_current_millis(),
+                            codes::BTN_LEFT,
+                            match c.c_state {
+                                ButtonState::Pressed =>
+                                    wl_pointer::ButtonState::Pressed,
+                                ButtonState::Released =>
+                                    wl_pointer::ButtonState::Released,
+                            },
+                        );
+                    }
+                }
             }
         }
     }
@@ -355,8 +379,8 @@ impl Input {
                 self.i_atmos.borrow_mut()
                     .add_cursor_pos(m.pm_dx, m.pm_dy);
             },
-            InputEvent::left_click(lc) =>
-                self.handle_click_on_window(lc),
+            InputEvent::click(c) =>
+                self.handle_click_on_window(c),
             InputEvent::key(k) =>
                 self.handle_keyboard(k),
         }

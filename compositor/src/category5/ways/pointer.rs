@@ -8,9 +8,10 @@ use ws::protocol::wl_pointer;
 // Called by the wayland filter anytime the client
 // makes a request. This does nothing
 pub fn wl_pointer_handle_request(req: wl_pointer::Request,
-                                 pointer: Main<wl_pointer::WlPointer>)
+                                 _pointer: Main<wl_pointer::WlPointer>)
 {
     match req {
-        wl_pointer::Request::release => {},
+        wl_pointer::Request::Release => {},
+        _ => {},
     }
 }

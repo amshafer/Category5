@@ -9,6 +9,7 @@ pub mod surface;
 mod shm;
 pub mod seat;
 mod keyboard;
+mod pointer;
 mod xdg_shell;
 mod wl_shell;
 pub mod linux_dmabuf;
