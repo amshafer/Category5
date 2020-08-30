@@ -27,6 +27,7 @@ use crate::log;
 use udev::{Enumerator,Context};
 use input::{Libinput,LibinputInterface};
 use input::event::Event;
+use input::event::pointer;
 use input::event::pointer::{ButtonState, PointerEvent};
 use input::event::keyboard::{KeyboardEvent, KeyboardEventTrait, KeyState};
 
@@ -232,6 +233,17 @@ impl Input {
                      pm_dy: m.dy(),
                  }));
              },
+             Some(Event::Pointer(PointerEvent::Axis(a))) => {
+                 log!(LogLevel::debug, "scrolling by ({}, {})",
+                      a.axis_value(pointer::Axis::Horizontal),
+                      a.axis_value(pointer::Axis::Vertical),
+                 );
+
+                 return Some(InputEvent::axis(Axis {
+                     a_hori_val: a.axis_value(pointer::Axis::Horizontal),
+                     a_vert_val: a.axis_value(pointer::Axis::Vertical),
+                 }));
+             },
              Some(Event::Pointer(PointerEvent::Button(b))) => {
                  log!(LogLevel::debug, "pointer button {:?}", b.button());
 
@@ -252,6 +264,40 @@ impl Input {
          };
 
         return None;
+    }
+
+    // Perform a scrolling motion
+    //
+    fn handle_pointer_axis(&mut self, a: &Axis) {
+        let mut atmos = self.i_atmos.borrow_mut();
+
+        // Find the active window
+        if let Some(id) = atmos.get_window_in_focus() {
+            // get the seat for this client
+            if let Some(cell) = atmos.get_seat_from_id(id) {
+                let seat = cell.borrow();
+                // Get the pointer
+                if let Some(pointer) = &seat.s_pointer {
+                    let time = get_current_millis();
+                    // deliver the axis events, one for each direction
+                    if a.a_hori_val > 0.0 {
+                        pointer.axis(
+                            time,
+                            wl_pointer::Axis::HorizontalScroll,
+                            a.a_hori_val,
+                        );
+                    }
+
+                    if a.a_vert_val > 0.0 {
+                        pointer.axis(
+                            time,
+                            wl_pointer::Axis::VerticalScroll,
+                            a.a_vert_val,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     // Move the pointer
@@ -416,6 +462,8 @@ impl Input {
         match iev {
             InputEvent::pointer_move(m) =>
                 self.handle_pointer_move(m),
+            InputEvent::axis(a) =>
+                self.handle_pointer_axis(a),
             InputEvent::click(c) =>
                 self.handle_click_on_window(c),
             InputEvent::key(k) =>

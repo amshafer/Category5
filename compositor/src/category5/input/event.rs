@@ -16,6 +16,7 @@ pub enum InputEvent {
     pointer_move(PointerMove),
     click(Click),
     key(Key),
+    axis(Axis),
 }
 
 // Movement of the pointer relative to
@@ -30,6 +31,14 @@ pub struct Click {
     // from the codes mod
     pub c_code: u32,
     pub c_state: ButtonState,
+}
+
+// Represents a scrolling motion in one of two directions
+pub struct Axis {
+    // horizontal motion
+    pub a_hori_val: f64,
+    // vertical motion
+    pub a_vert_val: f64,
 }
 
 // represents using the keyboard
