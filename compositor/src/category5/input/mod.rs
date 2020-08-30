@@ -233,7 +233,7 @@ impl Input {
                  }));
              },
              Some(Event::Pointer(PointerEvent::Button(b))) => {
-                 log!(LogLevel::debug, "pointer button {:?}", b);
+                 log!(LogLevel::debug, "pointer button {:?}", b.button());
 
                  return Some(InputEvent::click(Click {
                      c_code: b.button(),
@@ -335,7 +335,7 @@ impl Input {
                         pointer.button(
                             seat.s_serial,
                             get_current_millis(),
-                            codes::BTN_LEFT,
+                            c.c_code,
                             match c.c_state {
                                 ButtonState::Pressed =>
                                     wl_pointer::ButtonState::Pressed,
