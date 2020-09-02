@@ -346,14 +346,27 @@ impl Input {
     // token that was the result of clicking the pointer. We need
     // to find what the cursor is over and perform the appropriate
     // action.
+    //
+    // If a click is over a background window it is brought into focus
+    // clicking on a background titlebar can also start a grab
     fn handle_click_on_window(&mut self, c: &Click) {
         let mut atmos = self.i_atmos.borrow_mut();
         let cursor = atmos.get_cursor_pos();
+        // did our click bring a window into focus?
+        let mut set_focus = false;
 
         // find the window under the cursor
         if let Some(id) = atmos.find_window_at_point(cursor.0 as f32,
                                                      cursor.1 as f32)
         {
+            // If the window is not in focus, make it in focus
+            if let Some(focus) = atmos.get_window_in_focus() {
+                if id != focus && c.c_state == ButtonState::Pressed {
+                    atmos.focus_on(id);
+                    set_focus = true;
+                }
+            }
+
             // now check if we are over the titlebar
             // if so we will grab the bar
             if atmos.point_is_on_titlebar(id, cursor.0 as f32,
@@ -369,7 +382,7 @@ impl Input {
                         atmos.ungrab();
                     }
                 }
-            } else {
+            } else if !set_focus {
                 // else the click was over the meat of the window, so
                 // deliver the event to the wayland client
 

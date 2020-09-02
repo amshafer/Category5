@@ -10,6 +10,10 @@ use crate::category5::ways::{
 };
 use crate::category5::vkcomp::wm;
 use super::WindowId;
+use crate::category5::utils::{
+    timing::*, logging::LogLevel,
+};
+use crate::log;
 
 use std::rc::Rc;
 use std::vec::Vec;
@@ -27,6 +31,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
 enum Property {
     RESERVE_WINDOW_ID,
+    FREE_WINDOW_ID,
+    FOCUS_ON_ID,
     ADD_NEW_TOPLEVEL,
     SET_WINDOW_DIMENSIONS,
 }
@@ -43,12 +49,24 @@ enum Property {
 // These will be collected in a hashmap for replay
 //    map<(window id, property id), Patch>
 #[allow(dead_code)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum Patch {
+    // reserve a window id, old or new
     reserve_window_id(WindowId),
+    free_window_id(WindowId),
+    // bring a window to the top
+    focus_on_id(WindowId),
+    // add a new toplevel role window
     add_new_toplevel(WindowId),
+    // set (x, y, width, height)
     set_window_dimensions((f32, f32, f32, f32)),
 }
+
+// This is a magic value used as the id parameter in the
+// (WindowId, Property) pair for FOCUS_ON_ID
+// We need this because we won't have a window
+// id to look up the focused window patch with
+const FOCUS_STUB_ID: WindowId = 0;
 
 // private data used by ways only
 //
@@ -139,8 +157,8 @@ impl Atmosphere {
             a_tx: tx,
             a_rx: rx,
             a_hemi: Some(Box::new(Hemisphere::new())),
-            // TODO: only do this for ways
             a_id_map: Vec::new(),
+            // TODO: only do this for ways
             a_ways_priv: Vec::new(),
             a_patches: HashMap::new(),
             a_cursor_patch: None,
@@ -178,7 +196,9 @@ impl Atmosphere {
     // need to replay the patches on the new hemisphere to
     // update it will all the info it's missing
     fn replay(&mut self, hemi: &mut Hemisphere) {
+        log!(LogLevel::info, "replaying on hemisphere");
         for ((window_id, prop), patch) in self.a_patches.iter() {
+            log!(LogLevel::info, "   replaying {:?}", patch);
             hemi.apply_patch(*window_id, *prop, patch);
         }
         if let Some(grab) = self.a_grab_patch {
@@ -200,6 +220,7 @@ impl Atmosphere {
     pub fn send_hemisphere(&mut self) {
         // first grab our own hemi
         if let Some(mut h) = self.a_hemi.take() {
+            log!(LogLevel::info, "sending hemisphere");
             // second, we need to apply our changes to
             // our own hemisphere before we send it
             self.replay(&mut h);
@@ -214,10 +235,12 @@ impl Atmosphere {
     // returns true if we were able to get the other hemisphere
     // if returns false, this needs to be called again
     pub fn recv_hemisphere(&mut self) -> bool {
+        log!(LogLevel::info, "trying to recv hemisphere");
         let mut new_hemi = match self.a_rx.recv() {
             Ok(h) => h,
             Err(_) => return false,
         };
+        log!(LogLevel::info, "recieved hemisphere");
 
         // while we have the new one, go ahead and apply the
         // patches to make it up to date
@@ -334,6 +357,11 @@ impl Atmosphere {
     pub fn free_window_id(&mut self, id: WindowId) {
         assert!(!self.a_ways_priv[id as usize].is_none());
         self.a_ways_priv[id as usize] = None;
+        self.add_patch(
+            id,
+            Property::FREE_WINDOW_ID,
+            &Patch::free_window_id(id),
+        );
     }
 
     // Get the window order from [0..n windows)
@@ -345,7 +373,29 @@ impl Atmosphere {
 
     // Get the window currently in use
     pub fn get_window_in_focus(&self) -> Option<WindowId> {
+        if let Some(focus) = self.a_patches.get(&(FOCUS_STUB_ID, Property::FOCUS_ON_ID)) {
+            match focus {
+                Patch::focus_on_id(id) => return Some(*id),
+                _ => (),
+            }
+        }
+
         self.a_hemi.as_ref().unwrap().get_window_in_focus()
+    }
+
+    // Set the window currently in focus
+    //
+    // CONCERN: Theoretically if multiple of these could
+    // be submitted in one hemi flip then it could perform
+    // harmful swapping that could remove one or more windows
+    // from being drawn
+    pub fn focus_on(&mut self, id: WindowId) {
+        log!(LogLevel::info, "adding patch to focus on window {}", id);
+        self.add_patch(
+            FOCUS_STUB_ID, // see comment for this var
+            Property::FOCUS_ON_ID,
+            &Patch::focus_on_id(id),
+        );
     }
 
     // this is one of the few updates from vkcomp
@@ -622,18 +672,22 @@ impl Hemisphere {
     // list to the current hemisphere, and then again
     // to the new one to keep things up to date.
     fn apply_patch(&mut self,
-                   id: WindowId,
+                   win: WindowId,
                    _prop: Property,
                    patch: &Patch)
     {
         match patch {
             Patch::reserve_window_id(id) =>
                 self.reserve_window_id(*id),
+            Patch::free_window_id(id) =>
+                self.free_window_id(*id),
+            Patch::focus_on_id(id) =>
+                self.focus_on(*id),
             Patch::add_new_toplevel(id) =>
                 self.add_new_toplevel(*id),
             Patch::set_window_dimensions(dims) =>
                 self.set_window_dimensions(
-                    id, dims.0, dims.1, dims.2, dims.3
+                    win, dims.0, dims.1, dims.2, dims.3
                 ),
         };
     }
@@ -682,6 +736,29 @@ impl Hemisphere {
             assert!(id == self.h_windows.len());
             self.h_windows.push(true);
         }
+    }
+
+    // Make this window the top level
+    pub fn focus_on(&mut self, id: WindowId) {
+        log!(LogLevel::info, "focusing on window {}", id);
+        assert!((id as usize) < self.h_windows.len());
+        self.mark_changed();
+
+        // find the index of this window
+        let idx = self.h_window_heir.iter()
+            .enumerate()
+            .find(|(_, &win)| win == id)
+            // there can only be one
+            .unwrap()
+            // get the index, which is the first in the tuple
+            .0;
+
+        // if it is already the top window then bail
+        if idx == 0 {
+            return;
+        }
+
+        self.h_window_heir.swap(0, idx);
     }
 
     // Marks id as free and removes all references to it
