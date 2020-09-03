@@ -12,6 +12,7 @@ mod keyboard;
 mod pointer;
 mod xdg_shell;
 mod wl_shell;
+mod wl_output;
 pub mod linux_dmabuf;
 
 // Utils

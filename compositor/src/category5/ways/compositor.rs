@@ -15,6 +15,7 @@ use ws::protocol::{
     wl_shm,
     wl_shell,
     wl_seat,
+    wl_output,
 };
 
 use crate::category5::utils::{
@@ -26,6 +27,7 @@ use super::{
     shm::*,
     surface::*,
     wl_shell::wl_shell_handle_request,
+    wl_output::wl_output_broadcast,
     xdg_shell::xdg_wm_base_handle_request,
     linux_dmabuf::*,
 };
@@ -175,6 +177,7 @@ impl EventManager {
         evman.create_xdg_shell_global();
         evman.create_linux_dmabuf_global();
         evman.create_wl_seat_global();
+        evman.create_wl_output_global();
 
         return evman;
     }
@@ -322,6 +325,25 @@ impl EventManager {
                     res.quick_assign(move |s, r, _| {
                         seat.borrow_mut().handle_request(r, s);
                     });
+                }
+            ),
+        );
+    }
+
+    // Initialize the wl_output interface
+    //
+    // This doesn't do much of anything except advertise what displays
+    // are available for the clients
+    fn create_wl_output_global(&mut self) {
+        // for some reason we need to do two clones to make the lifetime
+        // inference happy with the closures below
+        let atmos = self.em_atmos.clone();
+
+        self.em_display.create_global::<wl_output::WlOutput, _>(
+            3, // version
+            Filter::new(
+                move |(res, _): (ws::Main<wl_output::WlOutput>, u32), _, _| {
+                    wl_output_broadcast(atmos.clone(), res);
                 }
             ),
         );

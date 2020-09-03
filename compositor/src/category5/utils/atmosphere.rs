@@ -368,12 +368,26 @@ impl Atmosphere {
     //
     // TODO: Make this a more efficient tree
     pub fn get_window_order(&self, id: WindowId) -> u32 {
+        // check if this window has been brought into focus
+        if let Some(patch) = self.a_patches.get(&(FOCUS_STUB_ID,
+                                                  Property::FOCUS_ON_ID))
+        {
+            match patch {
+                Patch::focus_on_id(focus) => {
+                    if *focus == id { return 0; }
+                },
+                _ => (),
+            }
+        }
+
         self.a_hemi.as_ref().unwrap().get_window_order(id)
     }
 
     // Get the window currently in use
     pub fn get_window_in_focus(&self) -> Option<WindowId> {
-        if let Some(focus) = self.a_patches.get(&(FOCUS_STUB_ID, Property::FOCUS_ON_ID)) {
+        if let Some(focus) = self.a_patches.get(&(FOCUS_STUB_ID,
+                                                  Property::FOCUS_ON_ID))
+        {
             match focus {
                 Patch::focus_on_id(id) => return Some(*id),
                 _ => (),
