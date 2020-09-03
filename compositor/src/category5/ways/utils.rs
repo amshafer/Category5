@@ -5,7 +5,7 @@ pub extern crate wayland_server as ws;
 use ws::{Filter,Client};
 
 use crate::category5::utils::{
-    WindowId,
+    ClientId,
     timing::get_current_millis,
     atmosphere::Atmosphere
 };
@@ -23,7 +23,7 @@ use std::rc::Rc;
 //
 // Returns the id created
 pub fn register_new_client(atmos_cell: Rc<RefCell<Atmosphere>>, client: Client)
-                           -> WindowId
+                           -> ClientId
 {
     let id;
     {
@@ -34,16 +34,13 @@ pub fn register_new_client(atmos_cell: Rc<RefCell<Atmosphere>>, client: Client)
         if !client.data_map().insert_if_missing(move || id) {
             log!(LogLevel::error, "registering a client that has already been registered");
         }
-
-        // Track this surface in the compositor state
-        atmos.reserve_window_id(id);
     }
 
     // when the client is destroyed we need to tell the atmosphere
     // to free the reserved space
     // TODO add destructor
     client.add_destructor(Filter::new(move |_, _, _| {
-        atmos_cell.borrow_mut().free_window_id(id);
+        atmos_cell.borrow_mut().free_client_id(id);
     }));
 
     return id;
@@ -56,9 +53,9 @@ pub fn register_new_client(atmos_cell: Rc<RefCell<Atmosphere>>, client: Client)
 //
 // If the client does not currently have an id, register it
 pub fn get_id_from_client(atmos: Rc<RefCell<Atmosphere>>, client: Client)
-                          -> WindowId
+                          -> ClientId
 {
-    match client.data_map().get::<WindowId>() {
+    match client.data_map().get::<ClientId>() {
         Some(id) => *id,
         // The client hasn't been assigned an id
         None => register_new_client(atmos, client),

@@ -13,7 +13,7 @@ use ws::Main;
 use ws::protocol::{wl_seat,wl_keyboard,wl_pointer};
 use ws::protocol::wl_seat::Capability;
 
-use crate::category5::utils::WindowId;
+use crate::category5::utils::ClientId;
 use crate::category5::input::Input;
 use super::keyboard::wl_keyboard_handle_request;
 use super::pointer::wl_pointer_handle_request;
@@ -34,7 +34,7 @@ pub struct Seat {
     // The handle to the input subsystem
     pub s_input: Rc<RefCell<Input>>,
     // The id of the client this seat belongs to
-    pub s_id: WindowId,
+    pub s_id: ClientId,
     // the seat object itself
     pub s_seat: Main<wl_seat::WlSeat>,
     // wl_keyboard handle
@@ -50,7 +50,7 @@ impl Seat {
     //
     // Also send the capabilities event to let the client know
     // what input methods are ready
-    pub fn new(input: Rc<RefCell<Input>>, id: WindowId, seat: Main<wl_seat::WlSeat>)
+    pub fn new(input: Rc<RefCell<Input>>, id: ClientId, seat: Main<wl_seat::WlSeat>)
                -> Seat
     {
         // broadcast the types of input we have available

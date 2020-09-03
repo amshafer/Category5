@@ -19,6 +19,13 @@ use std::{slice,fmt};
 use std::ops::Deref;
 use std::os::unix::io::RawFd;
 
+// Client Id
+//
+// This uniquely identifies one client program connected
+// to the compositor. A client may have multiple surfaces,
+// eacho of which has a WindowId
+pub type ClientId = u32;
+
 // Window ID
 //
 // Every on screen surface has a window id which

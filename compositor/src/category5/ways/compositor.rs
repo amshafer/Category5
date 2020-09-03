@@ -91,11 +91,12 @@ impl Compositor {
     // module
     pub fn create_surface(&mut self, surf: Main<wlsi::WlSurface>) {
         log!(LogLevel::debug, "Creating a new surface");
-        let id = utils::get_id_from_client(
+        let client = utils::get_id_from_client(
             self.c_atmos.clone(),
             surf.as_ref().client()
                 .expect("client for this surface seems to have disappeared")
         );
+        let id = self.c_atmos.borrow_mut().mint_window_id(client);
 
         // Create a reference counted object
         // in charge of this new surface

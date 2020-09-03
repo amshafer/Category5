@@ -9,7 +9,7 @@ use crate::category5::ways::{
     seat::Seat,
 };
 use crate::category5::vkcomp::wm;
-use super::WindowId;
+use super::{WindowId,ClientId};
 use crate::category5::utils::{
     timing::*, logging::LogLevel,
 };
@@ -32,6 +32,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 enum Property {
     RESERVE_WINDOW_ID,
     FREE_WINDOW_ID,
+    RESERVE_CLIENT_ID,
+    FREE_CLIENT_ID,
     FOCUS_ON_ID,
     ADD_NEW_TOPLEVEL,
     SET_WINDOW_DIMENSIONS,
@@ -52,8 +54,10 @@ enum Property {
 #[derive(Copy, Clone, Debug)]
 enum Patch {
     // reserve a window id, old or new
-    reserve_window_id(WindowId),
-    free_window_id(WindowId),
+    reserve_window_id(ClientId, WindowId),
+    free_window_id(ClientId, WindowId),
+    reserve_client_id(ClientId),
+    free_client_id(ClientId),
     // bring a window to the top
     focus_on_id(WindowId),
     // add a new toplevel role window
@@ -68,7 +72,7 @@ enum Patch {
 // id to look up the focused window patch with
 const FOCUS_STUB_ID: WindowId = 0;
 
-// private data used by ways only
+// per-surface private data
 //
 // This holds all of the protocol resources
 // that ways needs. An array of these are used (indexed
@@ -77,8 +81,15 @@ const FOCUS_STUB_ID: WindowId = 0;
 pub struct Priv {
     // a surface to have its callbacks called
     p_surf: Option<Rc<RefCell<Surface>>>,
+}
+
+// per-client private data
+//
+// Clients can have multiple windows, so we need this
+// to hold resources that are tied only to the client
+pub struct ClientPriv {
     // a collection of input resources
-    p_seat: Option<Rc<RefCell<Seat>>>,
+    cp_seat: Option<Rc<RefCell<Seat>>>,
 }
 
 // Global state tracking
@@ -114,11 +125,13 @@ pub struct Atmosphere {
 
     // The next id to hand out
     // each index is marked true if that id is handed out
-    a_id_map: Vec<bool>,
+    a_client_id_map: Vec<bool>,
+    a_window_id_map: Vec<bool>,
 
     // -- ways --
     
-    a_ways_priv: Vec<Option<Priv>>,
+    a_window_priv: Vec<Option<Priv>>,
+    a_client_priv: Vec<Option<ClientPriv>>,
     // A hashmap of patches based on the window id and the
     // property name
     //
@@ -157,9 +170,11 @@ impl Atmosphere {
             a_tx: tx,
             a_rx: rx,
             a_hemi: Some(Box::new(Hemisphere::new())),
-            a_id_map: Vec::new(),
             // TODO: only do this for ways
-            a_ways_priv: Vec::new(),
+            a_client_id_map: Vec::new(),
+            a_window_id_map: Vec::new(),
+            a_window_priv: Vec::new(),
+            a_client_priv: Vec::new(),
             a_patches: HashMap::new(),
             a_cursor_patch: None,
             a_grab_patch: None,
@@ -167,25 +182,34 @@ impl Atmosphere {
         }
     }
 
-    // Get the next id
-    //
-    // Find a free id if one is available, if not then
-    // add a new one
-    pub fn mint_client_id(&mut self) -> WindowId {
-        for (i, in_use) in self.a_id_map.iter_mut().enumerate() {
+    // Gets the next available id in a vec of bools
+    // generic id getter
+    fn get_next_id(v: &mut Vec<bool>) -> u32 {
+        for (i, in_use) in v.iter_mut().enumerate() {
             if !*in_use {
                 *in_use = true;
-                self.reserve_window_id(i as u32);
                 return i as u32;
             }
         }
 
-        // grow the mapping
-        self.reserve_window_id(self.a_id_map.len() as u32);
-        // this should come separately so we don't mess with the len
-        // used in the line above
-        self.a_id_map.push(true);
-        return (self.a_id_map.len() - 1) as u32;
+        v.push(true);
+        return (v.len() - 1) as u32;
+    }
+
+    // Get the next id
+    //
+    // Find a free id if one is available, if not then
+    // add a new one
+    pub fn mint_client_id(&mut self) -> ClientId {
+        let id = Atmosphere::get_next_id(&mut self.a_client_id_map);
+        self.reserve_client_id(id);
+        return id;
+    }
+
+    pub fn mint_window_id(&mut self, client: ClientId) -> WindowId {
+        let id = Atmosphere::get_next_id(&mut self.a_window_id_map);
+        self.reserve_window_id(client, id);
+        return id;
     }
 
     // Commit all our patches into the hemisphere
@@ -328,39 +352,80 @@ impl Atmosphere {
                        &Patch::add_new_toplevel(id));
     }
 
+    // Reserve a new client id
+    //
+    // Should be done the first time we interact with
+    // a new client
+    pub fn reserve_client_id(&mut self, id: ClientId) {
+        self.add_patch(id,
+                       Property::RESERVE_CLIENT_ID,
+                       &Patch::reserve_client_id(id));
+
+        // Add a new priv entry
+        let private = Some(ClientPriv {
+            cp_seat: None,
+        });
+        if (id as usize) < self.a_client_priv.len() {
+            assert!(self.a_client_priv[id as usize].is_none());
+            self.a_client_priv[id as usize] = private;
+        } else {
+            // otherwise make a new one
+            assert!(id as usize == self.a_client_priv.len());
+            self.a_client_priv.push(private);
+        }
+    }
+
     // Mark the specified id as in-use
     //
     // Ids are used as indexes for most of the vecs
     // in the hemisphere, and we need to mark this as
     // no longer available
-    pub fn reserve_window_id(&mut self, id: WindowId) {
+    pub fn reserve_window_id(&mut self, client: ClientId, id: WindowId) {
         self.add_patch(id,
                        Property::RESERVE_WINDOW_ID,
-                       &Patch::reserve_window_id(id));
+                       &Patch::reserve_window_id(client, id));
 
         // Add a new priv entry
         let private = Some(Priv {
             p_surf: None,
-            p_seat: None,
         });
-        if (id as usize) < self.a_ways_priv.len() {
-            assert!(!self.a_ways_priv[id as usize].is_none());
-            self.a_ways_priv[id as usize] = private;
+        if (id as usize) < self.a_window_priv.len() {
+            assert!(self.a_window_priv[id as usize].is_none());
+            self.a_window_priv[id as usize] = private;
         } else {
             // otherwise make a new one
-            assert!(id as usize == self.a_ways_priv.len());
-            self.a_ways_priv.push(private);
+            assert!(id as usize == self.a_window_priv.len());
+            self.a_window_priv.push(private);
         }
     }
 
+    pub fn free_client_id(&mut self, id: ClientId) {
+        assert!(!self.a_client_priv[id as usize].is_none());
+        self.a_client_priv[id as usize] = None;
+        self.a_client_id_map[id as usize] = false;
+
+        // Free all windows belonging to this client
+        let windows = self.get_windows_for_client(id);
+        for win in windows.iter() {
+            self.free_window_id(id, *win);
+        }
+
+        self.add_patch(
+            id,
+            Property::FREE_CLIENT_ID,
+            &Patch::free_client_id(id),
+        );
+    }
+
     // Mark the id as available
-    pub fn free_window_id(&mut self, id: WindowId) {
-        assert!(!self.a_ways_priv[id as usize].is_none());
-        self.a_ways_priv[id as usize] = None;
+    pub fn free_window_id(&mut self, client: ClientId, id: WindowId) {
+        assert!(!self.a_window_priv[id as usize].is_none());
+        self.a_window_priv[id as usize] = None;
+        self.a_window_id_map[id as usize] = false;
         self.add_patch(
             id,
             Property::FREE_WINDOW_ID,
-            &Patch::free_window_id(id),
+            &Patch::free_window_id(client, id),
         );
     }
 
@@ -381,6 +446,11 @@ impl Atmosphere {
         }
 
         self.a_hemi.as_ref().unwrap().get_window_order(id)
+    }
+
+    // Get the windows ids belonging this client
+    pub fn get_windows_for_client(&self, id: ClientId) -> Vec<WindowId> {
+        self.a_hemi.as_ref().unwrap().get_windows_for_client(id)
     }
 
     // Get the window currently in use
@@ -552,7 +622,7 @@ impl Atmosphere {
     pub fn add_surface(&mut self, id: WindowId,
                        surf: Rc<RefCell<Surface>>)
     {
-        if let Some(private) = self.a_ways_priv[id as usize].as_mut() {
+        if let Some(private) = self.a_window_priv[id as usize].as_mut() {
             private.p_surf = Some(surf);
         }
     }
@@ -560,16 +630,16 @@ impl Atmosphere {
     pub fn add_seat(&mut self, id: WindowId,
                     seat: Rc<RefCell<Seat>>)
     {
-        if let Some(private) = self.a_ways_priv[id as usize].as_mut() {
-            private.p_seat = Some(seat);
+        if let Some(private) = self.a_client_priv[id as usize].as_mut() {
+            private.cp_seat = Some(seat);
         }
     }
 
     pub fn get_seat_from_id(&mut self, id: WindowId)
                             -> Option<Rc<RefCell<Seat>>>
     {
-        if let Some(private) = self.a_ways_priv[id as usize].as_mut() {
-            return private.p_seat.clone();
+        if let Some(private) = self.a_client_priv[id as usize].as_mut() {
+            return private.cp_seat.clone();
         }
         return None;
     }
@@ -581,7 +651,7 @@ impl Atmosphere {
     // redraw themselves. If they aren't on screen we don't send
     // the callback so it doesn't use the power.
     pub fn signal_frame_callbacks(&mut self) {
-        for private in self.a_ways_priv
+        for private in self.a_window_priv
             .iter()
             .filter(|p| p.is_some())
         {
@@ -643,6 +713,10 @@ pub struct Hemisphere {
     // These are indexed by window id, and marked true if they are
     // in use. (aka h_windows[0] == false means this id is available)
     h_windows: Vec<bool>,
+    // A list of reserved client ids
+    // The ClientId is the index into this vec, and the element there is a list
+    // of windows that belong to this client
+    h_clients: Vec<Option<Vec<WindowId>>>,
     // a list of the window ids from front to back
     // index 0 is the current focus
     h_window_heir: Vec<WindowId>,
@@ -670,6 +744,7 @@ impl Hemisphere {
             h_cursor_x: 0.0,
             h_cursor_y: 0.0,
             h_grabbed: None,
+            h_clients: Vec::new(),
             h_windows: Vec::new(),
             h_window_heir: Vec::new(),
             h_window_dimensions: Vec::new(),
@@ -691,10 +766,14 @@ impl Hemisphere {
                    patch: &Patch)
     {
         match patch {
-            Patch::reserve_window_id(id) =>
-                self.reserve_window_id(*id),
-            Patch::free_window_id(id) =>
-                self.free_window_id(*id),
+            Patch::reserve_window_id(client, id) =>
+                self.reserve_window_id(*client, *id),
+            Patch::free_window_id(client, id) =>
+                self.free_window_id(*client, *id),
+            Patch::reserve_client_id(id) =>
+                self.reserve_client_id(*id),
+            Patch::free_client_id(id) =>
+                self.free_client_id(*id),
             Patch::focus_on_id(id) =>
                 self.focus_on(*id),
             Patch::add_new_toplevel(id) =>
@@ -735,21 +814,38 @@ impl Hemisphere {
         self.h_wm_tasks.push_back(task);
     }
 
-    // Returns the lowest allocated client id
-    // does not handle any heirarchy or other stuff
-    fn reserve_window_id(&mut self, wid: WindowId) {
-        self.mark_changed();
-        let id = wid as usize;
-
+    // common id reservation code
+    fn reserve_id(v: &mut Vec<bool>, id: usize) {
         // Check if we can reuse the id
-        if id < self.h_windows.len() {
-            assert!(!self.h_windows[id]);
-            self.h_windows[id] = true;
+        if id < v.len() {
+            assert!(!v[id]);
+            v[id] = true;
         } else {
             // otherwise make a new one
-            assert!(id == self.h_windows.len());
-            self.h_windows.push(true);
+            assert!(id == v.len());
+            v.push(true);
         }
+    }
+
+    fn reserve_client_id(&mut self, cid: ClientId) {
+        let id = cid as usize;
+        self.mark_changed();
+        if id < self.h_clients.len() {
+            assert!(self.h_clients[id].is_none());
+            self.h_clients[id] = Some(Vec::new());
+        } else {
+            // otherwise make a new one
+            assert!(id == self.h_clients.len());
+            self.h_clients.push(Some(Vec::new()));
+        }
+    }
+
+    // Reserves the window id, and adds this window
+    // to the client
+    fn reserve_window_id(&mut self, client: ClientId, id: WindowId) {
+        self.mark_changed();
+        Hemisphere::reserve_id(&mut self.h_windows, id as usize);
+        self.h_clients[client as usize].as_mut().unwrap().push(id);
     }
 
     // Make this window the top level
@@ -775,14 +871,23 @@ impl Hemisphere {
         self.h_window_heir.swap(0, idx);
     }
 
+    fn free_client_id(&mut self, id: ClientId) {
+        assert!((id as usize) < self.h_clients.len());
+        self.mark_changed();
+        self.h_clients[id as usize] = None;
+    }
+
     // Marks id as free and removes all references to it
-    fn free_window_id(&mut self, id: WindowId) {
+    fn free_window_id(&mut self, client: ClientId, id: WindowId) {
         assert!((id as usize) < self.h_windows.len());
         self.mark_changed();
 
         self.h_windows[id as usize] = false;
         // remove this id from the heirarchy
         self.h_window_heir.retain(|&wid| wid != id);
+        // remove this id from the client
+        self.h_clients[client as usize].as_mut()
+            .map(|v| v.retain(|&i| id != i));
     }
 
     pub fn wm_task_pop(&mut self) -> Option<wm::task::Task> {
@@ -850,6 +955,13 @@ impl Hemisphere {
 
     fn get_grabbed(&self) -> Option<WindowId> {
         self.h_grabbed
+    }
+
+    pub fn get_windows_for_client(&self, id: ClientId) -> Vec<WindowId> {
+        self.h_clients[id as usize]
+            .as_ref()
+            .expect("invalid client id while getting windows")
+            .clone()
     }
 
     pub fn get_window_order(&self, id: WindowId) -> u32 {
