@@ -19,7 +19,7 @@ use ws::protocol::{
 };
 
 use crate::category5::utils::{
-    timing::*, logging::LogLevel, atmosphere::*, fdwatch::FdWatch,
+    WindowId, timing::*, logging::LogLevel, atmosphere::*, fdwatch::FdWatch,
 };
 use crate::log;
 use crate::category5::input::Input;
@@ -42,6 +42,7 @@ use std::time::Duration;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc::{Sender,Receiver};
+use std::sync::{Arc,RwLock};
 use std::ops::Deref;
 
 // A wayland compositor wrapper
@@ -145,7 +146,8 @@ impl EventManager {
     // This kicks off the global callback chain, starting with
     //    Compositor::bind_compositor_callback
     pub fn new(tx: Sender<Box<Hemisphere>>,
-               rx: Receiver<Box<Hemisphere>>)
+               rx: Receiver<Box<Hemisphere>>,
+               heir: Arc<RwLock<Vec<WindowId>>>)
                -> Box<EventManager>
     {
         let mut display = ws::Display::new();
@@ -153,7 +155,7 @@ impl EventManager {
             .expect("Failed to add a socket to the wayland server");
 
         // Do some teraforming and generate an atmosphere
-        let atmos = Rc::new(RefCell::new(Atmosphere::new(tx, rx)));
+        let atmos = Rc::new(RefCell::new(Atmosphere::new(tx, rx, heir)));
 
         // Later moved into the closure
         let comp_cell = Rc::new(RefCell::new(

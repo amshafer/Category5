@@ -20,6 +20,7 @@ pub mod task;
 use task::*;
 
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, RwLock};
 
 // This consolidates the multiple resources needed
 // to represent a titlebar
@@ -137,7 +138,8 @@ impl WindowManager {
     // the compositor. The WindowManager will create and own
     // the Renderer, thereby readying the display to draw.
     pub fn new(tx: Sender<Box<Hemisphere>>,
-               rx: Receiver<Box<Hemisphere>>)
+               rx: Receiver<Box<Hemisphere>>,
+               heir: Arc<RwLock<Vec<WindowId>>>)
                -> WindowManager
     {
         // creates a context, swapchain, images, and others
@@ -146,7 +148,7 @@ impl WindowManager {
         rend.setup();
 
         let mut wm = WindowManager {
-            wm_atmos: Atmosphere::new(tx, rx),
+            wm_atmos: Atmosphere::new(tx, rx, heir),
             titlebar: WindowManager::get_default_titlebar(&mut rend),
             cursor: WindowManager::get_default_cursor(&mut rend),
             rend: rend,

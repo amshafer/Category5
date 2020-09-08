@@ -11,7 +11,9 @@ use vkcomp::wm::*;
 use ways::compositor::EventManager;
 
 use std::thread;
+use std::vec::Vec;
 use std::sync::mpsc;
+use std::sync::{Arc,RwLock};
 
 // The category5 compositor
 //
@@ -39,6 +41,9 @@ impl Category5 {
         let (v2w_tx, v2w_rx) = mpsc::channel();
         // ways to vkcomp channel
         let (w2v_tx, w2v_rx) = mpsc::channel();
+        // The shared locks for the atmospheres
+        let rwv = Arc::new(RwLock::new(Vec::new()));
+        let rww = rwv.clone();
 
         Category5 {
             // Get the wayland compositor
@@ -47,7 +52,7 @@ impl Category5 {
             c5_wc: Some(thread::Builder::new()
                         .name("wayland_handlers".to_string())
                         .spawn(|| {
-                let mut ev = EventManager::new(w2v_tx, v2w_rx);
+                let mut ev = EventManager::new(w2v_tx, v2w_rx, rww);
                 ev.worker_thread();
             }).unwrap()),
             // creates a context, swapchain, images, and others
@@ -56,7 +61,7 @@ impl Category5 {
             c5_wm: Some(thread::Builder::new()
                         .name("vulkan_compositor".to_string())
                         .spawn(|| {
-                let mut wm = WindowManager::new(v2w_tx, w2v_rx);
+                let mut wm = WindowManager::new(v2w_tx, w2v_rx, rwv);
                 wm.worker_thread();
             }).unwrap()),
         }

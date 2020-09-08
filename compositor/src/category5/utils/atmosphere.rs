@@ -18,6 +18,7 @@ use crate::log;
 use std::rc::Rc;
 use std::vec::Vec;
 use std::cell::RefCell;
+use std::sync::{Arc,RwLock};
 use std::collections::{HashMap,VecDeque};
 use std::sync::mpsc::{Sender,Receiver};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -34,9 +35,8 @@ enum Property {
     FREE_WINDOW_ID,
     RESERVE_CLIENT_ID,
     FREE_CLIENT_ID,
-    FOCUS_ON_ID,
     ADD_NEW_TOPLEVEL,
-    SET_WINDOW_DIMENSIONS,
+    WINDOW_DIMENSIONS,
 }
 
 // Represents updating one property in the ECS
@@ -58,8 +58,6 @@ enum Patch {
     free_window_id(ClientId, WindowId),
     reserve_client_id(ClientId),
     free_client_id(ClientId),
-    // bring a window to the top
-    focus_on_id(WindowId),
     // add a new toplevel role window
     add_new_toplevel(WindowId),
     // set (x, y, width, height)
@@ -153,17 +151,21 @@ pub struct Atmosphere {
     // is the value of the hemi.h_grabbed
     a_grab_patch: Option<Option<WindowId>>,
     a_resolution_patch: Option<(u32, u32)>,
+    // a list of the window ids from front to back
+    // index 0 is the current focus
+    a_window_heir: Arc<RwLock<Vec<WindowId>>>,
 }
 
 impl Atmosphere {
     // Create a new atmosphere to be shared within a subsystem
     //
-    // We pass in the hemispheres since they will have to
+    // We pass in the hemispheres and lock(s) since they will have to
     // also be passed to the other subsystem.
     // One subsystem must be setup as index 0 and the other
     // as index 1
     pub fn new(tx: Sender<Box<Hemisphere>>,
-               rx: Receiver<Box<Hemisphere>>)
+               rx: Receiver<Box<Hemisphere>>,
+               heir: Arc<RwLock<Vec<WindowId>>>)
                -> Atmosphere
     {
         Atmosphere {
@@ -179,6 +181,7 @@ impl Atmosphere {
             a_cursor_patch: None,
             a_grab_patch: None,
             a_resolution_patch: None,
+            a_window_heir: heir,
         }
     }
 
@@ -347,9 +350,8 @@ impl Atmosphere {
         );
 
         // make this the new toplevel window
-        self.add_patch(id,
-                       Property::ADD_NEW_TOPLEVEL,
-                       &Patch::add_new_toplevel(id));
+        self.a_window_heir.write().unwrap()
+            .insert(0, id);
     }
 
     // Reserve a new client id
@@ -401,14 +403,14 @@ impl Atmosphere {
 
     pub fn free_client_id(&mut self, id: ClientId) {
         assert!(!self.a_client_priv[id as usize].is_none());
-        self.a_client_priv[id as usize] = None;
-        self.a_client_id_map[id as usize] = false;
-
         // Free all windows belonging to this client
         let windows = self.get_windows_for_client(id);
         for win in windows.iter() {
             self.free_window_id(id, *win);
         }
+
+        self.a_client_priv[id as usize] = None;
+        self.a_client_id_map[id as usize] = false;
 
         self.add_patch(
             id,
@@ -420,8 +422,12 @@ impl Atmosphere {
     // Mark the id as available
     pub fn free_window_id(&mut self, client: ClientId, id: WindowId) {
         assert!(!self.a_window_priv[id as usize].is_none());
+        // remove this id from the heirarchy
+        self.a_window_heir.write().unwrap()
+            .retain(|&wid| wid != id);
         self.a_window_priv[id as usize] = None;
         self.a_window_id_map[id as usize] = false;
+
         self.add_patch(
             id,
             Property::FREE_WINDOW_ID,
@@ -433,19 +439,15 @@ impl Atmosphere {
     //
     // TODO: Make this a more efficient tree
     pub fn get_window_order(&self, id: WindowId) -> u32 {
-        // check if this window has been brought into focus
-        if let Some(patch) = self.a_patches.get(&(FOCUS_STUB_ID,
-                                                  Property::FOCUS_ON_ID))
-        {
-            match patch {
-                Patch::focus_on_id(focus) => {
-                    if *focus == id { return 0; }
-                },
-                _ => (),
+        log!(LogLevel::info, "getting window order for {}", id);
+        let heir = self.a_window_heir.read().unwrap();
+
+        for (i, win) in heir.iter().enumerate() {
+            if *win == id {
+                return i as u32;
             }
         }
-
-        self.a_hemi.as_ref().unwrap().get_window_order(id)
+        panic!("Could not find window with id {}", id);
     }
 
     // Get the windows ids belonging this client
@@ -454,17 +456,15 @@ impl Atmosphere {
     }
 
     // Get the window currently in use
+    // The window heir is sorted, so the first one will
+    // be the top level
     pub fn get_window_in_focus(&self) -> Option<WindowId> {
-        if let Some(focus) = self.a_patches.get(&(FOCUS_STUB_ID,
-                                                  Property::FOCUS_ON_ID))
-        {
-            match focus {
-                Patch::focus_on_id(id) => return Some(*id),
-                _ => (),
-            }
-        }
+        let heir = self.a_window_heir.read().unwrap();
 
-        self.a_hemi.as_ref().unwrap().get_window_in_focus()
+        if heir.len() > 0 {
+            return Some(heir[0]);
+        }
+        return None;
     }
 
     // Set the window currently in focus
@@ -474,12 +474,24 @@ impl Atmosphere {
     // harmful swapping that could remove one or more windows
     // from being drawn
     pub fn focus_on(&mut self, id: WindowId) {
-        log!(LogLevel::info, "adding patch to focus on window {}", id);
-        self.add_patch(
-            FOCUS_STUB_ID, // see comment for this var
-            Property::FOCUS_ON_ID,
-            &Patch::focus_on_id(id),
-        );
+        log!(LogLevel::info, "focusing on window {}", id);
+        let mut heir = self.a_window_heir.write().unwrap();
+
+        // find the index of this window
+        let idx = heir.iter()
+            .enumerate()
+            .find(|(_, &win)| win == id)
+            // there can only be one
+            .unwrap()
+            // get the index, which is the first in the tuple
+            .0;
+
+        // if it is already the top window then bail
+        if idx == 0 {
+            return;
+        }
+
+        heir.swap(0, idx);
     }
 
     // this is one of the few updates from vkcomp
@@ -508,7 +520,22 @@ impl Atmosphere {
     pub fn find_window_at_point(&self, x: f32, y: f32)
                                 -> Option<WindowId>
     {
-        self.a_hemi.as_ref().unwrap().find_window_at_point(x, y)
+        let heir = self.a_window_heir.read().unwrap();
+
+        let barsize = self.get_barsize();
+
+        for win in heir.iter() {
+            let pos = self.get_window_dimensions(*win);
+
+            // If this window contains (x, y) then return it
+            if x > pos.0 && y > pos.1
+                && x < (pos.0 + pos.2)
+                && y < (pos.1 + pos.3 + barsize)
+            {
+                return Some(*win);
+            }
+        }
+        return None;
     }
 
     // Is the current point over the titlebar of the window
@@ -717,9 +744,6 @@ pub struct Hemisphere {
     // The ClientId is the index into this vec, and the element there is a list
     // of windows that belong to this client
     h_clients: Vec<Option<Vec<WindowId>>>,
-    // a list of the window ids from front to back
-    // index 0 is the current focus
-    h_window_heir: Vec<WindowId>,
     // The position of each window's top left corner, and it's width
     // Indexed by WindowId
     // (base_x, base_y, width, height)
@@ -746,7 +770,6 @@ impl Hemisphere {
             h_grabbed: None,
             h_clients: Vec::new(),
             h_windows: Vec::new(),
-            h_window_heir: Vec::new(),
             h_window_dimensions: Vec::new(),
             h_wm_tasks: VecDeque::new(),
             h_resolution: (0, 0),
@@ -774,8 +797,6 @@ impl Hemisphere {
                 self.reserve_client_id(*id),
             Patch::free_client_id(id) =>
                 self.free_client_id(*id),
-            Patch::focus_on_id(id) =>
-                self.focus_on(*id),
             Patch::add_new_toplevel(id) =>
                 self.add_new_toplevel(*id),
             Patch::set_window_dimensions(dims) =>
@@ -848,29 +869,6 @@ impl Hemisphere {
         self.h_clients[client as usize].as_mut().unwrap().push(id);
     }
 
-    // Make this window the top level
-    pub fn focus_on(&mut self, id: WindowId) {
-        log!(LogLevel::info, "focusing on window {}", id);
-        assert!((id as usize) < self.h_windows.len());
-        self.mark_changed();
-
-        // find the index of this window
-        let idx = self.h_window_heir.iter()
-            .enumerate()
-            .find(|(_, &win)| win == id)
-            // there can only be one
-            .unwrap()
-            // get the index, which is the first in the tuple
-            .0;
-
-        // if it is already the top window then bail
-        if idx == 0 {
-            return;
-        }
-
-        self.h_window_heir.swap(0, idx);
-    }
-
     fn free_client_id(&mut self, id: ClientId) {
         assert!((id as usize) < self.h_clients.len());
         self.mark_changed();
@@ -883,8 +881,6 @@ impl Hemisphere {
         self.mark_changed();
 
         self.h_windows[id as usize] = false;
-        // remove this id from the heirarchy
-        self.h_window_heir.retain(|&wid| wid != id);
         // remove this id from the client
         self.h_clients[client as usize].as_mut()
             .map(|v| v.retain(|&i| id != i));
@@ -911,8 +907,8 @@ impl Hemisphere {
         self.h_grabbed = id;
     }
 
-    pub fn add_new_toplevel(&mut self, id: WindowId) {
-        self.h_window_heir.insert(0, id);
+    pub fn add_new_toplevel(&mut self, _id: WindowId) {
+        // empty
     }
 
     pub fn set_window_dimensions(&mut self,
@@ -939,16 +935,6 @@ impl Hemisphere {
     // accessors
     // ----------------
 
-    // Get the window currently in use
-    // The window heir is sorted, so the first one will
-    // be the top level
-    pub fn get_window_in_focus(&self) -> Option<WindowId> {
-        if self.h_window_heir.len() > 0 {
-            return Some(self.h_window_heir[0]);
-        }
-        return None;
-    }
-
     pub fn get_resolution(&self) -> (u32, u32) {
         self.h_resolution
     }
@@ -962,36 +948,6 @@ impl Hemisphere {
             .as_ref()
             .expect("invalid client id while getting windows")
             .clone()
-    }
-
-    pub fn get_window_order(&self, id: WindowId) -> u32 {
-        for (i, win) in self.h_window_heir.iter().enumerate() {
-            if *win == id {
-                return i as u32;
-            }
-        }
-        panic!("Could not find window with id {}", id);
-    }
-
-    // Used to find what window is under the cursor
-    // returns None if the point is not over a window
-    pub fn find_window_at_point(&self, x: f32, y: f32)
-                                -> Option<WindowId>
-    {
-        let barsize = self.get_barsize();
-
-        for win in self.h_window_heir.iter() {
-            let pos = self.h_window_dimensions[*win as usize].unwrap();
-
-            // If this window contains (x, y) then return it
-            if x > pos.0 && y > pos.1
-                && x < (pos.0 + pos.2)
-                && y < (pos.1 + pos.3 + barsize)
-            {
-                return Some(*win);
-            }
-        }
-        return None;
     }
 
     // Used to find if the point is over this windows titlebar
