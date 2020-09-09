@@ -59,7 +59,14 @@ impl<T: Clone + Property> PropertyMap<T> {
     }
 
     pub fn deactivate(&mut self, id: u32) {
+        assert!(!self.pm_map[id as usize].is_none());
         self.pm_map[id as usize] = None;
+    }
+
+    fn ensure_active(&mut self, id: u32) {
+        if self.pm_map[id as usize].is_none() {
+            self.activate(id);
+        }
     }
 
     /// Get the value of a property.
@@ -68,7 +75,10 @@ impl<T: Clone + Property> PropertyMap<T> {
     /// we want to retrieve.
     pub fn get(&self, id: u32, prop_id: PropertyId) -> Option<&T> {
         // make sure this id exists
-        assert!(!self.pm_map[id as usize].is_none());
+        if self.pm_map[id as usize].is_none() {
+            return None;
+        }
+
         let win = self.pm_map[id as usize].as_ref().unwrap();
         // make sure this property exists
         assert!(!win[prop_id].is_none());
@@ -83,7 +93,7 @@ impl<T: Clone + Property> PropertyMap<T> {
     /// T is the new data
     pub fn set(&mut self, id: u32, prop_id: PropertyId, value: &T) {
         // make sure this id exists
-        assert!(!self.pm_map[id as usize].is_none());
+        self.ensure_active(id);
         let win = self.pm_map[id as usize].as_mut().unwrap();
 
         win[prop_id] = Some(value.clone());
@@ -94,5 +104,20 @@ impl<T: Clone + Property> PropertyMap<T> {
     pub fn clear(&mut self, id: u32, prop_id: PropertyId) {
         let win = self.pm_map[id as usize].as_mut().unwrap();
         win[prop_id] = None;
+    }
+
+    /// return an iterator of valid ids.
+    ///
+    /// This will be all ids that are have been `activate`d
+    pub fn active_ids(&self) -> Vec<u32> {
+        self.pm_map.iter()
+            .enumerate()
+            .filter_map(|(i, elem)| {
+                match elem {
+                    Some(_) => Some(i as u32),
+                    None => None,
+                }
+            })
+            .collect()
     }
 }

@@ -38,10 +38,6 @@ enum GlobalProperty {
     cursor_pos(f64, f64),
     resolution(u32, u32),
     grabbed(Option<WindowId>),
-    // window ids represent a surface onscreen
-    //window_id(ClientId, WindowId),
-    // client ids represent a connected client
-    //client_id(ClientId),
     // does this window have the toplevel role
     //toplevel(WindowId),
     // (x, y, width, height)
@@ -74,24 +70,89 @@ impl Property for GlobalProperty {
     }
 }
 
+// These are indexed by ClientId
+#[derive(Clone, Debug)]
+enum ClientProperty {
+    // is this id in use?
+    in_use(bool),
+    // window ids belonging to this client
+    windows(Vec<WindowId>),
+}
+
+impl ClientProperty {
+    const IN_USE: PropertyId = 0;
+    const WINDOWS: PropertyId = 1;
+    const VARIANT_LEN: PropertyId = 2;
+}
+
+impl Property for ClientProperty {
+    // Get a unique Id
+    fn get_property_id(&self) -> PropertyId {
+        match self {
+            Self::in_use(_) => Self::IN_USE,
+            Self::windows(_)=> Self::WINDOWS,
+        }
+    }
+
+    fn variant_len() -> u32 {
+        return Self::VARIANT_LEN as u32;
+    }
+}
+
 // per-surface private data
 //
 // This holds all of the protocol resources
 // that ways needs. An array of these are used (indexed
 // by the window id) to tie an id to a set of protocol
 // objects. i.e. find the surface/seat/etc for this id.
-pub struct Priv {
+#[derive(Clone)]
+enum Priv {
     // a surface to have its callbacks called
-    p_surf: Option<Rc<RefCell<Surface>>>,
+    surface(Option<Rc<RefCell<Surface>>>),
+}
+
+impl Priv {
+    const SURFACE: PropertyId = 0;
+    const VARIANT_LEN: PropertyId = 1;
+}
+
+impl Property for Priv {
+    fn get_property_id(&self) -> PropertyId {
+        match self {
+            Self::surface(_) => Self::SURFACE,
+        }
+    }
+
+    fn variant_len() -> u32 {
+        return Self::VARIANT_LEN as u32;
+    }
 }
 
 // per-client private data
 //
 // Clients can have multiple windows, so we need this
 // to hold resources that are tied only to the client
-pub struct ClientPriv {
+#[derive(Clone)]
+enum ClientPriv {
     // a collection of input resources
-    cp_seat: Option<Rc<RefCell<Seat>>>,
+    seat(Option<Rc<RefCell<Seat>>>),
+}
+
+impl ClientPriv {
+    const SEAT: PropertyId = 0;
+    const VARIANT_LEN: PropertyId = 1;
+}
+
+impl Property for ClientPriv {
+    fn get_property_id(&self) -> PropertyId {
+        match self {
+            Self::seat(_) => Self::SEAT,
+        }
+    }
+
+    fn variant_len() -> u32 {
+        return Self::VARIANT_LEN as u32;
+    }
 }
 
 // Global state tracking
@@ -125,10 +186,16 @@ pub struct Atmosphere {
 
     // -- private subsystem specific resources --
 
+    // These keep track of what ids we have handed out to the
+    // property maps. We need to track this here since we are
+    // patching the prop maps and can't rely on them
+    a_client_id_map: Vec<bool>,
+    a_window_id_map: Vec<bool>,
+
     // -- ways --
     
-    a_window_priv: Vec<Option<Priv>>,
-    a_client_priv: Vec<Option<ClientPriv>>,
+    a_window_priv: PropertyMap<Priv>,
+    a_client_priv: PropertyMap<ClientPriv>,
     // A hashmap of patches based on the window id and the
     // property name
     //
@@ -141,7 +208,7 @@ pub struct Atmosphere {
     // when receiving the other hemisphere, first replay all
     // patches before constructing a new changeset.
     //a_window_patches: HashMap<(WindowId, Property), Property>,
-    //a_client_patches: HashMap<(ClientId, Property), Property>,
+    a_client_patches: HashMap<(ClientId, PropertyId), ClientProperty>,
     a_global_patches: HashMap<PropertyId, GlobalProperty>,
     // a list of the window ids from front to back
     // index 0 is the current focus
@@ -165,11 +232,28 @@ impl Atmosphere {
             a_rx: rx,
             a_hemi: Some(Box::new(Hemisphere::new())),
             // TODO: only do this for ways
-            a_window_priv: Vec::new(),
-            a_client_priv: Vec::new(),
+            a_window_priv: PropertyMap::new(),
+            a_client_priv: PropertyMap::new(),
+            a_client_id_map: Vec::new(),
+            a_window_id_map: Vec::new(),
+            a_client_patches: HashMap::new(),
             a_global_patches: HashMap::new(),
             a_window_heir: heir,
         }
+    }
+
+    // Gets the next available id in a vec of bools
+    // generic id getter
+    fn get_next_id(v: &mut Vec<bool>) -> u32 {
+        for (i, in_use) in v.iter_mut().enumerate() {
+            if !*in_use {
+                *in_use = true;
+                return i as u32;
+            }
+        }
+
+        v.push(true);
+        return (v.len() - 1) as u32;
     }
 
     // Get the next id
@@ -177,11 +261,15 @@ impl Atmosphere {
     // Find a free id if one is available, if not then
     // add a new one
     pub fn mint_client_id(&mut self) -> ClientId {
-        return 0;
+        let id = Atmosphere::get_next_id(&mut self.a_client_id_map);
+        self.reserve_client_id(id);
+        return id;
     }
 
     pub fn mint_window_id(&mut self, client: ClientId) -> WindowId {
-        return 0;
+        let id = Atmosphere::get_next_id(&mut self.a_window_id_map);
+        self.reserve_window_id(client, id);
+        return id;
     }
 
     // Add a patch to be replayed on a flip
@@ -210,6 +298,29 @@ impl Atmosphere {
         }
         return self.a_hemi.as_ref().unwrap()
             .get_global_prop(prop_id);
+    }
+
+    fn set_client_prop(&mut self, client: ClientId, value: &ClientProperty) {
+        self.mark_changed();
+        let prop_id = value.get_property_id();
+        // check if there is an existing patch to overwrite
+        if let Some(v) = self.a_client_patches.get_mut(&(client, prop_id)) {
+            // if so, just update it
+            *v = value.clone();
+        } else {
+            self.a_client_patches.insert((client, prop_id), value.clone());
+        }
+    }
+
+    fn get_client_prop(&self, client: ClientId, prop_id: PropertyId)
+                       -> Option<&ClientProperty>
+    {
+        // check if there is an existing patch to grab
+        if let Some(v) = self.a_client_patches.get(&(client, prop_id)) {
+            return Some(v);
+        }
+        return self.a_hemi.as_ref().unwrap()
+            .get_client_prop(client, prop_id);
     }
 
     // Commit all our patches into the hemisphere
@@ -331,11 +442,16 @@ impl Atmosphere {
     // Should be done the first time we interact with
     // a new client
     pub fn reserve_client_id(&mut self, id: ClientId) {
+        self.set_client_prop(id, &ClientProperty::in_use(true));
+
+        // For the priv maps we are activating and deactivating
+        // the entries so we can use the iterator trait
+        self.a_client_priv.activate(id);
         // Add a new priv entry
-        let private = Some(ClientPriv {
-            cp_seat: None,
-        });
-        // TODO: add client id
+        // This is kept separately for ways
+        self.a_client_priv.set(id,
+                               ClientPriv::SEAT,
+                               &ClientPriv::seat(None));
     }
 
     // Mark the specified id as in-use
@@ -345,29 +461,45 @@ impl Atmosphere {
     // no longer available
     pub fn reserve_window_id(&mut self, client: ClientId, id: WindowId) {
         // Add a new priv entry
-        let private = Some(Priv {
-            p_surf: None,
-        });
-        // TODO: add window Id
+        // For the priv maps we are activating and deactivating
+        // the entries so we can use the iterator trait
+        self.a_window_priv.activate(id);
+        // Add a new priv entry
+        // This is kept separately for ways
+        self.a_window_priv.set(id,
+                               Priv::SURFACE,
+                               &Priv::surface(None));
+
+        // This is a bit too expensive atm
+        let mut windows = self.get_windows_for_client(client);
+        windows.push(id);
+        self.set_client_prop(id, &ClientProperty::windows(windows));
     }
 
     pub fn free_client_id(&mut self, id: ClientId) {
-        assert!(!self.a_client_priv[id as usize].is_none());
         // Free all windows belonging to this client
         let windows = self.get_windows_for_client(id);
         for win in windows.iter() {
             self.free_window_id(id, *win);
         }
 
-        // TODO: deactivate client id
+        self.set_client_prop(id, &ClientProperty::in_use(false));
+        // For the priv maps we are activating and deactivating
+        // the entries so we can use the iterator trait
+        self.a_client_priv.deactivate(id);
     }
 
     // Mark the id as available
     pub fn free_window_id(&mut self, client: ClientId, id: WindowId) {
-        assert!(!self.a_window_priv[id as usize].is_none());
         // remove this id from the heirarchy
         self.a_window_heir.write().unwrap()
             .retain(|&wid| wid != id);
+
+        // remove this window from the clients list
+        // This is a bit too expensive atm
+        let mut windows = self.get_windows_for_client(client);
+        windows.retain(|&wid| wid != id);
+        self.set_client_prop(id, &ClientProperty::windows(windows));
 
         // TODO:  free window id
     }
@@ -389,7 +521,11 @@ impl Atmosphere {
 
     // Get the windows ids belonging this client
     pub fn get_windows_for_client(&self, id: ClientId) -> Vec<WindowId> {
-        Vec::new()
+        match self.get_client_prop(id, ClientProperty::WINDOWS) {
+            Some(ClientProperty::windows(v)) => v.clone(),
+            None => Vec::new(),
+            _ => panic!("property not found"),
+        }
     }
 
     // Get the window currently in use
@@ -438,9 +574,7 @@ impl Atmosphere {
 
     // Get the screen resolution as set by vkcomp
     pub fn get_resolution(&self) -> (u32, u32) {
-        match self.get_global_prop(GlobalProperty::resolution(0,0)
-                                   .get_property_id())
-        {
+        match self.get_global_prop(GlobalProperty::RESOLUTION) {
             Some(GlobalProperty::resolution(x, y)) => (*x, *y),
             _ => panic!("Could not find value for property"),
         }
@@ -581,26 +715,27 @@ impl Atmosphere {
     pub fn add_surface(&mut self, id: WindowId,
                        surf: Rc<RefCell<Surface>>)
     {
-        if let Some(private) = self.a_window_priv[id as usize].as_mut() {
-            private.p_surf = Some(surf);
-        }
+        self.a_window_priv.set(id,
+                               Priv::SURFACE,
+                               &Priv::surface(Some(surf)));
     }
 
     pub fn add_seat(&mut self, id: WindowId,
                     seat: Rc<RefCell<Seat>>)
     {
-        if let Some(private) = self.a_client_priv[id as usize].as_mut() {
-            private.cp_seat = Some(seat);
-        }
+        self.a_client_priv.set(id,
+                               ClientPriv::SEAT,
+                               &ClientPriv::seat(Some(seat)));
     }
 
     pub fn get_seat_from_id(&mut self, id: WindowId)
                             -> Option<Rc<RefCell<Seat>>>
     {
-        if let Some(private) = self.a_client_priv[id as usize].as_mut() {
-            return private.cp_seat.clone();
+        match self.a_client_priv.get(id, ClientPriv::SEAT) {
+            Some(ClientPriv::seat(Some(s))) => Some(s.clone()),
+            Some(ClientPriv::seat(None)) => None,
+            _ => panic!("Could not find value for property"),
         }
-        return None;
     }
 
     // Signal any registered frame callbacks
@@ -610,11 +745,12 @@ impl Atmosphere {
     // redraw themselves. If they aren't on screen we don't send
     // the callback so it doesn't use the power.
     pub fn signal_frame_callbacks(&mut self) {
-        for private in self.a_window_priv
-            .iter()
-            .filter(|p| p.is_some())
-        {
-            if let Some(cell) = private.as_ref().unwrap().p_surf.as_ref() {
+        // get each valid id in the mapping
+        for id in self.a_window_priv.active_ids().iter() {
+            // get the refcell for the surface for this id
+            if let Some(Priv::surface(Some(cell))) = self.a_window_priv
+                .get(*id, Priv::SURFACE)
+            {
                 let surf = cell.borrow_mut();
                 if let Some(callback) = surf.s_frame_callback.as_ref() {
                     // frame callbacks return the current time
@@ -660,6 +796,7 @@ pub struct Hemisphere {
     h_has_changed: bool,
     // The property database for our ECS
     h_global_props: PropertyMap<GlobalProperty>,
+    h_client_props: PropertyMap<ClientProperty>,
     // A list of tasks to be completed by vkcomp this frame
     // - does not need to be patched
     //
@@ -675,6 +812,7 @@ impl Hemisphere {
         Hemisphere {
             h_has_changed: true,
             h_global_props: PropertyMap::new(),
+            h_client_props: PropertyMap::new(),
             h_wm_tasks: VecDeque::new(),
         }
     }
@@ -700,6 +838,23 @@ impl Hemisphere {
                        -> Option<&GlobalProperty>
     {
         self.h_global_props.get(0, id)
+    }
+
+    fn set_client_prop(&mut self,
+                       client: ClientId,
+                       id: PropertyId,
+                       prop: &ClientProperty)
+    {
+        self.mark_changed();
+        // for global properties just always pass the id as 0
+        // since we don't care about window/client indexing
+        self.h_client_props.set(client, id, prop);
+    }
+
+    fn get_client_prop(&self, client: ClientId, id: PropertyId)
+                       -> Option<&ClientProperty>
+    {
+        self.h_client_props.get(client, id)
     }
 
     // This should be called after all patches are applied
