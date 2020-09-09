@@ -4,6 +4,11 @@
 #![allow(dead_code)]
 extern crate wayland_server as ws;
 
+mod property;
+use property::{PropertyId,Property};
+mod property_map;
+use property_map::PropertyMap;
+
 use crate::category5::ways::{
     surface::*,
     seat::Seat,
@@ -23,52 +28,51 @@ use std::collections::{HashMap,VecDeque};
 use std::sync::mpsc::{Sender,Receiver};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// Different shared property ids in the ECS
+// Global data not tied to a client or window
 //
-// We use this to show which property will be
-// updated by an action. All hashmaps are indexed
-// using the window id, and therefore another
-// method is needed to identify the property to update
-#[derive(PartialEq, Eq, Hash, Copy, Clone)]
-enum Property {
-    RESERVE_WINDOW_ID,
-    FREE_WINDOW_ID,
-    RESERVE_CLIENT_ID,
-    FREE_CLIENT_ID,
-    ADD_NEW_TOPLEVEL,
-    WINDOW_DIMENSIONS,
-}
-
-// Represents updating one property in the ECS
-//
-// Our atmosphere is really just a lock-free Entity
-// component set. We need a way to snapshot the
-// changes accummulated in a hemisphere during a frame
-// so that we can replay them on the other hemisphere
-// to keep things consistent. This encapsulates uppdating
-// one property.
-//
-// These will be collected in a hashmap for replay
-//    map<(window id, property id), Patch>
-#[allow(dead_code)]
+// See `Property` for implementation comments
 #[derive(Copy, Clone, Debug)]
-enum Patch {
-    // reserve a window id, old or new
-    reserve_window_id(ClientId, WindowId),
-    free_window_id(ClientId, WindowId),
-    reserve_client_id(ClientId),
-    free_client_id(ClientId),
-    // add a new toplevel role window
-    add_new_toplevel(WindowId),
-    // set (x, y, width, height)
-    set_window_dimensions((f32, f32, f32, f32)),
+enum GlobalProperty {
+    // !! IF YOU CHANGE THIS UPDATE property_count BELOW!!
+
+    cursor_pos(f64, f64),
+    resolution(u32, u32),
+    grabbed(Option<WindowId>),
+    // window ids represent a surface onscreen
+    //window_id(ClientId, WindowId),
+    // client ids represent a connected client
+    //client_id(ClientId),
+    // does this window have the toplevel role
+    //toplevel(WindowId),
+    // (x, y, width, height)
+    //window_dimensions(WindowId, (f32, f32, f32, f32)),
 }
 
-// This is a magic value used as the id parameter in the
-// (WindowId, Property) pair for FOCUS_ON_ID
-// We need this because we won't have a window
-// id to look up the focused window patch with
-const FOCUS_STUB_ID: WindowId = 0;
+// Declare constants for the property ids. This prevents us
+// from having to make an instance of the enum that we would
+// have to call get_property_id on
+impl GlobalProperty {
+    const CURSOR_POS: PropertyId = 0;
+    const RESOLUTION: PropertyId = 1;
+    const GRABBED: PropertyId = 2;
+    // MUST be the last one
+    const VARIANT_LEN: PropertyId = 3;
+}
+
+impl Property for GlobalProperty {
+    // Get a unique Id
+    fn get_property_id(&self) -> PropertyId {
+        match self {
+            Self::cursor_pos(_, _) => Self::CURSOR_POS,
+            Self::resolution(_, _) => Self::RESOLUTION,
+            Self::grabbed(_) => Self::GRABBED,
+        }
+    }
+
+    fn variant_len() -> u32 {
+        return Self::VARIANT_LEN as u32;
+    }
+}
 
 // per-surface private data
 //
@@ -121,11 +125,6 @@ pub struct Atmosphere {
 
     // -- private subsystem specific resources --
 
-    // The next id to hand out
-    // each index is marked true if that id is handed out
-    a_client_id_map: Vec<bool>,
-    a_window_id_map: Vec<bool>,
-
     // -- ways --
     
     a_window_priv: Vec<Option<Priv>>,
@@ -141,16 +140,9 @@ pub struct Atmosphere {
     // construction, and will then be applied before flipping.
     // when receiving the other hemisphere, first replay all
     // patches before constructing a new changeset.
-    a_patches: HashMap<(WindowId, Property), Patch>,
-    // The cursor is the number one thing we will have to
-    // patch. There's no point having the overhead of a_patches
-    // when it is only 2 floats, so just add it here.
-    a_cursor_patch: Option<(f64, f64)>,
-    // Same idea as the cursor patch but for the grabbed window
-    // The outer option tells us if we have an update. The inner
-    // is the value of the hemi.h_grabbed
-    a_grab_patch: Option<Option<WindowId>>,
-    a_resolution_patch: Option<(u32, u32)>,
+    //a_window_patches: HashMap<(WindowId, Property), Property>,
+    //a_client_patches: HashMap<(ClientId, Property), Property>,
+    a_global_patches: HashMap<PropertyId, GlobalProperty>,
     // a list of the window ids from front to back
     // index 0 is the current focus
     a_window_heir: Arc<RwLock<Vec<WindowId>>>,
@@ -173,30 +165,11 @@ impl Atmosphere {
             a_rx: rx,
             a_hemi: Some(Box::new(Hemisphere::new())),
             // TODO: only do this for ways
-            a_client_id_map: Vec::new(),
-            a_window_id_map: Vec::new(),
             a_window_priv: Vec::new(),
             a_client_priv: Vec::new(),
-            a_patches: HashMap::new(),
-            a_cursor_patch: None,
-            a_grab_patch: None,
-            a_resolution_patch: None,
+            a_global_patches: HashMap::new(),
             a_window_heir: heir,
         }
-    }
-
-    // Gets the next available id in a vec of bools
-    // generic id getter
-    fn get_next_id(v: &mut Vec<bool>) -> u32 {
-        for (i, in_use) in v.iter_mut().enumerate() {
-            if !*in_use {
-                *in_use = true;
-                return i as u32;
-            }
-        }
-
-        v.push(true);
-        return (v.len() - 1) as u32;
     }
 
     // Get the next id
@@ -204,15 +177,39 @@ impl Atmosphere {
     // Find a free id if one is available, if not then
     // add a new one
     pub fn mint_client_id(&mut self) -> ClientId {
-        let id = Atmosphere::get_next_id(&mut self.a_client_id_map);
-        self.reserve_client_id(id);
-        return id;
+        return 0;
     }
 
     pub fn mint_window_id(&mut self, client: ClientId) -> WindowId {
-        let id = Atmosphere::get_next_id(&mut self.a_window_id_map);
-        self.reserve_window_id(client, id);
-        return id;
+        return 0;
+    }
+
+    // Add a patch to be replayed on a flip
+    //
+    // All changes to the current hemisphere will get
+    // batched up into a set of patches. This is needed to
+    // keep both hemispheres in sync.
+    fn set_global_prop(&mut self, value: &GlobalProperty) {
+        self.mark_changed();
+        let prop_id = value.get_property_id();
+        // check if there is an existing patch to overwrite
+        if let Some(v) = self.a_global_patches.get_mut(&prop_id) {
+            // if so, just update it
+            *v = *value;
+        } else {
+            self.a_global_patches.insert(prop_id, *value);
+        }
+    }
+
+    fn get_global_prop(&self, prop_id: PropertyId)
+                       -> Option<&GlobalProperty>
+    {
+        // check if there is an existing patch to grab
+        if let Some(v) = self.a_global_patches.get(&prop_id) {
+            return Some(v);
+        }
+        return self.a_hemi.as_ref().unwrap()
+            .get_global_prop(prop_id);
     }
 
     // Commit all our patches into the hemisphere
@@ -224,18 +221,9 @@ impl Atmosphere {
     // update it will all the info it's missing
     fn replay(&mut self, hemi: &mut Hemisphere) {
         log!(LogLevel::info, "replaying on hemisphere");
-        for ((window_id, prop), patch) in self.a_patches.iter() {
-            log!(LogLevel::info, "   replaying {:?}", patch);
-            hemi.apply_patch(*window_id, *prop, patch);
-        }
-        if let Some(grab) = self.a_grab_patch {
-            hemi.grab(grab);
-        }
-        if let Some(res) = self.a_resolution_patch {
-            hemi.set_resolution(res.0, res.1);
-        }
-        if let Some(cursor) = self.a_cursor_patch {
-            hemi.set_cursor_pos(cursor.0, cursor.1);
+        for (prop_id, prop) in self.a_global_patches.iter() {
+            log!(LogLevel::info, "   replaying {:?}", prop);
+            hemi.set_global_prop(*prop_id, prop);
         }
 
         // Apply any remaining constant state like cursor
@@ -277,11 +265,8 @@ impl Atmosphere {
         // other subsystem
         self.a_hemi = Some(new_hemi);
 
-        // Clear the patches
-        self.a_resolution_patch = None;
-        self.a_grab_patch = None;
-        self.a_cursor_patch = None;
-        self.a_patches.clear();
+        // Clear all patches
+        self.a_global_patches.clear();
 
         return true;
     }
@@ -310,18 +295,12 @@ impl Atmosphere {
         }
     }
 
-    // Add a patch to be replayed on a flip
-    //
-    // All changes to the current hemisphere will get
-    // batched up into a set of patches. This is needed to
-    // keep both hemispheres in sync.
-    fn add_patch(&mut self,
-                 id: WindowId,
-                 prop: Property,
-                 patch: &Patch)
-    {
+    fn mark_changed(&mut self) {
         self.a_hemi.as_mut().map(|h| h.mark_changed());
-        self.a_patches.insert((id, prop), *patch);
+    }
+
+    pub fn get_barsize(&self) -> f32 {
+        self.get_resolution().1 as f32 * 0.02
     }
 
     // ------------------------------
@@ -340,14 +319,7 @@ impl Atmosphere {
             wm::task::Task::create_window(id)
         );
 
-        self.add_patch(
-            id,
-            Property::SET_WINDOW_DIMENSIONS,
-            &Patch::set_window_dimensions(
-                (0.0, 0.0, // (x, y)
-                 640.0, 480.0) // (width, height)
-            )
-        );
+        // TODO: add_patch
 
         // make this the new toplevel window
         self.a_window_heir.write().unwrap()
@@ -359,22 +331,11 @@ impl Atmosphere {
     // Should be done the first time we interact with
     // a new client
     pub fn reserve_client_id(&mut self, id: ClientId) {
-        self.add_patch(id,
-                       Property::RESERVE_CLIENT_ID,
-                       &Patch::reserve_client_id(id));
-
         // Add a new priv entry
         let private = Some(ClientPriv {
             cp_seat: None,
         });
-        if (id as usize) < self.a_client_priv.len() {
-            assert!(self.a_client_priv[id as usize].is_none());
-            self.a_client_priv[id as usize] = private;
-        } else {
-            // otherwise make a new one
-            assert!(id as usize == self.a_client_priv.len());
-            self.a_client_priv.push(private);
-        }
+        // TODO: add client id
     }
 
     // Mark the specified id as in-use
@@ -383,22 +344,11 @@ impl Atmosphere {
     // in the hemisphere, and we need to mark this as
     // no longer available
     pub fn reserve_window_id(&mut self, client: ClientId, id: WindowId) {
-        self.add_patch(id,
-                       Property::RESERVE_WINDOW_ID,
-                       &Patch::reserve_window_id(client, id));
-
         // Add a new priv entry
         let private = Some(Priv {
             p_surf: None,
         });
-        if (id as usize) < self.a_window_priv.len() {
-            assert!(self.a_window_priv[id as usize].is_none());
-            self.a_window_priv[id as usize] = private;
-        } else {
-            // otherwise make a new one
-            assert!(id as usize == self.a_window_priv.len());
-            self.a_window_priv.push(private);
-        }
+        // TODO: add window Id
     }
 
     pub fn free_client_id(&mut self, id: ClientId) {
@@ -409,14 +359,7 @@ impl Atmosphere {
             self.free_window_id(id, *win);
         }
 
-        self.a_client_priv[id as usize] = None;
-        self.a_client_id_map[id as usize] = false;
-
-        self.add_patch(
-            id,
-            Property::FREE_CLIENT_ID,
-            &Patch::free_client_id(id),
-        );
+        // TODO: deactivate client id
     }
 
     // Mark the id as available
@@ -425,14 +368,8 @@ impl Atmosphere {
         // remove this id from the heirarchy
         self.a_window_heir.write().unwrap()
             .retain(|&wid| wid != id);
-        self.a_window_priv[id as usize] = None;
-        self.a_window_id_map[id as usize] = false;
 
-        self.add_patch(
-            id,
-            Property::FREE_WINDOW_ID,
-            &Patch::free_window_id(client, id),
-        );
+        // TODO:  free window id
     }
 
     // Get the window order from [0..n windows)
@@ -452,7 +389,7 @@ impl Atmosphere {
 
     // Get the windows ids belonging this client
     pub fn get_windows_for_client(&self, id: ClientId) -> Vec<WindowId> {
-        self.a_hemi.as_ref().unwrap().get_windows_for_client(id)
+        Vec::new()
     }
 
     // Get the window currently in use
@@ -496,20 +433,35 @@ impl Atmosphere {
 
     // this is one of the few updates from vkcomp
     pub fn set_resolution(&mut self, x: u32, y: u32) {
-        self.a_hemi.as_mut().map(|h| h.mark_changed());
-        self.a_resolution_patch = Some((x, y));
+        self.set_global_prop(&GlobalProperty::resolution(x, y));
     }
 
     // Get the screen resolution as set by vkcomp
     pub fn get_resolution(&self) -> (u32, u32) {
-        self.a_hemi.as_ref().unwrap().get_resolution()
+        match self.get_global_prop(GlobalProperty::resolution(0,0)
+                                   .get_property_id())
+        {
+            Some(GlobalProperty::resolution(x, y)) => (*x, *y),
+            _ => panic!("Could not find value for property"),
+        }
     }
 
-    // This is the thickness of the titlebar
-    // It is based on the resolution, but hidden behind this
-    // function so it can easily be changed
-    pub fn get_barsize(&self) -> f32 {
-        self.a_hemi.as_ref().unwrap().get_barsize()
+    // Grab the window by the specified id
+    // it will get moved around as the cursor does
+    pub fn grab(&mut self, id: WindowId) {
+        self.set_global_prop(&GlobalProperty::grabbed(Some(id)));
+    }
+
+    pub fn ungrab(&mut self) {
+        self.set_global_prop(&GlobalProperty::grabbed(None));
+    }
+
+    pub fn get_grabbed(&self) -> Option<WindowId> {
+        match self.get_global_prop(GlobalProperty::GRABBED)
+        {
+            Some(GlobalProperty::grabbed(id)) => *id,
+            _ => panic!("Could not find value for property"),
+        }
     }
 
     // Find if there is a toplevel window under (x,y)
@@ -538,13 +490,25 @@ impl Atmosphere {
         return None;
     }
 
+    
     // Is the current point over the titlebar of the window
     //
     // Id should have first been found with find_window_at_point
     pub fn point_is_on_titlebar(&self, id: WindowId, x: f32, y: f32)
-                                -> bool
+                          -> bool
     {
-        self.a_hemi.as_ref().unwrap().point_is_on_titlebar(id, x, y)
+        let barsize = self.get_barsize();
+
+        let pos = self.get_window_dimensions(id);
+
+        // If this window contains (x, y) then return it
+        if x > pos.0 && y > pos.1
+            && x < (pos.0 + pos.2)
+            && y < pos.1 + barsize
+        {
+            return true;
+        }
+        return false;
     }
 
     // Adds a one-time task to the queue
@@ -562,15 +526,10 @@ impl Atmosphere {
     // This increments the cursor position, which will later
     // get replayed into the hemisphere
     pub fn add_cursor_pos(&mut self, dx: f64, dy: f64) {
-        self.a_hemi.as_mut().map(|h| h.mark_changed());
-        if let Some(mut cursor) = self.a_cursor_patch.as_mut() {
-            cursor.0 += dx;
-            cursor.1 += dy;
-        } else {
-            let cursor = self.a_hemi.as_mut().unwrap()
-                .get_cursor_pos();
-            self.a_cursor_patch = Some((cursor.0 + dx, cursor.1 + dy));
-        }
+        let pos = self.get_cursor_pos();
+        self.set_global_prop(&GlobalProperty::cursor_pos(
+            pos.0 + dx, pos.1 + dy,
+        ));
 
         // Now update the grabbed window if it exists
         let grabbed = match self.get_grabbed() {
@@ -586,18 +545,12 @@ impl Atmosphere {
                                    gpos.2, gpos.3);
     }
 
-    // gets the id of the currently grabbed window
-    pub fn get_grabbed(&self) -> Option<WindowId> {
-        // check if we have cached it
-        match self.a_grab_patch {
-            Some(grabbed) => grabbed,
-            // or just grab it
-            None => self.a_hemi.as_ref().unwrap().get_grabbed(),
-        }
-    }
-
     pub fn get_cursor_pos(&self) -> (f64, f64) {
-        self.a_hemi.as_ref().unwrap().get_cursor_pos()
+        match self.get_global_prop(GlobalProperty::CURSOR_POS)
+        {
+            Some(GlobalProperty::cursor_pos(x, y)) => (*x, *y),
+            _ => panic!("Could not find value for property"),
+        }
     }
 
     // Get the window dimensions
@@ -606,14 +559,8 @@ impl Atmosphere {
     pub fn get_window_dimensions(&self, id: WindowId)
                                  -> (f32, f32, f32, f32)
     {
-        if let Some(Patch::set_window_dimensions(patch))
-            = self.a_patches.get(&(id, Property::SET_WINDOW_DIMENSIONS))
-        {
-            return *patch;
-        } else {
-            return self.a_hemi.as_ref().unwrap()
-                .get_window_dimensions(id);
-        }
+        // TODO
+        (0.0, 0.0, 0.0, 0.0)
     }
 
     // Set the dimensions of the window
@@ -626,23 +573,8 @@ impl Atmosphere {
                                  width: f32,
                                  height: f32)
     {
-        self.add_patch(id,
-                       Property::SET_WINDOW_DIMENSIONS,
-                       &Patch::set_window_dimensions((x, y, width, height)));
+        // TODO
     }
-
-    // Grab the window by the specified id
-    // it will get moved around as the cursor does
-    pub fn grab(&mut self, id: WindowId) {
-        self.a_hemi.as_mut().map(|h| h.mark_changed());
-        self.a_grab_patch = Some(Some(id));
-    }
-
-    pub fn ungrab(&mut self) {
-        self.a_hemi.as_mut().map(|h| h.mark_changed());
-        self.a_grab_patch = Some(None);
-    }
-
 
     // -- subsystem specific handlers --
 
@@ -726,28 +658,8 @@ pub struct Hemisphere {
     // Will be true if there is new data in this hemisphere,
     // false if this hemi can be safely ignored
     h_has_changed: bool,
-    // software cursor position
-    h_cursor_x: f64,
-    h_cursor_y: f64,
-    // A window that has been grabbed by the user and is being
-    // drug around by the mouse.
-    //
-    // Any movements to the cursor will also move this window
-    // automagically.
-    h_grabbed: Option<WindowId>,
-    // A list of surfaces which have been handed out to clients
-    // Recorded here so we can perform interesting DE interactions
-    // These are indexed by window id, and marked true if they are
-    // in use. (aka h_windows[0] == false means this id is available)
-    h_windows: Vec<bool>,
-    // A list of reserved client ids
-    // The ClientId is the index into this vec, and the element there is a list
-    // of windows that belong to this client
-    h_clients: Vec<Option<Vec<WindowId>>>,
-    // The position of each window's top left corner, and it's width
-    // Indexed by WindowId
-    // (base_x, base_y, width, height)
-    h_window_dimensions: Vec<Option<(f32, f32, f32, f32)>>,
+    // The property database for our ECS
+    h_global_props: PropertyMap<GlobalProperty>,
     // A list of tasks to be completed by vkcomp this frame
     // - does not need to be patched
     //
@@ -755,9 +667,6 @@ pub struct Hemisphere {
     // be added elsewhere. A task is a transfer of ownership from
     // ways to vkcommp
     h_wm_tasks: VecDeque<wm::task::Task>,
-    // The resolution of the screen
-    // TODO: multimonitor support
-    h_resolution: (u32, u32),
 }
 
 
@@ -765,14 +674,8 @@ impl Hemisphere {
     fn new() -> Hemisphere {
         Hemisphere {
             h_has_changed: true,
-            h_cursor_x: 0.0,
-            h_cursor_y: 0.0,
-            h_grabbed: None,
-            h_clients: Vec::new(),
-            h_windows: Vec::new(),
-            h_window_dimensions: Vec::new(),
+            h_global_props: PropertyMap::new(),
             h_wm_tasks: VecDeque::new(),
-            h_resolution: (0, 0),
         }
     }
 
@@ -783,27 +686,20 @@ impl Hemisphere {
     // flipping hemispheres we will apply the patch
     // list to the current hemisphere, and then again
     // to the new one to keep things up to date.
-    fn apply_patch(&mut self,
-                   win: WindowId,
-                   _prop: Property,
-                   patch: &Patch)
+    fn set_global_prop(&mut self,
+                       id: PropertyId,
+                       prop: &GlobalProperty)
     {
-        match patch {
-            Patch::reserve_window_id(client, id) =>
-                self.reserve_window_id(*client, *id),
-            Patch::free_window_id(client, id) =>
-                self.free_window_id(*client, *id),
-            Patch::reserve_client_id(id) =>
-                self.reserve_client_id(*id),
-            Patch::free_client_id(id) =>
-                self.free_client_id(*id),
-            Patch::add_new_toplevel(id) =>
-                self.add_new_toplevel(*id),
-            Patch::set_window_dimensions(dims) =>
-                self.set_window_dimensions(
-                    win, dims.0, dims.1, dims.2, dims.3
-                ),
-        };
+        self.mark_changed();
+        // for global properties just always pass the id as 0
+        // since we don't care about window/client indexing
+        self.h_global_props.set(0, id, prop);
+    }
+
+    fn get_global_prop(&self, id: PropertyId)
+                       -> Option<&GlobalProperty>
+    {
+        self.h_global_props.get(0, id)
     }
 
     // This should be called after all patches are applied
@@ -822,10 +718,6 @@ impl Hemisphere {
         self.h_has_changed = true;
     }
 
-    fn clear_changed(&mut self) {
-        self.h_has_changed = false;
-    }
-
     // ----------------
     // modifiers
     // ----------------
@@ -835,153 +727,8 @@ impl Hemisphere {
         self.h_wm_tasks.push_back(task);
     }
 
-    // common id reservation code
-    fn reserve_id(v: &mut Vec<bool>, id: usize) {
-        // Check if we can reuse the id
-        if id < v.len() {
-            assert!(!v[id]);
-            v[id] = true;
-        } else {
-            // otherwise make a new one
-            assert!(id == v.len());
-            v.push(true);
-        }
-    }
-
-    fn reserve_client_id(&mut self, cid: ClientId) {
-        let id = cid as usize;
-        self.mark_changed();
-        if id < self.h_clients.len() {
-            assert!(self.h_clients[id].is_none());
-            self.h_clients[id] = Some(Vec::new());
-        } else {
-            // otherwise make a new one
-            assert!(id == self.h_clients.len());
-            self.h_clients.push(Some(Vec::new()));
-        }
-    }
-
-    // Reserves the window id, and adds this window
-    // to the client
-    fn reserve_window_id(&mut self, client: ClientId, id: WindowId) {
-        self.mark_changed();
-        Hemisphere::reserve_id(&mut self.h_windows, id as usize);
-        self.h_clients[client as usize].as_mut().unwrap().push(id);
-    }
-
-    fn free_client_id(&mut self, id: ClientId) {
-        assert!((id as usize) < self.h_clients.len());
-        self.mark_changed();
-        self.h_clients[id as usize] = None;
-    }
-
-    // Marks id as free and removes all references to it
-    fn free_window_id(&mut self, client: ClientId, id: WindowId) {
-        assert!((id as usize) < self.h_windows.len());
-        self.mark_changed();
-
-        self.h_windows[id as usize] = false;
-        // remove this id from the client
-        self.h_clients[client as usize].as_mut()
-            .map(|v| v.retain(|&i| id != i));
-    }
-
     pub fn wm_task_pop(&mut self) -> Option<wm::task::Task> {
         self.mark_changed();
         self.h_wm_tasks.pop_front()
-    }
-
-    pub fn add_cursor_pos(&mut self, dx: f64, dy: f64) {
-        self.mark_changed();
-        self.h_cursor_x += dx;
-        self.h_cursor_y += dy;
-    }
-
-    pub fn set_cursor_pos(&mut self, dx: f64, dy: f64) {
-        self.mark_changed();
-        self.h_cursor_x = dx;
-        self.h_cursor_y = dy;
-    }
-
-    pub fn grab(&mut self, id: Option<WindowId>) {
-        self.h_grabbed = id;
-    }
-
-    pub fn add_new_toplevel(&mut self, _id: WindowId) {
-        // empty
-    }
-
-    pub fn set_window_dimensions(&mut self,
-                                 id: WindowId,
-                                 x: f32,
-                                 y: f32,
-                                 width: f32,
-                                 height: f32)
-    {
-        if (id as usize) >= self.h_window_dimensions.len() {
-            self.h_window_dimensions.resize(id as usize + 1, None);
-        }
-
-        self.h_window_dimensions[id as usize] =
-            Some((x, y, width, height));
-    }
-
-    // this is one of the few updates from vkcomp
-    pub fn set_resolution(&mut self, x: u32, y: u32) {
-        self.h_resolution = (x, y);
-    }
-
-    // ----------------
-    // accessors
-    // ----------------
-
-    pub fn get_resolution(&self) -> (u32, u32) {
-        self.h_resolution
-    }
-
-    fn get_grabbed(&self) -> Option<WindowId> {
-        self.h_grabbed
-    }
-
-    pub fn get_windows_for_client(&self, id: ClientId) -> Vec<WindowId> {
-        self.h_clients[id as usize]
-            .as_ref()
-            .expect("invalid client id while getting windows")
-            .clone()
-    }
-
-    // Used to find if the point is over this windows titlebar
-    // returns true if the point is
-    pub fn point_is_on_titlebar(&self, id: WindowId, x: f32, y: f32)
-                          -> bool
-    {
-        let barsize = self.get_barsize();
-
-        let pos = self.h_window_dimensions[id as usize].unwrap();
-
-        // If this window contains (x, y) then return it
-        if x > pos.0 && y > pos.1
-            && x < (pos.0 + pos.2)
-            && y < pos.1 + barsize
-        {
-            return true;
-        }
-        return false;
-    }
-
-    pub fn get_cursor_pos(&self) -> (f64, f64) {
-        (self.h_cursor_x, self.h_cursor_y)
-    }
-
-    pub fn get_barsize(&self) -> f32 {
-        self.h_resolution.1 as f32 * 0.02
-    }
-
-    pub fn get_window_dimensions(&self, id: WindowId)
-                                 -> (f32, f32, f32, f32)
-    {
-        assert!((id as usize) < self.h_window_dimensions.len());
-
-        self.h_window_dimensions[id as usize].unwrap()
     }
 }
