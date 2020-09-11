@@ -38,10 +38,6 @@ enum GlobalProperty {
     cursor_pos(f64, f64),
     resolution(u32, u32),
     grabbed(Option<WindowId>),
-    // does this window have the toplevel role
-    //toplevel(WindowId),
-    // (x, y, width, height)
-    //window_dimensions(WindowId, (f32, f32, f32, f32)),
 }
 
 // Declare constants for the property ids. This prevents us
@@ -91,6 +87,43 @@ impl Property for ClientProperty {
         match self {
             Self::in_use(_) => Self::IN_USE,
             Self::windows(_)=> Self::WINDOWS,
+        }
+    }
+
+    fn variant_len() -> u32 {
+        return Self::VARIANT_LEN as u32;
+    }
+}
+
+// These are indexed by WindowId
+#[derive(Clone, Debug)]
+enum WindowProperty {
+    // is this id in use?
+    in_use(bool),
+    // The client that created this window
+    owner(ClientId),
+    // does this window have the toplevel role
+    toplevel(bool),
+    // (x, y, width, height)
+    window_dimensions(f32, f32, f32, f32),
+}
+
+impl WindowProperty {
+    const IN_USE: PropertyId = 0;
+    const OWNER: PropertyId = 1;
+    const TOPLEVEL: PropertyId = 2;
+    const WINDOW_DIMENSIONS: PropertyId = 3;
+    const VARIANT_LEN: PropertyId = 4;
+}
+
+impl Property for WindowProperty {
+    // Get a unique Id
+    fn get_property_id(&self) -> PropertyId {
+        match self {
+            Self::in_use(_) => Self::IN_USE,
+            Self::owner(_) => Self::OWNER,
+            Self::toplevel(_)=> Self::TOPLEVEL,
+            Self::window_dimensions(_,_,_,_)=> Self::WINDOW_DIMENSIONS,
         }
     }
 
@@ -207,7 +240,7 @@ pub struct Atmosphere {
     // construction, and will then be applied before flipping.
     // when receiving the other hemisphere, first replay all
     // patches before constructing a new changeset.
-    //a_window_patches: HashMap<(WindowId, Property), Property>,
+    a_window_patches: HashMap<(WindowId, PropertyId), WindowProperty>,
     a_client_patches: HashMap<(ClientId, PropertyId), ClientProperty>,
     a_global_patches: HashMap<PropertyId, GlobalProperty>,
     // a list of the window ids from front to back
@@ -227,7 +260,7 @@ impl Atmosphere {
                heir: Arc<RwLock<Vec<WindowId>>>)
                -> Atmosphere
     {
-        Atmosphere {
+        let mut atmos = Atmosphere {
             a_tx: tx,
             a_rx: rx,
             a_hemi: Some(Box::new(Hemisphere::new())),
@@ -237,9 +270,16 @@ impl Atmosphere {
             a_client_id_map: Vec::new(),
             a_window_id_map: Vec::new(),
             a_client_patches: HashMap::new(),
+            a_window_patches: HashMap::new(),
             a_global_patches: HashMap::new(),
             a_window_heir: heir,
-        }
+        };
+
+        // We need to set this property to the default since
+        // vkcomp will expect it.
+        atmos.set_cursor_pos(0.0, 0.0);
+
+        return atmos;
     }
 
     // Gets the next available id in a vec of bools
@@ -323,6 +363,29 @@ impl Atmosphere {
             .get_client_prop(client, prop_id);
     }
 
+    fn set_window_prop(&mut self, id: WindowId, value: &WindowProperty) {
+        self.mark_changed();
+        let prop_id = value.get_property_id();
+        // check if there is an existing patch to overwrite
+        if let Some(v) = self.a_window_patches.get_mut(&(id, prop_id)) {
+            // if so, just update it
+            *v = value.clone();
+        } else {
+            self.a_window_patches.insert((id, prop_id), value.clone());
+        }
+    }
+
+    fn get_window_prop(&self, id: WindowId, prop_id: PropertyId)
+                       -> Option<&WindowProperty>
+    {
+        // check if there is an existing patch to grab
+        if let Some(v) = self.a_window_patches.get(&(id, prop_id)) {
+            return Some(v);
+        }
+        return self.a_hemi.as_ref().unwrap()
+            .get_window_prop(id, prop_id);
+    }
+
     // Commit all our patches into the hemisphere
     //
     // We are batching all the changes into patches. We
@@ -335,6 +398,14 @@ impl Atmosphere {
         for (prop_id, prop) in self.a_global_patches.iter() {
             log!(LogLevel::info, "   replaying {:?}", prop);
             hemi.set_global_prop(*prop_id, prop);
+        }
+        for ((id, prop_id), prop) in self.a_client_patches.iter() {
+            log!(LogLevel::info, "   replaying {:?}", prop);
+            hemi.set_client_prop(*id, *prop_id, prop);
+        }
+        for ((id, prop_id), prop) in self.a_window_patches.iter() {
+            log!(LogLevel::info, "   replaying {:?}", prop);
+            hemi.set_window_prop(*id, *prop_id, prop);
         }
 
         // Apply any remaining constant state like cursor
@@ -378,6 +449,8 @@ impl Atmosphere {
 
         // Clear all patches
         self.a_global_patches.clear();
+        self.a_client_patches.clear();
+        self.a_window_patches.clear();
 
         return true;
     }
@@ -421,7 +494,7 @@ impl Atmosphere {
     // to the hemisphere
     // ------------------------------
 
-    // TODO: make atmosphere in charge of ids
+    // TODO: make atmosphere in charge of ids?
     //
     // This wraps a couple actions into one helper
     // since there are multiple 
@@ -430,7 +503,12 @@ impl Atmosphere {
             wm::task::Task::create_window(id)
         );
 
-        // TODO: add_patch
+        self.set_window_prop(id, &WindowProperty::in_use(true));
+        self.set_window_prop(id, &WindowProperty::toplevel(true));
+        self.set_window_prop(id, &WindowProperty::window_dimensions(
+            0.0, 0.0, // (x, y)
+            640.0, 480.0 // (width, height)
+        ));
 
         // make this the new toplevel window
         self.a_window_heir.write().unwrap()
@@ -501,7 +579,8 @@ impl Atmosphere {
         windows.retain(|&wid| wid != id);
         self.set_client_prop(id, &ClientProperty::windows(windows));
 
-        // TODO:  free window id
+        // free window id
+        self.set_window_prop(id, &WindowProperty::in_use(false));
     }
 
     // Get the window order from [0..n windows)
@@ -594,6 +673,7 @@ impl Atmosphere {
         match self.get_global_prop(GlobalProperty::GRABBED)
         {
             Some(GlobalProperty::grabbed(id)) => *id,
+            None => None,
             _ => panic!("Could not find value for property"),
         }
     }
@@ -679,10 +759,23 @@ impl Atmosphere {
                                    gpos.2, gpos.3);
     }
 
+    pub fn set_cursor_pos(&mut self, x: f64, y: f64) {
+        self.set_global_prop(&GlobalProperty::cursor_pos(x, y));
+    }
+
     pub fn get_cursor_pos(&self) -> (f64, f64) {
         match self.get_global_prop(GlobalProperty::CURSOR_POS)
         {
             Some(GlobalProperty::cursor_pos(x, y)) => (*x, *y),
+            _ => panic!("Could not find value for property"),
+        }
+    }
+
+    pub fn is_in_use(&self, id: WindowId) -> bool {
+        match self.get_window_prop(id, WindowProperty::IN_USE)
+        {
+            Some(WindowProperty::in_use(b)) => *b,
+            None => false,
             _ => panic!("Could not find value for property"),
         }
     }
@@ -693,8 +786,11 @@ impl Atmosphere {
     pub fn get_window_dimensions(&self, id: WindowId)
                                  -> (f32, f32, f32, f32)
     {
-        // TODO
-        (0.0, 0.0, 0.0, 0.0)
+        match self.get_window_prop(id, WindowProperty::WINDOW_DIMENSIONS)
+        {
+            Some(WindowProperty::window_dimensions(x, y, w, h)) => (*x, *y, *w, *h),
+            _ => panic!("Could not find value for property"),
+        }
     }
 
     // Set the dimensions of the window
@@ -707,7 +803,10 @@ impl Atmosphere {
                                  width: f32,
                                  height: f32)
     {
-        // TODO
+        self.set_window_prop(id,
+                             &WindowProperty::window_dimensions(
+                                 x, y, width, height,
+                             ));
     }
 
     // -- subsystem specific handlers --
@@ -746,10 +845,10 @@ impl Atmosphere {
     // the callback so it doesn't use the power.
     pub fn signal_frame_callbacks(&mut self) {
         // get each valid id in the mapping
-        for id in self.a_window_priv.active_ids().iter() {
+        for id in self.a_window_priv.active_id_iter() {
             // get the refcell for the surface for this id
             if let Some(Priv::surface(Some(cell))) = self.a_window_priv
-                .get(*id, Priv::SURFACE)
+                .get(id, Priv::SURFACE)
             {
                 let surf = cell.borrow_mut();
                 if let Some(callback) = surf.s_frame_callback.as_ref() {
@@ -797,6 +896,7 @@ pub struct Hemisphere {
     // The property database for our ECS
     h_global_props: PropertyMap<GlobalProperty>,
     h_client_props: PropertyMap<ClientProperty>,
+    h_window_props: PropertyMap<WindowProperty>,
     // A list of tasks to be completed by vkcomp this frame
     // - does not need to be patched
     //
@@ -813,6 +913,7 @@ impl Hemisphere {
             h_has_changed: true,
             h_global_props: PropertyMap::new(),
             h_client_props: PropertyMap::new(),
+            h_window_props: PropertyMap::new(),
             h_wm_tasks: VecDeque::new(),
         }
     }
@@ -855,6 +956,23 @@ impl Hemisphere {
                        -> Option<&ClientProperty>
     {
         self.h_client_props.get(client, id)
+    }
+
+    fn set_window_prop(&mut self,
+                       win: WindowId,
+                       id: PropertyId,
+                       prop: &WindowProperty)
+    {
+        self.mark_changed();
+        // for global properties just always pass the id as 0
+        // since we don't care about window/client indexing
+        self.h_window_props.set(win, id, prop);
+    }
+
+    fn get_window_prop(&self, win: WindowId, id: PropertyId)
+                       -> Option<&WindowProperty>
+    {
+        self.h_window_props.get(win, id)
     }
 
     // This should be called after all patches are applied

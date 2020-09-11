@@ -64,7 +64,9 @@ impl<T: Clone + Property> PropertyMap<T> {
     }
 
     fn ensure_active(&mut self, id: u32) {
-        if self.pm_map[id as usize].is_none() {
+        if id as usize >= self.pm_map.len()
+            || self.pm_map[id as usize].is_none()
+        {
             self.activate(id);
         }
     }
@@ -75,14 +77,13 @@ impl<T: Clone + Property> PropertyMap<T> {
     /// we want to retrieve.
     pub fn get(&self, id: u32, prop_id: PropertyId) -> Option<&T> {
         // make sure this id exists
-        if self.pm_map[id as usize].is_none() {
+        if id as usize >= self.pm_map.len()
+            || self.pm_map[id as usize].is_none()
+        {
             return None;
         }
 
         let win = self.pm_map[id as usize].as_ref().unwrap();
-        // make sure this property exists
-        assert!(!win[prop_id].is_none());
-
         return win[prop_id].as_ref();
     }
 
@@ -105,19 +106,70 @@ impl<T: Clone + Property> PropertyMap<T> {
         let win = self.pm_map[id as usize].as_mut().unwrap();
         win[prop_id] = None;
     }
+}
 
+// The lifetimes here are kind of weird. We need to make a
+// PropertymapIterator with the same lifetime as the PropertyMap
+// since it will hold a reference to it. This means our IntoIterator
+// declaration is going to happen on a reference not the owned value
+impl<'a, T: Clone + Property> PropertyMap<T> {
     /// return an iterator of valid ids.
     ///
     /// This will be all ids that are have been `activate`d
-    pub fn active_ids(&self) -> Vec<u32> {
-        self.pm_map.iter()
-            .enumerate()
-            .filter_map(|(i, elem)| {
-                match elem {
-                    Some(_) => Some(i as u32),
-                    None => None,
-                }
-            })
-            .collect()
+    pub fn active_id_iter(&'a self) -> PropertyMapIterator<'a, T> {
+        self.into_iter()
+    }
+}
+
+// Iterator for valid ids in a property map
+// Because we hold a reference to the PropertyMap, we do some
+// ugly lifetimes to ensure it lives this long
+pub struct PropertyMapIterator<'a, T: Clone + Property> {
+    pmi_pm: &'a PropertyMap<T>,
+    // the last index we returned
+    pmi_index: usize,
+    // the maximum we should walk before stopping
+    pmi_max: usize,
+}
+
+// Non-consuming iterator over a Propertymap, this is why
+// our trait is for a lifetime bound reference.
+//
+// See the YARIT iterator tutorials webpage for more
+//
+// This ties into active_id_iter, which is where we specify
+// the lifetimes as we instantiate this. 
+impl<'a, T: Clone + Property> IntoIterator for &'a PropertyMap<T> {
+    type Item = u32;
+    type IntoIter = PropertyMapIterator<'a, T>;
+
+    // note that into_iter() is consuming self
+    fn into_iter(self) -> Self::IntoIter {
+        PropertyMapIterator {
+            pmi_pm: &self,
+            pmi_index: 0,
+            pmi_max: self.pm_map.len(),
+        }
+    }
+}
+
+// We will inevitably need to get a list of valid ids that are
+// present in a map. This iterator does that. It effectively tells
+// us what ids we can use for queries against this map
+impl<'a, T: Clone + Property> Iterator for PropertyMapIterator<'a, T> {
+    // Our item type is a WindowId
+    type Item = u32;
+
+    fn next(&mut self) -> Option<u32> {
+        // iterate until we find a non-null id
+        while self.pmi_index < self.pmi_max {
+            if self.pmi_pm.pm_map[self.pmi_index].is_some() {
+                self.pmi_index += 1;
+                return Some(self.pmi_index as u32 - 1);
+            } else {
+                self.pmi_index += 1;
+            }
+        }
+        None
     }
 }

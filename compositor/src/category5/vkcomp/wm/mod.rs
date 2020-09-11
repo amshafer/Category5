@@ -290,8 +290,9 @@ impl WindowManager {
         // Each app should have one or more windows,
         // all of which we need to draw.
         for a in self.apps.iter() {
-            // If this window has been closed, ignore it
-            if a.marked_for_death {
+            // If this window has been closed or if it is not ready for
+            // rendering, ignore it
+            if a.marked_for_death || !self.wm_atmos.is_in_use(a.id) {
                 continue;
             }
 
