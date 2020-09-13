@@ -1,0 +1,176 @@
+// Support code for handling window heirarchies
+//
+// Austin Shafer - 2020
+
+use crate::category5::utils::atmosphere::*;
+use crate::category5::utils::WindowId;
+
+// A skiplist is an entry in a linked list designed to be
+// added in the atmosphere's property system
+//
+// The idea is that each window has one of these
+// which points to the next and previous windows in
+// the global ordering for that desktop. These properties
+// will be consistently published by the atmosphere just
+// like the rest.
+
+impl Atmosphere {
+    /// Gets the next window behind this id.
+    pub fn get_skiplist_next(&self, id: WindowId) -> Option<WindowId> {
+        match self.get_window_prop(id, WindowProperty::SKIPLIST_NEXT) {
+            // returns sl_next and doesn't skip
+            Some(WindowProperty::skiplist_next(n)) => *n,
+            None => None,
+            _ => panic!("Could not find value for property"),
+        }
+    }
+
+    pub fn set_skiplist_next(&mut self, id: WindowId, next: Option<WindowId>) {
+        self.set_window_prop(id, &WindowProperty::skiplist_next(next));
+    }
+
+    /// Gets the window in front this id.
+    ///
+    /// This does not do any skipping.
+    pub fn get_skiplist_prev(&self, id: WindowId) -> Option<WindowId> {
+        match self.get_window_prop(id, WindowProperty::SKIPLIST_PREV) {
+            Some(WindowProperty::skiplist_prev(p)) => *p,
+            None => None,
+            _ => panic!("Could not find value for property"),
+        }
+    }
+
+    pub fn set_skiplist_prev(&mut self, id: WindowId, prev: Option<WindowId>) {
+        self.set_window_prop(id, &WindowProperty::skiplist_prev(prev));
+    }
+
+    /// Windows are in a linked skiplist that tells us the order
+    /// of windows from front to back. This function returns the
+    /// next visible window behind this
+    ///
+    /// This uses the skip entry and is what you should use unless
+    /// you need to get *every* window
+    pub fn get_skiplist_next_visible(&self, id: WindowId)
+                                     -> Option<WindowId>
+    {
+        match self.get_window_prop(id, WindowProperty::SKIPLIST_SKIP) {
+            // TODO make it skip
+            Some(WindowProperty::skiplist_skip(s)) => *s,
+            None => None,
+            _ => panic!("Could not find value for property"),
+        }
+    }
+
+    pub fn set_skiplist_next_visible(&mut self, id: WindowId,
+                                     skip: Option<WindowId>)
+    {
+        self.set_window_prop(id, &WindowProperty::skiplist_skip(skip));
+    }
+
+    /// Removes a window from the heirarchy.
+    ///
+    /// Use this to pull a window out, and then insert it in focus
+    pub fn skiplist_remove_window(&mut self, id: WindowId) {
+        let next = self.get_skiplist_next(id);
+        let prev = self.get_skiplist_prev(id);
+
+        // TODO: recalculate skip
+        if let Some(p) = prev {
+            self.set_skiplist_next(p, next);
+        }
+        if let Some(n) = next {
+            self.set_skiplist_prev(n, prev);
+        }
+
+        // If this was the window in focus, set the focus
+        // to the next window in the order
+        let focus = self.get_window_in_focus();
+        if let Some(f) = focus {
+            if f == id {
+                self.set_global_prop(&GlobalProperty::focus(next));
+            }
+        }
+    }
+
+    /// Get the window currently in use
+    pub fn get_window_in_focus(&self) -> Option<WindowId> {
+        match self.get_global_prop(GlobalProperty::FOCUS) {
+            Some(GlobalProperty::focus(w)) => *w,
+            None => None,
+            _ => panic!("property not found"),
+        }
+    }
+
+    /// Set the window currently in focus
+    pub fn focus_on(&mut self, win: Option<WindowId>) {
+        log!(LogLevel::info, "focusing on window {:?}", win);
+        if let Some(id) = win {
+            let prev_focus = self.get_window_in_focus();
+            // If they clicked on the focused window, don't
+            // do anything
+            if let Some(prev) = prev_focus {
+                if prev == id {
+                    return;
+                }
+
+                // point the previous focus at the new focus
+                self.set_skiplist_prev(prev, win);
+            }
+
+            self.skiplist_remove_window(id);
+            self.set_skiplist_next(id, prev_focus);
+            self.set_skiplist_prev(id, None);
+        }
+        self.set_global_prop(&GlobalProperty::focus(win));
+
+        // TODO: recalculate skip
+    }
+}
+
+// (see PropertyMapIterator for lifetime comments
+impl<'a> Atmosphere {
+    /// return an iterator of valid ids.
+    ///
+    /// This will be all ids that are have been `activate`d
+    pub fn visible_windows(&'a self) -> VisibleWindowIterator<'a> {
+        self.into_iter()
+    }
+}
+
+// Iterator for visible windows in a desktop
+pub struct VisibleWindowIterator<'a> {
+    vwi_atmos: &'a Atmosphere,
+    // the current window we are on
+    vwi_cur: Option<WindowId>,
+}
+
+// Non-consuming iterator over an Atmosphere
+//
+// This will only show the visible windows
+impl<'a> IntoIterator for &'a Atmosphere {
+    type Item = u32;
+    type IntoIter = VisibleWindowIterator<'a>;
+
+    // note that into_iter() is consuming self
+    fn into_iter(self) -> Self::IntoIter {
+        VisibleWindowIterator {
+            vwi_atmos: &self,
+            vwi_cur: self.get_window_in_focus(),
+        }
+    }
+}
+
+impl<'a> Iterator for VisibleWindowIterator<'a> {
+    // Our item type is a WindowId
+    type Item = u32;
+
+    fn next(&mut self) -> Option<u32> {
+        let ret = self.vwi_cur.take();
+        // TODO: actually skip
+        if let Some(id) = ret {
+            self.vwi_cur = self.vwi_atmos.get_skiplist_next(id);
+        }
+
+        return ret;
+    }
+}

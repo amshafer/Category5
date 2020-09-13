@@ -20,7 +20,6 @@ pub mod task;
 use task::*;
 
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, RwLock};
 
 // This consolidates the multiple resources needed
 // to represent a titlebar
@@ -138,8 +137,7 @@ impl WindowManager {
     // the compositor. The WindowManager will create and own
     // the Renderer, thereby readying the display to draw.
     pub fn new(tx: Sender<Box<Hemisphere>>,
-               rx: Receiver<Box<Hemisphere>>,
-               heir: Arc<RwLock<Vec<WindowId>>>)
+               rx: Receiver<Box<Hemisphere>>)
                -> WindowManager
     {
         // creates a context, swapchain, images, and others
@@ -148,7 +146,7 @@ impl WindowManager {
         rend.setup();
 
         let mut wm = WindowManager {
-            wm_atmos: Atmosphere::new(tx, rx, heir),
+            wm_atmos: Atmosphere::new(tx, rx),
             titlebar: WindowManager::get_default_titlebar(&mut rend),
             cursor: WindowManager::get_default_cursor(&mut rend),
             rend: rend,
@@ -289,7 +287,8 @@ impl WindowManager {
     fn record_draw(&self, params: &RecordParams) {
         // Each app should have one or more windows,
         // all of which we need to draw.
-        for a in self.apps.iter() {
+        for (i, id) in self.wm_atmos.visible_windows().enumerate() {
+            let a = self.apps.iter().find(|&a| a.id == id).unwrap();
             // If this window has been closed or if it is not ready for
             // rendering, ignore it
             if a.marked_for_death || !self.wm_atmos.is_in_use(a.id) {
@@ -302,7 +301,7 @@ impl WindowManager {
             let dotsize = barsize * 0.95;
             let window_dims = self.wm_atmos.get_window_dimensions(a.id);
             // Convert the order into a float from 0.0 to 1.0
-            let order = ((self.wm_atmos.get_window_order(a.id) + 1) as f32) / 100.0;
+            let order = ((i + 1) as f32) / 100.0;
 
             // now render the bar itself, as wide as the window
             // the bar needs to be behind the dots

@@ -8,6 +8,7 @@ mod property;
 use property::{PropertyId,Property};
 mod property_map;
 use property_map::PropertyMap;
+mod skiplist;
 
 use crate::category5::ways::{
     surface::*,
@@ -23,7 +24,6 @@ use crate::log;
 use std::rc::Rc;
 use std::vec::Vec;
 use std::cell::RefCell;
-use std::sync::{Arc,RwLock};
 use std::collections::{HashMap,VecDeque};
 use std::sync::mpsc::{Sender,Receiver};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -38,6 +38,9 @@ enum GlobalProperty {
     cursor_pos(f64, f64),
     resolution(u32, u32),
     grabbed(Option<WindowId>),
+    // the window the user is currently interacting with
+    // This tells us which one to start looking at for the skiplist
+    focus(Option<WindowId>),
 }
 
 // Declare constants for the property ids. This prevents us
@@ -47,8 +50,9 @@ impl GlobalProperty {
     const CURSOR_POS: PropertyId = 0;
     const RESOLUTION: PropertyId = 1;
     const GRABBED: PropertyId = 2;
+    const FOCUS: PropertyId = 3;
     // MUST be the last one
-    const VARIANT_LEN: PropertyId = 3;
+    const VARIANT_LEN: PropertyId = 4;
 }
 
 impl Property for GlobalProperty {
@@ -58,6 +62,7 @@ impl Property for GlobalProperty {
             Self::cursor_pos(_, _) => Self::CURSOR_POS,
             Self::resolution(_, _) => Self::RESOLUTION,
             Self::grabbed(_) => Self::GRABBED,
+            Self::focus(_) => Self::FOCUS,
         }
     }
 
@@ -106,6 +111,14 @@ enum WindowProperty {
     toplevel(bool),
     // (x, y, width, height)
     window_dimensions(f32, f32, f32, f32),
+    // This window's position in the desktop order
+    //
+    // The next window behind this one
+    skiplist_next(Option<WindowId>),
+    // The window in front of this one
+    skiplist_prev(Option<WindowId>),
+    // The next *visible* window
+    skiplist_skip(Option<WindowId>),
 }
 
 impl WindowProperty {
@@ -113,7 +126,10 @@ impl WindowProperty {
     const OWNER: PropertyId = 1;
     const TOPLEVEL: PropertyId = 2;
     const WINDOW_DIMENSIONS: PropertyId = 3;
-    const VARIANT_LEN: PropertyId = 4;
+    const SKIPLIST_NEXT: PropertyId = 4;
+    const SKIPLIST_PREV: PropertyId = 5;
+    const SKIPLIST_SKIP: PropertyId = 6;
+    const VARIANT_LEN: PropertyId = 7;
 }
 
 impl Property for WindowProperty {
@@ -124,6 +140,9 @@ impl Property for WindowProperty {
             Self::owner(_) => Self::OWNER,
             Self::toplevel(_)=> Self::TOPLEVEL,
             Self::window_dimensions(_,_,_,_)=> Self::WINDOW_DIMENSIONS,
+            Self::skiplist_next(_)=> Self::SKIPLIST_NEXT,
+            Self::skiplist_prev(_)=> Self::SKIPLIST_PREV,
+            Self::skiplist_skip(_)=> Self::SKIPLIST_SKIP,
         }
     }
 
@@ -243,9 +262,6 @@ pub struct Atmosphere {
     a_window_patches: HashMap<(WindowId, PropertyId), WindowProperty>,
     a_client_patches: HashMap<(ClientId, PropertyId), ClientProperty>,
     a_global_patches: HashMap<PropertyId, GlobalProperty>,
-    // a list of the window ids from front to back
-    // index 0 is the current focus
-    a_window_heir: Arc<RwLock<Vec<WindowId>>>,
 }
 
 impl Atmosphere {
@@ -256,8 +272,7 @@ impl Atmosphere {
     // One subsystem must be setup as index 0 and the other
     // as index 1
     pub fn new(tx: Sender<Box<Hemisphere>>,
-               rx: Receiver<Box<Hemisphere>>,
-               heir: Arc<RwLock<Vec<WindowId>>>)
+               rx: Receiver<Box<Hemisphere>>)
                -> Atmosphere
     {
         let mut atmos = Atmosphere {
@@ -272,7 +287,6 @@ impl Atmosphere {
             a_client_patches: HashMap::new(),
             a_window_patches: HashMap::new(),
             a_global_patches: HashMap::new(),
-            a_window_heir: heir,
         };
 
         // We need to set this property to the default since
@@ -318,7 +332,6 @@ impl Atmosphere {
     // batched up into a set of patches. This is needed to
     // keep both hemispheres in sync.
     fn set_global_prop(&mut self, value: &GlobalProperty) {
-        self.mark_changed();
         let prop_id = value.get_property_id();
         // check if there is an existing patch to overwrite
         if let Some(v) = self.a_global_patches.get_mut(&prop_id) {
@@ -341,7 +354,6 @@ impl Atmosphere {
     }
 
     fn set_client_prop(&mut self, client: ClientId, value: &ClientProperty) {
-        self.mark_changed();
         let prop_id = value.get_property_id();
         // check if there is an existing patch to overwrite
         if let Some(v) = self.a_client_patches.get_mut(&(client, prop_id)) {
@@ -364,7 +376,6 @@ impl Atmosphere {
     }
 
     fn set_window_prop(&mut self, id: WindowId, value: &WindowProperty) {
-        self.mark_changed();
         let prop_id = value.get_property_id();
         // check if there is an existing patch to overwrite
         if let Some(v) = self.a_window_patches.get_mut(&(id, prop_id)) {
@@ -511,8 +522,7 @@ impl Atmosphere {
         ));
 
         // make this the new toplevel window
-        self.a_window_heir.write().unwrap()
-            .insert(0, id);
+        self.focus_on(Some(id));
     }
 
     // Reserve a new client id
@@ -570,32 +580,16 @@ impl Atmosphere {
     // Mark the id as available
     pub fn free_window_id(&mut self, client: ClientId, id: WindowId) {
         // remove this id from the heirarchy
-        self.a_window_heir.write().unwrap()
-            .retain(|&wid| wid != id);
+        self.skiplist_remove_window(id);
 
         // remove this window from the clients list
-        // This is a bit too expensive atm
+        // TODO: This is a bit too expensive atm
         let mut windows = self.get_windows_for_client(client);
         windows.retain(|&wid| wid != id);
         self.set_client_prop(id, &ClientProperty::windows(windows));
 
         // free window id
         self.set_window_prop(id, &WindowProperty::in_use(false));
-    }
-
-    // Get the window order from [0..n windows)
-    //
-    // TODO: Make this a more efficient tree
-    pub fn get_window_order(&self, id: WindowId) -> u32 {
-        log!(LogLevel::info, "getting window order for {}", id);
-        let heir = self.a_window_heir.read().unwrap();
-
-        for (i, win) in heir.iter().enumerate() {
-            if *win == id {
-                return i as u32;
-            }
-        }
-        panic!("Could not find window with id {}", id);
     }
 
     // Get the windows ids belonging this client
@@ -605,45 +599,6 @@ impl Atmosphere {
             None => Vec::new(),
             _ => panic!("property not found"),
         }
-    }
-
-    // Get the window currently in use
-    // The window heir is sorted, so the first one will
-    // be the top level
-    pub fn get_window_in_focus(&self) -> Option<WindowId> {
-        let heir = self.a_window_heir.read().unwrap();
-
-        if heir.len() > 0 {
-            return Some(heir[0]);
-        }
-        return None;
-    }
-
-    // Set the window currently in focus
-    //
-    // CONCERN: Theoretically if multiple of these could
-    // be submitted in one hemi flip then it could perform
-    // harmful swapping that could remove one or more windows
-    // from being drawn
-    pub fn focus_on(&mut self, id: WindowId) {
-        log!(LogLevel::info, "focusing on window {}", id);
-        let mut heir = self.a_window_heir.write().unwrap();
-
-        // find the index of this window
-        let idx = heir.iter()
-            .enumerate()
-            .find(|(_, &win)| win == id)
-            // there can only be one
-            .unwrap()
-            // get the index, which is the first in the tuple
-            .0;
-
-        // if it is already the top window then bail
-        if idx == 0 {
-            return;
-        }
-
-        heir.swap(0, idx);
     }
 
     // this is one of the few updates from vkcomp
@@ -686,19 +641,17 @@ impl Atmosphere {
     pub fn find_window_at_point(&self, x: f32, y: f32)
                                 -> Option<WindowId>
     {
-        let heir = self.a_window_heir.read().unwrap();
-
         let barsize = self.get_barsize();
 
-        for win in heir.iter() {
-            let pos = self.get_window_dimensions(*win);
+        for win in self.visible_windows() {
+            let pos = self.get_window_dimensions(win);
 
             // If this window contains (x, y) then return it
             if x > pos.0 && y > pos.1
                 && x < (pos.0 + pos.2)
                 && y < (pos.1 + pos.3 + barsize)
             {
-                return Some(*win);
+                return Some(win);
             }
         }
         return None;
@@ -833,7 +786,7 @@ impl Atmosphere {
         match self.a_client_priv.get(id, ClientPriv::SEAT) {
             Some(ClientPriv::seat(Some(s))) => Some(s.clone()),
             Some(ClientPriv::seat(None)) => None,
-            _ => panic!("Could not find value for property"),
+            None => None,
         }
     }
 

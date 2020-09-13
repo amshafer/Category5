@@ -362,7 +362,7 @@ impl Input {
             // If the window is not in focus, make it in focus
             if let Some(focus) = atmos.get_window_in_focus() {
                 if id != focus && c.c_state == ButtonState::Pressed {
-                    atmos.focus_on(id);
+                    atmos.focus_on(Some(id));
                     set_focus = true;
                 }
             }
