@@ -119,6 +119,16 @@ enum WindowProperty {
     skiplist_prev(Option<WindowId>),
     // The next *visible* window
     skiplist_skip(Option<WindowId>),
+    // The toplevel child surface
+    // because surfaces can be arbitrarily nested,
+    // surfaces may be added to this list instead
+    // of the main global ordering.
+    //
+    // The start of the subsurface skiplist
+    top_child(Option<WindowId>),
+    // If this is a subsurface of another window
+    // aka not a toplevel
+    parent_window(Option<WindowId>),
 }
 
 impl WindowProperty {
@@ -129,7 +139,9 @@ impl WindowProperty {
     const SKIPLIST_NEXT: PropertyId = 4;
     const SKIPLIST_PREV: PropertyId = 5;
     const SKIPLIST_SKIP: PropertyId = 6;
-    const VARIANT_LEN: PropertyId = 7;
+    const TOP_CHILD: PropertyId = 7;
+    const PARENT_WINDOW: PropertyId = 8;
+    const VARIANT_LEN: PropertyId = 9;
 }
 
 impl Property for WindowProperty {
@@ -143,6 +155,8 @@ impl Property for WindowProperty {
             Self::skiplist_next(_)=> Self::SKIPLIST_NEXT,
             Self::skiplist_prev(_)=> Self::SKIPLIST_PREV,
             Self::skiplist_skip(_)=> Self::SKIPLIST_SKIP,
+            Self::top_child(_)=> Self::TOP_CHILD,
+            Self::parent_window(_)=> Self::PARENT_WINDOW,
         }
     }
 

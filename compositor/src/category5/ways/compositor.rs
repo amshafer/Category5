@@ -16,6 +16,7 @@ use ws::protocol::{
     wl_shell,
     wl_seat,
     wl_output,
+    wl_subcompositor,
 };
 
 use crate::category5::utils::{
@@ -179,6 +180,7 @@ impl EventManager {
         evman.create_linux_dmabuf_global();
         evman.create_wl_seat_global();
         evman.create_wl_output_global();
+        evman.create_wl_subcompositor_global();
 
         return evman;
     }
@@ -345,6 +347,26 @@ impl EventManager {
             Filter::new(
                 move |(res, _): (ws::Main<wl_output::WlOutput>, u32), _, _| {
                     wl_output_broadcast(atmos.clone(), res);
+                }
+            ),
+        );
+    }
+
+    // Initialize the wl_subcompositor interface
+    //
+    // In certain scenarios it is desired to let the compositor do the compositing
+    // for the application. This interface allows the app to arbitrarily nest
+    // subsurfaces
+    fn create_wl_subcompositor_global(&mut self) {
+        // for some reason we need to do two clones to make the lifetime
+        // inference happy with the closures below
+        let atmos = self.em_atmos.clone();
+
+        self.em_display.create_global::<wl_subcompositor::WlSubcompositor, _>(
+            1, // version
+            Filter::new(
+                move |(res, _): (ws::Main<wl_subcompositor::WlSubcompositor>, u32), _, _| {
+                    // TODO
                 }
             ),
         );

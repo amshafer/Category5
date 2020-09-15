@@ -125,6 +125,40 @@ impl Atmosphere {
 
         // TODO: recalculate skip
     }
+
+    /// Get the start of the subsurfaces for this surface
+    pub fn get_top_child(&self, id: WindowId) -> Option<WindowId> {
+        match self.get_window_prop(id, WindowProperty::TOP_CHILD) {
+            Some(WindowProperty::top_child(w)) => *w,
+            None => None,
+            _ => panic!("property not found"),
+        }
+    }
+
+    /// set id to be a subsurface of parent
+    /// TODO: is there a way to share code between this and `focus_on`?
+    pub fn set_top_child(&mut self, id: WindowId, child: Option<WindowId>) {
+        log!(LogLevel::info, "setting {:?} as the top child of {:?}", child, id);
+        if let Some(id) = child {
+            let prev_top = self.get_top_child(id);
+            if let Some(top) = prev_top {
+                self.set_skiplist_prev(top, child);
+            }
+
+            self.skiplist_remove_window(id);
+            self.set_skiplist_next(id, prev_top);
+            self.set_skiplist_prev(id, None);
+        }
+
+        self.set_window_prop(id, &WindowProperty::top_child(child));
+        // TODO: recalculate skip
+    }
+
+    /// set id to be a subsurface of parent
+    pub fn set_parent(&mut self, id: WindowId, parent: Option<WindowId>) {
+        log!(LogLevel::info, "setting {:?} as a subsurface of {:?}", id, parent);
+        self.set_window_prop(id, &WindowProperty::parent_window(parent));
+    }
 }
 
 // (see PropertyMapIterator for lifetime comments
