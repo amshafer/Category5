@@ -92,6 +92,50 @@ impl Atmosphere {
         }
     }
 
+    /// Add a window above another
+    ///
+    /// This is used for the subsurface ordering requests
+    pub fn skiplist_place_above(&mut self,
+                                id: WindowId,
+                                target: WindowId)
+    {
+        // remove id from its skiplist just in case
+        self.skiplist_remove_window(id);
+
+        // TODO: recalculate skip
+        let prev = self.get_skiplist_prev(target);
+        if let Some(p) = prev {
+            self.set_skiplist_next(p, Some(id));
+        }
+        self.set_skiplist_prev(target, Some(id));
+
+        // Now point id to the target and its neighbor
+        self.set_skiplist_prev(id, prev);
+        self.set_skiplist_next(id, Some(target));
+    }
+
+    /// Add a window below another
+    ///
+    /// This is used for the subsurface ordering requests
+    pub fn skiplist_place_below(&mut self,
+                                id: WindowId,
+                                target: WindowId)
+    {
+        // remove id from its skiplist just in case
+        self.skiplist_remove_window(id);
+
+        // TODO: recalculate skip
+        let next = self.get_skiplist_next(target);
+        if let Some(n) = next {
+            self.set_skiplist_prev(n, Some(id));
+        }
+        self.set_skiplist_next(target, Some(id));
+
+        // Now point id to the target and its neighbor
+        self.set_skiplist_prev(id, Some(target));
+        self.set_skiplist_next(id, next);
+    }
+
     /// Get the window currently in use
     pub fn get_window_in_focus(&self) -> Option<WindowId> {
         match self.get_global_prop(GlobalProperty::FOCUS) {
@@ -168,6 +212,18 @@ impl<'a> Atmosphere {
     /// This will be all ids that are have been `activate`d
     pub fn visible_windows(&'a self) -> VisibleWindowIterator<'a> {
         self.into_iter()
+    }
+
+    /// return an iterator over the subsurfaces of id
+    ///
+    /// This will be all ids that are have been `activate`d
+    pub fn visible_subsurfaces(&'a self, id: WindowId)
+                               -> VisibleWindowIterator<'a>
+    {
+        VisibleWindowIterator {
+            vwi_atmos: &self,
+            vwi_cur: self.get_top_child(id),
+        }
     }
 }
 

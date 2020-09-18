@@ -276,6 +276,80 @@ impl WindowManager {
         }
     }
 
+    // Handles generating draw commands for one window
+    fn record_draw_for_id(&self,
+                          id: WindowId,
+                          order: usize,
+                          params: &RecordParams)
+    {
+        let a = self.apps.iter().find(|&a| a.id == id).unwrap();
+        // If this window has been closed or if it is not ready for
+        // rendering, ignore it
+        if a.marked_for_death || !self.wm_atmos.is_in_use(a.id) {
+            return;
+        }
+
+        // The bar should be a percentage of the screen height
+        let barsize = self.wm_atmos.get_barsize();
+        // The dotsize should be just slightly smaller
+        let dotsize = barsize * 0.95;
+        let window_dims = self.wm_atmos.get_window_dimensions(a.id);
+        // Convert the order into a float from 0.0 to 1.0
+        let order_depth = ((order + 1) as f32) / 100.0;
+
+        // now render the bar itself, as wide as the window
+        // the bar needs to be behind the dots
+        let push = PushConstants {
+            order: order_depth - 0.001, // depth
+            // align it at the top right
+            x: window_dims.0,
+            y: window_dims.1,
+            // the bar is as wide as the window
+            width: window_dims.2,
+            // use a percentage of the screen size
+            height: barsize,
+        };
+        self.titlebar.bar
+            .record_draw(&self.rend, params, &push);
+
+        // We should render the dot second, so alpha blending
+        // has a color to use
+        let push = PushConstants {
+            order: order_depth - 0.002, // depth
+            // the x position needs to be all the way to the
+            // right side of the bar
+            x: window_dims.0
+            // Multiply by 2 (see vert shader for details)
+                + window_dims.2
+            // we don't want to go past the end of the bar
+                - barsize,
+            y: window_dims.1,
+            // align it at the top right
+            width: dotsize,
+            height: dotsize,
+        };
+        // render buttons on the titlebar
+        self.titlebar.dot
+            .record_draw(&self.rend, params, &push);
+
+        // Finally, we can draw the window itself
+        // If the mesh does not exist, then only the titlebar
+        // and other window decorations will be drawn
+        if let Some(mesh) = &a.mesh {
+            // TODO: else draw blank mesh?
+            let push = PushConstants {
+                order: order_depth, // depth
+                x: window_dims.0,
+                // The actual window will be drawn below the bar
+                y: (window_dims.1 + barsize),
+                // align it at the top right
+                width: window_dims.2,
+                height: window_dims.3,
+            };
+            mesh.record_draw(&self.rend, params, &push);
+        }
+    }
+
     // Record all the drawing operations for the current scene
     //
     // Vulkan requires that we record a list of operations into a command
@@ -288,72 +362,13 @@ impl WindowManager {
         // Each app should have one or more windows,
         // all of which we need to draw.
         for (i, id) in self.wm_atmos.visible_windows().enumerate() {
-            let a = self.apps.iter().find(|&a| a.id == id).unwrap();
-            // If this window has been closed or if it is not ready for
-            // rendering, ignore it
-            if a.marked_for_death || !self.wm_atmos.is_in_use(a.id) {
-                continue;
+            // Render any subsurfaces first
+            for (j, sub) in self.wm_atmos.visible_subsurfaces(id).enumerate() {
+                // TODO: Make this recursive??
+                self.record_draw_for_id(sub, j, params);
             }
-
-            // The bar should be a percentage of the screen height
-            let barsize = self.wm_atmos.get_barsize();
-            // The dotsize should be just slightly smaller
-            let dotsize = barsize * 0.95;
-            let window_dims = self.wm_atmos.get_window_dimensions(a.id);
-            // Convert the order into a float from 0.0 to 1.0
-            let order = ((i + 1) as f32) / 100.0;
-
-            // now render the bar itself, as wide as the window
-            // the bar needs to be behind the dots
-            let push = PushConstants {
-                order: order - 0.001, // depth
-                // align it at the top right
-                x: window_dims.0,
-                y: window_dims.1,
-                // the bar is as wide as the window
-                width: window_dims.2,
-                // use a percentage of the screen size
-                height: barsize,
-            };
-            self.titlebar.bar
-                .record_draw(&self.rend, params, &push);
-
-            // We should render the dot second, so alpha blending
-            // has a color to use
-            let push = PushConstants {
-                order: order - 0.002, // depth
-                // the x position needs to be all the way to the
-                // right side of the bar
-                x: window_dims.0
-                // Multiply by 2 (see vert shader for details)
-                    + window_dims.2
-                // we don't want to go past the end of the bar
-                    - barsize,
-                y: window_dims.1,
-                // align it at the top right
-                width: dotsize,
-                height: dotsize,
-            };
-            // render buttons on the titlebar
-            self.titlebar.dot
-                .record_draw(&self.rend, params, &push);
-
-            // Finally, we can draw the window itself
-            // If the mesh does not exist, then only the titlebar
-            // and other window decorations will be drawn
-            if let Some(mesh) = &a.mesh {
-                // TODO: else draw blank mesh?
-                let push = PushConstants {
-                    order: order, // depth
-                    x: window_dims.0,
-                    // The actual window will be drawn below the bar
-                    y: (window_dims.1 + barsize),
-                    // align it at the top right
-                    width: window_dims.2,
-                    height: window_dims.3,
-                };
-                mesh.record_draw(&self.rend, params, &push);
-            }
+            // Now render this window
+            self.record_draw_for_id(id, i, params);
         }
 
         // Draw the background last, painter style

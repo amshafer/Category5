@@ -269,7 +269,7 @@ impl Input {
     // Perform a scrolling motion
     //
     fn handle_pointer_axis(&mut self, a: &Axis) {
-        let mut atmos = self.i_atmos.borrow_mut();
+        let atmos = self.i_atmos.borrow_mut();
 
         // Find the active window
         if let Some(id) = atmos.get_window_in_focus() {
@@ -413,7 +413,7 @@ impl Input {
     //
     pub fn handle_keyboard(&mut self, key: &Key) {
         // find the client in use
-        let mut atmos = self.i_atmos.borrow_mut();
+        let atmos = self.i_atmos.borrow_mut();
         // if there is a window in focus
         if let Some(id) = atmos.get_window_in_focus() {
             // get the seat for this client

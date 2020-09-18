@@ -110,6 +110,8 @@ enum WindowProperty {
     // does this window have the toplevel role
     toplevel(bool),
     // (x, y, width, height)
+    // If this window is a subsurface, then x and y will
+    // be offsets from the base of the parent window
     window_dimensions(f32, f32, f32, f32),
     // This window's position in the desktop order
     //
@@ -786,6 +788,16 @@ impl Atmosphere {
                                &Priv::surface(Some(surf)));
     }
 
+    pub fn get_surface_from_id(&self, id: WindowId)
+                               -> Option<Rc<RefCell<Surface>>>
+    {
+        match self.a_window_priv.get(id, Priv::SURFACE) {
+            Some(Priv::surface(Some(s))) => Some(s.clone()),
+            Some(Priv::surface(None)) => None,
+            None => None,
+        }
+    }
+
     pub fn add_seat(&mut self, id: WindowId,
                     seat: Rc<RefCell<Seat>>)
     {
@@ -794,7 +806,7 @@ impl Atmosphere {
                                &ClientPriv::seat(Some(seat)));
     }
 
-    pub fn get_seat_from_id(&mut self, id: WindowId)
+    pub fn get_seat_from_id(&self, id: WindowId)
                             -> Option<Rc<RefCell<Seat>>>
     {
         match self.a_client_priv.get(id, ClientPriv::SEAT) {

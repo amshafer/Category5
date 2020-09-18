@@ -13,7 +13,7 @@ use ws::protocol::{
     wl_callback,
 };
 
-use crate::category5::utils::{atmosphere::*,Dmabuf};
+use crate::category5::utils::{atmosphere::*,Dmabuf,WindowId};
 use crate::category5::vkcomp::wm;
 use super::shm::*;
 use super::role::Role;
@@ -30,22 +30,21 @@ use std::cell::RefCell;
 #[allow(dead_code)]
 pub struct Surface {
     pub s_atmos: Rc<RefCell<Atmosphere>>,
-    pub s_id: u32, // The id of the window in the renderer
+    pub s_id: WindowId, // The id of the window in the renderer
     // The currently attached buffer. Will be displayed on commit
     // When the window is created a buffer is not assigned, hence the option
     s_attached_buffer: Option<wl_buffer::WlBuffer>,
     // the s_attached_buffer is moved here to signify that we can draw
     // with it.
     pub s_committed_buffer: Option<wl_buffer::WlBuffer>,
-    // the location of the surface in our compositor
-    s_x: u32,
-    s_y: u32,
     // Frame callback
     // This is a power saving feature, we will signal this when the
     // client should redraw this surface
     pub s_frame_callback: Option<Main<wl_callback::WlCallback>>,
     // How this surface is being used
     pub s_role: Option<Role>,
+    // Are we currently committing this surface?
+    pub s_commit_in_progress: bool,
 }
 
 impl Surface {
@@ -96,11 +95,21 @@ impl Surface {
     // The commit request tells the compositor that we have
     // fully prepared this surface to be presented to the
     // user. It commits the surface config to vkcomp
-    fn commit(&mut self)
-    {
+    fn commit(&mut self) {
         // If there was no surface attached, do nothing
         if self.s_attached_buffer.is_none() {
             return; // throw error?
+        }
+        let mut atmos = self.s_atmos.borrow_mut();
+
+        // Before we commit ourselves, we need to
+        // commit any subsurfaces available
+        self.s_commit_in_progress = true;
+        for id in atmos.visible_subsurfaces(self.s_id) {
+            atmos.get_surface_from_id(id).map(|surf| {
+                surf.borrow_mut()
+                    .commit();
+            });
         }
 
         // now we can commit the attached state
@@ -111,9 +120,14 @@ impl Surface {
             Some(Role::xdg_shell_toplevel(xs)) =>
                 xs.borrow_mut().commit(&self),
             Some(Role::wl_shell_toplevel) => {},
+            Some(Role::subsurface(ss)) =>
+                ss.borrow_mut().commit(),
             // if we don't have an assigned role, avoid doing
             // any real work
-            None => return,
+            None => {
+                self.s_commit_in_progress = false;
+                return;
+            },
         }
 
         // We need to do different things depending on the
@@ -128,7 +142,7 @@ impl Surface {
             .user_data();
 
         if let Some(dmabuf) = userdata.get::<Dmabuf>() {
-            self.s_atmos.borrow_mut().add_wm_task(
+            atmos.add_wm_task(
                 wm::task::Task::update_window_contents_from_dmabuf(
                     self.s_id, // ID of the new window
                     *dmabuf, // fd of the gpu buffer
@@ -136,14 +150,13 @@ impl Surface {
                     self.s_committed_buffer.as_ref().unwrap().clone(),
                 )
             );
-            return;
         } else if let Some(shm_buf) = userdata.get::<ShmBuffer>() {
             // ShmBuffer holds the base pointer and an offset, so
             // we need to get the actual pointer, which will be
             // wrapped in a MemImage
             let fb = shm_buf.get_mem_image();
 
-            self.s_atmos.borrow_mut().add_wm_task(
+            atmos.add_wm_task(
                 wm::task::Task::update_window_contents_from_mem(
                     self.s_id, // ID of the new window
                     fb, // memimage of the contents
@@ -155,6 +168,8 @@ impl Surface {
                 )
             );
         }
+        // Make sure to unmark this before returning
+        self.s_commit_in_progress = false;
     }
 
     // Register a frame callback
@@ -182,21 +197,15 @@ impl Surface {
 
     // create a new visible surface at coordinates (x,y)
     // from the specified wayland resource
-    pub fn new(atmos: Rc<RefCell<Atmosphere>>,
-               id: u32,
-               x: u32,
-               y: u32)
-               -> Surface
-    {
+    pub fn new(atmos: Rc<RefCell<Atmosphere>>, id: u32) -> Surface {
         Surface {
             s_atmos: atmos,
             s_id: id,
             s_attached_buffer: None,
             s_committed_buffer: None,
-            s_x: x,
-            s_y: y,
             s_frame_callback: None,
             s_role: None,
+            s_commit_in_progress: false,
         }
     }
 }

@@ -13,6 +13,7 @@ mod pointer;
 mod xdg_shell;
 mod wl_shell;
 mod wl_output;
+mod wl_subcompositor;
 pub mod linux_dmabuf;
 
 // Utils

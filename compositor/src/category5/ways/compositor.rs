@@ -16,7 +16,7 @@ use ws::protocol::{
     wl_shell,
     wl_seat,
     wl_output,
-    wl_subcompositor,
+    wl_subcompositor as wlsc,
 };
 
 use crate::category5::utils::{
@@ -31,6 +31,7 @@ use super::{
     wl_output::wl_output_broadcast,
     xdg_shell::xdg_wm_base_handle_request,
     linux_dmabuf::*,
+    wl_subcompositor::wl_subcompositor_handle_request,
 };
 use super::protocol::{
     xdg_shell::xdg_wm_base,
@@ -102,11 +103,8 @@ impl Compositor {
         // Create a reference counted object
         // in charge of this new surface
         let new_surface = Rc::new(RefCell::new(
-            Surface::new(
-                self.c_atmos.clone(),
-                id,
-                0, 0)
-        ));
+            Surface::new(self.c_atmos.clone(), id))
+        );
         // Add the new surface to the atmosphere
         self.c_atmos.borrow_mut().add_surface(id, new_surface.clone());
         // This clone will be passed to the surface handler
@@ -358,15 +356,13 @@ impl EventManager {
     // for the application. This interface allows the app to arbitrarily nest
     // subsurfaces
     fn create_wl_subcompositor_global(&mut self) {
-        // for some reason we need to do two clones to make the lifetime
-        // inference happy with the closures below
-        let atmos = self.em_atmos.clone();
-
-        self.em_display.create_global::<wl_subcompositor::WlSubcompositor, _>(
+        self.em_display.create_global::<wlsc::WlSubcompositor, _>(
             1, // version
             Filter::new(
-                move |(res, _): (ws::Main<wl_subcompositor::WlSubcompositor>, u32), _, _| {
-                    // TODO
+                move |(res, _): (ws::Main<wlsc::WlSubcompositor>, u32), _, _| {
+                    res.quick_assign(move |s, r, _| {
+                        wl_subcompositor_handle_request(r, s);
+                    });
                 }
             ),
         );
