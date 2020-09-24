@@ -2,7 +2,6 @@
 //
 // Austin Shafer - 2020
 #![allow(dead_code)]
-extern crate wayland_server as ws;
 
 mod property;
 use property::{PropertyId,Property};
@@ -13,6 +12,7 @@ mod skiplist;
 use crate::category5::ways::{
     surface::*,
     seat::Seat,
+    xdg_shell::xdg_toplevel::ResizeEdge,
 };
 use crate::category5::vkcomp::wm;
 use super::{WindowId,ClientId};
@@ -606,6 +606,9 @@ impl Atmosphere {
 
         // free window id
         self.set_window_prop(id, &WindowProperty::in_use(false));
+        // Clear the private wayland rc data
+        self.a_window_priv.set(id, Priv::SURFACE,
+                               &Priv::surface(None));
     }
 
     // Get the windows ids belonging this client
@@ -681,7 +684,6 @@ impl Atmosphere {
                           -> bool
     {
         let barsize = self.get_barsize();
-
         let pos = self.get_window_dimensions(id);
 
         // If this window contains (x, y) then return it
@@ -692,6 +694,52 @@ impl Atmosphere {
             return true;
         }
         return false;
+    }
+
+    // calculates if a position is over the part of a window that
+    // procs a resize
+    pub fn point_is_on_window_edge(&self, id: WindowId, x: f32, y: f32)
+                                   -> ResizeEdge
+    {
+        let barsize = self.get_barsize();
+        let (wx, wy, ww, wh) = self.get_window_dimensions(id);
+        let prox = 3.0; // TODO find a better val for this??
+
+        // is (x,y) inside each dimension of the window
+        let x_contained = x > wx && x < wx + ww;
+        let y_contained = y > wy && y < wy + barsize + wh;
+
+        // closures for helping us with overlap calculations
+        // v is val to check, a is axis location
+        let near_edge = |p, a| {
+            p > (a - prox) && p < (a + prox)
+        };
+        // same thing but for corners
+        // v is the point and c is the corner
+        let near_corner = |vx, vy, cx, cy| {
+            near_edge(vx, cx) && near_edge(vy, cy)
+        };
+
+        // first check if we are over a corner
+        if near_corner(x, y, wx, wy) {
+             ResizeEdge::TopLeft
+        } else if near_corner(x, y, wx + ww, wy) {
+            ResizeEdge::TopRight
+        } else if near_corner(x, y, wx, wy + wh) {
+            ResizeEdge::BottomLeft
+        } else if near_corner(x, y, wx + ww, wy + wh) {
+            ResizeEdge::BottomRight
+        } else if near_edge(x, wx) && y_contained {
+            ResizeEdge::Left
+        } else if near_edge(x, wx + ww) && y_contained {
+            ResizeEdge::Right
+        } else if near_edge(y, wy) && x_contained {
+            ResizeEdge::Top
+        } else if near_edge(y, wy + wh) && x_contained {
+            ResizeEdge::Bottom
+        } else {
+            ResizeEdge::None
+        }
     }
 
     // Adds a one-time task to the queue
@@ -780,6 +828,8 @@ impl Atmosphere {
 
     // -- subsystem specific handlers --
 
+    // These are getters for the private wayland structures
+    // that do not get shared across hemispheres
     pub fn add_surface(&mut self, id: WindowId,
                        surf: Rc<RefCell<Surface>>)
     {
@@ -793,8 +843,7 @@ impl Atmosphere {
     {
         match self.a_window_priv.get(id, Priv::SURFACE) {
             Some(Priv::surface(Some(s))) => Some(s.clone()),
-            Some(Priv::surface(None)) => None,
-            None => None,
+            _ => None,
         }
     }
 
@@ -811,8 +860,7 @@ impl Atmosphere {
     {
         match self.a_client_priv.get(id, ClientPriv::SEAT) {
             Some(ClientPriv::seat(Some(s))) => Some(s.clone()),
-            Some(ClientPriv::seat(None)) => None,
-            None => None,
+            _ => None,
         }
     }
 

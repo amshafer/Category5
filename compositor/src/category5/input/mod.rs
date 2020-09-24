@@ -19,8 +19,12 @@ extern crate xkbcommon;
 use ws::protocol::wl_pointer;
 
 use event::*;
+use crate::category5::ways::{
+    role::Role,
+    xdg_shell::xdg_toplevel::ResizeEdge,
+};
 use crate::category5::utils::{
-    timing::*, logging::LogLevel, atmosphere::*
+    timing::*, logging::LogLevel, atmosphere::*, WindowId,
 };
 use crate::log;
 
@@ -135,6 +139,14 @@ pub struct Input {
     pub i_mod_caps: bool,
     pub i_mod_meta: bool,
     pub i_mod_num: bool,
+
+    // Resize tracking
+    // When we resize a window we want to batch together the
+    // changes and send one configure message per frame
+    // The window currently being resized
+    pub i_resizing: Option<WindowId>,
+    // changes to the window surface to be sent this frame
+    pub i_resize_diff: (f64, f64),
 }
 
 impl Input {
@@ -189,6 +201,8 @@ impl Input {
             i_mod_caps: false,
             i_mod_meta: false,
             i_mod_num: false,
+            i_resizing: None,
+            i_resize_diff: (0.0, 0.0),
         }
     }
 
@@ -300,6 +314,33 @@ impl Input {
         }
     }
 
+    // Apply any batched input changes to the window dimensions
+    pub fn update_shell(&mut self) {
+        let mut atmos = self.i_atmos.borrow_mut();
+        if let Some(id) = self.i_resizing {
+            if let Some(cell) = atmos.get_surface_from_id(id) {
+                let surf = cell.borrow();
+                match &surf.s_role {
+                    Some(Role::xdg_shell_toplevel(ss)) => {
+                        // send the xdg configure events
+                        ss.borrow_mut()
+                            .configure(
+                                &mut atmos, &surf,
+                                Some((
+                                    self.i_resize_diff.0 as f32,
+                                    self.i_resize_diff.1 as f32,
+                                )),
+                            );
+                    },
+                    _ => (),
+                }
+            }
+
+            // clear the diff so we can batch more
+            self.i_resize_diff = (0.0, 0.0);
+        }
+    }
+
     // Move the pointer
     //
     // Also generates wl_pointer.motion events to the surface
@@ -308,19 +349,25 @@ impl Input {
         let mut atmos = self.i_atmos.borrow_mut();
         // Update the atmosphere with the new cursor pos
         atmos.add_cursor_pos(m.pm_dx, m.pm_dy);
+        // Get the cursor position
+        let (cx, cy) = atmos.get_cursor_pos();
 
         // Find the active window
+        // TODO: have a specific seat focus for generating enter/leave events
         if let Some(id) = atmos.get_window_in_focus() {
-            // get the seat for this client
-            if let Some(cell) = atmos.get_seat_from_id(id) {
+            // get the surface-local position
+            let (wx, mut wy, ww, wh) = atmos.get_window_dimensions(id);
+
+            // If a resize is happening then collect the cursor changes
+            // to send at the end of the frame
+            if self.i_resizing.is_some() {
+                self.i_resize_diff.0 += m.pm_dx;
+                self.i_resize_diff.1 += m.pm_dy;
+            } else if let Some(cell) = atmos.get_seat_from_id(id) {
+                // get the seat for this client
                 let seat = cell.borrow();
                 // Get the pointer
                 if let Some(pointer) = &seat.s_pointer {
-                    // Get the cursor position
-                    let (cx, cy) = atmos.get_cursor_pos();
-
-                    // get the surface-local position
-                    let (wx, mut wy, ww, wh) = atmos.get_window_dimensions(id);
                     // we need to add the barsize to the window y to account
                     // for where the surface will actually be drawn
                     wy += atmos.get_barsize();
@@ -356,8 +403,35 @@ impl Input {
         let mut set_focus = false;
 
         // find the window under the cursor
-        if let Some(id) = atmos.find_window_at_point(cursor.0 as f32,
-                                                     cursor.1 as f32)
+        if self.i_resizing.is_some() && c.c_state == ButtonState::Released {
+            // We are releasing a resize, and we might not be resizing
+            // the same window as find_window_at_point would report
+            if let Some(id) = self.i_resizing {
+                // if on one of the edges start a resize
+                if let Some(surf) = atmos.get_surface_from_id(id) {
+                    match &surf.borrow_mut().s_role {
+                        Some(Role::xdg_shell_toplevel(ss)) => {
+                            match c.c_state {
+                                // The release is handled above
+                                ButtonState::Released => {
+                                    log!(LogLevel::debug,
+                                         "Stopping resize of {}", id);
+                                    ss.borrow_mut().ss_attached_state
+                                        .xs_resizing = false;
+                                    self.i_resizing = None;
+                                    // TODO: send final configure here?
+                                },
+                                // this should never be pressed
+                                _ => (),
+                            }
+                        },
+                        // TODO: resizing for other shell types
+                        _ => (),
+                    }
+                }
+            }
+        } else if let Some(id) = atmos.find_window_at_point(cursor.0 as f32,
+                                                            cursor.1 as f32)
         {
             // If the window is not in focus, make it in focus
             if let Some(focus) = atmos.get_window_in_focus() {
@@ -367,11 +441,38 @@ impl Input {
                 }
             }
 
-            // now check if we are over the titlebar
-            // if so we will grab the bar
-            if atmos.point_is_on_titlebar(id, cursor.0 as f32,
-                                          cursor.1 as f32)
+            // do this first here so we don't do it more than once
+            let edge = atmos.point_is_on_window_edge(id, cursor.0 as f32,
+                                                     cursor.1 as f32);
+
+            // First check if we are over an edge, or if we are resizing
+            // and released the click
+            if edge != ResizeEdge::None {
+                // if on one of the edges start a resize
+                if let Some(surf) = atmos.get_surface_from_id(id) {
+                    match &surf.borrow_mut().s_role {
+                        Some(Role::xdg_shell_toplevel(ss)) => {
+                            match c.c_state {
+                                ButtonState::Pressed => {
+                                    log!(LogLevel::debug,
+                                         "Resizing window {}", id);
+                                    ss.borrow_mut().ss_attached_state
+                                        .xs_resizing = true;
+                                    self.i_resizing = Some(id);
+                                },
+                                // releasing is handled above
+                                _ => (),
+                            }
+                        },
+                        // TODO: resizing for other shell types
+                        _ => (),
+                    }
+                }
+            } else if atmos.point_is_on_titlebar(id, cursor.0 as f32,
+                                                 cursor.1 as f32)
             {
+                // now check if we are over the titlebar
+                // if so we will grab the bar
                 match c.c_state {
                     ButtonState::Pressed => {
                         log!(LogLevel::debug, "Grabbing window {}", id);

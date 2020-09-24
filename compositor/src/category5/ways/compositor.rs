@@ -403,6 +403,13 @@ impl EventManager {
             // TODO: This might not be the most accurate
             if tm.is_overdue() {
                 log!(LogLevel::profiling, "timer out");
+                // TODO: fix frame timings to prevent the current state of
+                // 3 frames of latency
+                //
+                // The input subsystem has batched the changes to the window
+                // due to resizing, we need to send those changes now
+                self.em_input.borrow_mut().update_shell();
+
                 if needs_frame {
                     needs_frame = false;
                     // it has been roughly one frame, so fire the frame callbacks

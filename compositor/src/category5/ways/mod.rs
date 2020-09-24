@@ -10,7 +10,7 @@ mod shm;
 pub mod seat;
 mod keyboard;
 mod pointer;
-mod xdg_shell;
+pub mod xdg_shell;
 mod wl_shell;
 mod wl_output;
 mod wl_subcompositor;
@@ -18,7 +18,7 @@ pub mod linux_dmabuf;
 
 // Utils
 pub mod utils;
-mod role;
+pub mod role;
 pub mod sys;
 pub mod task;
 

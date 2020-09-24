@@ -11,6 +11,7 @@ use ws::protocol::{wl_shm, wl_shm_pool};
 use crate::category5::utils::*;
 
 use std::rc::Rc;
+use std::cell::RefCell;
 use std::os::unix::io::RawFd;
 use std::ffi::c_void;
 use nix::{unistd, sys::mman};
@@ -58,6 +59,27 @@ impl ShmRegion {
             })
         }
     }
+
+    // Enlarge the shm pool
+    // Shrinking a pool is not supported
+    fn resize(&mut self, size: usize) {
+        assert!(self.sr_size <= size);
+        self.sr_size = size;
+
+        self.sr_raw_ptr = unsafe {
+            match mman::mmap(
+                std::ptr::null_mut(),
+                self.sr_size,
+                mman::ProtFlags::PROT_READ,
+                mman::MapFlags::MAP_SHARED,
+                self.sr_fd,
+                0)
+            {
+                Ok(p) => p,
+                Err(_) => panic!("Could not resize the shm pool"),
+            }
+        };
+    }
 }
 
 impl Drop for ShmRegion {
@@ -91,7 +113,9 @@ pub fn shm_handle_request(req: wl_shm::Request,
                 ); 
             }
 
-            let reg = Rc::new(ShmRegion::new(fd, size as usize).unwrap());
+            let reg = Rc::new(RefCell::new(
+                ShmRegion::new(fd, size as usize).unwrap()
+            ));
             // Register a callback for the wl_shm_pool interface
             pool.quick_assign(|p, r, _| {
                 shm_pool_handle_request(r, p.deref().clone());
@@ -111,7 +135,7 @@ pub fn shm_handle_request(req: wl_shm::Request,
 #[allow(dead_code)]
 pub struct ShmBuffer {
     // The region this buffer is a part of
-    sb_reg: Rc<ShmRegion>,
+    sb_reg: Rc<RefCell<ShmRegion>>,
     // The offset into sb_reg where this is located
     sb_offset: i32,
     pub sb_width: i32,
@@ -129,8 +153,11 @@ impl ShmBuffer {
     // it as a MemImage
     pub fn get_mem_image(&self) -> MemImage {
         MemImage::new(
-            unsafe { self.sb_reg.sr_raw_ptr.offset(self.sb_offset as isize) }
-                as *mut u8,
+            unsafe { self.sb_reg
+                     .borrow()
+                     .sr_raw_ptr
+                     .offset(self.sb_offset as isize)
+            } as *mut u8,
             4, // 4 bytes per pixel hardcoded
             self.sb_width as usize,
             self.sb_height as usize,
@@ -147,7 +174,7 @@ pub fn shm_pool_handle_request(req: wl_shm_pool::Request,
                                pool: wl_shm_pool::WlShmPool)
 {
     // Get the userdata from this resource
-    let reg = pool.as_ref().user_data().get::<Rc<ShmRegion>>().unwrap();
+    let reg = pool.as_ref().user_data().get::<Rc<RefCell<ShmRegion>>>().unwrap();
 
     match req {
         #[allow(unused_variables)]
@@ -181,6 +208,9 @@ pub fn shm_pool_handle_request(req: wl_shm_pool::Request,
             buffer.quick_assign(|_, _, _| {});
             // Add our buffer priv data to the userdata
             buffer.as_ref().user_data().set(move || data);
+        },
+        wl_shm_pool::Request::Resize { size } => {
+            reg.borrow_mut().resize(size as usize);
         },
         wl_shm_pool::Request::Destroy => {},
         _ => unimplemented!(),

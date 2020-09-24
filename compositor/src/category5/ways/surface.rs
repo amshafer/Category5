@@ -118,7 +118,7 @@ impl Surface {
         // Commit any role state before we do our thing
         match &self.s_role {
             Some(Role::xdg_shell_toplevel(xs)) =>
-                xs.borrow_mut().commit(&self),
+                xs.borrow_mut().commit(&self, &mut atmos),
             Some(Role::wl_shell_toplevel) => {},
             Some(Role::subsurface(ss)) =>
                 ss.borrow_mut().commit(),

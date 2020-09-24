@@ -9,8 +9,12 @@ use ws::protocol::wl_surface;
 
 use super::surface::*;
 use super::role::Role;
-use super::protocol::xdg_shell::*;
-use crate::category5::utils::atmosphere::Atmosphere;
+pub use super::protocol::xdg_shell::*;
+
+use crate::category5::utils::{
+    timing::*, logging::LogLevel, atmosphere::Atmosphere,
+};
+use crate::log;
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -32,26 +36,24 @@ use std::clone::Clone;
 // finally: the client will commit the surface, causing the server to apply
 //   all of the attached state
 #[allow(dead_code)]
-struct XdgState {
-    xs_acked: bool,
+#[derive(Clone)]
+pub struct XdgState {
+    pub xs_acked: bool,
     // window title
-    xs_title: Option<String>,
-    // the width and height of the window
-    xs_width: i32,
-    xs_height: i32,
+    pub xs_title: Option<String>,
     // self-explanitory I think
-    xs_maximized: bool,
+    pub xs_maximized: bool,
     // guess what this one means
-    xs_fullscreen: bool,
+    pub xs_fullscreen: bool,
     // who would have thought
-    xs_resizing: bool,
+    pub xs_resizing: bool,
     // Is the window currently in focus?
-    xs_activated: bool,
+    pub xs_activated: bool,
     // Is this window against a tile boundary?
-    xs_tiled_left: bool,
-    xs_tiled_right: bool,
-    xs_tiled_top: bool,
-    xs_tiled_bottom: bool,
+    pub xs_tiled_left: bool,
+    pub xs_tiled_right: bool,
+    pub xs_tiled_top: bool,
+    pub xs_tiled_bottom: bool,
 
     // ------------------
     // The following are "meta" configuration changes
@@ -68,8 +70,6 @@ impl XdgState {
         XdgState {
             xs_acked: false,
             xs_title: None,
-            xs_width: 0,
-            xs_height: 0,
             xs_maximized: false,
             xs_fullscreen: false,
             xs_resizing: false,
@@ -101,12 +101,14 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request,
             let atmos = surf.borrow_mut().s_atmos.clone();
 
             let shsurf = Rc::new(RefCell::new(ShellSurface {
-                ss_atmos: atmos,
+                ss_atmos: atmos.clone(),
                 ss_surface: surf.clone(),
                 ss_surface_proxy: surface,
                 ss_xdg_surface: xdg.clone(),
                 ss_attached_state: XdgState::empty(),
+                ss_current_state: XdgState::empty(),
                 ss_serial: 0,
+                ss_xdg_toplevel: None,
             }));
 
             xdg.quick_assign(|s, r, _| {
@@ -167,20 +169,23 @@ pub struct ShellSurface {
     ss_surface_proxy: wl_surface::WlSurface,
     // The object this belongs to
     ss_xdg_surface: Main<xdg_surface::XdgSurface>,
+    ss_xdg_toplevel: Option<Main<xdg_toplevel::XdgToplevel>>,
     // Outstanding changes to be applied in commit
-    ss_attached_state: XdgState,
+    pub ss_attached_state: XdgState,
+    pub ss_current_state: XdgState,
     // A serial for tracking config updates
     // every time we request a configuration this is the
     // serial number used
-    ss_serial: u32,
+    pub ss_serial: u32,
 }
 
 impl ShellSurface {
     // Surface is the caller, and it has already called
     // borrow_mut, so it will just pass itself to us
     // to prevent causing a refcell panic.
-    pub fn commit(&mut self, surf: &Surface) {
-        let xs = &self.ss_attached_state;
+    // The same goes for the atmosphere
+    pub fn commit(&mut self, surf: &Surface, atmos: &mut Atmosphere) {
+        let xs = &mut self.ss_attached_state;
         // do nothing if the client has yet to ack these changes
         if !xs.xs_acked {
             return;
@@ -190,10 +195,47 @@ impl ShellSurface {
         if xs.xs_make_toplevel {
             // Tell vkcomp to create a new window
             println!("Setting surface {} to toplevel", surf.s_id);
-            surf.s_atmos.borrow_mut().create_new_window(surf.s_id);
+            atmos.create_new_window(surf.s_id);
+            xs.xs_make_toplevel = false;
         }
-        // Reset the state now that it is complete
-        self.ss_attached_state = XdgState::empty();
+        self.ss_current_state = self.ss_attached_state.clone();
+    }
+
+    // Generate a fresh set of configure events
+    //
+    // This is called from other subsystems (input), which means we need to
+    // pass the surface as an argument since its refcell will already be
+    // borrowed.
+    pub fn configure(&mut self,
+                     atmos: &mut Atmosphere,
+                     surf: &Surface,
+                     resize_diff: Option<(f32,f32)>)
+    {
+        // send configuration requests to the client
+        if let Some(toplevel) = &self.ss_xdg_toplevel {
+            if let Some((x, y)) = resize_diff {
+                // Get the current window position
+                let mut dims = atmos.get_window_dimensions(surf.s_id);
+
+                // update our state's dimensions
+                dims.2 += x;
+                dims.3 += y;
+                log!(LogLevel::debug, "new window size is {}x{}",
+                     dims.2,
+                     dims.3,
+                );
+                // Update the atmosphere
+                atmos.set_window_dimensions(surf.s_id,
+                                            dims.0, dims.1, dims.2, dims.3);
+
+                // send them to the client
+                toplevel.configure(
+                    dims.2 as i32, dims.3 as i32,
+                    Vec::new(), // TODO: specify our requirements?
+                );
+            }
+        }
+        self.ss_xdg_surface.configure(self.ss_serial);
     }
 
     // Check if this serial is the currently loaned out one,
@@ -213,17 +255,16 @@ impl ShellSurface {
                     toplevel: Main<xdg_toplevel::XdgToplevel>,
                     userdata: Rc<RefCell<ShellSurface>>)
     {
-        let mut surf = self.ss_surface.borrow_mut();        
-
         // Mark our surface as being a window handled by xdg_shell
-        surf.s_role = Some(Role::xdg_shell_toplevel(userdata.clone()));
+        self.ss_surface.borrow_mut().s_role =
+            Some(Role::xdg_shell_toplevel(userdata.clone()));
 
         // Record our state
         self.ss_attached_state.xs_make_toplevel = true;
 
         // send configuration requests to the client
+        // width and height 0 means client picks a size
         toplevel.configure(
-            // width and height 0 means client picks a size
             0, 0,
             Vec::new(), // TODO: specify our requirements?
         );
@@ -231,7 +272,9 @@ impl ShellSurface {
 
         // Now add ourselves to the xdg_toplevel
         // TODO: implement toplevel
+        self.ss_xdg_toplevel = Some(toplevel.clone());
         toplevel.quick_assign(|_,_,_| {});
+        // TODO: implement handler for stuff like resize
         toplevel.as_ref().user_data().set(move || userdata);
     }
 }
