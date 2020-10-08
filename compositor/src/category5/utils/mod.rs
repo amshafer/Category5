@@ -6,6 +6,7 @@ pub mod timing;
 pub mod logging;
 pub mod atmosphere;
 pub mod fdwatch;
+pub mod region;
 extern crate wayland_server as ws;
 
 use ws::protocol::wl_buffer;

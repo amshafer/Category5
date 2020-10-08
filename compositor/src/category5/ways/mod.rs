@@ -15,6 +15,7 @@ mod wl_shell;
 mod wl_output;
 mod wl_subcompositor;
 pub mod linux_dmabuf;
+mod wl_region;
 
 // Utils
 pub mod utils;

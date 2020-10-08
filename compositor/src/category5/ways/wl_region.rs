@@ -7,7 +7,7 @@ extern crate wayland_server as ws;
 use ws::Main;
 use ws::protocol::wl_region;
 
-use crate::category5::utils::region::Rect;
+use crate::category5::utils::region::{Offset2D,Rect};
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -23,17 +23,22 @@ pub struct Region {
 
 // Register a new wl_region
 pub fn register_new(reg: Main<wl_region::WlRegion>) {
-    let r = Rc::new(RefCell::new(Region {
+    let re = Rc::new(RefCell::new(Region {
         r_add: Vec::new(),
         r_sub: Vec::new(),
     }));
-    reg.as_ref().user_data().set(move || r);
+    reg.as_ref().user_data().set(|| re.clone());
+
+    // register our request handler
+    reg.quick_assign(move |_, r, _| {
+        let mut nre = re.borrow_mut();
+        nre.handle_request(r);
+    });
 }
 
 impl Region {
     pub fn handle_request(&mut self,
-                          req: wl_region::Request,
-                          reg: Main<wl_region::WlRegion>)
+                          req: wl_region::Request)
     {
         match req {
             wl_region::Request::Add { x, y, width, height } => {
@@ -41,7 +46,7 @@ impl Region {
                     r_start: Offset2D {
                         x: x, y: y
                     },
-                    r_start: Offset2D {
+                    r_size: Offset2D {
                         x: width, y: height,
                     },
                 });
@@ -51,7 +56,7 @@ impl Region {
                     r_start: Offset2D {
                         x: x, y: y
                     },
-                    r_start: Offset2D {
+                    r_size: Offset2D {
                         x: width, y: height,
                     },
                 });

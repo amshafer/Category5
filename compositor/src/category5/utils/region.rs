@@ -7,8 +7,8 @@
 // This an offset of unspecified units from
 // some basis. Basically a cartesian point.
 pub struct Offset2D {
-    pub x: f64,
-    pub y: f64,
+    pub x: i32,
+    pub y: i32,
 }
 
 // A rectangular region
