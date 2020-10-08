@@ -18,7 +18,7 @@ pub struct Offset2D {
 // the corders of a rectangle:
 //   r_start: the upper left corner's position on the desktop
 //   r_size:  the distance from the left to the lower right
-pub struct Region {
+pub struct Rect {
     pub r_start: Offset2D,
     pub r_size: Offset2D,
 }

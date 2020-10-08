@@ -31,6 +31,7 @@ use super::{
     wl_output::wl_output_broadcast,
     xdg_shell::xdg_wm_base_handle_request,
     linux_dmabuf::*,
+    wl_region::new,
     wl_subcompositor::wl_subcompositor_handle_request,
 };
 use super::protocol::{
@@ -208,6 +209,8 @@ impl EventManager {
                         match request {
                             wlci::Request::CreateSurface { id } =>
                                 comp.create_surface(id),
+                            wlci::Request::CreateRegion { id } =>
+                                wl_region::register_new(id),
                             // All other requests are invalid
                             _ => unimplemented!(),
                         }
