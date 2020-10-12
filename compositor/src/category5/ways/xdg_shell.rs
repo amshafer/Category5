@@ -117,6 +117,25 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request,
             // Pass ourselves as user data
             xdg.as_ref().user_data().set(move || shsurf);
         },
+        xdg_wm_base::Request::CreatePositioner { id } => {
+            let pos = Positioner {
+                p_x: 0, p_y: 0, p_width: 0, p_height: 0,
+                p_anchor_rect: None,
+                p_anchor: xdg_positioner::Anchor::None,
+                p_gravity: xdg_positioner::Gravity::None,
+                p_constraint: xdg_positioner::ConstraintAdjustment::None,
+                p_reactive: false,
+                p_parent_size: None,
+                p_parent_configure: 0,
+            };
+
+            id.quick_assign(|s, r, _| {
+                xdg_positioner_handle_request(s, r);
+            });
+            // We will add the positioner as userdata since nothing
+            // else needs to look it up
+            id.as_ref().user_data().set(move || pos);
+        },
         _ => unimplemented!(),
     };
 }
@@ -152,6 +171,70 @@ fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>,
             shsurf.ack_configure(serial),
         _ => unimplemented!(),
     };
+}
+
+// A positioner object
+//
+// This is used to position popups relative to the toplevel parent
+// surface. It handles offsets and anchors for hovering the popup
+// surface.
+#[derive(Copy,Clone)]
+struct Positioner {
+    /// The dimensions of the positioned surface
+    p_x: i32,
+    p_y: i32,
+    p_width: i32,
+    p_height: i32,
+    /// (x, y, width, height) of the anchor rectangle
+    p_anchor_rect: Option<(i32, i32, i32, i32)>,
+    p_anchor: xdg_positioner::Anchor,
+    p_gravity: xdg_positioner::Gravity,
+    p_constraint: xdg_positioner::ConstraintAdjustment,
+    /// If the constraints should be recalculated when the parent is moved
+    p_reactive: bool,
+    p_parent_size: Option<(i32, i32)>,
+    /// The serial of the parent configuration event this is responding to
+    p_parent_configure: u32,
+}
+
+fn xdg_positioner_handle_request(res: Main<xdg_positioner::XdgPositioner>,
+                                 req: xdg_positioner::Request)
+{
+    let mut pos = *res.as_ref()
+        .user_data()
+        .get::<Positioner>()
+        .expect("xdg_positioner did not contain the correct userdata");
+
+    match req {
+        xdg_positioner::Request::SetSize { width, height } => {
+            pos.p_width = width;
+            pos.p_height = height;
+        },
+        xdg_positioner::Request::SetAnchorRect { x, y, width, height } => {
+            pos.p_anchor_rect = Some((x, y, width, height));
+        },
+        xdg_positioner::Request::SetAnchor { anchor } =>
+            pos.p_anchor = anchor,
+        xdg_positioner::Request::SetGravity { gravity } =>
+            pos.p_gravity = gravity,
+        xdg_positioner::Request::SetConstraintAdjustment { constraint_adjustment } =>
+            pos.p_constraint = xdg_positioner::ConstraintAdjustment::from_raw(constraint_adjustment)
+            .unwrap(),
+        xdg_positioner::Request::SetOffset { x, y } => {
+            pos.p_x = x;
+            pos.p_y = y;
+        },
+        xdg_positioner::Request::SetReactive =>
+            pos.p_reactive = true,
+        xdg_positioner::Request::SetParentSize { parent_width, parent_height } =>
+            pos.p_parent_size = Some((parent_width, parent_height)),
+        xdg_positioner::Request::SetParentConfigure { serial } =>
+            pos.p_parent_configure = serial,
+        _ => unimplemented!(),
+    };
+
+    // store the updated Positioner in the userdata
+    res.as_ref().user_data().set(move || pos);
 }
 
 // A shell surface
