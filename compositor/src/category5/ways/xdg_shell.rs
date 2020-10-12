@@ -20,21 +20,21 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::clone::Clone;
 
-// This is the set of outstanding
-// configuration changes which have not
-// been committed yet.
-//
-// Configuration is a bit weird, I think it looks like:
-// first: any role interfaces will send their own configure events, which
-//   request the client to set itself to match a certain state (size, maximized, etc)
-// second: once that is done, the xdg_wm_base will send a configure event
-//   saying that the configuration requests are over with.
-// thirdish: the client will start making requests that update each part
-//   of the window state (i.e. set the size/title)
-// fourth: the client will do the ack_configure request to tell the server
-//   that it is done.
-// finally: the client will commit the surface, causing the server to apply
-//   all of the attached state
+/// This is the set of outstanding
+/// configuration changes which have not
+/// been committed yet.
+///
+/// Configuration is a bit weird, I think it looks like:
+/// first: any role interfaces will send their own configure events, which
+///   request the client to set itself to match a certain state (size, maximized, etc)
+/// second: once that is done, the xdg_wm_base will send a configure event
+///   saying that the configuration requests are over with.
+/// thirdish: the client will start making requests that update each part
+///   of the window state (i.e. set the size/title)
+/// fourth: the client will do the ack_configure request to tell the server
+///   that it is done.
+/// finally: the client will commit the surface, causing the server to apply
+///   all of the attached state
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct XdgState {
@@ -61,11 +61,11 @@ pub struct XdgState {
     // window itself
     // ------------------
     // Should we create a new window
-    xs_make_toplevel: bool,
+    xs_make_new_window: bool,
 }
 
 impl XdgState {
-    // Return a state with no changes
+    /// Return a state with no changes
     fn empty() -> XdgState {
         XdgState {
             xs_acked: false,
@@ -78,16 +78,16 @@ impl XdgState {
             xs_tiled_right: false,
             xs_tiled_top: false,
             xs_tiled_bottom: false,
-            xs_make_toplevel: false,
+            xs_make_new_window: false,
         }
     }
 }
 
-// Handle requests to a xdg_shell interface
-//
-// The xdg_shell interface implements functionality regarding
-// the lifecycle of the window. Essentially it just creates
-// a xdg_shell_surface.
+/// Handle requests to a xdg_shell interface
+///
+/// The xdg_shell interface implements functionality regarding
+/// the lifecycle of the window. Essentially it just creates
+/// a xdg_shell_surface.
 pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request,
                                   _wm_base: Main<xdg_wm_base::XdgWmBase>)
 {
@@ -109,6 +109,7 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request,
                 ss_current_state: XdgState::empty(),
                 ss_serial: 0,
                 ss_xdg_toplevel: None,
+                ss_xdg_popup: None,
             }));
 
             xdg.quick_assign(|s, r, _| {
@@ -120,7 +121,7 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request,
         xdg_wm_base::Request::CreatePositioner { id } => {
             let pos = Positioner {
                 p_x: 0, p_y: 0, p_width: 0, p_height: 0,
-                p_anchor_rect: None,
+                p_anchor_rect: (0, 0, 0, 0),
                 p_anchor: xdg_positioner::Anchor::None,
                 p_gravity: xdg_positioner::Gravity::None,
                 p_constraint: xdg_positioner::ConstraintAdjustment::None,
@@ -140,12 +141,12 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request,
     };
 }
 
-// Handle requests to a xdg_shell_surface interface
-//
-// xdg_shell_surface is the interface which actually
-// tracks window characteristics and roles. It is
-// highly recommended to read wayland.xml for all
-// the gory details.
+/// Handle requests to a xdg_shell_surface interface
+///
+/// xdg_shell_surface is the interface which actually
+/// tracks window characteristics and roles. It is
+/// highly recommended to read wayland.xml for all
+/// the gory details.
 fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>,
                               req: xdg_surface::Request)
 {
@@ -167,36 +168,52 @@ fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>,
     match req {
         xdg_surface::Request::GetToplevel { id: xdg } =>
             shsurf.get_toplevel(xdg, ss_clone),
+        xdg_surface::Request::GetPopup { id, parent, positioner } =>
+            shsurf.get_popup(id, parent, positioner, ss_clone),
         xdg_surface::Request::AckConfigure { serial } =>
             shsurf.ack_configure(serial),
         _ => unimplemented!(),
     };
 }
 
-// A positioner object
-//
-// This is used to position popups relative to the toplevel parent
-// surface. It handles offsets and anchors for hovering the popup
-// surface.
+/// A positioner object
+///
+/// This is used to position popups relative to the toplevel parent
+/// surface. It handles offsets and anchors for hovering the popup
+/// surface.
 #[derive(Copy,Clone)]
 struct Positioner {
     /// The dimensions of the positioned surface
-    p_x: i32,
+    p_x: i32, // from set_offset
     p_y: i32,
-    p_width: i32,
+    p_width: i32, // from set_size
     p_height: i32,
-    /// (x, y, width, height) of the anchor rectangle
-    p_anchor_rect: Option<(i32, i32, i32, i32)>,
+    // (x, y, width, height) of the anchor rectangle
+    p_anchor_rect: (i32, i32, i32, i32),
     p_anchor: xdg_positioner::Anchor,
     p_gravity: xdg_positioner::Gravity,
     p_constraint: xdg_positioner::ConstraintAdjustment,
-    /// If the constraints should be recalculated when the parent is moved
+    // If the constraints should be recalculated when the parent is moved
     p_reactive: bool,
     p_parent_size: Option<(i32, i32)>,
     /// The serial of the parent configuration event this is responding to
     p_parent_configure: u32,
 }
 
+impl Positioner {
+    /// Create a surface local position from the positioner.
+    /// This should be called to reevaluate the end result of the popup location.
+    fn get_loc(&self) -> (i32, i32) {
+        // TODO: add the rest of the positioner elements
+        (self.p_anchor_rect.0 + self.p_x,
+         self.p_anchor_rect.1 + self.p_y)
+    }
+}
+
+/// Respond to xdg_positioner requests.
+///
+/// These requests are used to build up a `Positioner`, which will
+/// later be used during the creation of an `xdg_popup` surface.
 fn xdg_positioner_handle_request(res: Main<xdg_positioner::XdgPositioner>,
                                  req: xdg_positioner::Request)
 {
@@ -205,13 +222,14 @@ fn xdg_positioner_handle_request(res: Main<xdg_positioner::XdgPositioner>,
         .get::<Positioner>()
         .expect("xdg_positioner did not contain the correct userdata");
 
+    // add the reqeust data to our struct
     match req {
         xdg_positioner::Request::SetSize { width, height } => {
             pos.p_width = width;
             pos.p_height = height;
         },
         xdg_positioner::Request::SetAnchorRect { x, y, width, height } => {
-            pos.p_anchor_rect = Some((x, y, width, height));
+            pos.p_anchor_rect = (x, y, width, height);
         },
         xdg_positioner::Request::SetAnchor { anchor } =>
             pos.p_anchor = anchor,
@@ -237,12 +255,19 @@ fn xdg_positioner_handle_request(res: Main<xdg_positioner::XdgPositioner>,
     res.as_ref().user_data().set(move || pos);
 }
 
-// A shell surface
-//
-// This is the private protocol object for
-// xdg_shell_surface. It actually implements
-// all the functionality that the handler
-// dispatches
+/// Private struct for an xdg_popup role.
+pub struct Popup {
+    pu_pop: Main<xdg_popup::XdgPopup>,
+    pu_parent: Option<xdg_surface::XdgSurface>,
+    pu_positioner: xdg_positioner::XdgPositioner,
+}
+
+/// A shell surface
+///
+/// This is the private protocol object for
+/// xdg_shell_surface. It actually implements
+/// all the functionality that the handler
+/// dispatches
 #[allow(dead_code)]
 pub struct ShellSurface {
     ss_atmos: Rc<RefCell<Atmosphere>>,
@@ -253,6 +278,7 @@ pub struct ShellSurface {
     // The object this belongs to
     ss_xdg_surface: Main<xdg_surface::XdgSurface>,
     ss_xdg_toplevel: Option<Main<xdg_toplevel::XdgToplevel>>,
+    ss_xdg_popup: Option<Popup>,
     // Outstanding changes to be applied in commit
     pub ss_attached_state: XdgState,
     pub ss_current_state: XdgState,
@@ -263,10 +289,10 @@ pub struct ShellSurface {
 }
 
 impl ShellSurface {
-    // Surface is the caller, and it has already called
-    // borrow_mut, so it will just pass itself to us
-    // to prevent causing a refcell panic.
-    // The same goes for the atmosphere
+    /// Surface is the caller, and it has already called
+    /// borrow_mut, so it will just pass itself to us
+    /// to prevent causing a refcell panic.
+    /// The same goes for the atmosphere
     pub fn commit(&mut self, surf: &Surface, atmos: &mut Atmosphere) {
         let xs = &mut self.ss_attached_state;
         // do nothing if the client has yet to ack these changes
@@ -275,20 +301,20 @@ impl ShellSurface {
         }
 
         // This has just been assigned role of toplevel
-        if xs.xs_make_toplevel {
+        if xs.xs_make_new_window {
             // Tell vkcomp to create a new window
             println!("Setting surface {} to toplevel", surf.s_id);
             atmos.create_new_window(surf.s_id);
-            xs.xs_make_toplevel = false;
+            xs.xs_make_new_window = false;
         }
         self.ss_current_state = self.ss_attached_state.clone();
     }
 
-    // Generate a fresh set of configure events
-    //
-    // This is called from other subsystems (input), which means we need to
-    // pass the surface as an argument since its refcell will already be
-    // borrowed.
+    /// Generate a fresh set of configure events
+    ///
+    /// This is called from other subsystems (input), which means we need to
+    /// pass the surface as an argument since its refcell will already be
+    /// borrowed.
     pub fn configure(&mut self,
                      atmos: &mut Atmosphere,
                      surf: &Surface,
@@ -321,8 +347,8 @@ impl ShellSurface {
         self.ss_xdg_surface.configure(self.ss_serial);
     }
 
-    // Check if this serial is the currently loaned out one,
-    // and if so set the existing state to be applied
+    /// Check if this serial is the currently loaned out one,
+    /// and if so set the existing state to be applied
     pub fn ack_configure(&mut self, serial: u32) {
         if serial == self.ss_serial {
             // mark this as acked so it is applied in commit
@@ -332,8 +358,12 @@ impl ShellSurface {
         }
     }
 
-    // userdata is a Rc ref of ourselves which should
-    // be added to toplevel
+    /// Get a toplevel surface
+    ///
+    /// A toplevel surface is the "normal" window type. It
+    /// represents displaying one wl_surface in the desktop shell.
+    /// `userdata` is a Rc ref of ourselves which should
+    /// be added to toplevel.
     fn get_toplevel(&mut self,
                     toplevel: Main<xdg_toplevel::XdgToplevel>,
                     userdata: Rc<RefCell<ShellSurface>>)
@@ -343,7 +373,7 @@ impl ShellSurface {
             Some(Role::xdg_shell_toplevel(userdata.clone()));
 
         // Record our state
-        self.ss_attached_state.xs_make_toplevel = true;
+        self.ss_attached_state.xs_make_new_window = true;
 
         // send configuration requests to the client
         // width and height 0 means client picks a size
@@ -359,5 +389,47 @@ impl ShellSurface {
         toplevel.quick_assign(|_,_,_| {});
         // TODO: implement handler for stuff like resize
         toplevel.as_ref().user_data().set(move || userdata);
+    }
+
+    /// Register a new popup surface.
+    ///
+    /// A popup surface is for dropdowns and alerts, and is the consumer
+    /// of the positioner code. It is assigned a position over a parent
+    /// toplevel surface and may exclusively grab input for that app.
+    fn get_popup(&mut self,
+                 popup: Main<xdg_popup::XdgPopup>,
+                 parent: Option<xdg_surface::XdgSurface>,
+                 positioner: xdg_positioner::XdgPositioner,
+                 userdata: Rc<RefCell<ShellSurface>>)
+    {
+        // assign the popup role
+        self.ss_surface.borrow_mut().s_role =
+            Some(Role::xdg_shell_popup(userdata.clone()));
+
+        // tell vkcomp to generate resources for a new window
+        self.ss_attached_state.xs_make_new_window = true;
+
+        // send configuration requests to the client
+        // width and height 0 means client picks a size
+        // TODO: calculate the position according to the positioner rule
+        let pos = positioner.as_ref()
+            .user_data()
+            .get::<Positioner>()
+            .unwrap();
+        let popup_loc = pos.get_loc();
+        popup.configure(
+            popup_loc.0, popup_loc.1, 0, 0, // x, y, width, height
+        );
+        self.ss_xdg_surface.configure(self.ss_serial);
+
+        self.ss_xdg_popup = Some(Popup {
+            pu_pop: popup.clone(),
+            pu_parent: parent,
+            pu_positioner: positioner,
+        });
+
+        popup.quick_assign(|_,_,_| {});
+        // TODO: implement handler
+        popup.as_ref().user_data().set(move || userdata);
     }
 }

@@ -18,4 +18,5 @@ pub enum Role {
     wl_shell_toplevel,
     // This window is being controlled by xdg_shell
     xdg_shell_toplevel(Rc<RefCell<xdg_shell::ShellSurface>>),
+    xdg_shell_popup(Rc<RefCell<xdg_shell::ShellSurface>>),
 }

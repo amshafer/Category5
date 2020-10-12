@@ -119,6 +119,8 @@ impl Surface {
         match &self.s_role {
             Some(Role::xdg_shell_toplevel(xs)) =>
                 xs.borrow_mut().commit(&self, &mut atmos),
+            Some(Role::xdg_shell_popup(xs)) =>
+                xs.borrow_mut().commit(&self, &mut atmos),
             Some(Role::wl_shell_toplevel) => {},
             Some(Role::subsurface(ss)) =>
                 ss.borrow_mut().commit(),
