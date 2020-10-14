@@ -297,40 +297,45 @@ impl WindowManager {
         // Convert the order into a float from 0.0 to 1.0
         let order_depth = ((order + 1) as f32) / 100.0;
 
-        // now render the bar itself, as wide as the window
-        // the bar needs to be behind the dots
-        let push = PushConstants {
-            order: order_depth - 0.001, // depth
-            // align it at the top right
-            x: window_dims.0,
-            y: window_dims.1,
-            // the bar is as wide as the window
-            width: window_dims.2,
-            // use a percentage of the screen size
-            height: barsize,
-        };
-        self.titlebar.bar
-            .record_draw(&self.rend, params, &push);
+        // Only display the bar for toplevel surfaces
+        // i.e. don't for popups
+        if self.wm_atmos.is_toplevel(id) {
+            // now render the bar itself, as wide as the window
+            // the bar needs to be behind the dots
+            let push = PushConstants {
+                order: order_depth - 0.001, // depth
+                // align it at the top right
+                x: window_dims.0,
+                // draw the bar above the window
+                y: window_dims.1 - barsize,
+                // the bar is as wide as the window
+                width: window_dims.2,
+                // use a percentage of the screen size
+                height: barsize,
+            };
+            self.titlebar.bar
+                .record_draw(&self.rend, params, &push);
 
-        // We should render the dot second, so alpha blending
-        // has a color to use
-        let push = PushConstants {
-            order: order_depth - 0.002, // depth
-            // the x position needs to be all the way to the
-            // right side of the bar
-            x: window_dims.0
-            // Multiply by 2 (see vert shader for details)
-                + window_dims.2
-            // we don't want to go past the end of the bar
-                - barsize,
-            y: window_dims.1,
-            // align it at the top right
-            width: dotsize,
-            height: dotsize,
-        };
-        // render buttons on the titlebar
-        self.titlebar.dot
-            .record_draw(&self.rend, params, &push);
+            // We should render the dot second, so alpha blending
+            // has a color to use
+            let push = PushConstants {
+                order: order_depth - 0.002, // depth
+                // the x position needs to be all the way to the
+                // right side of the bar
+                x: window_dims.0
+                // Multiply by 2 (see vert shader for details)
+                    + window_dims.2
+                // we don't want to go past the end of the bar
+                    - barsize,
+                y: window_dims.1 - barsize,
+                // align it at the top right
+                width: dotsize,
+                height: dotsize,
+            };
+            // render buttons on the titlebar
+            self.titlebar.dot
+                .record_draw(&self.rend, params, &push);
+        }
 
         // Finally, we can draw the window itself
         // If the mesh does not exist, then only the titlebar
@@ -340,8 +345,7 @@ impl WindowManager {
             let push = PushConstants {
                 order: order_depth, // depth
                 x: window_dims.0,
-                // The actual window will be drawn below the bar
-                y: (window_dims.1 + barsize),
+                y: window_dims.1,
                 // align it at the top right
                 width: window_dims.2,
                 height: window_dims.3,

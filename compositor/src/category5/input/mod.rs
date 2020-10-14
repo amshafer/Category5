@@ -356,7 +356,7 @@ impl Input {
         // TODO: have a specific seat focus for generating enter/leave events
         if let Some(id) = atmos.get_window_in_focus() {
             // get the surface-local position
-            let (wx, mut wy, ww, wh) = atmos.get_window_dimensions(id);
+            let (wx, wy, ww, wh) = atmos.get_window_dimensions(id);
 
             // If a resize is happening then collect the cursor changes
             // to send at the end of the frame
@@ -368,10 +368,6 @@ impl Input {
                 let seat = cell.borrow();
                 // Get the pointer
                 if let Some(pointer) = &seat.s_pointer {
-                    // we need to add the barsize to the window y to account
-                    // for where the surface will actually be drawn
-                    wy += atmos.get_barsize();
-
                     // offset into the surface
                     let (sx, sy) = (cx - wx as f64, cy - wy as f64);
                     // if the cursor is out of the valid bounds for the surface

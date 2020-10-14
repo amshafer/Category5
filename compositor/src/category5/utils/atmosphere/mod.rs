@@ -108,6 +108,7 @@ enum WindowProperty {
     // The client that created this window
     owner(ClientId),
     // does this window have the toplevel role
+    // this controls if SSD are drawn
     toplevel(bool),
     // (x, y, width, height)
     // If this window is a subsurface, then x and y will
@@ -348,6 +349,7 @@ impl Atmosphere {
     // batched up into a set of patches. This is needed to
     // keep both hemispheres in sync.
     fn set_global_prop(&mut self, value: &GlobalProperty) {
+        self.mark_changed();
         let prop_id = value.get_property_id();
         // check if there is an existing patch to overwrite
         if let Some(v) = self.a_global_patches.get_mut(&prop_id) {
@@ -370,6 +372,7 @@ impl Atmosphere {
     }
 
     fn set_client_prop(&mut self, client: ClientId, value: &ClientProperty) {
+        self.mark_changed();
         let prop_id = value.get_property_id();
         // check if there is an existing patch to overwrite
         if let Some(v) = self.a_client_patches.get_mut(&(client, prop_id)) {
@@ -392,6 +395,7 @@ impl Atmosphere {
     }
 
     fn set_window_prop(&mut self, id: WindowId, value: &WindowProperty) {
+        self.mark_changed();
         let prop_id = value.get_property_id();
         // check if there is an existing patch to overwrite
         if let Some(v) = self.a_window_patches.get_mut(&(id, prop_id)) {
@@ -521,19 +525,21 @@ impl Atmosphere {
     // to the hemisphere
     // ------------------------------
 
-    // TODO: make atmosphere in charge of ids?
+    // Create a new window for the id
     //
     // This wraps a couple actions into one helper
     // since there are multiple 
-    pub fn create_new_window(&mut self, id: WindowId) {
+    pub fn create_new_window(&mut self, id: WindowId, is_toplevel: bool) {
         self.add_wm_task(
             wm::task::Task::create_window(id)
         );
 
+        let barsize = self.get_barsize();
+
         self.set_window_prop(id, &WindowProperty::in_use(true));
-        self.set_window_prop(id, &WindowProperty::toplevel(true));
+        self.set_window_prop(id, &WindowProperty::toplevel(is_toplevel));
         self.set_window_prop(id, &WindowProperty::window_dimensions(
-            0.0, 0.0, // (x, y)
+            0.0, 0.0 + barsize, // (x, y)
             640.0, 480.0 // (width, height)
         ));
 
@@ -633,6 +639,15 @@ impl Atmosphere {
         }
     }
 
+    // Get the screen resolution as set by vkcomp
+    pub fn is_toplevel(&self, id: WindowId) -> bool {
+        match self.get_window_prop(id, WindowProperty::TOPLEVEL) {
+            Some(WindowProperty::toplevel(b)) => *b,
+            None => false,
+            _ => panic!("Could not find value for property"),
+        }
+    }
+
     // Grab the window by the specified id
     // it will get moved around as the cursor does
     pub fn grab(&mut self, id: WindowId) {
@@ -666,9 +681,9 @@ impl Atmosphere {
             let pos = self.get_window_dimensions(win);
 
             // If this window contains (x, y) then return it
-            if x > pos.0 && y > pos.1
+            if x > pos.0 && y > (pos.1 - barsize)
                 && x < (pos.0 + pos.2)
-                && y < (pos.1 + pos.3 + barsize)
+                && y < (pos.1 + pos.3)
             {
                 return Some(win);
             }
@@ -687,9 +702,9 @@ impl Atmosphere {
         let pos = self.get_window_dimensions(id);
 
         // If this window contains (x, y) then return it
-        if x > pos.0 && y > pos.1
+        if x > pos.0 && y > (pos.1 - barsize)
             && x < (pos.0 + pos.2)
-            && y < pos.1 + barsize
+            && y < pos.1
         {
             return true;
         }

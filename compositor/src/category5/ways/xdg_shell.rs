@@ -304,7 +304,11 @@ impl ShellSurface {
         if xs.xs_make_new_window {
             // Tell vkcomp to create a new window
             println!("Setting surface {} to toplevel", surf.s_id);
-            atmos.create_new_window(surf.s_id);
+            let is_toplevel = match self.ss_xdg_toplevel {
+                Some(_) => true,
+                None => false,
+            };
+            atmos.create_new_window(surf.s_id, is_toplevel);
             xs.xs_make_new_window = false;
         }
         self.ss_current_state = self.ss_attached_state.clone();
