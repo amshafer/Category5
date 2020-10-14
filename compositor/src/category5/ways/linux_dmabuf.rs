@@ -45,12 +45,14 @@ pub fn linux_dmabuf_setup(dma: Main<zldv1::ZwpLinuxDmabufV1>) {
     dma.format(WL_DRM_FORMAT_XRGB8888);
     dma.format(WL_DRM_FORMAT_ARGB8888);
 
-    // The above format events are legacy and will be ignored,
+    // The above format events are implicitly ignored by mesa,
     // these modifier events do the real work
     dma.modifier(WL_DRM_FORMAT_XRGB8888,
-                 0, 0);
+                 DRM_FORMAT_MOD_INVALID_HI,
+                 DRM_FORMAT_MOD_INVALID_LOW);
     dma.modifier(WL_DRM_FORMAT_ARGB8888,
-                 0, 0);
+                 DRM_FORMAT_MOD_INVALID_HI,
+                 DRM_FORMAT_MOD_INVALID_LOW);
 }
 
 

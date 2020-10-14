@@ -22,7 +22,7 @@ use std::clone::Clone;
 
 /// This is the set of outstanding
 /// configuration changes which have not
-/// been committed yet.
+/// been committed to the atmos yet.
 ///
 /// Configuration is a bit weird, I think it looks like:
 /// first: any role interfaces will send their own configure events, which
@@ -38,11 +38,12 @@ use std::clone::Clone;
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct XdgState {
-    pub xs_acked: bool,
     // window title
     pub xs_title: Option<String>,
+    pub xs_app_id: Option<String>,
     // self-explanitory I think
     pub xs_maximized: bool,
+    pub xs_minimized: bool,
     // guess what this one means
     pub xs_fullscreen: bool,
     // who would have thought
@@ -54,6 +55,10 @@ pub struct XdgState {
     pub xs_tiled_right: bool,
     pub xs_tiled_top: bool,
     pub xs_tiled_bottom: bool,
+    // bounding dimensions
+    // (0, 0) means it has not yet been set
+    pub xs_max_size: (i32, i32),
+    pub xs_min_size: (i32, i32),
 
     // ------------------
     // The following are "meta" configuration changes
@@ -62,6 +67,7 @@ pub struct XdgState {
     // ------------------
     // Should we create a new window
     xs_make_new_window: bool,
+    pub xs_acked: bool,
 }
 
 impl XdgState {
@@ -70,14 +76,18 @@ impl XdgState {
         XdgState {
             xs_acked: false,
             xs_title: None,
+            xs_app_id: None,
             xs_maximized: false,
             xs_fullscreen: false,
+            xs_minimized: false,
             xs_resizing: false,
             xs_activated: false,
             xs_tiled_left: false,
             xs_tiled_right: false,
             xs_tiled_top: false,
             xs_tiled_bottom: false,
+            xs_max_size: (0, 0),
+            xs_min_size: (0, 0),
             xs_make_new_window: false,
         }
     }
@@ -256,6 +266,7 @@ fn xdg_positioner_handle_request(res: Main<xdg_positioner::XdgPositioner>,
 }
 
 /// Private struct for an xdg_popup role.
+#[allow(dead_code)]
 pub struct Popup {
     pu_pop: Main<xdg_popup::XdgPopup>,
     pu_parent: Option<xdg_surface::XdgSurface>,
@@ -311,6 +322,11 @@ impl ShellSurface {
             atmos.create_new_window(surf.s_id, is_toplevel);
             xs.xs_make_new_window = false;
         }
+        // TODO: handle the other state changes
+        //       make them options??
+
+        // unset the ack for next time
+        xs.xs_acked = false;
         self.ss_current_state = self.ss_attached_state.clone();
     }
 
@@ -390,9 +406,48 @@ impl ShellSurface {
         // Now add ourselves to the xdg_toplevel
         // TODO: implement toplevel
         self.ss_xdg_toplevel = Some(toplevel.clone());
-        toplevel.quick_assign(|_,_,_| {});
-        // TODO: implement handler for stuff like resize
-        toplevel.as_ref().user_data().set(move || userdata);
+        toplevel.quick_assign(move |t,r,_| {
+            userdata.borrow_mut().handle_toplevel_request(t, r);
+        });
+    }
+
+    /// handle xdg_toplevel requests
+    ///
+    /// This should load our xdg state with any changes that the client
+    /// has made, and they will be applied during the next commit.
+    fn handle_toplevel_request(&mut self,
+                               _toplevel: Main<xdg_toplevel::XdgToplevel>,
+                               req: xdg_toplevel::Request)
+    {
+        let xs = &mut self.ss_attached_state;
+
+        // TODO: implement the remaining handlers
+        #[allow(unused_variables)]
+        match req {
+            xdg_toplevel::Request::Destroy => (),
+            xdg_toplevel::Request::SetParent { parent } => (),
+            xdg_toplevel::Request::SetTitle { title } =>
+                xs.xs_title = Some(title),
+            xdg_toplevel::Request::SetAppId { app_id } =>
+                xs.xs_app_id = Some(app_id),
+            xdg_toplevel::Request::ShowWindowMenu { seat, serial, x, y } => (),
+            xdg_toplevel::Request::Move { seat, serial } => (),
+            xdg_toplevel::Request::Resize { seat, serial, edges } => (),
+            xdg_toplevel::Request::SetMaxSize { width ,height } =>
+                xs.xs_max_size = (width, height),
+            xdg_toplevel::Request::SetMinSize { width, height } =>
+                xs.xs_min_size = (width, height),
+            xdg_toplevel::Request::SetMaximized =>
+                xs.xs_maximized = true,
+            xdg_toplevel::Request::UnsetMaximized =>
+                xs.xs_maximized = false,
+            xdg_toplevel::Request::SetFullscreen { output } =>
+                xs.xs_fullscreen = true,
+            xdg_toplevel::Request::UnsetFullscreen =>
+                xs.xs_fullscreen = false,
+            xdg_toplevel::Request::SetMinimized =>
+                xs.xs_minimized = true,
+        }
     }
 
     /// Register a new popup surface.
@@ -432,8 +487,28 @@ impl ShellSurface {
             pu_positioner: positioner,
         });
 
-        popup.quick_assign(|_,_,_| {});
-        // TODO: implement handler
-        popup.as_ref().user_data().set(move || userdata);
+        popup.quick_assign(move |p,r,_| {
+            userdata.borrow_mut().handle_popup_request(p, r);
+        });
+    }
+
+    /// handle xdg_popup requests
+    ///
+    /// This should load our xdg state with any changes that the client
+    /// has made, and they will be applied during the next commit.
+    /// There is relatively little compared to xdg_toplevel.
+    fn handle_popup_request(&mut self,
+                            _popup: Main<xdg_popup::XdgPopup>,
+                            req: xdg_popup::Request)
+    {
+        let _xs = &mut self.ss_attached_state;
+
+        // TODO: implement the remaining handlers
+        #[allow(unused_variables)]
+        match req {
+            xdg_popup::Request::Destroy => (),
+            xdg_popup::Request::Grab { seat, serial } => (),
+            xdg_popup::Request::Reposition { positioner, token } => (),
+        }
     }
 }
