@@ -256,7 +256,10 @@ impl WindowManager {
         {
             Some(a) => a,
             // If the id is not found, then don't update anything
-            None => { log!(LogLevel::error, "Could not find id {}", info.id); return; },
+            None => {
+                log!(LogLevel::error, "Could not find id {}", info.id);
+                return;
+            },
         };
 
         if !app.mesh.is_none() {
@@ -282,7 +285,11 @@ impl WindowManager {
                           order: usize,
                           params: &RecordParams)
     {
-        let a = self.apps.iter().find(|&a| a.id == id).unwrap();
+        let a = match self.apps.iter().find(|&a| a.id == id) {
+            Some(a) => a,
+            // app must have been closed
+            None => return,
+        };
         // If this window has been closed or if it is not ready for
         // rendering, ignore it
         if a.marked_for_death || !self.wm_atmos.is_in_use(a.id) {

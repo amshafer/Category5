@@ -4,6 +4,7 @@
 
 use crate::category5::utils::atmosphere::*;
 use crate::category5::utils::WindowId;
+use crate::category5::input::Input;
 
 // A skiplist is an entry in a linked list designed to be
 // added in the atmosphere's property system
@@ -145,10 +146,25 @@ impl Atmosphere {
         }
     }
 
+    /// Get the client in focus.
+    /// This is better for subsystems like input which need to
+    /// find the seat of the client currently in use.
+    pub fn get_client_in_focus(&self) -> Option<ClientId> {
+        // get the surface in focus
+        if let Some(win) = self.get_window_in_focus() {
+            // now get the client for that surface
+            return Some(self.get_owner(win));
+        }
+        return None;
+    }
+
     /// Set the window currently in focus
     pub fn focus_on(&mut self, win: Option<WindowId>) {
-        log!(LogLevel::info, "focusing on window {:?}", win);
+        log!(LogLevel::debug, "focusing on window {:?}", win);
         if let Some(id) = win {
+            // Send enter event(s) to the new focus
+            Input::keyboard_enter(self, id);
+
             let prev_focus = self.get_window_in_focus();
             // If they clicked on the focused window, don't
             // do anything
@@ -156,6 +172,9 @@ impl Atmosphere {
                 if prev == id {
                     return;
                 }
+
+                // Send leave event(s) to the old focus
+                Input::keyboard_leave(self, prev);
 
                 // point the previous focus at the new focus
                 self.set_skiplist_prev(prev, win);

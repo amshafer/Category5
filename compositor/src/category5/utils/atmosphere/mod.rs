@@ -2,6 +2,8 @@
 //
 // Austin Shafer - 2020
 #![allow(dead_code)]
+extern crate wayland_server as ws;
+use ws::protocol::wl_surface;
 
 mod property;
 use property::{PropertyId,Property};
@@ -178,17 +180,24 @@ impl Property for WindowProperty {
 enum Priv {
     // a surface to have its callbacks called
     surface(Option<Rc<RefCell<Surface>>>),
+    // The protocol object for this surface
+    // We need to store this here because some places
+    // (`keyboard_enter`) will want to query for it to deliver
+    // events while the above surface is borrowed
+    wl_surface(wl_surface::WlSurface),
 }
 
 impl Priv {
     const SURFACE: PropertyId = 0;
-    const VARIANT_LEN: PropertyId = 1;
+    const WL_SURFACE: PropertyId = 1;
+    const VARIANT_LEN: PropertyId = 2;
 }
 
 impl Property for Priv {
     fn get_property_id(&self) -> PropertyId {
         match self {
             Self::surface(_) => Self::SURFACE,
+            Self::wl_surface(_) => Self::WL_SURFACE,
         }
     }
 
@@ -529,13 +538,18 @@ impl Atmosphere {
     //
     // This wraps a couple actions into one helper
     // since there are multiple 
-    pub fn create_new_window(&mut self, id: WindowId, is_toplevel: bool) {
+    pub fn create_new_window(&mut self,
+                             id: WindowId,
+                             owner: ClientId,
+                             is_toplevel: bool)
+    {
         self.add_wm_task(
             wm::task::Task::create_window(id)
         );
 
         let barsize = self.get_barsize();
 
+        self.set_owner(id, owner);
         self.set_window_prop(id, &WindowProperty::in_use(true));
         self.set_window_prop(id, &WindowProperty::toplevel(is_toplevel));
         self.set_window_prop(id, &WindowProperty::window_dimensions(
@@ -646,6 +660,19 @@ impl Atmosphere {
             None => false,
             _ => panic!("Could not find value for property"),
         }
+    }
+
+    // Get the owning client of a surface
+    pub fn get_owner(&self, id: WindowId) -> ClientId {
+        match self.get_window_prop(id, WindowProperty::OWNER) {
+            Some(WindowProperty::owner(o)) => *o,
+            _ => panic!("Could not find value for property"),
+        }
+    }
+
+    // Set the owning client of a surface
+    pub fn set_owner(&mut self, id: WindowId, owner: ClientId) {
+        self.set_window_prop(id, &WindowProperty::owner(owner));
     }
 
     // Grab the window by the specified id
@@ -853,6 +880,7 @@ impl Atmosphere {
                                &Priv::surface(Some(surf)));
     }
 
+    // Grab our Surface struct for this id
     pub fn get_surface_from_id(&self, id: WindowId)
                                -> Option<Rc<RefCell<Surface>>>
     {
@@ -860,6 +888,24 @@ impl Atmosphere {
             Some(Priv::surface(Some(s))) => Some(s.clone()),
             _ => None,
         }
+    }
+
+    // Grab the wayland protocol object wl_surface for this id
+    pub fn get_wl_surface_from_id(&self, id: WindowId)
+                                  -> Option<wl_surface::WlSurface>
+    {
+        match self.a_window_priv.get(id, Priv::WL_SURFACE) {
+            Some(Priv::wl_surface(s)) => Some(s.clone()),
+            _ => None,
+        }
+    }
+    pub fn set_wl_surface(&mut self,
+                          id: WindowId,
+                          surf: wl_surface::WlSurface)
+    {
+        self.a_window_priv.set(id,
+                               Priv::WL_SURFACE,
+                               &Priv::wl_surface(surf));
     }
 
     pub fn add_seat(&mut self, id: WindowId,

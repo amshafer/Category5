@@ -117,7 +117,7 @@ impl LibinputInterface for Inkit {
 // We will also stash our xkb resources here, and
 // will consult this before sending out keymaps/syms
 pub struct Input {
-    i_atmos: Rc<RefCell<Atmosphere>>,
+    pub i_atmos: Rc<RefCell<Atmosphere>>,
     // The udev context
     uctx: Context,
     // libinput context
@@ -267,7 +267,7 @@ impl Input {
                  }));
              },
              Some(Event::Keyboard(KeyboardEvent::Key(k))) => {
-                 log!(LogLevel::debug, "keyboard event: {:?}", k);
+                 log!(LogLevel::debug, "keyboard event: {:?}", k.key());
                  return Some(InputEvent::key(Key {
                      k_code: k.key(),
                      k_state: k.key_state(),
@@ -338,6 +338,46 @@ impl Input {
 
             // clear the diff so we can batch more
             self.i_resize_diff = (0.0, 0.0);
+        }
+    }
+
+    // Generate the wl_keyboard.enter event for id's seat, if it
+    // has a keyboard.
+    //
+    // Atmos is passed since this is called from `atmos.focus_on`,
+    // so atmos' rc may be held.
+    pub fn keyboard_enter(atmos: &Atmosphere, id: WindowId) {
+        let client = atmos.get_owner(id);
+        if let Some(cell) = atmos.get_seat_from_id(client) {
+            let seat = cell.borrow_mut();
+            if let Some(keyboard) = &seat.s_keyboard {
+                if let Some(surf) = atmos.get_wl_surface_from_id(id) {
+                    keyboard.enter(
+                        seat.s_serial,
+                        &surf,
+                        Vec::new(),
+                    );
+                }
+            }
+        }
+    }
+
+    // Generate the wl_keyboard.leave event for id's seat, if it
+    // has a keyboard.
+    //
+    // Atmos is passed since this is called from `atmos.focus_on`,
+    // so atmos' rc may be held.
+    pub fn keyboard_leave(atmos: &Atmosphere, id: WindowId) {
+        if let Some(cell) = atmos.get_seat_from_id(id) {
+            let seat = cell.borrow_mut();
+            if let Some(keyboard) = &seat.s_keyboard {
+                if let Some(surf) = atmos.get_wl_surface_from_id(id) {
+                    keyboard.leave(
+                        seat.s_serial,
+                        &surf,
+                    );
+                }
+            }
         }
     }
 
@@ -432,6 +472,7 @@ impl Input {
             // If the window is not in focus, make it in focus
             if let Some(focus) = atmos.get_window_in_focus() {
                 if id != focus && c.c_state == ButtonState::Pressed {
+                    // Tell atmos that this is the one in focus
                     atmos.focus_on(Some(id));
                     set_focus = true;
                 }
@@ -512,7 +553,7 @@ impl Input {
         // find the client in use
         let atmos = self.i_atmos.borrow_mut();
         // if there is a window in focus
-        if let Some(id) = atmos.get_window_in_focus() {
+        if let Some(id) = atmos.get_client_in_focus() {
             // get the seat for this client
             if let Some(cell) = atmos.get_seat_from_id(id) {
                 let mut seat = cell.borrow_mut();
@@ -544,6 +585,7 @@ impl Input {
                         let layout = self.i_xkb_state.serialize_layout(xkb::STATE_LAYOUT_LOCKED);
 
                         // Finally fire the wayland event
+                        log!(LogLevel::debug,"Sending modifiers to window {}",id);
                         keyboard.modifiers(
                             seat.s_serial,
                             depressed, latched, locked, layout,
@@ -552,6 +594,8 @@ impl Input {
                     // give the keycode to the client
                     let time = get_current_millis();
                     let state = map_key_state(key.k_state);
+                    log!(LogLevel::debug,"Sending {} key to window {}",
+                         key.k_code, id);
                     keyboard.key(seat.s_serial, time, key.k_code, state);
 
                     // increment the serial for next time

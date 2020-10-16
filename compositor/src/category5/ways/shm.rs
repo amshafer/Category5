@@ -188,7 +188,7 @@ pub fn shm_pool_handle_request(req: wl_shm_pool::Request,
             format,
         } => {
             // Ensure that the requested format is supported
-            if format != wl_shm::Format::Xrgb8888 {
+            if format != wl_shm::Format::Xrgb8888 && format != wl_shm::Format::Argb8888 {
                 pool.as_ref().post_error(
                     wl_shm::Error::InvalidFormat as u32,
                     format!("SHM format {:?} is not supported.", format),

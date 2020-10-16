@@ -12,6 +12,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 /// The private userdata for the wl_region
+#[derive(Debug)]
 pub struct Region {
     /// A list of rectangles which make up the
     /// active portion of the region

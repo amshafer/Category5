@@ -7,6 +7,7 @@ extern crate wayland_server as ws;
 use ws::Main;
 use ws::protocol::wl_surface;
 
+use super::utils;
 use super::surface::*;
 use super::role::Role;
 pub use super::protocol::xdg_shell::*;
@@ -38,6 +39,8 @@ use std::clone::Clone;
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct XdgState {
+    pub xs_width: i32,
+    pub xs_height: i32,
     // window title
     pub xs_title: Option<String>,
     pub xs_app_id: Option<String>,
@@ -74,6 +77,8 @@ impl XdgState {
     /// Return a state with no changes
     fn empty() -> XdgState {
         XdgState {
+            xs_width: 0,
+            xs_height: 0,
             xs_acked: false,
             xs_title: None,
             xs_app_id: None,
@@ -182,6 +187,8 @@ fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>,
             shsurf.get_popup(id, parent, positioner, ss_clone),
         xdg_surface::Request::AckConfigure { serial } =>
             shsurf.ack_configure(serial),
+        xdg_surface::Request::SetWindowGeometry { x, y, width, height } =>
+            shsurf.set_win_geom(x, y, width, height),
         _ => unimplemented!(),
     };
 }
@@ -319,9 +326,20 @@ impl ShellSurface {
                 Some(_) => true,
                 None => false,
             };
-            atmos.create_new_window(surf.s_id, is_toplevel);
+            let client = self.ss_xdg_surface.as_ref().client().unwrap();
+            let owner = utils::try_get_id_from_client(client).unwrap();
+            atmos.create_new_window(surf.s_id, owner, is_toplevel);
             xs.xs_make_new_window = false;
         }
+
+        // Update the window size
+        let mut pos = atmos.get_window_dimensions(surf.s_id);
+        pos.0 += xs.xs_width as f32;
+        pos.1 += xs.xs_height as f32;
+        atmos.set_window_dimensions(surf.s_id,
+                                    pos.0, pos.1,
+                                    pos.2, pos.3);
+
         // TODO: handle the other state changes
         //       make them options??
 
@@ -376,6 +394,20 @@ impl ShellSurface {
             // increment the serial for next timme
             self.ss_serial += 1;
         }
+    }
+
+    /// Set the window geometry for this surface
+    ///
+    /// ???: According to the spec:
+    ///     When maintaining a position, the compositor should treat the (x, y)
+    ///     coordinate of the window geometry as the top left corner of the window.
+    ///     A client changing the (x, y) window geometry coordinate should in
+    ///     general not alter the position of the window.
+    ///
+    /// I think this means to just ignore x and y, and handle movement elsewhere
+    fn set_win_geom(&mut self, _x: i32, _y: i32, width: i32, height: i32) {
+        self.ss_attached_state.xs_width = width;
+        self.ss_attached_state.xs_height = height;
     }
 
     /// Get a toplevel surface

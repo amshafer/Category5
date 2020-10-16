@@ -104,10 +104,16 @@ impl Compositor {
         // Create a reference counted object
         // in charge of this new surface
         let new_surface = Rc::new(RefCell::new(
-            Surface::new(self.c_atmos.clone(), id))
+            Surface::new(self.c_atmos.clone(), surf.clone(), id))
         );
         // Add the new surface to the atmosphere
-        self.c_atmos.borrow_mut().add_surface(id, new_surface.clone());
+        {
+            let mut atmos = self.c_atmos.borrow_mut();
+            atmos.add_surface(id, new_surface.clone());
+            // get the Resource<WlSurface>, turn it into a &WlSurface
+            atmos.set_wl_surface(id, surf.as_ref().clone().into());
+        }
+
         // This clone will be passed to the surface handler
         let ns_clone = new_surface.clone();
 

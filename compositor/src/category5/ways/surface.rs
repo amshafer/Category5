@@ -11,12 +11,15 @@ use ws::protocol::{
     wl_buffer,
     wl_surface as wlsi,
     wl_callback,
+    wl_surface,
 };
 
-use crate::category5::utils::{atmosphere::*,Dmabuf,WindowId};
+use crate::log;
+use crate::category5::utils::{timing::*, logging::LogLevel, atmosphere::*,Dmabuf,WindowId};
 use crate::category5::vkcomp::wm;
 use super::shm::*;
 use super::role::Role;
+use super::wl_region::Region;
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -30,6 +33,7 @@ use std::cell::RefCell;
 #[allow(dead_code)]
 pub struct Surface {
     pub s_atmos: Rc<RefCell<Atmosphere>>,
+    pub s_surf: Main<wl_surface::WlSurface>,
     pub s_id: WindowId, // The id of the window in the renderer
     // The currently attached buffer. Will be displayed on commit
     // When the window is created a buffer is not assigned, hence the option
@@ -48,6 +52,25 @@ pub struct Surface {
 }
 
 impl Surface {
+    // create a new visible surface at coordinates (x,y)
+    // from the specified wayland resource
+    pub fn new(atmos: Rc<RefCell<Atmosphere>>,
+               surf: Main<wl_surface::WlSurface>,
+               id: u32)
+               -> Surface
+    {
+        Surface {
+            s_atmos: atmos,
+            s_surf: surf,
+            s_id: id,
+            s_attached_buffer: None,
+            s_committed_buffer: None,
+            s_frame_callback: None,
+            s_role: None,
+            s_commit_in_progress: false,
+        }
+    }
+
     // Handle a request from a client
     //
     // Called by wayland-rs, this function dispatches
@@ -65,7 +88,26 @@ impl Surface {
             // No damage tracking for now
             wlsi::Request::Damage { x, y, width, height } => {},
             wlsi::Request::DamageBuffer { x, y, width, height } => {},
-            wlsi::Request::SetOpaqueRegion { region } => {},
+            wlsi::Request::SetOpaqueRegion { region } => {
+                let reg = region.as_ref().unwrap()
+                    .as_ref().user_data()
+                    .get::<Rc<RefCell<Region>>>()
+                    .unwrap()
+                    .clone();
+                let r = reg.borrow();
+                log!(LogLevel::debug, "Surface {}: Attaching opaque region {:?}",
+                     self.s_id, r);
+            },
+            wlsi::Request::SetInputRegion { region } => {
+                let reg = region.as_ref().unwrap()
+                    .as_ref().user_data()
+                    .get::<Rc<RefCell<Region>>>()
+                    .unwrap()
+                    .clone();
+                let r = reg.borrow();
+                log!(LogLevel::debug, "Surface {}: Attaching input region {:?}",
+                     self.s_id, r);
+            },
             wlsi::Request::Frame { callback } =>
                 self.frame(callback),
             // wayland-rs makes us register a destructor
@@ -195,20 +237,6 @@ impl Surface {
         self.s_atmos.borrow_mut().add_wm_task(
             wm::task::Task::close_window(self.s_id)
         );
-    }
-
-    // create a new visible surface at coordinates (x,y)
-    // from the specified wayland resource
-    pub fn new(atmos: Rc<RefCell<Atmosphere>>, id: u32) -> Surface {
-        Surface {
-            s_atmos: atmos,
-            s_id: id,
-            s_attached_buffer: None,
-            s_committed_buffer: None,
-            s_frame_callback: None,
-            s_role: None,
-            s_commit_in_progress: false,
-        }
     }
 }
 
