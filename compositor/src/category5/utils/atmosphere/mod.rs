@@ -40,6 +40,7 @@ enum GlobalProperty {
     cursor_pos(f64, f64),
     resolution(u32, u32),
     grabbed(Option<WindowId>),
+    resizing(Option<WindowId>),
     // the window the user is currently interacting with
     // This tells us which one to start looking at for the skiplist
     focus(Option<WindowId>),
@@ -52,9 +53,10 @@ impl GlobalProperty {
     const CURSOR_POS: PropertyId = 0;
     const RESOLUTION: PropertyId = 1;
     const GRABBED: PropertyId = 2;
-    const FOCUS: PropertyId = 3;
+    const RESIZING: PropertyId = 3;
+    const FOCUS: PropertyId = 4;
     // MUST be the last one
-    const VARIANT_LEN: PropertyId = 4;
+    const VARIANT_LEN: PropertyId = 5;
 }
 
 impl Property for GlobalProperty {
@@ -64,6 +66,7 @@ impl Property for GlobalProperty {
             Self::cursor_pos(_, _) => Self::CURSOR_POS,
             Self::resolution(_, _) => Self::RESOLUTION,
             Self::grabbed(_) => Self::GRABBED,
+            Self::resizing(_) => Self::RESIZING,
             Self::focus(_) => Self::FOCUS,
         }
     }
@@ -686,9 +689,22 @@ impl Atmosphere {
     }
 
     pub fn get_grabbed(&self) -> Option<WindowId> {
-        match self.get_global_prop(GlobalProperty::GRABBED)
-        {
+        match self.get_global_prop(GlobalProperty::GRABBED) {
             Some(GlobalProperty::grabbed(id)) => *id,
+            None => None,
+            _ => panic!("Could not find value for property"),
+        }
+    }
+
+    // Get and set the window that is currently being resized
+    // This is used by both input and xdg shell
+    pub fn set_resizing(&mut self, id: Option<WindowId>) {
+        self.set_global_prop(&GlobalProperty::resizing(Some(id)));
+    }
+
+    pub fn get_resizing(&self) -> Option<WindowId> {
+        match self.get_global_prop(GlobalProperty::RESIZING) {
+            Some(GlobalProperty::resizing(id)) => *id,
             None => None,
             _ => panic!("Could not find value for property"),
         }
