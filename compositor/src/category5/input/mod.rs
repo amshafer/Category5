@@ -147,6 +147,9 @@ pub struct Input {
     pub i_resizing: Option<WindowId>,
     // changes to the window surface to be sent this frame
     pub i_resize_diff: (f64, f64),
+    // The surface that the pointer is currently over
+    // note that this may be different than the application focus
+    pub i_pointer_focus: Option<WindowId>,
 }
 
 impl Input {
@@ -203,6 +206,7 @@ impl Input {
             i_mod_num: false,
             i_resizing: None,
             i_resize_diff: (0.0, 0.0),
+            i_pointer_focus: None,
         }
     }
 
@@ -286,9 +290,9 @@ impl Input {
         let atmos = self.i_atmos.borrow_mut();
 
         // Find the active window
-        if let Some(id) = atmos.get_window_in_focus() {
+        if let Some(id) = self.i_pointer_focus {
             // get the seat for this client
-            if let Some(cell) = atmos.get_seat_from_id(id) {
+            if let Some(cell) = atmos.get_seat_from_window_id(id) {
                 let seat = cell.borrow();
                 // Get the pointer
                 if let Some(pointer) = &seat.s_pointer {
@@ -348,7 +352,7 @@ impl Input {
     // so atmos' rc may be held.
     pub fn keyboard_enter(atmos: &Atmosphere, id: WindowId) {
         let client = atmos.get_owner(id);
-        if let Some(cell) = atmos.get_seat_from_id(client) {
+        if let Some(cell) = atmos.get_seat_from_client_id(client) {
             let seat = cell.borrow_mut();
             if let Some(keyboard) = &seat.s_keyboard {
                 if let Some(surf) = atmos.get_wl_surface_from_id(id) {
@@ -368,11 +372,55 @@ impl Input {
     // Atmos is passed since this is called from `atmos.focus_on`,
     // so atmos' rc may be held.
     pub fn keyboard_leave(atmos: &Atmosphere, id: WindowId) {
-        if let Some(cell) = atmos.get_seat_from_id(id) {
+        if let Some(cell) = atmos.get_seat_from_window_id(id) {
             let seat = cell.borrow_mut();
             if let Some(keyboard) = &seat.s_keyboard {
                 if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                     keyboard.leave(
+                        seat.s_serial,
+                        &surf,
+                    );
+                }
+            }
+        }
+    }
+
+    // Generate the wl_pointer.enter event for id's seat, if it
+    // has a pointer.
+    //
+    // Atmos is passed since this may be called from `atmos.focus_on`,
+    // so atmos' rc may be held.
+    pub fn pointer_enter(atmos: &Atmosphere, id: WindowId) {
+        if let Some(cell) = atmos.get_seat_from_window_id(id) {
+            let seat = cell.borrow_mut();
+            if let Some(pointer) = &seat.s_pointer {
+                if let Some(surf) = atmos.get_wl_surface_from_id(id) {
+                    let (cx, cy) = atmos.get_cursor_pos();
+                    if let Some((sx, sy)) = atmos
+                        .global_coords_to_surf(id, cx, cy)
+                    {
+                        pointer.enter(
+                            seat.s_serial,
+                            &surf,
+                            sx as f64, sy, // surface local coordinates
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // Generate the wl_pointer.leave event for id's seat, if it
+    // has a pointer.
+    //
+    // Atmos is passed since this may be called from `atmos.focus_on`,
+    // so atmos' rc may be held.
+    pub fn pointer_leave(atmos: &Atmosphere, id: WindowId) {
+        if let Some(cell) = atmos.get_seat_from_window_id(id) {
+            let seat = cell.borrow_mut();
+            if let Some(pointer) = &seat.s_pointer {
+                if let Some(surf) = atmos.get_wl_surface_from_id(id) {
+                    pointer.leave(
                         seat.s_serial,
                         &surf,
                     );
@@ -386,38 +434,48 @@ impl Input {
     // Also generates wl_pointer.motion events to the surface
     // in focus if the cursor is on that surface
     fn handle_pointer_move(&mut self, m: &PointerMove) {
+        // If a resize is happening then collect the cursor changes
+        // to send at the end of the frame
+        if self.i_resizing.is_some() {
+            self.i_resize_diff.0 += m.pm_dx;
+            self.i_resize_diff.1 += m.pm_dy;
+            return;
+        }
+
         let mut atmos = self.i_atmos.borrow_mut();
         // Update the atmosphere with the new cursor pos
         atmos.add_cursor_pos(m.pm_dx, m.pm_dy);
         // Get the cursor position
         let (cx, cy) = atmos.get_cursor_pos();
 
-        // Find the active window
-        // TODO: have a specific seat focus for generating enter/leave events
-        if let Some(id) = atmos.get_window_in_focus() {
-            // get the surface-local position
-            let (wx, wy, ww, wh) = atmos.get_window_dimensions(id);
+        // Get the window the pointer is over
+        let focus = atmos.find_window_at_point(cx as f32, cy as f32);
+        // If the pointer is over top of a different window, change the
+        // pointer focus and send the leave/enter events
+        if focus != self.i_pointer_focus {
+            if let Some(id) = self.i_pointer_focus {
+                Input::pointer_leave(&atmos, id);
+            }
+            if let Some(id) = focus {
+                Input::pointer_enter(&atmos, id);
+            }
+            self.i_pointer_focus = focus;
+        }
 
-            // If a resize is happening then collect the cursor changes
-            // to send at the end of the frame
-            if self.i_resizing.is_some() {
-                self.i_resize_diff.0 += m.pm_dx;
-                self.i_resize_diff.1 += m.pm_dy;
-            } else if let Some(cell) = atmos.get_seat_from_id(id) {
+        // deliver the motion event
+        if let Some(id) = focus {
+            if let Some(cell) = atmos.get_seat_from_window_id(id) {
                 // get the seat for this client
                 let seat = cell.borrow();
                 // Get the pointer
                 if let Some(pointer) = &seat.s_pointer {
-                    // offset into the surface
-                    let (sx, sy) = (cx - wx as f64, cy - wy as f64);
-                    // if the cursor is out of the valid bounds for the surface
-                    // offset, the cursor is not over this surface
-                    if sx < 0.0 || sy < 0.0 || sx >= ww as f64 || sy >= wh as f64 {
-                        return;
+                    // If the pointer is over this surface
+                    if let Some((sx, sy)) = atmos
+                        .global_coords_to_surf(id, cx, cy)
+                    {
+                        // deliver the motion event
+                        pointer.motion(get_current_millis(), sx, sy);
                     }
-
-                    // deliver the motion event
-                    pointer.motion(get_current_millis(), sx, sy);
                 }
             }
         }
@@ -525,7 +583,7 @@ impl Input {
                 // deliver the event to the wayland client
 
                 // get the seat for this client
-                if let Some(cell) = atmos.get_seat_from_id(id) {
+                if let Some(cell) = atmos.get_seat_from_window_id(id) {
                     let seat = cell.borrow_mut();
                     if let Some(pointer) = &seat.s_pointer {
                         // Trigger a button event
@@ -555,7 +613,7 @@ impl Input {
         // if there is a window in focus
         if let Some(id) = atmos.get_client_in_focus() {
             // get the seat for this client
-            if let Some(cell) = atmos.get_seat_from_id(id) {
+            if let Some(cell) = atmos.get_seat_from_client_id(id) {
                 let mut seat = cell.borrow_mut();
                 if let Some(keyboard) = &seat.s_keyboard {
                     // let xkb keep track of the keyboard state

@@ -253,8 +253,9 @@ fn xdg_positioner_handle_request(res: Main<xdg_positioner::XdgPositioner>,
         xdg_positioner::Request::SetGravity { gravity } =>
             pos.p_gravity = gravity,
         xdg_positioner::Request::SetConstraintAdjustment { constraint_adjustment } =>
-            pos.p_constraint = xdg_positioner::ConstraintAdjustment::from_raw(constraint_adjustment)
-            .unwrap(),
+            pos.p_constraint = xdg_positioner::ConstraintAdjustment::from_raw(
+                constraint_adjustment
+            ).unwrap(),
         xdg_positioner::Request::SetOffset { x, y } => {
             pos.p_x = x;
             pos.p_y = y;

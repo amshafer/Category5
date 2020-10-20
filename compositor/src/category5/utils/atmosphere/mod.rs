@@ -738,6 +738,25 @@ impl Atmosphere {
         return false;
     }
 
+    // convert a global location to a surface local coordinates.
+    // Returns None if the location given is not over the surface
+    pub fn global_coords_to_surf(&self, id: WindowId,  x: f64, y: f64)
+                                 -> Option<(f64, f64)>
+    {
+        // get the surface-local position
+        let (wx, wy, ww, wh) = self.get_window_dimensions(id);
+
+        // offset into the surface
+        let (sx, sy) = (x - wx as f64, y - wy as f64);
+
+        // if the cursor is out of the valid bounds for the surface
+        // offset, the cursor is not over this surface
+        if sx < 0.0 || sy < 0.0 || sx >= ww as f64 || sy >= wh as f64 {
+            return None;
+        }
+        return Some((sx, sy));
+    }
+
     // calculates if a position is over the part of a window that
     // procs a resize
     pub fn point_is_on_window_edge(&self, id: WindowId, x: f32, y: f32)
@@ -908,7 +927,7 @@ impl Atmosphere {
                                &Priv::wl_surface(surf));
     }
 
-    pub fn add_seat(&mut self, id: WindowId,
+    pub fn add_seat(&mut self, id: ClientId,
                     seat: Rc<RefCell<Seat>>)
     {
         self.a_client_priv.set(id,
@@ -916,8 +935,15 @@ impl Atmosphere {
                                &ClientPriv::seat(Some(seat)));
     }
 
-    pub fn get_seat_from_id(&self, id: WindowId)
-                            -> Option<Rc<RefCell<Seat>>>
+    pub fn get_seat_from_window_id(&self, id: WindowId)
+                                   -> Option<Rc<RefCell<Seat>>>
+    {
+        // get the client id
+        let owner = self.get_owner(id);
+        self.get_seat_from_client_id(owner)
+    }
+    pub fn get_seat_from_client_id(&self, id: ClientId)
+                                   -> Option<Rc<RefCell<Seat>>>
     {
         match self.a_client_priv.get(id, ClientPriv::SEAT) {
             Some(ClientPriv::seat(Some(s))) => Some(s.clone()),

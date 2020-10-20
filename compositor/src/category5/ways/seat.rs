@@ -24,11 +24,11 @@ use std::fs::File;
 use std::rc::Rc;
 use std::cell::RefCell;
 
-// A collection of protocol objects available to a user
-//
-// This does not represent a physical seat made of real input
-// devices, but rather a set of wayland objects which we use
-// to send events to the user
+/// A collection of protocol objects available to a user
+///
+/// This does not represent a physical seat made of real input
+/// devices, but rather a set of wayland objects which we use
+/// to send events to the user
 #[allow(dead_code)]
 pub struct Seat {
     // The handle to the input subsystem
@@ -46,10 +46,10 @@ pub struct Seat {
 }
 
 impl Seat {
-    // creates an empty seat
-    //
-    // Also send the capabilities event to let the client know
-    // what input methods are ready
+    /// creates an empty seat
+    ///
+    /// Also send the capabilities event to let the client know
+    /// what input methods are ready
     pub fn new(input: Rc<RefCell<Input>>, id: ClientId, seat: Main<wl_seat::WlSeat>)
                -> Seat
     {
@@ -67,11 +67,16 @@ impl Seat {
         }
     }
 
-    // Add a keyboard to this seat
-    //
-    // This also sends the modifier event
+    /// Add a keyboard to this seat
+    ///
+    /// This also sends the modifier event
     fn get_keyboard(&mut self,
                     keyboard: Main<wl_keyboard::WlKeyboard>) {
+        // register our request handler
+        keyboard.quick_assign(move |k, r, _| {
+            wl_keyboard_handle_request(r, k);
+        });
+
         let input = self.s_input.borrow();
         // Make a temp fd to share with the client
         let fd = unsafe {
@@ -108,10 +113,29 @@ impl Seat {
         }
     }
 
-    // Handle client requests
-    //
-    // This basically just creates and registers the different
-    // input-related protocols, such as wl_keyboard
+    /// Register a wl_pointer to this seat
+    fn get_pointer(&mut self,
+                   pointer: Main<wl_pointer::WlPointer>) {
+        self.s_pointer = Some(pointer.clone());
+        pointer.quick_assign(move |p, r, _| {
+            wl_pointer_handle_request(r, p);
+        });
+
+        // // If we are in focus, then we should go ahead and generate
+        // // the enter event
+        // let input = self.s_input.borrow();
+        // let atmos = input.i_atmos.borrow();
+        // if let Some(focus) = atmos.get_client_in_focus() {
+        //     if self.s_id == focus {
+        //         Input::pointer_enter(&atmos, focus);
+        //     }
+        // }
+    }
+
+    /// Handle client requests
+    ///
+    /// This basically just creates and registers the different
+    /// input-related protocols, such as wl_keyboard
     pub fn handle_request(&mut self,
                           req: wl_seat::Request,
                           _seat: Main<wl_seat::WlSeat>)
@@ -119,17 +143,10 @@ impl Seat {
 
         match req {
             wl_seat::Request::GetKeyboard { id } => {
-                id.quick_assign(move |k, r, _| {
-                    wl_keyboard_handle_request(r, k);
-                });
-
                 self.get_keyboard(id);
             },
             wl_seat::Request::GetPointer { id } => {
-                self.s_pointer = Some(id.clone());
-                id.quick_assign(move |p, r, _| {
-                    wl_pointer_handle_request(r, p);
-                });
+                self.get_pointer(id);
             },
             _ => unimplemented!("Did not recognize the request"),
         }

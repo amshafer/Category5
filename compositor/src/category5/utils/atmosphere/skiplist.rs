@@ -162,9 +162,6 @@ impl Atmosphere {
     pub fn focus_on(&mut self, win: Option<WindowId>) {
         log!(LogLevel::debug, "focusing on window {:?}", win);
         if let Some(id) = win {
-            // Send enter event(s) to the new focus
-            Input::keyboard_enter(self, id);
-
             let prev_focus = self.get_window_in_focus();
             // If they clicked on the focused window, don't
             // do anything
@@ -179,6 +176,9 @@ impl Atmosphere {
                 // point the previous focus at the new focus
                 self.set_skiplist_prev(prev, win);
             }
+            // Send enter event(s) to the new focus
+            // spec says this MUST be done after the leave events are sent
+            Input::keyboard_enter(self, id);
 
             self.skiplist_remove_window(id);
             self.set_skiplist_next(id, prev_focus);
