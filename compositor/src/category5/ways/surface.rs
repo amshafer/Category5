@@ -12,6 +12,7 @@ use ws::protocol::{
     wl_surface as wlsi,
     wl_callback,
     wl_surface,
+    wl_output,
 };
 
 use crate::log;
@@ -85,7 +86,7 @@ impl Surface {
                 self.attach(surf, buffer, x, y),
             wlsi::Request::Commit =>
                 self.commit(),
-            // No damage tracking for now
+            // TODO: implement damage tracking
             wlsi::Request::Damage { x, y, width, height } => {},
             wlsi::Request::DamageBuffer { x, y, width, height } => {},
             wlsi::Request::SetOpaqueRegion { region } => {
@@ -113,6 +114,16 @@ impl Surface {
             // wayland-rs makes us register a destructor
             wlsi::Request::Destroy =>
                 self.destroy(),
+            // TODO: support variable buffer scaling
+            wlsi::Request::SetBufferScale { scale } => {
+                if scale != 1 { panic!("Non-1 Buffer scaling is not implemented") }
+            },
+            // TODO: support variable buffer transformation
+            wlsi::Request::SetBufferTransform { transform } => {
+                if transform != wl_output::Transform::Normal {
+                    panic!("Non-normal Buffer transformation is not implemented");
+                }
+            },
             _ => unimplemented!(),
         }
     }

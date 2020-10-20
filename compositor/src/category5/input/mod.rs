@@ -144,7 +144,7 @@ pub struct Input {
     // When we resize a window we want to batch together the
     // changes and send one configure message per frame
     // The window currently being resized
-    pub i_resizing: Option<WindowId>,
+    // The currently grabbed resizing window is in the atmosphere
     // changes to the window surface to be sent this frame
     pub i_resize_diff: (f64, f64),
     // The surface that the pointer is currently over
@@ -204,7 +204,6 @@ impl Input {
             i_mod_caps: false,
             i_mod_meta: false,
             i_mod_num: false,
-            i_resizing: None,
             i_resize_diff: (0.0, 0.0),
             i_pointer_focus: None,
         }
@@ -321,7 +320,7 @@ impl Input {
     // Apply any batched input changes to the window dimensions
     pub fn update_shell(&mut self) {
         let mut atmos = self.i_atmos.borrow_mut();
-        if let Some(id) = self.i_resizing {
+        if let Some(id) = atmos.get_resizing() {
             if let Some(cell) = atmos.get_surface_from_id(id) {
                 let surf = cell.borrow();
                 match &surf.s_role {
@@ -434,15 +433,15 @@ impl Input {
     // Also generates wl_pointer.motion events to the surface
     // in focus if the cursor is on that surface
     fn handle_pointer_move(&mut self, m: &PointerMove) {
+        let mut atmos = self.i_atmos.borrow_mut();
+
         // If a resize is happening then collect the cursor changes
         // to send at the end of the frame
-        if self.i_resizing.is_some() {
+        if atmos.get_resizing().is_some() {
             self.i_resize_diff.0 += m.pm_dx;
             self.i_resize_diff.1 += m.pm_dy;
             return;
         }
-
-        let mut atmos = self.i_atmos.borrow_mut();
         // Update the atmosphere with the new cursor pos
         atmos.add_cursor_pos(m.pm_dx, m.pm_dy);
         // Get the cursor position
@@ -496,11 +495,24 @@ impl Input {
         // did our click bring a window into focus?
         let mut set_focus = false;
 
+        // first check if we are releasing a grab
+        if let Some(id) = atmos.get_grabbed() {
+            match c.c_state {
+                ButtonState::Released => {
+                    log!(LogLevel::debug, "Ungrabbing window {}", id);
+                    atmos.ungrab();
+                    return;
+                },
+                _ => (),
+            }
+        }
+
         // find the window under the cursor
-        if self.i_resizing.is_some() && c.c_state == ButtonState::Released {
+        let resizing = atmos.get_resizing();
+        if resizing.is_some() && c.c_state == ButtonState::Released {
             // We are releasing a resize, and we might not be resizing
             // the same window as find_window_at_point would report
-            if let Some(id) = self.i_resizing {
+            if let Some(id) = resizing {
                 // if on one of the edges start a resize
                 if let Some(surf) = atmos.get_surface_from_id(id) {
                     match &surf.borrow_mut().s_role {
@@ -512,7 +524,7 @@ impl Input {
                                          "Stopping resize of {}", id);
                                     ss.borrow_mut().ss_attached_state
                                         .xs_resizing = false;
-                                    self.i_resizing = None;
+                                    atmos.set_resizing(None);
                                     // TODO: send final configure here?
                                 },
                                 // this should never be pressed
@@ -553,7 +565,7 @@ impl Input {
                                          "Resizing window {}", id);
                                     ss.borrow_mut().ss_attached_state
                                         .xs_resizing = true;
-                                    self.i_resizing = Some(id);
+                                    atmos.set_resizing(Some(id));
                                 },
                                 // releasing is handled above
                                 _ => (),

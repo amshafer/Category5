@@ -49,7 +49,6 @@ pub struct XdgState {
     pub xs_minimized: bool,
     // guess what this one means
     pub xs_fullscreen: bool,
-    // who would have thought
     pub xs_resizing: bool,
     // Is the window currently in focus?
     pub xs_activated: bool,
@@ -60,8 +59,8 @@ pub struct XdgState {
     pub xs_tiled_bottom: bool,
     // bounding dimensions
     // (0, 0) means it has not yet been set
-    pub xs_max_size: (i32, i32),
-    pub xs_min_size: (i32, i32),
+    pub xs_max_size: Option<(i32, i32)>,
+    pub xs_min_size: Option<(i32, i32)>,
 
     // ------------------
     // The following are "meta" configuration changes
@@ -70,6 +69,7 @@ pub struct XdgState {
     // ------------------
     // Should we create a new window
     xs_make_new_window: bool,
+    xs_moving: bool,
     pub xs_acked: bool,
 }
 
@@ -91,9 +91,10 @@ impl XdgState {
             xs_tiled_right: false,
             xs_tiled_top: false,
             xs_tiled_bottom: false,
-            xs_max_size: (0, 0),
-            xs_min_size: (0, 0),
+            xs_max_size: None,
+            xs_min_size: None,
             xs_make_new_window: false,
+            xs_moving: false,
         }
     }
 }
@@ -189,7 +190,7 @@ fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>,
             shsurf.ack_configure(serial),
         xdg_surface::Request::SetWindowGeometry { x, y, width, height } =>
             shsurf.set_win_geom(x, y, width, height),
-        _ => unimplemented!(),
+        xdg_surface::Request::Destroy => (),
     };
 }
 
@@ -266,7 +267,7 @@ fn xdg_positioner_handle_request(res: Main<xdg_positioner::XdgPositioner>,
             pos.p_parent_size = Some((parent_width, parent_height)),
         xdg_positioner::Request::SetParentConfigure { serial } =>
             pos.p_parent_configure = serial,
-        _ => unimplemented!(),
+        xdg_positioner::Request::Destroy => (),
     };
 
     // store the updated Positioner in the userdata
@@ -322,7 +323,7 @@ impl ShellSurface {
         // This has just been assigned role of toplevel
         if xs.xs_make_new_window {
             // Tell vkcomp to create a new window
-            println!("Setting surface {} to toplevel", surf.s_id);
+            log!(LogLevel::debug, "Setting surface {} to toplevel", surf.s_id);
             let is_toplevel = match self.ss_xdg_toplevel {
                 Some(_) => true,
                 None => false,
@@ -331,6 +332,12 @@ impl ShellSurface {
             let owner = utils::try_get_id_from_client(client).unwrap();
             atmos.create_new_window(surf.s_id, owner, is_toplevel);
             xs.xs_make_new_window = false;
+        }
+
+        if xs.xs_moving {
+            log!(LogLevel::debug, "Moving surface {}", surf.s_id);
+            atmos.grab(surf.s_id);
+            xs.xs_moving = false;
         }
 
         // Update the window size
@@ -464,12 +471,21 @@ impl ShellSurface {
             xdg_toplevel::Request::SetAppId { app_id } =>
                 xs.xs_app_id = Some(app_id),
             xdg_toplevel::Request::ShowWindowMenu { seat, serial, x, y } => (),
-            xdg_toplevel::Request::Move { seat, serial } => (),
-            xdg_toplevel::Request::Resize { seat, serial, edges } => (),
+            xdg_toplevel::Request::Move { seat, serial } => {
+                // Moving is NOT double buffered so just grab it now
+                let id = self.ss_surface.borrow().s_id;
+                self.ss_atmos.borrow_mut().grab(id);
+            },
+            xdg_toplevel::Request::Resize { seat, serial, edges } => {
+                // Moving is NOT double buffered so just grab it now
+                let id = self.ss_surface.borrow().s_id;
+                self.ss_atmos.borrow_mut().set_resizing(Some(id));
+                xs.xs_resizing = true;
+            },
             xdg_toplevel::Request::SetMaxSize { width ,height } =>
-                xs.xs_max_size = (width, height),
+                xs.xs_max_size = Some((width, height)),
             xdg_toplevel::Request::SetMinSize { width, height } =>
-                xs.xs_min_size = (width, height),
+                xs.xs_min_size = Some((width, height)),
             xdg_toplevel::Request::SetMaximized =>
                 xs.xs_maximized = true,
             xdg_toplevel::Request::UnsetMaximized =>
