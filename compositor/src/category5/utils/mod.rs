@@ -25,7 +25,8 @@ use std::os::unix::io::RawFd;
 // This uniquely identifies one client program connected
 // to the compositor. A client may have multiple surfaces,
 // eacho of which has a WindowId
-pub type ClientId = u32;
+#[derive(Copy,Clone,PartialEq,Debug,Eq,Hash)]
+pub struct ClientId(u32);
 
 // Window ID
 //
@@ -33,7 +34,8 @@ pub type ClientId = u32;
 // is used as an ECS property id to tie data to
 // the resource. For now it is a u32 since there
 // is no way we have 4 million windows open
-pub type WindowId = u32;
+#[derive(Copy,Clone,PartialEq,Debug,Eq,Hash)]
+pub struct WindowId(u32);
 
 // Window Contents
 //

@@ -13,7 +13,7 @@ use renderer::*;
 use renderer::mesh::Mesh;
 
 use crate::category5::utils::{
-    *, atmosphere::*, timing::*, logging::*
+    *, atmosphere::*, timing::*, logging::*, WindowId,
 };
 use crate::log; // utils::logging::log
 pub mod task;
@@ -39,7 +39,7 @@ struct Titlebar {
 // See WindowManager::record_draw for how this is displayed.
 pub struct App {
     // This id uniquely identifies the App
-    id: u32,
+    id: WindowId,
     // Because the images for meshes are used for both
     // buffers in a double buffer system, when an App is
     // deleted we need to avoid recording it in the next
@@ -191,8 +191,8 @@ impl WindowManager {
     //
     // tex_res is the resolution of `texture`
     // window_res is the size of the on screen window
-    fn create_window(&mut self, id: u32) {
-        log!(LogLevel::info, "wm: Creating new window {}", id);
+    fn create_window(&mut self, id: WindowId) {
+        log!(LogLevel::info, "wm: Creating new window {:?}", id);
 
         self.apps.insert(0, App {
             id: id,
@@ -216,7 +216,10 @@ impl WindowManager {
         {
             Some(a) => a,
             // If the id is not found, then don't update anything
-            None => { log!(LogLevel::error, "Could not find id {}", info.ufd_id); return; },
+            None => {
+                log!(LogLevel::error, "Could not find id {:?}", info.ufd_id);
+                return;
+            },
         };
 
         if !app.mesh.is_none() {
@@ -257,7 +260,7 @@ impl WindowManager {
             Some(a) => a,
             // If the id is not found, then don't update anything
             None => {
-                log!(LogLevel::error, "Could not find id {}", info.id);
+                log!(LogLevel::error, "Could not find id {:?}", info.id);
                 return;
             },
         };
@@ -422,7 +425,7 @@ impl WindowManager {
         });
     }
 
-    fn close_window(&mut self, id: u32) {
+    fn close_window(&mut self, id: WindowId) {
         // if it exists, mark it for death
         self.apps.iter_mut().find(|app| app.id == id).map(|app| {
             app.marked_for_death = true;

@@ -350,8 +350,7 @@ impl Input {
     // Atmos is passed since this is called from `atmos.focus_on`,
     // so atmos' rc may be held.
     pub fn keyboard_enter(atmos: &Atmosphere, id: WindowId) {
-        let client = atmos.get_owner(id);
-        if let Some(cell) = atmos.get_seat_from_client_id(client) {
+        if let Some(cell) = atmos.get_seat_from_window_id(id) {
             let seat = cell.borrow_mut();
             if let Some(keyboard) = &seat.s_keyboard {
                 if let Some(surf) = atmos.get_wl_surface_from_id(id) {
@@ -499,7 +498,7 @@ impl Input {
         if let Some(id) = atmos.get_grabbed() {
             match c.c_state {
                 ButtonState::Released => {
-                    log!(LogLevel::debug, "Ungrabbing window {}", id);
+                    log!(LogLevel::debug, "Ungrabbing window {:?}", id);
                     atmos.ungrab();
                     return;
                 },
@@ -521,7 +520,7 @@ impl Input {
                                 // The release is handled above
                                 ButtonState::Released => {
                                     log!(LogLevel::debug,
-                                         "Stopping resize of {}", id);
+                                         "Stopping resize of {:?}", id);
                                     ss.borrow_mut().ss_attached_state
                                         .xs_resizing = false;
                                     atmos.set_resizing(None);
@@ -562,7 +561,7 @@ impl Input {
                             match c.c_state {
                                 ButtonState::Pressed => {
                                     log!(LogLevel::debug,
-                                         "Resizing window {}", id);
+                                         "Resizing window {:?}", id);
                                     ss.borrow_mut().ss_attached_state
                                         .xs_resizing = true;
                                     atmos.set_resizing(Some(id));
@@ -582,11 +581,11 @@ impl Input {
                 // if so we will grab the bar
                 match c.c_state {
                     ButtonState::Pressed => {
-                        log!(LogLevel::debug, "Grabbing window {}", id);
+                        log!(LogLevel::debug, "Grabbing window {:?}", id);
                         atmos.grab(id);
                     },
                     ButtonState::Released => {
-                        log!(LogLevel::debug, "Ungrabbing window {}", id);
+                        log!(LogLevel::debug, "Ungrabbing window {:?}", id);
                         atmos.ungrab();
                     }
                 }
@@ -655,7 +654,7 @@ impl Input {
                         let layout = self.i_xkb_state.serialize_layout(xkb::STATE_LAYOUT_LOCKED);
 
                         // Finally fire the wayland event
-                        log!(LogLevel::debug,"Sending modifiers to window {}",id);
+                        log!(LogLevel::debug,"Sending modifiers to window {:?}",id);
                         keyboard.modifiers(
                             seat.s_serial,
                             depressed, latched, locked, layout,
@@ -664,7 +663,7 @@ impl Input {
                     // give the keycode to the client
                     let time = get_current_millis();
                     let state = map_key_state(key.k_state);
-                    log!(LogLevel::debug,"Sending {} key to window {}",
+                    log!(LogLevel::debug,"Sending {} key to window {:?}",
                          key.k_code, id);
                     keyboard.key(seat.s_serial, time, key.k_code, state);
 

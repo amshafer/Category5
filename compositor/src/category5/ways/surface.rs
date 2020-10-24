@@ -57,7 +57,7 @@ impl Surface {
     // from the specified wayland resource
     pub fn new(atmos: Rc<RefCell<Atmosphere>>,
                surf: Main<wl_surface::WlSurface>,
-               id: u32)
+               id: WindowId)
                -> Surface
     {
         Surface {
@@ -96,7 +96,7 @@ impl Surface {
                     .unwrap()
                     .clone();
                 let r = reg.borrow();
-                log!(LogLevel::debug, "Surface {}: Attaching opaque region {:?}",
+                log!(LogLevel::debug, "Surface {:?}: Attaching opaque region {:?}",
                      self.s_id, r);
             },
             wlsi::Request::SetInputRegion { region } => {
@@ -106,7 +106,7 @@ impl Surface {
                     .unwrap()
                     .clone();
                 let r = reg.borrow();
-                log!(LogLevel::debug, "Surface {}: Attaching input region {:?}",
+                log!(LogLevel::debug, "Surface {:?}: Attaching input region {:?}",
                      self.s_id, r);
             },
             wlsi::Request::Frame { callback } =>

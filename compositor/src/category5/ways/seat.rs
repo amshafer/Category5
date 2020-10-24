@@ -108,7 +108,9 @@ impl Seat {
         let atmos = input.i_atmos.borrow();
         if let Some(focus) = atmos.get_client_in_focus() {
             if self.s_id == focus {
-                Input::keyboard_enter(&atmos, focus);
+                if let Some(surface) = atmos.get_window_in_focus() {
+                    Input::keyboard_enter(&atmos, surface);
+                }
             }
         }
     }

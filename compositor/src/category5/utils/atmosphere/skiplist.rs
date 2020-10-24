@@ -257,7 +257,7 @@ pub struct VisibleWindowIterator<'a> {
 //
 // This will only show the visible windows
 impl<'a> IntoIterator for &'a Atmosphere {
-    type Item = u32;
+    type Item = WindowId;
     type IntoIter = VisibleWindowIterator<'a>;
 
     // note that into_iter() is consuming self
@@ -271,9 +271,9 @@ impl<'a> IntoIterator for &'a Atmosphere {
 
 impl<'a> Iterator for VisibleWindowIterator<'a> {
     // Our item type is a WindowId
-    type Item = u32;
+    type Item = WindowId;
 
-    fn next(&mut self) -> Option<u32> {
+    fn next(&mut self) -> Option<WindowId> {
         let ret = self.vwi_cur.take();
         // TODO: actually skip
         if let Some(id) = ret {

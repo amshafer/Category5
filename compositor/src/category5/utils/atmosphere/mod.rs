@@ -344,13 +344,13 @@ impl Atmosphere {
     // Find a free id if one is available, if not then
     // add a new one
     pub fn mint_client_id(&mut self) -> ClientId {
-        let id = Atmosphere::get_next_id(&mut self.a_client_id_map);
+        let id = ClientId(Atmosphere::get_next_id(&mut self.a_client_id_map));
         self.reserve_client_id(id);
         return id;
     }
 
     pub fn mint_window_id(&mut self, client: ClientId) -> WindowId {
-        let id = Atmosphere::get_next_id(&mut self.a_window_id_map);
+        let id = WindowId(Atmosphere::get_next_id(&mut self.a_window_id_map));
         self.reserve_window_id(client, id);
         return id;
     }
@@ -573,10 +573,11 @@ impl Atmosphere {
 
         // For the priv maps we are activating and deactivating
         // the entries so we can use the iterator trait
-        self.a_client_priv.activate(id);
+        let ClientId(raw_id) = id;
+        self.a_client_priv.activate(raw_id);
         // Add a new priv entry
         // This is kept separately for ways
-        self.a_client_priv.set(id,
+        self.a_client_priv.set(raw_id,
                                ClientPriv::SEAT,
                                &ClientPriv::seat(None));
     }
@@ -587,20 +588,21 @@ impl Atmosphere {
     // in the hemisphere, and we need to mark this as
     // no longer available
     pub fn reserve_window_id(&mut self, client: ClientId, id: WindowId) {
+        let WindowId(raw_id) = id;
         // Add a new priv entry
         // For the priv maps we are activating and deactivating
         // the entries so we can use the iterator trait
-        self.a_window_priv.activate(id);
+        self.a_window_priv.activate(raw_id);
         // Add a new priv entry
         // This is kept separately for ways
-        self.a_window_priv.set(id,
+        self.a_window_priv.set(raw_id,
                                Priv::SURFACE,
                                &Priv::surface(None));
 
         // This is a bit too expensive atm
         let mut windows = self.get_windows_for_client(client);
         windows.push(id);
-        self.set_client_prop(id, &ClientProperty::windows(windows));
+        self.set_client_prop(client, &ClientProperty::windows(windows));
     }
 
     pub fn free_client_id(&mut self, id: ClientId) {
@@ -613,7 +615,8 @@ impl Atmosphere {
         self.set_client_prop(id, &ClientProperty::in_use(false));
         // For the priv maps we are activating and deactivating
         // the entries so we can use the iterator trait
-        self.a_client_priv.deactivate(id);
+        let ClientId(raw_id) = id;
+        self.a_client_priv.deactivate(raw_id);
     }
 
     // Mark the id as available
@@ -625,12 +628,13 @@ impl Atmosphere {
         // TODO: This is a bit too expensive atm
         let mut windows = self.get_windows_for_client(client);
         windows.retain(|&wid| wid != id);
-        self.set_client_prop(id, &ClientProperty::windows(windows));
+        self.set_client_prop(client, &ClientProperty::windows(windows));
 
         // free window id
         self.set_window_prop(id, &WindowProperty::in_use(false));
         // Clear the private wayland rc data
-        self.a_window_priv.set(id, Priv::SURFACE,
+        let WindowId(raw_id) = id;
+        self.a_window_priv.set(raw_id, Priv::SURFACE,
                                &Priv::surface(None));
     }
 
@@ -910,7 +914,8 @@ impl Atmosphere {
     pub fn add_surface(&mut self, id: WindowId,
                        surf: Rc<RefCell<Surface>>)
     {
-        self.a_window_priv.set(id,
+        let WindowId(raw_id) = id;
+        self.a_window_priv.set(raw_id,
                                Priv::SURFACE,
                                &Priv::surface(Some(surf)));
     }
@@ -919,7 +924,8 @@ impl Atmosphere {
     pub fn get_surface_from_id(&self, id: WindowId)
                                -> Option<Rc<RefCell<Surface>>>
     {
-        match self.a_window_priv.get(id, Priv::SURFACE) {
+        let WindowId(raw_id) = id;
+        match self.a_window_priv.get(raw_id, Priv::SURFACE) {
             Some(Priv::surface(Some(s))) => Some(s.clone()),
             _ => None,
         }
@@ -929,7 +935,8 @@ impl Atmosphere {
     pub fn get_wl_surface_from_id(&self, id: WindowId)
                                   -> Option<wl_surface::WlSurface>
     {
-        match self.a_window_priv.get(id, Priv::WL_SURFACE) {
+        let WindowId(raw_id) = id;
+        match self.a_window_priv.get(raw_id, Priv::WL_SURFACE) {
             Some(Priv::wl_surface(s)) => Some(s.clone()),
             _ => None,
         }
@@ -938,7 +945,8 @@ impl Atmosphere {
                           id: WindowId,
                           surf: wl_surface::WlSurface)
     {
-        self.a_window_priv.set(id,
+        let WindowId(raw_id) = id;
+        self.a_window_priv.set(raw_id,
                                Priv::WL_SURFACE,
                                &Priv::wl_surface(surf));
     }
@@ -946,7 +954,8 @@ impl Atmosphere {
     pub fn add_seat(&mut self, id: ClientId,
                     seat: Rc<RefCell<Seat>>)
     {
-        self.a_client_priv.set(id,
+        let ClientId(raw_id) = id;
+        self.a_client_priv.set(raw_id,
                                ClientPriv::SEAT,
                                &ClientPriv::seat(Some(seat)));
     }
@@ -961,7 +970,8 @@ impl Atmosphere {
     pub fn get_seat_from_client_id(&self, id: ClientId)
                                    -> Option<Rc<RefCell<Seat>>>
     {
-        match self.a_client_priv.get(id, ClientPriv::SEAT) {
+        let ClientId(raw_id) = id;
+        match self.a_client_priv.get(raw_id, ClientPriv::SEAT) {
             Some(ClientPriv::seat(Some(s))) => Some(s.clone()),
             _ => None,
         }
@@ -1079,13 +1089,15 @@ impl Hemisphere {
         self.mark_changed();
         // for global properties just always pass the id as 0
         // since we don't care about window/client indexing
-        self.h_client_props.set(client, id, prop);
+        let ClientId(raw_client) = client;
+        self.h_client_props.set(raw_client, id, prop);
     }
 
     fn get_client_prop(&self, client: ClientId, id: PropertyId)
                        -> Option<&ClientProperty>
     {
-        self.h_client_props.get(client, id)
+        let ClientId(raw_client) = client;
+        self.h_client_props.get(raw_client, id)
     }
 
     fn set_window_prop(&mut self,
@@ -1096,13 +1108,15 @@ impl Hemisphere {
         self.mark_changed();
         // for global properties just always pass the id as 0
         // since we don't care about window/client indexing
-        self.h_window_props.set(win, id, prop);
+        let WindowId(raw_win) = win;
+        self.h_window_props.set(raw_win, id, prop);
     }
 
     fn get_window_prop(&self, win: WindowId, id: PropertyId)
                        -> Option<&WindowProperty>
     {
-        self.h_window_props.get(win, id)
+        let WindowId(raw_win) = win;
+        self.h_window_props.get(raw_win, id)
     }
 
     // This should be called after all patches are applied

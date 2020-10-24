@@ -14,7 +14,7 @@ use ws::protocol::wl_buffer;
 
 use crate::log;
 use crate::category5::utils::{Dmabuf, MemImage};
-use crate::category5::utils::{timing::*, logging::*};
+use crate::category5::utils::{timing::*, logging::*, WindowId};
 
 // Tell wm the desktop background
 //
@@ -29,7 +29,7 @@ pub struct SetBackgroundFromMem {
 }
 
 pub struct UpdateWindowContentsFromDmabuf {
-    pub ufd_id: u32,
+    pub ufd_id: WindowId,
     // dmabuf from linux_dmabuf protocol
     pub ufd_dmabuf: Dmabuf,
     // private: the wl_buffer to release when this
@@ -48,7 +48,7 @@ impl fmt::Debug for UpdateWindowContentsFromDmabuf {
 }
 
 pub struct UpdateWindowContentsFromMem {
-    pub id: u32,
+    pub id: WindowId,
     // The resolution of the texture
     pub width: usize,
     pub height: usize,
@@ -83,8 +83,8 @@ impl Drop for UpdateWindowContentsFromMem {
 pub enum Task {
     begin_frame,
     end_frame,
-    create_window(u32),
-    close_window(u32),
+    create_window(WindowId),
+    close_window(WindowId),
     sbfm(SetBackgroundFromMem),
     uwcfd(UpdateWindowContentsFromDmabuf),
     uwcfm(UpdateWindowContentsFromMem),
@@ -103,7 +103,7 @@ impl Task {
         })
     }
 
-    pub fn update_window_contents_from_dmabuf(id: u32,
+    pub fn update_window_contents_from_dmabuf(id: WindowId,
                                               dmabuf: Dmabuf,
                                               buffer: wl_buffer::WlBuffer)
                                               -> Task
@@ -115,7 +115,7 @@ impl Task {
         })
     }
 
-    pub fn update_window_contents_from_mem(id: u32,
+    pub fn update_window_contents_from_mem(id: WindowId,
                                            tex: MemImage,
                                            buffer: wl_buffer::WlBuffer,
                                            tex_width: usize,

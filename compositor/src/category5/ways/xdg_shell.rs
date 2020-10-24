@@ -323,7 +323,7 @@ impl ShellSurface {
         // This has just been assigned role of toplevel
         if xs.xs_make_new_window {
             // Tell vkcomp to create a new window
-            log!(LogLevel::debug, "Setting surface {} to toplevel", surf.s_id);
+            log!(LogLevel::debug, "Setting surface {:?} to toplevel", surf.s_id);
             let is_toplevel = match self.ss_xdg_toplevel {
                 Some(_) => true,
                 None => false,
@@ -335,7 +335,7 @@ impl ShellSurface {
         }
 
         if xs.xs_moving {
-            log!(LogLevel::debug, "Moving surface {}", surf.s_id);
+            log!(LogLevel::debug, "Moving surface {:?}", surf.s_id);
             atmos.grab(surf.s_id);
             xs.xs_moving = false;
         }

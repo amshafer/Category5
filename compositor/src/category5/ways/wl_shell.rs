@@ -91,7 +91,7 @@ impl ShellSurface {
 
         // Tell vkcomp to create a new window
         let mut surf = self.ss_surface.borrow_mut();
-        println!("Setting surface {} to toplevel", surf.s_id);
+        println!("Setting surface {:?} to toplevel", surf.s_id);
         let client = self.ss_surface_proxy.as_ref().client().unwrap();
         let owner = utils::try_get_id_from_client(client).unwrap();
         surf.s_atmos.borrow_mut().create_new_window(surf.s_id, owner, true);
