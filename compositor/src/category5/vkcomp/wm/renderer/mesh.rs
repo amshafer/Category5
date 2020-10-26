@@ -361,11 +361,31 @@ impl Mesh {
                              rend: &mut Renderer,
                              img: &MemImage)
     {
-        if let MeshPrivate::mem_image(mp) = &self.m_priv {
+        if let MeshPrivate::mem_image(mp) = &mut self.m_priv {
             unsafe {
-                // copy the data into the staging buffer
-                rend.update_memory(mp.transfer_mem,
-                                   img.as_slice());
+                // resize the transfer mem if needed
+                if img.width != self.image_resolution.width as usize
+                    || img.height != self.image_resolution.height as usize
+                {
+                    // Out with the old
+                    rend.free_memory(mp.transfer_mem);
+                    // in with the new
+                    let (buffer, buf_mem) = rend.create_buffer(
+                        vk::BufferUsageFlags::TRANSFER_SRC,
+                        vk::SharingMode::EXCLUSIVE,
+                        vk::MemoryPropertyFlags::HOST_VISIBLE
+                            | vk::MemoryPropertyFlags::HOST_COHERENT,
+                        img.as_slice(),
+                    );
+                    *mp = MemImagePrivate {
+                        transfer_buf: buffer,
+                        transfer_mem: buf_mem,
+                    };
+                } else {
+                    // copy the data into the staging buffer
+                    rend.update_memory(mp.transfer_mem,
+                                       img.as_slice());
+                }
                 // copy the staging buffer into the image
                 rend.update_image_contents_from_buf(
                     mp.transfer_buf,
@@ -430,7 +450,7 @@ impl Mesh {
                 // Release the old frame's resources
                 //
                 // Free the old memory and replace it with the new one
-                rend.dev.free_memory(self.image_mem, None);
+                rend.free_memory(self.image_mem);
                 self.image_mem = image_memory;
 
                 // update the image header with the new import
@@ -453,13 +473,13 @@ impl Mesh {
         unsafe {
             rend.dev.destroy_image(self.image, None);
             rend.dev.destroy_image_view(self.image_view, None);
-            rend.dev.free_memory(self.image_mem, None);
+            rend.free_memory(self.image_mem);
             match &self.m_priv {
                 // dma has nothing dynamic to free
                 MeshPrivate::dmabuf(_) => {},
                 MeshPrivate::mem_image(m) => {
                     rend.dev.destroy_buffer(m.transfer_buf, None);
-                    rend.dev.free_memory(m.transfer_mem, None);
+                    rend.free_memory(m.transfer_mem);
                 },
             }
             // get the descriptor pool

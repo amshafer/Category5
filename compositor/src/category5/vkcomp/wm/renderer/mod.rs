@@ -2197,6 +2197,14 @@ impl Renderer {
         return (buffer, memory);
     }
 
+    // Wrapper for freeing device memory
+    //
+    // Having this in one place lets us quickly handle any additional
+    // allocation tracking
+    unsafe fn free_memory(&self, mem: vk::DeviceMemory) {
+        self.dev.free_memory(mem, None);
+    }
+
     // Writes `data` to `memory`
     //
     // This is a helper method for mapping and updating the value stored
@@ -2386,15 +2394,15 @@ impl Drop for Renderer {
             // first destroy the application specific resources
             if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
 
-                self.dev.free_memory(ctx.vert_buffer_memory, None);
-                self.dev.free_memory(ctx.index_buffer_memory, None);
+                self.free_memory(ctx.vert_buffer_memory);
+                self.free_memory(ctx.index_buffer_memory);
                 self.dev.destroy_buffer(ctx.vert_buffer, None);
                 self.dev.destroy_buffer(ctx.index_buffer, None);
 
                 self.dev.destroy_sampler(ctx.image_sampler, None);
 
                 self.dev.destroy_buffer(ctx.uniform_buffer, None);
-                self.dev.free_memory(ctx.uniform_buffers_memory, None);
+                self.free_memory(ctx.uniform_buffers_memory);
 
                 self.dev.destroy_render_pass(ctx.pass, None);
 
@@ -2421,7 +2429,7 @@ impl Drop for Renderer {
             self.dev.destroy_semaphore(self.present_sema, None);
             self.dev.destroy_semaphore(self.render_sema, None);
 
-            self.dev.free_memory(self.depth_image_mem, None);
+            self.free_memory(self.depth_image_mem);
             self.dev.destroy_image_view(self.depth_image_view, None);
             self.dev.destroy_image(self.depth_image, None);
             
