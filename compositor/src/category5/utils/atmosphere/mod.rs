@@ -907,6 +907,21 @@ impl Atmosphere {
                              ));
     }
 
+    // Set the window size.
+    // This is a helper for calling get and set on the window dims
+     pub fn set_window_size(&mut self,
+                            id: WindowId,
+                            width: f32,
+                            height: f32)
+    {
+        let mut pos = self.get_window_dimensions(id);
+        pos.2 = width;
+        pos.3 = height;
+        self.set_window_dimensions(id,
+                                   pos.0, pos.1,
+                                   pos.2, pos.3);
+    }
+
     // -- subsystem specific handlers --
 
     // These are getters for the private wayland structures

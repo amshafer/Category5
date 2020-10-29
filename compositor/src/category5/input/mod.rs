@@ -433,6 +433,8 @@ impl Input {
     // in focus if the cursor is on that surface
     fn handle_pointer_move(&mut self, m: &PointerMove) {
         let mut atmos = self.i_atmos.borrow_mut();
+        // Update the atmosphere with the new cursor pos
+        atmos.add_cursor_pos(m.pm_dx, m.pm_dy);
 
         // If a resize is happening then collect the cursor changes
         // to send at the end of the frame
@@ -441,8 +443,6 @@ impl Input {
             self.i_resize_diff.1 += m.pm_dy;
             return;
         }
-        // Update the atmosphere with the new cursor pos
-        atmos.add_cursor_pos(m.pm_dx, m.pm_dy);
         // Get the cursor position
         let (cx, cy) = atmos.get_cursor_pos();
 
@@ -515,14 +515,12 @@ impl Input {
                 // if on one of the edges start a resize
                 if let Some(surf) = atmos.get_surface_from_id(id) {
                     match &surf.borrow_mut().s_role {
-                        Some(Role::xdg_shell_toplevel(ss)) => {
+                        Some(Role::xdg_shell_toplevel(_)) => {
                             match c.c_state {
                                 // The release is handled above
                                 ButtonState::Released => {
                                     log!(LogLevel::debug,
                                          "Stopping resize of {:?}", id);
-                                    ss.borrow_mut().ss_attached_state
-                                        .xs_resizing = false;
                                     atmos.set_resizing(None);
                                     // TODO: send final configure here?
                                 },
@@ -557,13 +555,11 @@ impl Input {
                 // if on one of the edges start a resize
                 if let Some(surf) = atmos.get_surface_from_id(id) {
                     match &surf.borrow_mut().s_role {
-                        Some(Role::xdg_shell_toplevel(ss)) => {
+                        Some(Role::xdg_shell_toplevel(_)) => {
                             match c.c_state {
                                 ButtonState::Pressed => {
                                     log!(LogLevel::debug,
                                          "Resizing window {:?}", id);
-                                    ss.borrow_mut().ss_attached_state
-                                        .xs_resizing = true;
                                     atmos.set_resizing(Some(id));
                                 },
                                 // releasing is handled above

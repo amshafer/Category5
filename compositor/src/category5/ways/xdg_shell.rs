@@ -37,21 +37,12 @@ use std::clone::Clone;
 /// finally: the client will commit the surface, causing the server to apply
 ///   all of the attached state
 #[allow(dead_code)]
-#[derive(Clone)]
 pub struct XdgState {
-    pub xs_width: i32,
-    pub xs_height: i32,
+    pub xs_pos: Option<(i32, i32)>,
+    pub xs_size: Option<(i32, i32)>,
     // window title
     pub xs_title: Option<String>,
     pub xs_app_id: Option<String>,
-    // self-explanitory I think
-    pub xs_maximized: bool,
-    pub xs_minimized: bool,
-    // guess what this one means
-    pub xs_fullscreen: bool,
-    pub xs_resizing: bool,
-    // Is the window currently in focus?
-    pub xs_activated: bool,
     // Is this window against a tile boundary?
     pub xs_tiled_left: bool,
     pub xs_tiled_right: bool,
@@ -77,16 +68,11 @@ impl XdgState {
     /// Return a state with no changes
     fn empty() -> XdgState {
         XdgState {
-            xs_width: 0,
-            xs_height: 0,
+            xs_pos: None,
+            xs_size: None,
             xs_acked: false,
             xs_title: None,
             xs_app_id: None,
-            xs_maximized: false,
-            xs_fullscreen: false,
-            xs_minimized: false,
-            xs_resizing: false,
-            xs_activated: false,
             xs_tiled_left: false,
             xs_tiled_right: false,
             xs_tiled_top: false,
@@ -95,6 +81,96 @@ impl XdgState {
             xs_min_size: None,
             xs_make_new_window: false,
             xs_moving: false,
+        }
+    }
+}
+
+/// A range of serial numbers.
+/// This is used to have one TLState describe multiple configuration
+/// events. This can either represent one event or a continuous range
+/// of events
+#[derive(Copy, Clone)]
+enum SerialRange {
+    // one serial number
+    Single(u32),
+    // range from a to b
+    Range(u32,u32),
+}
+
+#[allow(dead_code)]
+impl SerialRange {
+    /// Is this serial range completely before `serial`?
+    /// This is used to test if a config is out of date and should
+    /// be thrown away
+    fn is_outdated_compared_to(self, serial: u32) -> bool {
+        match self {
+            Self::Single(a) => if a < serial { return true; },
+            Self::Range(a, _) => if a < serial { return true; },
+        }
+        return false;
+    }
+
+    fn equals(self, serial: u32) -> bool {
+        match self {
+            Self::Single(a) => if a == serial { return true; },
+            Self::Range(a, b) => if serial > a && serial < b { return true; },
+        }
+        return false;
+    }
+
+    /// Expand our range to end at `serial`
+    fn extend_to(&mut self, serial: u32) {
+        let newself = match self {
+            Self::Single(a) => Self::Range(*a, serial),
+            Self::Range(a, _) => Self::Range(*a, serial),
+        };
+        *self = newself;
+    }
+}
+
+/// The xdg_toplevel state.
+///
+/// This contains basic information about the sizing of a surface.
+/// It is tracked on a per configuration serial basis.
+#[derive(PartialEq,Eq,Copy,Clone)]
+struct TLState {
+    // self-explanitory I think
+    pub tl_maximized: bool,
+    pub tl_minimized: bool,
+    // guess what this one means
+    pub tl_fullscreen: bool,
+    // Is the window currently in focus?
+    pub tl_activated: bool,
+    pub tl_resizing: bool,
+}
+
+impl TLState {
+    /// Return a state with no changes
+    fn empty() -> TLState {
+        TLState {
+            tl_maximized: false,
+            tl_fullscreen: false,
+            tl_minimized: false,
+            tl_activated: false,
+            tl_resizing: false,
+        }
+    }
+}
+
+/// A complete xdg_toplevel configuration
+/// This pairs the above toplevel state with a serial range
+/// that is holds true for
+struct TLConfig {
+    // The serial numbers that this state describes
+    tlc_serial: SerialRange,
+    tlc_state: TLState,
+}
+
+impl TLConfig {
+    fn new(serial: SerialRange, state: TLState) -> TLConfig {
+        TLConfig {
+            tlc_serial: serial,
+            tlc_state: state,
         }
     }
 }
@@ -121,11 +197,13 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request,
                 ss_surface: surf.clone(),
                 ss_surface_proxy: surface,
                 ss_xdg_surface: xdg.clone(),
-                ss_attached_state: XdgState::empty(),
-                ss_current_state: XdgState::empty(),
+                ss_xs: XdgState::empty(),
                 ss_serial: 0,
+                ss_last_acked: 0,
                 ss_xdg_toplevel: None,
                 ss_xdg_popup: None,
+                ss_cur_tlstate: TLState::empty(),
+                ss_tlconfigs: Vec::new(),
             }));
 
             xdg.quick_assign(|s, r, _| {
@@ -186,10 +264,17 @@ fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>,
             shsurf.get_toplevel(xdg, ss_clone),
         xdg_surface::Request::GetPopup { id, parent, positioner } =>
             shsurf.get_popup(id, parent, positioner, ss_clone),
-        xdg_surface::Request::AckConfigure { serial } =>
-            shsurf.ack_configure(serial),
-        xdg_surface::Request::SetWindowGeometry { x, y, width, height } =>
-            shsurf.set_win_geom(x, y, width, height),
+        xdg_surface::Request::AckConfigure { serial } => {
+            log!(LogLevel::debug, "xdg_surface: client acked configure event {}",
+                 serial);
+            shsurf.ack_configure(serial);
+        }
+        xdg_surface::Request::SetWindowGeometry { x, y, width, height } => {
+            log!(LogLevel::debug, "xdg_surface: set geometry to:");
+            log!(LogLevel::debug, "              x={} y={} width={} height={}",
+                 x, y, width, height);
+            shsurf.set_win_geom(x, y, width, height);
+        },
         xdg_surface::Request::Destroy => (),
     };
 }
@@ -300,12 +385,17 @@ pub struct ShellSurface {
     ss_xdg_toplevel: Option<Main<xdg_toplevel::XdgToplevel>>,
     ss_xdg_popup: Option<Popup>,
     // Outstanding changes to be applied in commit
-    pub ss_attached_state: XdgState,
-    pub ss_current_state: XdgState,
+    pub ss_xs: XdgState,
     // A serial for tracking config updates
     // every time we request a configuration this is the
     // serial number used
     pub ss_serial: u32,
+    pub ss_last_acked: u32,
+    // The current toplevel state
+    // This will get snapshotted and recorded for each config serial
+    ss_cur_tlstate: TLState,
+    // The list of pending configuration events
+    ss_tlconfigs: Vec<Rc<RefCell<TLConfig>>>,
 }
 
 impl ShellSurface {
@@ -314,14 +404,13 @@ impl ShellSurface {
     /// to prevent causing a refcell panic.
     /// The same goes for the atmosphere
     pub fn commit(&mut self, surf: &Surface, atmos: &mut Atmosphere) {
-        let xs = &mut self.ss_attached_state;
         // do nothing if the client has yet to ack these changes
-        if !xs.xs_acked {
+        if !self.ss_xs.xs_acked {
             return;
         }
 
         // This has just been assigned role of toplevel
-        if xs.xs_make_new_window {
+        if self.ss_xs.xs_make_new_window {
             // Tell vkcomp to create a new window
             log!(LogLevel::debug, "Setting surface {:?} to toplevel", surf.s_id);
             let is_toplevel = match self.ss_xdg_toplevel {
@@ -331,29 +420,54 @@ impl ShellSurface {
             let client = self.ss_xdg_surface.as_ref().client().unwrap();
             let owner = utils::try_get_id_from_client(client).unwrap();
             atmos.create_new_window(surf.s_id, owner, is_toplevel);
-            xs.xs_make_new_window = false;
+            self.ss_xs.xs_make_new_window = false;
         }
 
-        if xs.xs_moving {
+        if self.ss_xs.xs_moving {
             log!(LogLevel::debug, "Moving surface {:?}", surf.s_id);
             atmos.grab(surf.s_id);
-            xs.xs_moving = false;
+            self.ss_xs.xs_moving = false;
+        }
+
+        // If we are the surface currently being resized
+        // if let Some(id) = atmos.get_resizing() {
+        //     if id == surf.s_id {
+        //         // actually update the window dimensions
+        //         atmos.set_window_size();
+        //     }
+        // }
+
+        // find the toplevel state for the last config event acked
+        // ack the toplevel configuration
+        if let Some((i, _tlc)) = self.ss_tlconfigs
+            .iter().enumerate()
+            // Find the config which matches this serial
+            .find(|&(_, tlc)| {
+                if tlc.borrow().tlc_serial.equals(self.ss_last_acked) {
+                    return true;
+                }
+                return false;
+            })
+        {
+            // TODO: handle min/max/fullscreen/activated
+
+            // remove all the previous/outdated configs
+            self.ss_tlconfigs.drain(0..i);
         }
 
         // Update the window size
-        let mut pos = atmos.get_window_dimensions(surf.s_id);
-        pos.0 += xs.xs_width as f32;
-        pos.1 += xs.xs_height as f32;
-        atmos.set_window_dimensions(surf.s_id,
-                                    pos.0, pos.1,
-                                    pos.2, pos.3);
+        if let Some((w, h)) = self.ss_xs.xs_size {
+            log!(LogLevel::debug, "xdg_surface.commit: resizing win {:?} to {}x{}",
+                 surf.s_id, w, h);
+            atmos.set_window_size(surf.s_id, w as f32, h as f32);
+            self.ss_xs.xs_size = None;
+        }
 
         // TODO: handle the other state changes
         //       make them options??
 
         // unset the ack for next time
-        xs.xs_acked = false;
-        self.ss_current_state = self.ss_attached_state.clone();
+        self.ss_xs.xs_acked = false;
     }
 
     /// Generate a fresh set of configure events
@@ -366,28 +480,63 @@ impl ShellSurface {
                      surf: &Surface,
                      resize_diff: Option<(f32,f32)>)
     {
+        log!(LogLevel::debug, "xdg_surface: generating configure event {}",
+             self.ss_serial);
         // send configuration requests to the client
         if let Some(toplevel) = &self.ss_xdg_toplevel {
             if let Some((x, y)) = resize_diff {
                 // Get the current window position
-                let mut dims = atmos.get_window_dimensions(surf.s_id);
+                let mut size;
+                if let Some(cur_size) = self.ss_xs.xs_size {
+                    size = cur_size;
+                } else {
+                    // If we don't have the size saved then grab the latest
+                    // from atmos
+                    let dims = atmos.get_window_dimensions(surf.s_id);
+                    size = (dims.2 as i32, dims.3 as i32);
+                }
 
                 // update our state's dimensions
-                dims.2 += x;
-                dims.3 += y;
-                log!(LogLevel::debug, "new window size is {}x{}",
-                     dims.2,
-                     dims.3,
-                );
-                // Update the atmosphere
-                atmos.set_window_dimensions(surf.s_id,
-                                            dims.0, dims.1, dims.2, dims.3);
+                // We SHOULD NOT update the atmosphere until the wl_surface
+                // is committed
+                size.0 += x as i32;
+                size.1 += y as i32;
+                self.ss_xs.xs_size = Some(size);
+
+                // build an array of state flags to pass to toplevel.configure
+                let mut states: Vec<u8> = Vec::new();
+                if self.ss_cur_tlstate.tl_maximized {
+                    states.push(xdg_toplevel::State::Maximized as u8);
+                }
+                if self.ss_cur_tlstate.tl_resizing {
+                    states.push(xdg_toplevel::State::Resizing as u8);
+                }
+                if self.ss_cur_tlstate.tl_fullscreen {
+                    states.push(xdg_toplevel::State::Fullscreen as u8);
+                }
+
+                // insert a tlconfig representing this configure event.
+                // commit will find the latest acked tlconfig we add
+                // to this list and use its info
+                let tlc_size = self.ss_tlconfigs.len();
+                if self.ss_tlconfigs[tlc_size].borrow()
+                    .tlc_state == self.ss_cur_tlstate
+                {
+                    // If nothing has changed, just bump the range on
+                    // the last tlconfig
+                    self.ss_tlconfigs[tlc_size].borrow_mut()
+                        .tlc_serial.extend_to(self.ss_serial);
+                } else {
+                    self.ss_tlconfigs.push(Rc::new(RefCell::new(TLConfig::new(
+                        // Add a single range type here. It will get
+                        // extended above if nothing has changed
+                        SerialRange::Single(self.ss_serial),
+                        self.ss_cur_tlstate,
+                    ))));
+                }
 
                 // send them to the client
-                toplevel.configure(
-                    dims.2 as i32, dims.3 as i32,
-                    Vec::new(), // TODO: specify our requirements?
-                );
+                toplevel.configure(size.0 as i32, size.1 as i32, states);
             }
         }
         self.ss_xdg_surface.configure(self.ss_serial);
@@ -396,12 +545,12 @@ impl ShellSurface {
     /// Check if this serial is the currently loaned out one,
     /// and if so set the existing state to be applied
     pub fn ack_configure(&mut self, serial: u32) {
-        if serial == self.ss_serial {
-            // mark this as acked so it is applied in commit
-            self.ss_attached_state.xs_acked = true;
-            // increment the serial for next timme
-            self.ss_serial += 1;
-        }
+        // ack that we should take action during the next commit
+        self.ss_xs.xs_acked = true;
+
+        // increment the serial for next timme
+        self.ss_last_acked = serial;
+        self.ss_serial += 1;
     }
 
     /// Set the window geometry for this surface
@@ -414,8 +563,7 @@ impl ShellSurface {
     ///
     /// I think this means to just ignore x and y, and handle movement elsewhere
     fn set_win_geom(&mut self, _x: i32, _y: i32, width: i32, height: i32) {
-        self.ss_attached_state.xs_width = width;
-        self.ss_attached_state.xs_height = height;
+        self.ss_xs.xs_size = Some((width, height));
     }
 
     /// Get a toplevel surface
@@ -433,7 +581,7 @@ impl ShellSurface {
             Some(Role::xdg_shell_toplevel(userdata.clone()));
 
         // Record our state
-        self.ss_attached_state.xs_make_new_window = true;
+        self.ss_xs.xs_make_new_window = true;
 
         // send configuration requests to the client
         // width and height 0 means client picks a size
@@ -459,7 +607,7 @@ impl ShellSurface {
                                _toplevel: Main<xdg_toplevel::XdgToplevel>,
                                req: xdg_toplevel::Request)
     {
-        let xs = &mut self.ss_attached_state;
+        let xs = &mut self.ss_xs;
 
         // TODO: implement the remaining handlers
         #[allow(unused_variables)]
@@ -480,22 +628,21 @@ impl ShellSurface {
                 // Moving is NOT double buffered so just grab it now
                 let id = self.ss_surface.borrow().s_id;
                 self.ss_atmos.borrow_mut().set_resizing(Some(id));
-                xs.xs_resizing = true;
             },
             xdg_toplevel::Request::SetMaxSize { width ,height } =>
                 xs.xs_max_size = Some((width, height)),
             xdg_toplevel::Request::SetMinSize { width, height } =>
                 xs.xs_min_size = Some((width, height)),
             xdg_toplevel::Request::SetMaximized =>
-                xs.xs_maximized = true,
+                self.ss_cur_tlstate.tl_maximized = true,
             xdg_toplevel::Request::UnsetMaximized =>
-                xs.xs_maximized = false,
+                self.ss_cur_tlstate.tl_maximized = false,
             xdg_toplevel::Request::SetFullscreen { output } =>
-                xs.xs_fullscreen = true,
+                self.ss_cur_tlstate.tl_fullscreen = true,
             xdg_toplevel::Request::UnsetFullscreen =>
-                xs.xs_fullscreen = false,
+                self.ss_cur_tlstate.tl_fullscreen = false,
             xdg_toplevel::Request::SetMinimized =>
-                xs.xs_minimized = true,
+                self.ss_cur_tlstate.tl_minimized = true,
         }
     }
 
@@ -515,7 +662,7 @@ impl ShellSurface {
             Some(Role::xdg_shell_popup(userdata.clone()));
 
         // tell vkcomp to generate resources for a new window
-        self.ss_attached_state.xs_make_new_window = true;
+        self.ss_xs.xs_make_new_window = true;
 
         // send configuration requests to the client
         // width and height 0 means client picks a size
@@ -550,8 +697,6 @@ impl ShellSurface {
                             _popup: Main<xdg_popup::XdgPopup>,
                             req: xdg_popup::Request)
     {
-        let _xs = &mut self.ss_attached_state;
-
         // TODO: implement the remaining handlers
         #[allow(unused_variables)]
         match req {
