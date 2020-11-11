@@ -390,7 +390,7 @@ impl ShellSurface {
 
         if self.ss_xs.xs_moving {
             log!(LogLevel::debug, "Moving surface {:?}", surf.s_id);
-            atmos.grab(surf.s_id);
+            atmos.set_grabbed(Some(surf.s_id));
             self.ss_xs.xs_moving = false;
         }
 
@@ -455,8 +455,8 @@ impl ShellSurface {
             } else {
                 // If we don't have the size saved then grab the latest
                 // from atmos
-                let dims = atmos.get_window_dimensions(surf.s_id);
-                size = (dims.2 as i32, dims.3 as i32);
+                let raw_size = atmos.get_window_size(surf.s_id);
+                size = (raw_size.0 as i32, raw_size.1 as i32);
 
                 if let Some((x, y)) = resize_diff {
                     // update our state's dimensions
@@ -534,7 +534,7 @@ impl ShellSurface {
     ///     general not alter the position of the window.
     ///
     /// I think this means to just ignore x and y, and handle movement elsewhere
-    fn set_win_geom(&mut self, x: i32, y: i32, width: i32, height: i32) {
+    fn set_win_geom(&mut self, _x: i32, _y: i32, width: i32, height: i32) {
         self.ss_xs.xs_size = Some((width, height));
         // Go ahead and generate a configure event.
         // If this is called by the client, we need to trigger an event
@@ -603,7 +603,7 @@ impl ShellSurface {
             xdg_toplevel::Request::Move { seat, serial } => {
                 // Moving is NOT double buffered so just grab it now
                 let id = self.ss_surface.borrow().s_id;
-                self.ss_atmos.borrow_mut().grab(id);
+                self.ss_atmos.borrow_mut().set_grabbed(Some(id));
             },
             xdg_toplevel::Request::Resize { seat, serial, edges } => {
                 // Moving is NOT double buffered so just grab it now

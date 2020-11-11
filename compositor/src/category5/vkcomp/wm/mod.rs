@@ -299,7 +299,7 @@ impl WindowManager {
         };
         // If this window has been closed or if it is not ready for
         // rendering, ignore it
-        if a.marked_for_death || !self.wm_atmos.is_in_use(a.id) {
+        if a.marked_for_death || !self.wm_atmos.get_window_in_use(a.id) {
             return;
         }
 
@@ -307,23 +307,24 @@ impl WindowManager {
         let barsize = self.wm_atmos.get_barsize();
         // The dotsize should be just slightly smaller
         let dotsize = barsize * 0.95;
-        let window_dims = self.wm_atmos.get_window_dimensions(a.id);
+        let window_pos = self.wm_atmos.get_window_pos(a.id);
+        let window_size = self.wm_atmos.get_window_size(a.id);
         // Convert the order into a float from 0.0 to 1.0
         let order_depth = ((order + 1) as f32) / 100.0;
 
         // Only display the bar for toplevel surfaces
         // i.e. don't for popups
-        if self.wm_atmos.is_toplevel(id) {
+        if self.wm_atmos.get_toplevel(id) {
             // now render the bar itself, as wide as the window
             // the bar needs to be behind the dots
             let push = PushConstants {
                 order: order_depth - 0.001, // depth
                 // align it at the top right
-                x: window_dims.0,
+                x: window_pos.0,
                 // draw the bar above the window
-                y: window_dims.1 - barsize,
+                y: window_pos.1 - barsize,
                 // the bar is as wide as the window
-                width: window_dims.2,
+                width: window_size.0,
                 // use a percentage of the screen size
                 height: barsize,
             };
@@ -336,12 +337,12 @@ impl WindowManager {
                 order: order_depth - 0.002, // depth
                 // the x position needs to be all the way to the
                 // right side of the bar
-                x: window_dims.0
+                x: window_pos.0
                 // Multiply by 2 (see vert shader for details)
-                    + window_dims.2
+                    + window_size.0
                 // we don't want to go past the end of the bar
                     - barsize,
-                y: window_dims.1 - barsize,
+                y: window_pos.1 - barsize,
                 // align it at the top right
                 width: dotsize,
                 height: dotsize,
@@ -358,11 +359,11 @@ impl WindowManager {
             // TODO: else draw blank mesh?
             let push = PushConstants {
                 order: order_depth, // depth
-                x: window_dims.0,
-                y: window_dims.1,
+                x: window_pos.0,
+                y: window_pos.1,
                 // align it at the top right
-                width: window_dims.2,
-                height: window_dims.3,
+                width: window_size.0,
+                height: window_size.1,
             };
             mesh.record_draw(&self.rend, params, &push);
         }

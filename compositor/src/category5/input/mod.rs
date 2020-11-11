@@ -499,7 +499,7 @@ impl Input {
             match c.c_state {
                 ButtonState::Released => {
                     log!(LogLevel::debug, "Ungrabbing window {:?}", id);
-                    atmos.ungrab();
+                    atmos.set_grabbed(None);
                     return;
                 },
                 _ => (),
@@ -582,11 +582,11 @@ impl Input {
                 match c.c_state {
                     ButtonState::Pressed => {
                         log!(LogLevel::debug, "Grabbing window {:?}", id);
-                        atmos.grab(id);
+                        atmos.set_grabbed(Some(id));
                     },
                     ButtonState::Released => {
                         log!(LogLevel::debug, "Ungrabbing window {:?}", id);
-                        atmos.ungrab();
+                        atmos.set_grabbed(None);
                     }
                 }
             } else if !set_focus {

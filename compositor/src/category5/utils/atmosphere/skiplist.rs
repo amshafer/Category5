@@ -16,58 +16,6 @@ use crate::category5::input::Input;
 // like the rest.
 
 impl Atmosphere {
-    /// Gets the next window behind this id.
-    pub fn get_skiplist_next(&self, id: WindowId) -> Option<WindowId> {
-        match self.get_window_prop(id, WindowProperty::SKIPLIST_NEXT) {
-            // returns sl_next and doesn't skip
-            Some(WindowProperty::skiplist_next(n)) => *n,
-            None => None,
-            _ => panic!("Could not find value for property"),
-        }
-    }
-
-    pub fn set_skiplist_next(&mut self, id: WindowId, next: Option<WindowId>) {
-        self.set_window_prop(id, &WindowProperty::skiplist_next(next));
-    }
-
-    /// Gets the window in front this id.
-    ///
-    /// This does not do any skipping.
-    pub fn get_skiplist_prev(&self, id: WindowId) -> Option<WindowId> {
-        match self.get_window_prop(id, WindowProperty::SKIPLIST_PREV) {
-            Some(WindowProperty::skiplist_prev(p)) => *p,
-            None => None,
-            _ => panic!("Could not find value for property"),
-        }
-    }
-
-    pub fn set_skiplist_prev(&mut self, id: WindowId, prev: Option<WindowId>) {
-        self.set_window_prop(id, &WindowProperty::skiplist_prev(prev));
-    }
-
-    /// Windows are in a linked skiplist that tells us the order
-    /// of windows from front to back. This function returns the
-    /// next visible window behind this
-    ///
-    /// This uses the skip entry and is what you should use unless
-    /// you need to get *every* window
-    pub fn get_skiplist_next_visible(&self, id: WindowId)
-                                     -> Option<WindowId>
-    {
-        match self.get_window_prop(id, WindowProperty::SKIPLIST_SKIP) {
-            // TODO make it skip
-            Some(WindowProperty::skiplist_skip(s)) => *s,
-            None => None,
-            _ => panic!("Could not find value for property"),
-        }
-    }
-
-    pub fn set_skiplist_next_visible(&mut self, id: WindowId,
-                                     skip: Option<WindowId>)
-    {
-        self.set_window_prop(id, &WindowProperty::skiplist_skip(skip));
-    }
-
     /// Removes a window from the heirarchy.
     ///
     /// Use this to pull a window out, and then insert it in focus
@@ -187,40 +135,6 @@ impl Atmosphere {
         self.set_global_prop(&GlobalProperty::focus(win));
 
         // TODO: recalculate skip
-    }
-
-    /// Get the start of the subsurfaces for this surface
-    pub fn get_top_child(&self, id: WindowId) -> Option<WindowId> {
-        match self.get_window_prop(id, WindowProperty::TOP_CHILD) {
-            Some(WindowProperty::top_child(w)) => *w,
-            None => None,
-            _ => panic!("property not found"),
-        }
-    }
-
-    /// set id to be a subsurface of parent
-    /// TODO: is there a way to share code between this and `focus_on`?
-    pub fn set_top_child(&mut self, id: WindowId, child: Option<WindowId>) {
-        log!(LogLevel::info, "setting {:?} as the top child of {:?}", child, id);
-        if let Some(id) = child {
-            let prev_top = self.get_top_child(id);
-            if let Some(top) = prev_top {
-                self.set_skiplist_prev(top, child);
-            }
-
-            self.skiplist_remove_window(id);
-            self.set_skiplist_next(id, prev_top);
-            self.set_skiplist_prev(id, None);
-        }
-
-        self.set_window_prop(id, &WindowProperty::top_child(child));
-        // TODO: recalculate skip
-    }
-
-    /// set id to be a subsurface of parent
-    pub fn set_parent(&mut self, id: WindowId, parent: Option<WindowId>) {
-        log!(LogLevel::info, "setting {:?} as a subsurface of {:?}", id, parent);
-        self.set_window_prop(id, &WindowProperty::parent_window(parent));
     }
 }
 

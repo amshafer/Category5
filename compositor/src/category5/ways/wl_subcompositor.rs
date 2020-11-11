@@ -124,10 +124,7 @@ impl SubSurface {
 
         // set_position request
         if let Some((x, y)) = self.ss_position {
-            let pos = atmos.get_window_dimensions(id);
-
-            // don't change the existing width and height
-            atmos.set_window_dimensions(id, x, y, pos.2, pos.3);
+            atmos.set_window_pos(id, x, y);
         }
         self.ss_position = None;
 

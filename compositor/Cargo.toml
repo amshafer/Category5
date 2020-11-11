@@ -21,6 +21,7 @@ udev="0.2.0"
 nix="0.17"
 libc=""
 xkbcommon=""
+atmos_gen = {path = "atmos_gen"}
 
 [build-dependencies]
 wayland-scanner="0.26.4"

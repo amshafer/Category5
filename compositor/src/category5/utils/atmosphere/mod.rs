@@ -33,7 +33,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // Global data not tied to a client or window
 //
 // See `Property` for implementation comments
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, AtmosECSGetSet)]
 enum GlobalProperty {
     // !! IF YOU CHANGE THIS UPDATE property_count BELOW!!
 
@@ -77,17 +77,17 @@ impl Property for GlobalProperty {
 }
 
 // These are indexed by ClientId
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, AtmosECSGetSet)]
 enum ClientProperty {
     // is this id in use?
-    in_use(bool),
+    client_in_use(bool),
     // window ids belonging to this client
-    windows(Vec<WindowId>),
+    windows_for_client(Vec<WindowId>),
 }
 
 impl ClientProperty {
-    const IN_USE: PropertyId = 0;
-    const WINDOWS: PropertyId = 1;
+    const CLIENT_IN_USE: PropertyId = 0;
+    const WINDOWS_FOR_CLIENT: PropertyId = 1;
     const VARIANT_LEN: PropertyId = 2;
 }
 
@@ -95,8 +95,8 @@ impl Property for ClientProperty {
     // Get a unique Id
     fn get_property_id(&self) -> PropertyId {
         match self {
-            Self::in_use(_) => Self::IN_USE,
-            Self::windows(_)=> Self::WINDOWS,
+            Self::client_in_use(_) => Self::CLIENT_IN_USE,
+            Self::windows_for_client(_)=> Self::WINDOWS_FOR_CLIENT,
         }
     }
 
@@ -106,19 +106,27 @@ impl Property for ClientProperty {
 }
 
 // These are indexed by WindowId
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, AtmosECSGetSet)]
 enum WindowProperty {
     // is this id in use?
-    in_use(bool),
+    window_in_use(bool),
     // The client that created this window
     owner(ClientId),
     // does this window have the toplevel role
     // this controls if SSD are drawn
     toplevel(bool),
-    // (x, y, width, height)
+    // the position of the visible portion of the window
+    window_pos(f32, f32),
+    // size of the visible portion (non-CSD) of the window
+    // window manager uses this
+    window_size(f32, f32),
     // If this window is a subsurface, then x and y will
     // be offsets from the base of the parent window
-    window_dimensions(f32, f32, f32, f32),
+    surface_pos(f32, f32),
+    // the size of the surface
+    // aka the size of the last buffer attached
+    // vkcomp uses this
+    surface_size(f32, f32),
     // This window's position in the desktop order
     //
     // The next window behind this one
@@ -140,26 +148,32 @@ enum WindowProperty {
 }
 
 impl WindowProperty {
-    const IN_USE: PropertyId = 0;
+    const WINDOW_IN_USE: PropertyId = 0;
     const OWNER: PropertyId = 1;
     const TOPLEVEL: PropertyId = 2;
-    const WINDOW_DIMENSIONS: PropertyId = 3;
-    const SKIPLIST_NEXT: PropertyId = 4;
-    const SKIPLIST_PREV: PropertyId = 5;
-    const SKIPLIST_SKIP: PropertyId = 6;
-    const TOP_CHILD: PropertyId = 7;
-    const PARENT_WINDOW: PropertyId = 8;
-    const VARIANT_LEN: PropertyId = 9;
+    const WINDOW_POS: PropertyId = 3;
+    const WINDOW_SIZE: PropertyId = 4;
+    const SURFACE_POS: PropertyId = 5;
+    const SURFACE_SIZE: PropertyId = 6;
+    const SKIPLIST_NEXT: PropertyId = 7;
+    const SKIPLIST_PREV: PropertyId = 8;
+    const SKIPLIST_SKIP: PropertyId = 9;
+    const TOP_CHILD: PropertyId = 10;
+    const PARENT_WINDOW: PropertyId = 11;
+    const VARIANT_LEN: PropertyId = 12;
 }
 
 impl Property for WindowProperty {
     // Get a unique Id
     fn get_property_id(&self) -> PropertyId {
         match self {
-            Self::in_use(_) => Self::IN_USE,
+            Self::window_in_use(_) => Self::WINDOW_IN_USE,
             Self::owner(_) => Self::OWNER,
             Self::toplevel(_)=> Self::TOPLEVEL,
-            Self::window_dimensions(_,_,_,_)=> Self::WINDOW_DIMENSIONS,
+            Self::window_pos(_,_)=> Self::WINDOW_POS,
+            Self::window_size(_,_)=> Self::WINDOW_SIZE,
+            Self::surface_pos(_,_)=> Self::SURFACE_POS,
+            Self::surface_size(_,_)=> Self::SURFACE_SIZE,
             Self::skiplist_next(_)=> Self::SKIPLIST_NEXT,
             Self::skiplist_prev(_)=> Self::SKIPLIST_PREV,
             Self::skiplist_skip(_)=> Self::SKIPLIST_SKIP,
@@ -321,6 +335,10 @@ impl Atmosphere {
         // We need to set this property to the default since
         // vkcomp will expect it.
         atmos.set_cursor_pos(0.0, 0.0);
+        // resolution is set by wm
+        atmos.set_grabbed(None);
+        atmos.set_resizing(None);
+        atmos.set_focus(None);
 
         return atmos;
     }
@@ -553,12 +571,10 @@ impl Atmosphere {
         let barsize = self.get_barsize();
 
         self.set_owner(id, owner);
-        self.set_window_prop(id, &WindowProperty::in_use(true));
-        self.set_window_prop(id, &WindowProperty::toplevel(is_toplevel));
-        self.set_window_prop(id, &WindowProperty::window_dimensions(
-            0.0, 0.0 + barsize, // (x, y)
-            640.0, 480.0 // (width, height)
-        ));
+        self.set_window_in_use(id, true);
+        self.set_toplevel(id, is_toplevel);
+        self.set_window_pos(id, 0.0, 0.0 + barsize);
+        self.set_window_size(id, 640.0, 480.0);
 
         // make this the new toplevel window
         self.focus_on(Some(id));
@@ -569,7 +585,8 @@ impl Atmosphere {
     // Should be done the first time we interact with
     // a new client
     pub fn reserve_client_id(&mut self, id: ClientId) {
-        self.set_client_prop(id, &ClientProperty::in_use(true));
+        self.set_client_in_use(id, true);
+        self.set_windows_for_client(id, Vec::new());
 
         // For the priv maps we are activating and deactivating
         // the entries so we can use the iterator trait
@@ -588,6 +605,20 @@ impl Atmosphere {
     // in the hemisphere, and we need to mark this as
     // no longer available
     pub fn reserve_window_id(&mut self, client: ClientId, id: WindowId) {
+        // first initialize all our properties
+        self.set_window_in_use(id, true);
+        self.set_owner(id, client);
+        self.set_toplevel(id, false);
+        self.set_window_pos(id, 0.0, 0.0);
+        self.set_window_size(id, 0.0, 0.0);
+        self.set_surface_pos(id, 0.0, 0.0);
+        self.set_surface_size(id, 0.0, 0.0);
+        self.set_skiplist_next(id, None);
+        self.set_skiplist_prev(id, None);
+        self.set_skiplist_skip(id, None);
+        self.set_top_child(id, None);
+        self.set_parent_window(id, None);
+
         let WindowId(raw_id) = id;
         // Add a new priv entry
         // For the priv maps we are activating and deactivating
@@ -602,7 +633,7 @@ impl Atmosphere {
         // This is a bit too expensive atm
         let mut windows = self.get_windows_for_client(client);
         windows.push(id);
-        self.set_client_prop(client, &ClientProperty::windows(windows));
+        self.set_windows_for_client(client, windows);
     }
 
     pub fn free_client_id(&mut self, id: ClientId) {
@@ -612,7 +643,7 @@ impl Atmosphere {
             self.free_window_id(id, *win);
         }
 
-        self.set_client_prop(id, &ClientProperty::in_use(false));
+        self.set_client_in_use(id, false);
         // For the priv maps we are activating and deactivating
         // the entries so we can use the iterator trait
         let ClientId(raw_id) = id;
@@ -628,90 +659,14 @@ impl Atmosphere {
         // TODO: This is a bit too expensive atm
         let mut windows = self.get_windows_for_client(client);
         windows.retain(|&wid| wid != id);
-        self.set_client_prop(client, &ClientProperty::windows(windows));
+        self.set_windows_for_client(client, windows);
 
         // free window id
-        self.set_window_prop(id, &WindowProperty::in_use(false));
+        self.set_window_in_use(id, false);
         // Clear the private wayland rc data
         let WindowId(raw_id) = id;
         self.a_window_priv.set(raw_id, Priv::SURFACE,
                                &Priv::surface(None));
-    }
-
-    // Get the windows ids belonging this client
-    pub fn get_windows_for_client(&self, id: ClientId) -> Vec<WindowId> {
-        match self.get_client_prop(id, ClientProperty::WINDOWS) {
-            Some(ClientProperty::windows(v)) => v.clone(),
-            None => Vec::new(),
-            _ => panic!("property not found"),
-        }
-    }
-
-    // this is one of the few updates from vkcomp
-    pub fn set_resolution(&mut self, x: u32, y: u32) {
-        self.set_global_prop(&GlobalProperty::resolution(x, y));
-    }
-
-    // Get the screen resolution as set by vkcomp
-    pub fn get_resolution(&self) -> (u32, u32) {
-        match self.get_global_prop(GlobalProperty::RESOLUTION) {
-            Some(GlobalProperty::resolution(x, y)) => (*x, *y),
-            _ => panic!("Could not find value for property"),
-        }
-    }
-
-    // Get the screen resolution as set by vkcomp
-    pub fn is_toplevel(&self, id: WindowId) -> bool {
-        match self.get_window_prop(id, WindowProperty::TOPLEVEL) {
-            Some(WindowProperty::toplevel(b)) => *b,
-            None => false,
-            _ => panic!("Could not find value for property"),
-        }
-    }
-
-    // Get the owning client of a surface
-    pub fn get_owner(&self, id: WindowId) -> ClientId {
-        match self.get_window_prop(id, WindowProperty::OWNER) {
-            Some(WindowProperty::owner(o)) => *o,
-            _ => panic!("Could not find value for property"),
-        }
-    }
-
-    // Set the owning client of a surface
-    pub fn set_owner(&mut self, id: WindowId, owner: ClientId) {
-        self.set_window_prop(id, &WindowProperty::owner(owner));
-    }
-
-    // Grab the window by the specified id
-    // it will get moved around as the cursor does
-    pub fn grab(&mut self, id: WindowId) {
-        self.set_global_prop(&GlobalProperty::grabbed(Some(id)));
-    }
-
-    pub fn ungrab(&mut self) {
-        self.set_global_prop(&GlobalProperty::grabbed(None));
-    }
-
-    pub fn get_grabbed(&self) -> Option<WindowId> {
-        match self.get_global_prop(GlobalProperty::GRABBED) {
-            Some(GlobalProperty::grabbed(id)) => *id,
-            None => None,
-            _ => panic!("Could not find value for property"),
-        }
-    }
-
-    // Get and set the window that is currently being resized
-    // This is used by both input and xdg shell
-    pub fn set_resizing(&mut self, id: Option<WindowId>) {
-        self.set_global_prop(&GlobalProperty::resizing(id));
-    }
-
-    pub fn get_resizing(&self) -> Option<WindowId> {
-        match self.get_global_prop(GlobalProperty::RESIZING) {
-            Some(GlobalProperty::resizing(id)) => *id,
-            None => None,
-            _ => panic!("Could not find value for property"),
-        }
     }
 
     // Find if there is a toplevel window under (x,y)
@@ -725,12 +680,13 @@ impl Atmosphere {
         let barsize = self.get_barsize();
 
         for win in self.visible_windows() {
-            let pos = self.get_window_dimensions(win);
+            let (wx, wy) = self.get_window_pos(win);
+            let (ww, wh) = self.get_window_size(win);
 
             // If this window contains (x, y) then return it
-            if x > pos.0 && y > (pos.1 - barsize)
-                && x < (pos.0 + pos.2)
-                && y < (pos.1 + pos.3)
+            if x > wx && y > (wy - barsize)
+                && x < (wx + ww)
+                && y < (wy + wh)
             {
                 return Some(win);
             }
@@ -746,12 +702,13 @@ impl Atmosphere {
                           -> bool
     {
         let barsize = self.get_barsize();
-        let pos = self.get_window_dimensions(id);
+        let (wx, wy) = self.get_window_pos(id);
+        let (ww, wh) = self.get_window_size(id);
 
         // If this window contains (x, y) then return it
-        if x > pos.0 && y > (pos.1 - barsize)
-            && x < (pos.0 + pos.2)
-            && y < pos.1
+        if x > wx && y > (wy - barsize)
+            && x < (wx + ww)
+            && y < wh
         {
             return true;
         }
@@ -764,7 +721,8 @@ impl Atmosphere {
                                  -> Option<(f64, f64)>
     {
         // get the surface-local position
-        let (wx, wy, ww, wh) = self.get_window_dimensions(id);
+        let (wx, wy) = self.get_window_pos(id);
+        let (ww, wh) = self.get_window_size(id);
 
         // offset into the surface
         let (sx, sy) = (x - wx as f64, y - wy as f64);
@@ -783,7 +741,8 @@ impl Atmosphere {
                                    -> ResizeEdge
     {
         let barsize = self.get_barsize();
-        let (wx, wy, ww, wh) = self.get_window_dimensions(id);
+        let (wx, wy) = self.get_window_pos(id);
+        let (ww, wh) = self.get_window_size(id);
         let prox = 3.0; // TODO find a better val for this??
 
         // is (x,y) inside each dimension of the window
@@ -839,9 +798,7 @@ impl Atmosphere {
     // get replayed into the hemisphere
     pub fn add_cursor_pos(&mut self, dx: f64, dy: f64) {
         let pos = self.get_cursor_pos();
-        self.set_global_prop(&GlobalProperty::cursor_pos(
-            pos.0 + dx, pos.1 + dy,
-        ));
+        self.set_cursor_pos(pos.0 + dx, pos.1 + dy);
 
         // Now update the grabbed window if it exists
         let grabbed = match self.get_grabbed() {
@@ -849,87 +806,11 @@ impl Atmosphere {
             None => return,
         };
 
-        let mut gpos = self.get_window_dimensions(grabbed);
+        let mut gpos = self.get_window_pos(grabbed);
         gpos.0 += dx as f32;
         gpos.1 += dy as f32;
 
-        self.set_window_dimensions(grabbed, gpos.0, gpos.1,
-                                   gpos.2, gpos.3);
-    }
-
-    pub fn set_cursor_pos(&mut self, x: f64, y: f64) {
-        self.set_global_prop(&GlobalProperty::cursor_pos(x, y));
-    }
-
-    pub fn get_cursor_pos(&self) -> (f64, f64) {
-        match self.get_global_prop(GlobalProperty::CURSOR_POS)
-        {
-            Some(GlobalProperty::cursor_pos(x, y)) => (*x, *y),
-            _ => panic!("Could not find value for property"),
-        }
-    }
-
-    pub fn is_in_use(&self, id: WindowId) -> bool {
-        match self.get_window_prop(id, WindowProperty::IN_USE)
-        {
-            Some(WindowProperty::in_use(b)) => *b,
-            None => false,
-            _ => panic!("Could not find value for property"),
-        }
-    }
-
-    // Get the window dimensions
-    // grab them from the patchmap first, and fetch them from the
-    // hemisphere if they aren't currently patched.
-    pub fn get_window_dimensions(&self, id: WindowId)
-                                 -> (f32, f32, f32, f32)
-    {
-        match self.get_window_prop(id, WindowProperty::WINDOW_DIMENSIONS)
-        {
-            Some(WindowProperty::window_dimensions(x, y, w, h)) => (*x, *y, *w, *h),
-            _ => panic!("Could not find value for property"),
-        }
-    }
-
-    // Set the dimensions of the window
-    //
-    // This includes the base coordinate, plus the width and height
-    pub fn set_window_dimensions(&mut self,
-                                 id: WindowId,
-                                 x: f32,
-                                 y: f32,
-                                 width: f32,
-                                 height: f32)
-    {
-        log!(
-            LogLevel::debug,
-            "atmos.set_window_dimensions: win {:?} set to ({},{}), {}x{}",
-            id, x, y, width, height,
-        );
-        self.set_window_prop(id,
-                             &WindowProperty::window_dimensions(
-                                 x, y, width, height,
-                             ));
-    }
-
-    // Set the window size.
-    // This is a helper for calling get and set on the window dims
-     pub fn set_window_size(&mut self,
-                            id: WindowId,
-                            width: f32,
-                            height: f32)
-    {
-        log!(
-            LogLevel::debug,
-            "atmos.set_window_size: win {:?} set to {}x{}",
-            id, width, height,
-        );
-        let mut pos = self.get_window_dimensions(id);
-        pos.2 = width;
-        pos.3 = height;
-        self.set_window_dimensions(id,
-                                   pos.0, pos.1,
-                                   pos.2, pos.3);
+        self.set_window_pos(grabbed, gpos.0, gpos.1);
     }
 
     // -- subsystem specific handlers --

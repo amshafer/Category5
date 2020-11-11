@@ -8,6 +8,8 @@ extern crate cgmath;
 extern crate memoffset;
 #[macro_use]
 extern crate bitflags;
+#[macro_use]
+extern crate atmos_gen;
 
 extern crate bincode;
 extern crate serde;

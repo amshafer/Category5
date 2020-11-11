@@ -102,17 +102,6 @@ impl Seat {
 
         // add the keyboard to this seat
         self.s_keyboard = Some(keyboard);
-
-        // If we are in focus, then we should go ahead and generate
-        // the enter event
-        let atmos = input.i_atmos.borrow();
-        if let Some(focus) = atmos.get_client_in_focus() {
-            if self.s_id == focus {
-                if let Some(surface) = atmos.get_window_in_focus() {
-                    Input::keyboard_enter(&atmos, surface);
-                }
-            }
-        }
     }
 
     /// Register a wl_pointer to this seat
