@@ -84,6 +84,68 @@ fn construct_getters(variants: &Vec<&syn::Variant>,
     }).collect()
 }
 
+fn construct_properties(variants: &Vec<&syn::Variant>,
+                        enum_ident: &syn::Ident)
+                        -> proc_macro2::TokenStream
+{
+    let mut i: usize = 0;
+    let mut props = Vec::new();
+    let mut matches = Vec::new();
+
+    for v in variants.iter() {
+        // the variant identifier
+        let ident = &v.ident;
+        // create an identifier for the property equivalent of this
+        // variant
+        let prop_ident = syn::parse_str::<syn::Ident>(
+            format!("{}", ident).to_uppercase().as_str()
+        ).expect("Could not parse get_ident");
+
+        let underscores: Vec<_> = (0..v.fields.len()).map(|i| {
+            syn::parse_str::<syn::Ident>(&format!("_arg{:?}",i).to_string())
+                .unwrap()
+        }).collect();
+
+        // constants
+        props.push(quote! {
+            const #prop_ident: PropertyId = #i;
+        });
+
+        // these are for get_property_id
+        matches.push(quote! {
+            Self::#ident(#(#underscores),*) => Self::#prop_ident,
+        });
+        i += 1;
+    }
+
+    // this one is for telling how many properties there are
+    props.push(quote! {
+        const VARIANT_LEN: PropertyId = #i;
+    });
+
+    quote! {
+        // Declare constants for the property ids. This prevents us
+        // from having to make an instance of the enum that we would
+        // have to call get_property_id on
+        impl #enum_ident {
+            #(#props)*
+        }
+
+        impl Property for #enum_ident {
+            // Get a unique Id
+            fn get_property_id(&self) -> PropertyId {
+                match self {
+                    #(#matches)*
+                }
+            }
+            
+            fn variant_len() -> u32 {
+                return Self::VARIANT_LEN as u32;
+            }
+        }
+    }
+}
+
 fn construct_setters(variants: &Vec<&syn::Variant>,
                      name: &String,
                      enum_ident: &syn::Ident)
@@ -160,8 +222,9 @@ pub fn ecs_get_set(input: TokenStream) -> TokenStream {
 
         // Now we will construct a set of getter functions
         // for each variant
-        let getters: Vec<_> = construct_getters(&variants, &name, &enum_ident);
-        let setters: Vec<_> = construct_setters(&variants, &name, &enum_ident);
+        let getters = construct_getters(&variants, &name, &enum_ident);
+        let setters = construct_setters(&variants, &name, &enum_ident);
+        let props = construct_properties(&variants, &enum_ident);
 
         let gen = quote!{
             impl Atmosphere {
@@ -170,6 +233,7 @@ pub fn ecs_get_set(input: TokenStream) -> TokenStream {
                     #setters
                 )*
             }
+            #props
         };
         //println!("{:#?}", gen);
         return gen.into();

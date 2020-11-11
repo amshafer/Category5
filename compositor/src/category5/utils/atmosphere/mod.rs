@@ -46,36 +46,6 @@ enum GlobalProperty {
     focus(Option<WindowId>),
 }
 
-// Declare constants for the property ids. This prevents us
-// from having to make an instance of the enum that we would
-// have to call get_property_id on
-impl GlobalProperty {
-    const CURSOR_POS: PropertyId = 0;
-    const RESOLUTION: PropertyId = 1;
-    const GRABBED: PropertyId = 2;
-    const RESIZING: PropertyId = 3;
-    const FOCUS: PropertyId = 4;
-    // MUST be the last one
-    const VARIANT_LEN: PropertyId = 5;
-}
-
-impl Property for GlobalProperty {
-    // Get a unique Id
-    fn get_property_id(&self) -> PropertyId {
-        match self {
-            Self::cursor_pos(_, _) => Self::CURSOR_POS,
-            Self::resolution(_, _) => Self::RESOLUTION,
-            Self::grabbed(_) => Self::GRABBED,
-            Self::resizing(_) => Self::RESIZING,
-            Self::focus(_) => Self::FOCUS,
-        }
-    }
-
-    fn variant_len() -> u32 {
-        return Self::VARIANT_LEN as u32;
-    }
-}
-
 // These are indexed by ClientId
 #[derive(Clone, Debug, AtmosECSGetSet)]
 enum ClientProperty {
@@ -83,26 +53,6 @@ enum ClientProperty {
     client_in_use(bool),
     // window ids belonging to this client
     windows_for_client(Vec<WindowId>),
-}
-
-impl ClientProperty {
-    const CLIENT_IN_USE: PropertyId = 0;
-    const WINDOWS_FOR_CLIENT: PropertyId = 1;
-    const VARIANT_LEN: PropertyId = 2;
-}
-
-impl Property for ClientProperty {
-    // Get a unique Id
-    fn get_property_id(&self) -> PropertyId {
-        match self {
-            Self::client_in_use(_) => Self::CLIENT_IN_USE,
-            Self::windows_for_client(_)=> Self::WINDOWS_FOR_CLIENT,
-        }
-    }
-
-    fn variant_len() -> u32 {
-        return Self::VARIANT_LEN as u32;
-    }
 }
 
 // These are indexed by WindowId
@@ -145,46 +95,6 @@ enum WindowProperty {
     // If this is a subsurface of another window
     // aka not a toplevel
     parent_window(Option<WindowId>),
-}
-
-impl WindowProperty {
-    const WINDOW_IN_USE: PropertyId = 0;
-    const OWNER: PropertyId = 1;
-    const TOPLEVEL: PropertyId = 2;
-    const WINDOW_POS: PropertyId = 3;
-    const WINDOW_SIZE: PropertyId = 4;
-    const SURFACE_POS: PropertyId = 5;
-    const SURFACE_SIZE: PropertyId = 6;
-    const SKIPLIST_NEXT: PropertyId = 7;
-    const SKIPLIST_PREV: PropertyId = 8;
-    const SKIPLIST_SKIP: PropertyId = 9;
-    const TOP_CHILD: PropertyId = 10;
-    const PARENT_WINDOW: PropertyId = 11;
-    const VARIANT_LEN: PropertyId = 12;
-}
-
-impl Property for WindowProperty {
-    // Get a unique Id
-    fn get_property_id(&self) -> PropertyId {
-        match self {
-            Self::window_in_use(_) => Self::WINDOW_IN_USE,
-            Self::owner(_) => Self::OWNER,
-            Self::toplevel(_)=> Self::TOPLEVEL,
-            Self::window_pos(_,_)=> Self::WINDOW_POS,
-            Self::window_size(_,_)=> Self::WINDOW_SIZE,
-            Self::surface_pos(_,_)=> Self::SURFACE_POS,
-            Self::surface_size(_,_)=> Self::SURFACE_SIZE,
-            Self::skiplist_next(_)=> Self::SKIPLIST_NEXT,
-            Self::skiplist_prev(_)=> Self::SKIPLIST_PREV,
-            Self::skiplist_skip(_)=> Self::SKIPLIST_SKIP,
-            Self::top_child(_)=> Self::TOP_CHILD,
-            Self::parent_window(_)=> Self::PARENT_WINDOW,
-        }
-    }
-
-    fn variant_len() -> u32 {
-        return Self::VARIANT_LEN as u32;
-    }
 }
 
 // per-surface private data
