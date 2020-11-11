@@ -901,6 +901,11 @@ impl Atmosphere {
                                  width: f32,
                                  height: f32)
     {
+        log!(
+            LogLevel::debug,
+            "atmos.set_window_dimensions: win {:?} set to ({},{}), {}x{}",
+            id, x, y, width, height,
+        );
         self.set_window_prop(id,
                              &WindowProperty::window_dimensions(
                                  x, y, width, height,
@@ -914,6 +919,11 @@ impl Atmosphere {
                             width: f32,
                             height: f32)
     {
+        log!(
+            LogLevel::debug,
+            "atmos.set_window_size: win {:?} set to {}x{}",
+            id, width, height,
+        );
         let mut pos = self.get_window_dimensions(id);
         pos.2 = width;
         pos.3 = height;

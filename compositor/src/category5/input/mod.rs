@@ -515,13 +515,15 @@ impl Input {
                 // if on one of the edges start a resize
                 if let Some(surf) = atmos.get_surface_from_id(id) {
                     match &surf.borrow_mut().s_role {
-                        Some(Role::xdg_shell_toplevel(_)) => {
+                        Some(Role::xdg_shell_toplevel(ss)) => {
                             match c.c_state {
                                 // The release is handled above
                                 ButtonState::Released => {
                                     log!(LogLevel::debug,
                                          "Stopping resize of {:?}", id);
                                     atmos.set_resizing(None);
+                                    ss.borrow_mut()
+                                        .ss_cur_tlstate.tl_resizing = false;
                                     // TODO: send final configure here?
                                 },
                                 // this should never be pressed
@@ -555,12 +557,14 @@ impl Input {
                 // if on one of the edges start a resize
                 if let Some(surf) = atmos.get_surface_from_id(id) {
                     match &surf.borrow_mut().s_role {
-                        Some(Role::xdg_shell_toplevel(_)) => {
+                        Some(Role::xdg_shell_toplevel(ss)) => {
                             match c.c_state {
                                 ButtonState::Pressed => {
                                     log!(LogLevel::debug,
                                          "Resizing window {:?}", id);
                                     atmos.set_resizing(Some(id));
+                                    ss.borrow_mut()
+                                        .ss_cur_tlstate.tl_resizing = true;
                                 },
                                 // releasing is handled above
                                 _ => (),

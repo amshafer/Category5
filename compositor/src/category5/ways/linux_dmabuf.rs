@@ -88,8 +88,10 @@ impl Params {
                                            height,
                                            format,
                                            flags } => {
-                log!(LogLevel::profiling,
+                log!(LogLevel::debug,
                      "linux_dmabuf_params: Creating a new wl_buffer");
+                log!(LogLevel::debug,
+                     "                     of size {}x{}", width, height);
 
                 // TODO
                 // for now just only assign the first dmabuf

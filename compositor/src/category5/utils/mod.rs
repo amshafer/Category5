@@ -4,6 +4,7 @@
 pub mod timing;
 #[macro_use]
 pub mod logging;
+pub mod log_prelude;
 pub mod atmosphere;
 pub mod fdwatch;
 pub mod region;

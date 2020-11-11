@@ -63,7 +63,10 @@ impl fmt::Debug for UpdateWindowContentsFromMem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("UpdateWindowContentsFromMem")
             .field("id", &format!("{:?}", self.id))
-            .field("ufm_wl_buffer", &"<wl_buffer omitted>".to_string())
+            .field("width", &format!("{:?}", self.width))
+            .field("height", &format!("{:?}", self.height))
+            .field("pixels", &"<MemImage omitted>".to_string())
+            .field("ufd_wl_buffer", &"<wl_buffer omitted>".to_string())
             .finish()
     }
 }

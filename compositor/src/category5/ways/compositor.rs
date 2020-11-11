@@ -93,13 +93,13 @@ impl Compositor {
     // hooks up our surface handler. See the surface
     // module
     pub fn create_surface(&mut self, surf: Main<wlsi::WlSurface>) {
-        log!(LogLevel::debug, "Creating a new surface");
         let client = utils::get_id_from_client(
             self.c_atmos.clone(),
             surf.as_ref().client()
                 .expect("client for this surface seems to have disappeared")
         );
         let id = self.c_atmos.borrow_mut().mint_window_id(client);
+        log!(LogLevel::debug, "Creating new surface {:?}", id);
 
         // Create a reference counted object
         // in charge of this new surface
@@ -435,9 +435,11 @@ impl EventManager {
                     log!(LogLevel::profiling, "finished frame");
                     if needs_send {
                         needs_send = false;
+                        log!(LogLevel::debug, "_____________________________ SENT HEMI");
                         self.em_atmos.borrow_mut().send_hemisphere(); 
                     }
                     if self.em_atmos.borrow_mut().recv_hemisphere() {
+                        log!(LogLevel::debug, "_____________________________ RECV HEMI");
                         // reset our timer
                         tm.reset();
                         needs_send = true;

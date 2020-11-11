@@ -8,6 +8,7 @@ extern crate wayland_server as ws;
 
 use ws::protocol::{wl_shm, wl_shm_pool};
 
+use crate::category5::utils::log_prelude::*;
 use crate::category5::utils::*;
 
 use std::rc::Rc;
@@ -203,6 +204,8 @@ pub fn shm_pool_handle_request(req: wl_shm_pool::Request,
                 sb_stride: stride,
                 sb_format: format,
             };
+            log!(LogLevel::debug, "Created new shm buf with size {}x{}",
+                 width, height);
 
             // We still need to register a void callback
             buffer.quick_assign(|_, _, _| {});

@@ -209,6 +209,8 @@ impl WindowManager {
     fn update_window_contents_from_dmabuf(&mut self,
                                           info: &UpdateWindowContentsFromDmabuf)
     {
+        log!(LogLevel::error, "Updating window {:?} with {:#?}",
+             info.ufd_id, info);
         // Find the app corresponding to that window id
         let app = match self.apps
             .iter_mut()
@@ -252,6 +254,8 @@ impl WindowManager {
     fn update_window_contents_from_mem(&mut self,
                                        info: &UpdateWindowContentsFromMem)
     {
+        log!(LogLevel::error, "Updating window {:?} with {:#?}",
+             info.id, info);
         // Find the app corresponding to that window id
         let app = match self.apps
             .iter_mut()
@@ -564,6 +568,7 @@ impl WindowManager {
             }
 
             // start recording how much time we spent doing graphics
+            log!(LogLevel::debug, "_____________________________ FRAME BEGIN");
             draw_stop.start();
 
             // get the next frame to draw into
@@ -575,6 +580,7 @@ impl WindowManager {
             // present our frame
             self.end_frame();
             draw_stop.end();
+            log!(LogLevel::debug, "_____________________________ FRAME END");
 
             log!(LogLevel::profiling, "spent {} ms drawing this frame",
                  draw_stop.get_duration().as_millis());
