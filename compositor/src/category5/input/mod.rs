@@ -357,7 +357,7 @@ impl Input {
                     keyboard.enter(
                         seat.s_serial,
                         &surf,
-                        Vec::new(),
+                        Vec::new(), // TODO: update modifiers if needed
                     );
                 }
             }

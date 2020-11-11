@@ -101,7 +101,25 @@ impl Seat {
         );
 
         // add the keyboard to this seat
-        self.s_keyboard = Some(keyboard);
+        self.s_keyboard = Some(keyboard.clone());
+
+        // If we are in focus, then we should go ahead and generate
+        // the enter event
+        let atmos = input.i_atmos.borrow();
+        if let Some(focus) = atmos.get_client_in_focus() {
+            if self.s_id == focus {
+                if let Some(sid) = atmos.get_window_in_focus() {
+                    if let Some(surf) = atmos.get_wl_surface_from_id(sid) {
+                        // TODO: use Input::keyboard_enter and fix the refcell order
+                        keyboard.enter(
+                            self.s_serial,
+                            &surf,
+                            Vec::new(), // TODO: update modifiers if needed
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Register a wl_pointer to this seat
