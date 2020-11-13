@@ -534,15 +534,25 @@ impl ShellSurface {
     ///     general not alter the position of the window.
     ///
     /// I think this means to just ignore x and y, and handle movement elsewhere
-    fn set_win_geom(&mut self, _x: i32, _y: i32, width: i32, height: i32) {
+    fn set_win_geom(&mut self, x: i32, y: i32, width: i32, height: i32) {
+        let atmos_cell = self.ss_atmos.clone();
+        let surf_cell = self.ss_surface.clone();
+        let mut atmos = atmos_cell.borrow_mut();
+        let mut surf = surf_cell.borrow_mut();
+
+        // we need to update the *window* position
+        // to be an offset from the base surface position
+        let mut surf_pos = atmos.get_surface_pos(surf.s_id);
+        surf_pos.0 += x as f32;
+        surf_pos.1 += y as f32;
+        atmos.set_window_pos(surf.s_id, surf_pos.0, surf_pos.0);
+
         self.ss_xs.xs_size = Some((width, height));
         // Go ahead and generate a configure event.
         // If this is called by the client, we need to trigger an event
         // manually TODO?
-        let atmos = self.ss_atmos.clone();
-        let surf = self.ss_surface.clone();
-        self.configure(&mut atmos.borrow_mut(),
-                       &mut surf.borrow_mut(),
+        self.configure(&mut atmos,
+                       &mut surf,
                        None);
     }
 

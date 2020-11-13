@@ -483,7 +483,9 @@ impl Atmosphere {
         self.set_owner(id, owner);
         self.set_window_in_use(id, true);
         self.set_toplevel(id, is_toplevel);
+        self.set_surface_pos(id, 0.0, 0.0 + barsize);
         self.set_window_pos(id, 0.0, 0.0 + barsize);
+        self.set_surface_size(id, 640.0, 480.0);
         self.set_window_size(id, 640.0, 480.0);
 
         // make this the new toplevel window
@@ -631,8 +633,8 @@ impl Atmosphere {
                                  -> Option<(f64, f64)>
     {
         // get the surface-local position
-        let (wx, wy) = self.get_window_pos(id);
-        let (ww, wh) = self.get_window_size(id);
+        let (wx, wy) = self.get_surface_pos(id);
+        let (ww, wh) = self.get_surface_size(id);
 
         // offset into the surface
         let (sx, sy) = (x - wx as f64, y - wy as f64);

@@ -307,8 +307,8 @@ impl WindowManager {
         let barsize = self.wm_atmos.get_barsize();
         // The dotsize should be just slightly smaller
         let dotsize = barsize * 0.95;
-        let window_pos = self.wm_atmos.get_window_pos(a.id);
-        let window_size = self.wm_atmos.get_window_size(a.id);
+        let surface_pos = self.wm_atmos.get_surface_pos(a.id);
+        let surface_size = self.wm_atmos.get_surface_size(a.id);
         // Convert the order into a float from 0.0 to 1.0
         let order_depth = ((order + 1) as f32) / 100.0;
 
@@ -320,11 +320,11 @@ impl WindowManager {
             let push = PushConstants {
                 order: order_depth - 0.001, // depth
                 // align it at the top right
-                x: window_pos.0,
+                x: surface_pos.0,
                 // draw the bar above the window
-                y: window_pos.1 - barsize,
+                y: surface_pos.1 - barsize,
                 // the bar is as wide as the window
-                width: window_size.0,
+                width: surface_size.0,
                 // use a percentage of the screen size
                 height: barsize,
             };
@@ -337,12 +337,12 @@ impl WindowManager {
                 order: order_depth - 0.002, // depth
                 // the x position needs to be all the way to the
                 // right side of the bar
-                x: window_pos.0
+                x: surface_pos.0
                 // Multiply by 2 (see vert shader for details)
-                    + window_size.0
+                    + surface_size.0
                 // we don't want to go past the end of the bar
                     - barsize,
-                y: window_pos.1 - barsize,
+                y: surface_pos.1 - barsize,
                 // align it at the top right
                 width: dotsize,
                 height: dotsize,
@@ -359,11 +359,11 @@ impl WindowManager {
             // TODO: else draw blank mesh?
             let push = PushConstants {
                 order: order_depth, // depth
-                x: window_pos.0,
-                y: window_pos.1,
+                x: surface_pos.0,
+                y: surface_pos.1,
                 // align it at the top right
-                width: window_size.0,
-                height: window_size.1,
+                width: surface_size.0,
+                height: surface_size.1,
             };
             mesh.record_draw(&self.rend, params, &push);
         }

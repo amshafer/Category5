@@ -196,7 +196,10 @@ impl Surface {
             .as_ref()
             .user_data();
 
-        if let Some(dmabuf) = userdata.get::<Dmabuf>() {
+        // Add tasks that tell the compositor to import this buffer
+        // so it is usable in vulkan. Also return the size of the buffer
+        // so we can set the surface size
+        let surf_size = if let Some(dmabuf) = userdata.get::<Dmabuf>() {
             atmos.add_wm_task(
                 wm::task::Task::update_window_contents_from_dmabuf(
                     self.s_id, // ID of the new window
@@ -205,6 +208,7 @@ impl Surface {
                     self.s_committed_buffer.as_ref().unwrap().clone(),
                 )
             );
+            (dmabuf.db_width as f32, dmabuf.db_height as f32)
         } else if let Some(shm_buf) = userdata.get::<ShmBuffer>() {
             // ShmBuffer holds the base pointer and an offset, so
             // we need to get the actual pointer, which will be
@@ -222,7 +226,15 @@ impl Surface {
                     shm_buf.sb_height as usize,
                 )
             );
-        }
+            (shm_buf.sb_width as f32, shm_buf.sb_height as f32)
+        } else {
+            panic!("Could not find dmabuf or shmbuf private data for wl_buffer");
+        };
+
+        // update the surface size of this id so that vkcomp knows what
+        // size of buffer it is compositing
+        atmos.set_surface_size(self.s_id, surf_size.0, surf_size.1);
+
         // Make sure to unmark this before returning
         self.s_commit_in_progress = false;
     }

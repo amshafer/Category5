@@ -124,7 +124,7 @@ impl SubSurface {
 
         // set_position request
         if let Some((x, y)) = self.ss_position {
-            atmos.set_window_pos(id, x, y);
+            atmos.set_surface_pos(id, x, y);
         }
         self.ss_position = None;
 
