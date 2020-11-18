@@ -145,6 +145,7 @@ pub struct Dmabuf {
     // These will be added later during creation
     pub db_width: i32,
     pub db_height: i32,
+    pub db_mods: u64,
 }
 
 // Dmabuf release info
@@ -185,7 +186,8 @@ impl Dmabuf {
     pub fn new(fd: RawFd,
                plane: u32,
                offset: u32,
-               stride: u32)
+               stride: u32,
+               mods: u64)
                -> Dmabuf
     {
         Dmabuf {
@@ -196,6 +198,7 @@ impl Dmabuf {
             // these will be added later during creation
             db_width: -1,
             db_height: -1,
+            db_mods: mods,
         }
     }
 }

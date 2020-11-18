@@ -13,11 +13,12 @@ use crate::category5::utils::{
 
 use crate::category5::utils::*;
 use super::*;
+use std::iter;
 
 use nix::Error;
 use nix::errno::Errno;
 use nix::unistd::dup;
-use ash::version::{DeviceV1_0};
+use ash::version::{DeviceV1_0,InstanceV1_1};
 use ash::vk;
 
 // A single 3D object, stored in indexed vertex form
@@ -188,12 +189,66 @@ impl Mesh {
         log!(LogLevel::profiling, "Creating mesh from dmabuf {:?}", dmabuf);
         // A lot of this is duplicated from Renderer::create_image
         unsafe {
+            // According to the mesa source, this supports all modifiers
+            let target_format = vk::Format::B8G8R8A8_SRGB;
+            // get_physical_device_format_properties2
+            let mut format_props = vk::FormatProperties2::builder()
+                .build();
+            let mut drm_fmt_props = vk::DrmFormatModifierPropertiesListEXT::builder()
+                .build();
+            format_props.p_next = &drm_fmt_props
+                as *const _ as *mut std::ffi::c_void;
+
+            // get the number of drm format mods props
+            rend.inst.get_physical_device_format_properties2(
+                rend.pdev, target_format, &mut format_props,
+            );
+            let mut mods: Vec<_> =
+                iter::repeat(vk::DrmFormatModifierPropertiesEXT::default())
+                .take(drm_fmt_props.drm_format_modifier_count as usize)
+                .collect();
+
+            drm_fmt_props.p_drm_format_modifier_properties = mods.as_mut_ptr();
+            rend.inst.get_physical_device_format_properties2(
+                rend.pdev, target_format, &mut format_props,
+            );
+
+            for m in mods.iter() {
+                log!(LogLevel::debug, "dmabuf {} found mod {:#?}",
+                     dmabuf.db_fd, m);
+            }
+
+            // the parameters to use for image creation
+            let mut img_fmt_info = vk::PhysicalDeviceImageFormatInfo2::builder()
+                .format(target_format)
+                .ty(vk::ImageType::TYPE_2D)
+                .usage(vk::ImageUsageFlags::SAMPLED)
+                .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
+                .build();
+            let drm_img_props =
+                vk::PhysicalDeviceImageDrmFormatModifierInfoEXT::builder()
+                .drm_format_modifier(dmabuf.db_mods)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                .queue_family_indices(&[rend.graphics_family_index])
+                .build();
+            img_fmt_info.p_next = &drm_img_props
+                as *const _ as *mut std::ffi::c_void;
+            // the returned properties
+            // the dimensions of the image will be returned here
+            let mut img_fmt_props = vk::ImageFormatProperties2::builder()
+                .build();
+            rend.inst.get_physical_device_image_format_properties2(
+                rend.pdev, &img_fmt_info, &mut img_fmt_props,
+            ).unwrap();
+            log!(LogLevel::debug, "dmabuf {} image format properties {:#?} {:#?}",
+                 dmabuf.db_fd, img_fmt_props, drm_img_props);
+
             // we create the image now, but will have to bind
             // some memory to it later.
-            let image_info = vk::ImageCreateInfo::builder()
+            let mut image_info = vk::ImageCreateInfo::builder()
                 .image_type(vk::ImageType::TYPE_2D)
                 // TODO: add other formats
-                .format(vk::Format::R8G8B8A8_SRGB)
+                .format(target_format)
                 .extent(vk::Extent3D {
                     width: dmabuf.db_width as u32,
                     height: dmabuf.db_height as u32,
@@ -203,9 +258,37 @@ impl Mesh {
                 .array_layers(1)
                 .samples(vk::SampleCountFlags::TYPE_1)
                 // we are only doing the linear format for now
-                .tiling(vk::ImageTiling::LINEAR)
+                .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
                 .usage(vk::ImageUsageFlags::SAMPLED)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
+            let mut ext_mem_info = vk::ExternalMemoryImageCreateInfo::builder()
+                .handle_types(vk::ExternalMemoryHandleTypeFlags
+                              ::EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF)
+                .build();
+            // ???: Mesa doesn't use this one?
+            // let drm_create_info =
+            //     vk::ImageDrmFormatModifierExplicitCreateInfoEXT::builder()
+            //     .drm_format_modifier(dmabuf.db_mods)
+            //     .plane_layouts(&[
+            //         vk::SubresourceLayout::builder()
+            //             .size(
+            //                 (dmabuf.db_stride * dmabuf.db_height as u32) as u64
+            //             )
+            //             .row_pitch(
+            //                 dmabuf.db_stride as u64
+            //                     - (dmabuf.db_width * 4) as u64
+            //             )
+            //             .build()
+            //     ])
+            //     .build();
+            let drm_create_info =
+                vk::ImageDrmFormatModifierListCreateInfoEXT::builder()
+                .drm_format_modifiers(&[dmabuf.db_mods])
+                .build();
+            ext_mem_info.p_next = &drm_create_info
+                as *const _ as *mut std::ffi::c_void;
+            image_info.p_next = &ext_mem_info
+                as *const _ as *mut std::ffi::c_void;
             let image = rend.dev.create_image(&image_info, None).unwrap();
 
             // we need to find a memory type that matches the type our

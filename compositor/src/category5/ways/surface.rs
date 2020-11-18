@@ -168,23 +168,6 @@ impl Surface {
         // now we can commit the attached state
         self.s_committed_buffer = self.s_attached_buffer.take();
 
-        // Commit any role state before we do our thing
-        match &self.s_role {
-            Some(Role::xdg_shell_toplevel(xs)) =>
-                xs.borrow_mut().commit(&self, &mut atmos),
-            Some(Role::xdg_shell_popup(xs)) =>
-                xs.borrow_mut().commit(&self, &mut atmos),
-            Some(Role::wl_shell_toplevel) => {},
-            Some(Role::subsurface(ss)) =>
-                ss.borrow_mut().commit(),
-            // if we don't have an assigned role, avoid doing
-            // any real work
-            None => {
-                self.s_commit_in_progress = false;
-                return;
-            },
-        }
-
         // We need to do different things depending on the
         // type of buffer attached. We detect the type by
         // trying to extract different types of userdat
@@ -231,8 +214,30 @@ impl Surface {
             panic!("Could not find dmabuf or shmbuf private data for wl_buffer");
         };
 
+        // Commit any role state before we do our thing
+        match &self.s_role {
+            Some(Role::xdg_shell_toplevel(xs)) =>
+                xs.borrow_mut().commit(&self, &mut atmos),
+            Some(Role::xdg_shell_popup(xs)) =>
+                xs.borrow_mut().commit(&self, &mut atmos),
+            Some(Role::wl_shell_toplevel) =>
+                atmos.set_window_size(self.s_id, surf_size.0, surf_size.1),
+            Some(Role::subsurface(ss)) =>
+                ss.borrow_mut().commit(),
+            // if we don't have an assigned role, avoid doing
+            // any real work
+            None => {
+                self.s_commit_in_progress = false;
+                return;
+            },
+        }
+
         // update the surface size of this id so that vkcomp knows what
         // size of buffer it is compositing
+        let win_size = atmos.get_window_size(self.s_id);
+        log!(LogLevel::debug,
+             "surf {:?}: new sizes are winsize={}x{} surfsize={}x{}",
+             self.s_id, win_size.0, win_size.1, surf_size.0, surf_size.1);
         atmos.set_surface_size(self.s_id, surf_size.0, surf_size.1);
 
         // Make sure to unmark this before returning

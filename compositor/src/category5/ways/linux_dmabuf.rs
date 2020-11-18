@@ -47,12 +47,11 @@ pub fn linux_dmabuf_setup(dma: Main<zldv1::ZwpLinuxDmabufV1>) {
 
     // The above format events are implicitly ignored by mesa,
     // these modifier events do the real work
-    dma.modifier(WL_DRM_FORMAT_XRGB8888,
-                 DRM_FORMAT_MOD_INVALID_HI,
-                 DRM_FORMAT_MOD_INVALID_LOW);
-    dma.modifier(WL_DRM_FORMAT_ARGB8888,
-                 DRM_FORMAT_MOD_INVALID_HI,
-                 DRM_FORMAT_MOD_INVALID_LOW);
+    //
+    // Sending zeroe as the modifier bits is the linear
+    // drm format
+    dma.modifier(WL_DRM_FORMAT_XRGB8888, 0, 0);
+    dma.modifier(WL_DRM_FORMAT_ARGB8888, 0, 0);
 }
 
 
@@ -134,10 +133,13 @@ impl Params {
            plane_idx: u32,
            offset: u32,
            stride: u32,
-           _mod_hi: u32,
-           _mod_low: u32) {
-        let d = Dmabuf::new(fd, plane_idx, offset, stride);
-        log!(LogLevel::profiling, "linux_dmabuf_params:Adding {:?}", d);
+           mod_hi: u32,
+           mod_low: u32) {
+        let d = Dmabuf::new(
+            fd, plane_idx, offset, stride,
+            (mod_hi as u64) << 32 | (mod_low as u64)
+        );
+        log!(LogLevel::profiling, "linux_dmabuf_params:Adding {:#?}", d);
         self.p_bufs.push(d);
     }
 }
