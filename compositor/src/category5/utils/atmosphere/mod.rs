@@ -592,8 +592,8 @@ impl Atmosphere {
         let barsize = self.get_barsize();
 
         for win in self.visible_windows() {
-            let (wx, wy) = self.get_window_pos(win);
-            let (ww, wh) = self.get_window_size(win);
+            let (wx, wy) = self.get_surface_pos(win);
+            let (ww, wh) = self.get_surface_size(win);
 
             // If this window contains (x, y) then return it
             if x > wx && y > (wy - barsize)
@@ -614,13 +614,13 @@ impl Atmosphere {
                           -> bool
     {
         let barsize = self.get_barsize();
-        let (wx, wy) = self.get_window_pos(id);
-        let (ww, wh) = self.get_window_size(id);
+        let (wx, wy) = self.get_surface_pos(id);
+        let (ww, wh) = self.get_surface_size(id);
 
         // If this window contains (x, y) then return it
         if x > wx && y > (wy - barsize)
             && x < (wx + ww)
-            && y < wh
+            && y < (wy + wh)
         {
             return true;
         }
@@ -653,8 +653,9 @@ impl Atmosphere {
                                    -> ResizeEdge
     {
         let barsize = self.get_barsize();
-        let (wx, wy) = self.get_window_pos(id);
-        let (ww, wh) = self.get_window_size(id);
+        // TODO: how should this be done with xdg-decoration?
+        let (wx, wy) = self.get_surface_pos(id);
+        let (ww, wh) = self.get_surface_size(id);
         let prox = 3.0; // TODO find a better val for this??
 
         // is (x,y) inside each dimension of the window
@@ -718,11 +719,16 @@ impl Atmosphere {
             None => return,
         };
 
+        // Need to update both the surface and window positions
         let mut gpos = self.get_window_pos(grabbed);
         gpos.0 += dx as f32;
         gpos.1 += dy as f32;
-
         self.set_window_pos(grabbed, gpos.0, gpos.1);
+
+        let mut gpos = self.get_surface_pos(grabbed);
+        gpos.0 += dx as f32;
+        gpos.1 += dy as f32;
+        self.set_surface_pos(grabbed, gpos.0, gpos.1);
     }
 
     // -- subsystem specific handlers --
