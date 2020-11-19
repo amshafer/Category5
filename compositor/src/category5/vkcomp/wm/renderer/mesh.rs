@@ -446,6 +446,10 @@ impl Mesh {
     {
         if let MeshPrivate::mem_image(mp) = &mut self.m_priv {
             unsafe {
+                log!(LogLevel::debug,
+                     "update_fr_mem_img: new img is {}x{} and image_resolution is {:?}",
+                     img.width, img.height,
+                     self.image_resolution);
                 // resize the transfer mem if needed
                 if img.width != self.image_resolution.width as usize
                     || img.height != self.image_resolution.height as usize
@@ -464,6 +468,10 @@ impl Mesh {
                         transfer_buf: buffer,
                         transfer_mem: buf_mem,
                     };
+
+                    // update our mesh's resolution
+                    self.image_resolution.width = img.width as u32;
+                    self.image_resolution.height = img.height as u32;
                 } else {
                     // copy the data into the staging buffer
                     rend.update_memory(mp.transfer_mem,
