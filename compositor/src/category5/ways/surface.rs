@@ -13,6 +13,7 @@ use ws::protocol::{
     wl_callback,
     wl_surface,
     wl_output,
+    wl_region,
 };
 
 use crate::log;
@@ -25,31 +26,37 @@ use super::wl_region::Region;
 use std::rc::Rc;
 use std::cell::RefCell;
 
-// Private structure for a wayland surface
-//
-// A surface represents a visible area on screen. Desktop organization
-// effects and other transformations are taken care of by a 'shell'
-// interface, not this. A surface will have a buffer attached to it which
-// will be displayed to the client when it is committed.
+/// Private structure for a wayland surface
+///
+/// A surface represents a visible area on screen. Desktop organization
+/// effects and other transformations are taken care of by a 'shell'
+/// interface, not this. A surface will have a buffer attached to it which
+/// will be displayed to the client when it is committed.
 #[allow(dead_code)]
 pub struct Surface {
     pub s_atmos: Rc<RefCell<Atmosphere>>,
     pub s_surf: Main<wl_surface::WlSurface>,
     pub s_id: WindowId, // The id of the window in the renderer
-    // The currently attached buffer. Will be displayed on commit
-    // When the window is created a buffer is not assigned, hence the option
+    /// The currently attached buffer. Will be displayed on commit
+    /// When the window is created a buffer is not assigned, hence the option
     s_attached_buffer: Option<wl_buffer::WlBuffer>,
-    // the s_attached_buffer is moved here to signify that we can draw
-    // with it.
+    /// the s_attached_buffer is moved here to signify that we can draw
+    /// with it.
     pub s_committed_buffer: Option<wl_buffer::WlBuffer>,
-    // Frame callback
-    // This is a power saving feature, we will signal this when the
-    // client should redraw this surface
-    pub s_frame_callback: Option<Main<wl_callback::WlCallback>>,
-    // How this surface is being used
+    /// Frame callback
+    /// This is a power saving feature, we will signal this when the
+    /// client should redraw this surface
+    pub s_frame_callbacks: Vec<Main<wl_callback::WlCallback>>,
+    /// How this surface is being used
     pub s_role: Option<Role>,
-    // Are we currently committing this surface?
+    /// Are we currently committing this surface?
     pub s_commit_in_progress: bool,
+    /// The opaque region.
+    /// vkcomp can optimize displaying this region
+    pub s_opaque: Option<Rc<RefCell<Region>>>,
+    /// The input region.
+    /// Input events will only be delivered if this region is in focus
+    pub s_input: Option<Rc<RefCell<Region>>>,
 }
 
 impl Surface {
@@ -66,9 +73,26 @@ impl Surface {
             s_id: id,
             s_attached_buffer: None,
             s_committed_buffer: None,
-            s_frame_callback: None,
+            s_frame_callbacks: Vec::new(),
             s_role: None,
+            s_opaque: None,
+            s_input: None,
             s_commit_in_progress: false,
+        }
+    }
+
+    fn get_priv_from_region(&self,
+                            reg: Option<wl_region::WlRegion>)
+                            -> Option<Rc<RefCell<Region>>>
+    {
+        match reg {
+            Some(r) => Some(
+                r.as_ref().user_data()
+                    .get::<Rc<RefCell<Region>>>()
+                    .unwrap()
+                    .clone()
+            ),
+            None => None
         }
     }
 
@@ -90,24 +114,14 @@ impl Surface {
             wlsi::Request::Damage { x, y, width, height } => {},
             wlsi::Request::DamageBuffer { x, y, width, height } => {},
             wlsi::Request::SetOpaqueRegion { region } => {
-                let reg = region.as_ref().unwrap()
-                    .as_ref().user_data()
-                    .get::<Rc<RefCell<Region>>>()
-                    .unwrap()
-                    .clone();
-                let r = reg.borrow();
+                self.s_opaque = self.get_priv_from_region(region);
                 log!(LogLevel::debug, "Surface {:?}: Attaching opaque region {:?}",
-                     self.s_id, r);
+                     self.s_id, self.s_opaque);
             },
             wlsi::Request::SetInputRegion { region } => {
-                let reg = region.as_ref().unwrap()
-                    .as_ref().user_data()
-                    .get::<Rc<RefCell<Region>>>()
-                    .unwrap()
-                    .clone();
-                let r = reg.borrow();
+                self.s_input = self.get_priv_from_region(region);
                 log!(LogLevel::debug, "Surface {:?}: Attaching input region {:?}",
-                     self.s_id, r);
+                     self.s_id, self.s_input);
             },
             wlsi::Request::Frame { callback } =>
                 self.frame(callback),
@@ -253,7 +267,7 @@ impl Surface {
     fn frame(&mut self, callback: Main<wl_callback::WlCallback>) {
         // Add this call to our current state, which will
         // be called at the appropriate time
-        self.s_frame_callback = Some(callback);
+        self.s_frame_callbacks.push(callback);
     }
 
 

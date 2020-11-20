@@ -814,14 +814,20 @@ impl Atmosphere {
             if let Some(Priv::surface(Some(cell))) = self.a_window_priv
                 .get(id, Priv::SURFACE)
             {
-                let surf = cell.borrow_mut();
-                if let Some(callback) = surf.s_frame_callback.as_ref() {
-                    // frame callbacks return the current time
-                    // in milliseconds.
-                    callback.done(SystemTime::now()
-                                  .duration_since(UNIX_EPOCH)
-                                  .expect("Error getting system time")
-                                  .as_millis() as u32);
+                let mut surf = cell.borrow_mut();
+                if surf.s_frame_callbacks.len() > 0 {
+                    // frame callbacks are signaled in the order that they
+                    // were submitted in
+                    for callback in surf.s_frame_callbacks.iter() {
+                        // frame callbacks return the current time
+                        // in milliseconds.
+                        callback.done(SystemTime::now()
+                                      .duration_since(UNIX_EPOCH)
+                                      .expect("Error getting system time")
+                                      .as_millis() as u32);
+                    }
+
+                    surf.s_frame_callbacks.clear();
                 }
             }
         }

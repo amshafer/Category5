@@ -107,10 +107,6 @@ impl Mesh {
                 height: img.height as u32,
             };
 
-            // TODO: make this cached in Renderer
-            let mem_props = Renderer::get_pdev_mem_properties(&rend.inst,
-                                                              rend.pdev);
-
             // The image is created with DEVICE_LOCAL memory types,
             // so we need to make a staging buffer to copy the data from.
             let (buffer, buf_mem) = rend.create_buffer(
@@ -126,7 +122,6 @@ impl Mesh {
             // TODO: this should eventually just use the image reported from
             // wayland.
             let (image, view, img_mem) = rend.create_image_with_contents(
-                &mem_props,
                 &tex_res,
                 vk::Format::R8G8B8A8_SRGB,
                 vk::ImageUsageFlags::SAMPLED
@@ -454,7 +449,8 @@ impl Mesh {
                 if img.width != self.image_resolution.width as usize
                     || img.height != self.image_resolution.height as usize
                 {
-                    // Out with the old
+                    // Out with the old TODO: make this a drop impl
+                    rend.dev.destroy_buffer(mp.transfer_buf, None);
                     rend.free_memory(mp.transfer_mem);
                     // in with the new
                     let (buffer, buf_mem) = rend.create_buffer(
@@ -472,18 +468,38 @@ impl Mesh {
                     // update our mesh's resolution
                     self.image_resolution.width = img.width as u32;
                     self.image_resolution.height = img.height as u32;
+                    rend.dev.free_memory(self.image_mem, None);
+                    rend.dev.destroy_image_view(self.image_view, None);
+                    rend.dev.destroy_image(self.image, None);
+                    // we need to re-create & resize the image since we changed
+                    // the resolution
+                    let (image, view, img_mem) = rend.create_image_with_contents(
+                        &vk::Extent2D {
+                            width: img.width as u32,
+                            height: img.height as u32,
+                        },
+                        vk::Format::R8G8B8A8_SRGB,
+                        vk::ImageUsageFlags::SAMPLED
+                            | vk::ImageUsageFlags::TRANSFER_DST,
+                        vk::ImageAspectFlags::COLOR,
+                        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                        buffer,
+                    );
+                    self.image = image;
+                    self.image_view = view;
+                    self.image_mem = img_mem;
                 } else {
                     // copy the data into the staging buffer
                     rend.update_memory(mp.transfer_mem,
                                        img.as_slice());
+                    // copy the staging buffer into the image
+                    rend.update_image_contents_from_buf(
+                        mp.transfer_buf,
+                        self.image,
+                        self.image_resolution.width,
+                        self.image_resolution.height,
+                    );
                 }
-                // copy the staging buffer into the image
-                rend.update_image_contents_from_buf(
-                    mp.transfer_buf,
-                    self.image,
-                    self.image_resolution.width,
-                    self.image_resolution.height,
-                );
             }
         }
     }

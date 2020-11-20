@@ -105,6 +105,7 @@ pub struct Renderer {
     dev: Device,
     // the physical device selected to display to
     pdev: vk::PhysicalDevice,
+    mem_props: vk::PhysicalDeviceMemoryProperties,
 
     // index into the array of queue families
     graphics_family_index: u32,
@@ -982,7 +983,6 @@ impl Renderer {
     // The resulting image will be in the shader read layout
     unsafe fn create_image_with_contents(
         &mut self,
-        mem_props: &vk::PhysicalDeviceMemoryProperties,
         resolution: &vk::Extent2D,
         format: vk::Format,
         usage: vk::ImageUsageFlags,
@@ -992,7 +992,7 @@ impl Renderer {
         -> (vk::Image, vk::ImageView, vk::DeviceMemory)
     {
         let (image, view, img_mem) = Renderer::create_image(&self.dev,
-                                                            mem_props,
+                                                            &self.mem_props,
                                                             resolution,
                                                             format,
                                                             usage,
@@ -1056,9 +1056,11 @@ impl Renderer {
             let surface_resolution = display.select_resolution(
                 &surface_caps
             );
-            log!(LogLevel::profiling, "Rendering with resolution {:?}", surface_resolution);
+            log!(LogLevel::profiling, "Rendering with resolution {:?}",
+                 surface_resolution);
 
-            let dev = Renderer::create_device(&inst, pdev, &[graphics_queue_family]);
+            let dev = Renderer::create_device(&inst, pdev,
+                                              &[graphics_queue_family]);
             let present_queue = dev.get_device_queue(graphics_queue_family, 0);
             let transfer_queue = dev.get_device_queue(transfer_queue_family, 0);
 
@@ -1122,6 +1124,7 @@ impl Renderer {
                 inst: inst,
                 dev: dev,
                 pdev: pdev,
+                mem_props: mem_props,
                 graphics_family_index: graphics_queue_family,
                 transfer_family_index: transfer_queue_family,
                 present_queue: present_queue,
