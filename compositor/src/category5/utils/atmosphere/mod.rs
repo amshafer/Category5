@@ -615,12 +615,12 @@ impl Atmosphere {
     {
         let barsize = self.get_barsize();
         let (wx, wy) = self.get_surface_pos(id);
-        let (ww, wh) = self.get_surface_size(id);
+        let (ww, _wh) = self.get_surface_size(id);
 
         // If this window contains (x, y) then return it
         if x > wx && y > (wy - barsize)
             && x < (wx + ww)
-            && y < (wy + wh)
+            && y < wy
         {
             return true;
         }
