@@ -85,7 +85,7 @@ impl WindowManager {
     // up all of the titlebars in a scene. These meshes will
     // be colored differently when multidrawn
     fn get_default_titlebar(rend: &mut Renderer) -> Titlebar {
-        let img = image::open("../bar.png").unwrap().to_rgba();
+        let img = image::open("images/bar.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
 
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8,
@@ -99,7 +99,7 @@ impl WindowManager {
             ReleaseInfo::none,
         ).unwrap();
 
-        let img = image::open("../dot.png").unwrap().to_rgba();
+        let img = image::open("images/dot.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8,
                                  4,
@@ -117,7 +117,7 @@ impl WindowManager {
     }
 
     fn get_default_cursor(rend: &mut Renderer) -> Option<Mesh> {
-        let img = image::open("../cursor.png").unwrap().to_rgba();
+        let img = image::open("images/cursor.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8,
                                  4,
@@ -537,7 +537,7 @@ impl WindowManager {
     pub fn worker_thread(&mut self) {
         // first set the background
         let img =
-            image::open("/home/ashafer/git/compositor_playground/hurricane.png")
+            image::open("/home/ashafer/git/compositor_playground/images/hurricane.png")
             .unwrap()
             .to_rgba();
         let pixels: Vec<u8> = img.into_vec();

@@ -1,7 +1,6 @@
-vulkan/target
-input/target
-wayland-server/target
+target
 **/*.rs.bk
+**/*.dir-locals.el
 **/*.core
 **/*~
 **/*.emacs
