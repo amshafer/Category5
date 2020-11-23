@@ -378,19 +378,7 @@ impl WindowManager {
     // params: a private info structure for the Renderer. It holds all
     // the data about what we are recording.
     fn record_draw(&self, params: &RecordParams) {
-        // Each app should have one or more windows,
-        // all of which we need to draw.
-        for (i, id) in self.wm_atmos.visible_windows().enumerate() {
-            // Render any subsurfaces first
-            for (j, sub) in self.wm_atmos.visible_subsurfaces(id).enumerate() {
-                // TODO: Make this recursive??
-                self.record_draw_for_id(sub, j, params);
-            }
-            // Now render this window
-            self.record_draw_for_id(id, i, params);
-        }
-
-        // Draw the background last, painter style
+        // Draw the background first for alpha reasons
         self.background.as_ref().map(|back| {
             back.record_draw(
                 &self.rend,
@@ -406,6 +394,21 @@ impl WindowManager {
                 },
             );
         });
+
+        // Each app should have one or more windows,
+        // all of which we need to draw.
+        let ids: Vec<(usize, WindowId)> = self.wm_atmos.visible_windows().enumerate().collect();
+        // draw the windows from back to front to make alpha blending work.
+        // TODO: this is terrible for performance
+        for (i, id) in ids.iter().rev() {
+            // Render any subsurfaces first
+            for (j, sub) in self.wm_atmos.visible_subsurfaces(*id).enumerate() {
+                // TODO: Make this recursive??
+                self.record_draw_for_id(sub, j, params);
+            }
+            // Now render this window
+            self.record_draw_for_id(*id, *i, params);
+        }
 
         // get the latest cursor position
         let (cursor_x, cursor_y) = self.wm_atmos.get_cursor_pos();
