@@ -2,8 +2,8 @@
 //
 // Austin Shafer - 2020
 
-use crate::category5::utils::atmosphere::*;
-use crate::category5::utils::WindowId;
+use super::*;
+use utils::{ClientId,WindowId};
 use crate::category5::input::Input;
 
 // A skiplist is an entry in a linked list designed to be

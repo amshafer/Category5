@@ -3,7 +3,7 @@
 
 #![allow(unused_imports)]
 pub use crate::log;
-pub use crate::category5::utils::{
+pub use crate::{
     timing::get_current_millis,
     logging::LogLevel,
 };

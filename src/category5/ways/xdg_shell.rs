@@ -12,10 +12,9 @@ use super::surface::*;
 use super::role::Role;
 pub use super::protocol::xdg_shell::*;
 
-use crate::category5::utils::{
-    timing::*, logging::LogLevel, atmosphere::Atmosphere,
-};
-use crate::log;
+extern crate utils as cat5_utils;
+use cat5_utils::log_prelude::*;
+use crate::category5::atmosphere::Atmosphere;
 
 use std::rc::Rc;
 use std::cell::RefCell;

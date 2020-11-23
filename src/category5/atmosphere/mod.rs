@@ -17,11 +17,8 @@ use crate::category5::ways::{
     xdg_shell::xdg_toplevel::ResizeEdge,
 };
 use crate::category5::vkcomp::wm;
-use super::{WindowId,ClientId};
-use crate::category5::utils::{
-    timing::*, logging::LogLevel,
-};
-use crate::log;
+use utils::{WindowId,ClientId};
+use utils::log_prelude::*;
 
 use std::rc::Rc;
 use std::vec::Vec;

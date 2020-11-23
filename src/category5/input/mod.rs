@@ -23,10 +23,10 @@ use crate::category5::ways::{
     role::Role,
     xdg_shell::xdg_toplevel::ResizeEdge,
 };
-use crate::category5::utils::{
-    timing::*, logging::LogLevel, atmosphere::*, WindowId,
+use utils::{
+    timing::*, log_prelude::*, WindowId,
 };
-use crate::log;
+use crate::category5::atmosphere::Atmosphere;
 
 use udev::{Enumerator,Context};
 use input::{Libinput,LibinputInterface};

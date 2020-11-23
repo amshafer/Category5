@@ -19,10 +19,11 @@ use ws::protocol::{
     wl_subcompositor as wlsc,
 };
 
-use crate::category5::utils::{
-    timing::*, logging::LogLevel, atmosphere::*, fdwatch::FdWatch,
+extern crate utils as cat5_utils;
+use cat5_utils::{
+    timing::*, log_prelude::*, fdwatch::FdWatch,
 };
-use crate::log;
+use crate::category5::atmosphere::{Atmosphere,Hemisphere};
 use crate::category5::input::Input;
 use super::{
     shm::*,

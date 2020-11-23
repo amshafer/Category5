@@ -4,8 +4,8 @@
 
 mod vkcomp;
 mod ways;
-mod utils;
 mod input;
+mod atmosphere;
 
 use vkcomp::wm::*;
 use ways::compositor::EventManager;

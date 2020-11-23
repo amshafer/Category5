@@ -10,3 +10,4 @@
 // takes care of driving the Renderer
 // Does not contain any vulkan or unsafe code.
 pub mod wm;
+mod release_info;

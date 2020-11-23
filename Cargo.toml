@@ -1,5 +1,5 @@
 [package]
-name = "compositor"
+name = "category5"
 version = "0.1.0"
 authors = ["Austin Shafer <ashafer@badland.io>"]
 edition = "2018"
@@ -7,21 +7,18 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ash="0.30.0"
+thundr={path="thundr"}
 wayland-server={version="0.26.3", features=["use_system_lib"]}
 wayland-commons=""
-bitflags=""
-cgmath="0.17"
-memoffset="0.5"
-image="0.23"
-serde = { version = "1.0", features = ["derive"] }
-bincode="1.2.1"
 input="0.4.1"
 udev="0.2.0"
-nix="0.17"
 libc=""
+image="0.23"
+nix="0.17"
+bitflags=""
 xkbcommon=""
-atmos_gen = {path = "atmos_gen"}
+atmos_gen={path="atmos_gen"}
+utils={path="utils"}
 
 [build-dependencies]
 wayland-scanner="0.26.4"

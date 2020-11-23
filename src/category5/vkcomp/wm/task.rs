@@ -12,9 +12,9 @@ use std::fmt;
 extern crate wayland_server as ws;
 use ws::protocol::wl_buffer;
 
-use crate::log;
-use crate::category5::utils::{Dmabuf, MemImage};
-use crate::category5::utils::{timing::*, logging::*, WindowId};
+extern crate utils;
+use utils::{Dmabuf, MemImage};
+use utils::{timing::*, log_prelude::*, WindowId};
 
 // Tell wm the desktop background
 //

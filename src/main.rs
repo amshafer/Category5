@@ -2,18 +2,10 @@
 //
 // Austin Shafer - 2020
 #![allow(non_camel_case_types)]
-extern crate ash;
-extern crate cgmath;
-#[macro_use]
-extern crate memoffset;
-#[macro_use]
-extern crate bitflags;
 #[macro_use]
 extern crate atmos_gen;
-
-extern crate bincode;
-extern crate serde;
-extern crate image;
+#[macro_use]
+extern crate bitflags;
 
 mod category5;
 use category5::Category5;

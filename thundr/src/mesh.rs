@@ -6,14 +6,12 @@
 extern crate nix;
 extern crate ash;
 
-use crate::log;
-use crate::category5::utils::{
-    timing::*, logging::LogLevel
-};
+use crate::{Renderer,RecordParams,PushConstants};
+use cat5_utils::log_prelude::*;
+use utils::{WindowContents,MemImage,Dmabuf};
 
-use crate::category5::utils::*;
-use super::*;
-use std::iter;
+use std::{mem,fmt,iter};
+use std::ops::Drop;
 
 use nix::Error;
 use nix::errno::Errno;
@@ -21,84 +19,99 @@ use nix::unistd::dup;
 use ash::version::{DeviceV1_0,InstanceV1_1};
 use ash::vk;
 
-// A single 3D object, stored in indexed vertex form
-//
-// All 3D objects should be stored as a set of vertices, which
-// are combined into a mesh by selecting indices. This is typical stuff.
-//
-// meshes are created with Renderer::create_mesh. The renderer is in
-// charge of creating/destroying the meshes since all of the mesh
-// resources are created from the Renderer.
-#[derive(Debug)]
+/// A single 3D object, stored in indexed vertex form
+///
+/// All 3D objects should be stored as a set of vertices, which
+/// are combined into a mesh by selecting indices. This is typical stuff.
+///
+/// meshes are created with Renderer::create_mesh. The renderer is in
+/// charge of creating/destroying the meshes since all of the mesh
+/// resources are created from the Renderer.
 pub struct Mesh {
-    // image containing the contents of the window
+    /// image containing the contents of the window
     pub image: vk::Image,
     pub image_view: vk::ImageView,
     pub image_mem: vk::DeviceMemory,
     pub image_resolution: vk::Extent2D,
     pub pool_handle: usize,
     pub sampler_descriptors: Vec<vk::DescriptorSet>,
-    // specific to the type of image
+    /// specific to the type of image
     m_priv: MeshPrivate,
+    /// Stuff to release when we are no longer using
+    /// this gpu buffer (release the wl_buffer)
+    m_release_info: Option<Box<dyn Drop>>,
 }
 
-// Private data specific to a mesh type.
-//
-// There are two types of meshes: memimages, and dmabufs
-// MemImages represent shared memory that is copied
-// and used as the mesh's texture
-//
-// Dmabufs are GPU buffers passed by fd. They will be
-// imported (copyless) and bound to the mesh's image
+impl fmt::Debug for Mesh {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Mesh")
+            .field("VkImage", &self.image)
+            .field("Image View", &self.image_view)
+            .field("Image mem", &self.image_mem)
+            .field("Resolution", &self.image_resolution)
+            .field("Pool Handle", &self.pool_handle)
+            .field("Sampler Descriptors", &self.sampler_descriptors)
+            .field("Mesh Private", &self.m_priv)
+            .field("m_release_info", &"<release info omitted>".to_string())
+            .finish()
+    }
+}
+
+/// Private data specific to a mesh type.
+///
+/// There are two types of meshes: memimages, and dmabufs
+/// MemImages represent shared memory that is copied
+/// and used as the mesh's texture
+///
+/// Dmabufs are GPU buffers passed by fd. They will be
+/// imported (copyless) and bound to the mesh's image
 #[derive(Debug)]
 enum MeshPrivate {
     dmabuf(DmabufPrivate),
     mem_image(MemImagePrivate),
 }
 
-// Private data for shm images
+/// Private data for shm images
 #[derive(Debug)]
 struct MemImagePrivate {
-    // The staging buffer for copies to mesh.image
+    /// The staging buffer for copies to mesh.image
     transfer_buf: vk::Buffer,
     transfer_mem: vk::DeviceMemory,
 }
 
-// Private data for gpu buffers
+/// Private data for gpu buffers
 #[derive(Debug)]
 struct DmabufPrivate {
-    // we need to cache the params to import memory with
-    //
-    // memory reqs for the mesh image
+    /// we need to cache the params to import memory with
+    ///
+    /// memory reqs for the mesh image
     dp_mem_reqs: vk::MemoryRequirements,
-    // the type of memory to use
+    /// the type of memory to use
     dp_memtype_index: u32,
-    // Stuff to release when we are no longer using
-    // this gpu buffer (release the wl_buffer)
-    dp_release_info: ReleaseInfo,
 }
 
 impl Mesh {
-    // Create a mesh and its needed data
-    //
-    // All resources will be allocated by
-    // rend
+    /// Create a mesh and its needed data
+    ///
+    /// All resources will be allocated by
+    /// rend
     pub fn new(rend: &mut Renderer,
                texture: WindowContents,
-               release: ReleaseInfo)
+               release: Option<Box<dyn Drop>>)
                -> Option<Mesh>
     {
         match texture {
             WindowContents::mem_image(m) =>
-                Mesh::from_mem_image(rend, m),
+                Mesh::from_mem_image(rend, m, release),
             WindowContents::dmabuf(d) =>
                 Mesh::from_dmabuf(rend, d, release),
         }
     }
 
-    // Create a new mesh from a shm buffer
+    /// Create a new mesh from a shm buffer
     fn from_mem_image(rend: &mut Renderer,
-                      img: &MemImage)
+                      img: &MemImage,
+                      release: Option<Box<dyn Drop>>)
                       -> Option<Mesh>
     {
         unsafe {
@@ -140,7 +153,8 @@ impl Mesh {
                                        &tex_res,
                                        image,
                                        img_mem,
-                                       view,);
+                                       view,
+                                       release);
         }
     }
 
@@ -178,7 +192,7 @@ impl Mesh {
     // and create an image/view pair representing it.
     fn from_dmabuf(rend: &mut Renderer,
                    dmabuf: &Dmabuf,
-                   release: ReleaseInfo)
+                   release: Option<Box<dyn Drop>>)
                    -> Option<Mesh>
     {
         log!(LogLevel::profiling, "Creating mesh from dmabuf {:?}", dmabuf);
@@ -355,7 +369,6 @@ impl Mesh {
                                        MeshPrivate::dmabuf(DmabufPrivate {
                                            dp_mem_reqs: mem_reqs,
                                            dp_memtype_index: memtype_index,
-                                           dp_release_info: release,
                                        }),
                                        &vk::Extent2D {
                                            width: dmabuf.db_width as u32,
@@ -363,7 +376,8 @@ impl Mesh {
                                        },
                                        image,
                                        image_memory,
-                                       view);
+                                       view,
+                                       release);
         }
     }
 
@@ -377,7 +391,8 @@ impl Mesh {
                      res: &vk::Extent2D,
                      image: vk::Image,
                      image_mem: vk::DeviceMemory,
-                     view: vk::ImageView)
+                     view: vk::ImageView,
+                     release: Option<Box<dyn Drop>>)
                      -> Option<Mesh>
     {
         if let Some(ctx) = &mut *rend.app_ctx.borrow_mut() {
@@ -412,6 +427,7 @@ impl Mesh {
                 pool_handle: handle,
                 sampler_descriptors: descriptors,
                 m_priv: private,
+                m_release_info: release,
             });
         }
         return None;
@@ -424,11 +440,11 @@ impl Mesh {
     pub fn update_contents(&mut self,
                            rend: &mut Renderer,
                            data: WindowContents,
-                           release: ReleaseInfo)
+                           release: Option<Box<dyn Drop>>)
     {
         match data {
             WindowContents::mem_image(m) =>
-                self.update_from_mem_image(rend, m),
+                self.update_from_mem_image(rend, m, release),
             WindowContents::dmabuf(d) =>
                 self.update_from_dmabuf(rend, d, release),
         };
@@ -437,7 +453,8 @@ impl Mesh {
     // Update mesh contents from a shm buffer
     fn update_from_mem_image(&mut self,
                              rend: &mut Renderer,
-                             img: &MemImage)
+                             img: &MemImage,
+                             release: Option<Box<dyn Drop>>)
     {
         if let MeshPrivate::mem_image(mp) = &mut self.m_priv {
             unsafe {
@@ -502,6 +519,8 @@ impl Mesh {
                 }
             }
         }
+
+        self.update_common(rend, release);
     }
 
     // Update mesh contents from a GPU buffer
@@ -511,7 +530,7 @@ impl Mesh {
     fn update_from_dmabuf(&mut self,
                           rend: &mut Renderer,
                           dmabuf: &Dmabuf,
-                          release: ReleaseInfo)
+                          release: Option<Box<dyn Drop>>)
     {
         log!(LogLevel::profiling, "Updating mesh with dmabuf {:?}", dmabuf);
         if let MeshPrivate::dmabuf(dp) = &mut self.m_priv {
@@ -563,14 +582,20 @@ impl Mesh {
                 // update the image header with the new import
                 rend.dev.bind_image_memory(self.image, self.image_mem, 0)
                     .expect("Unable to rebind device memory to image");
-
-                // the old release info will be implicitly dropped
-                // after it has been drawn and presented
-                let mut old_release = release;
-                // swap our new release info into dp
-                mem::swap(&mut dp.dp_release_info, &mut old_release);
-                rend.register_for_release(old_release);
             }
+        }
+        self.update_common(rend, release);
+    }
+
+    /// Common path for updating a mesh with a new buffer
+    fn update_common(&mut self, rend: &mut Renderer, release: Option<Box<dyn Drop>>) {
+        // the old release info will be implicitly dropped
+        // after it has been drawn and presented
+        let mut old_release = release;
+        // swap our new release info into dp
+        mem::swap(&mut self.m_release_info, &mut old_release);
+        if let Some(old) = old_release {
+            rend.register_for_release(old);
         }
     }
 

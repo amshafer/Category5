@@ -7,17 +7,19 @@
 // Austin Shafer - 2020
 #![allow(dead_code)]
 extern crate image;
+extern crate thundr;
+extern crate utils;
 
-mod renderer;
-use renderer::*;
-use renderer::mesh::Mesh;
+use thundr::*;
+use thundr::mesh::Mesh;
 
-use crate::category5::utils::{
-    *, atmosphere::*, timing::*, logging::*, WindowId,
-};
-use crate::log; // utils::logging::log
+use crate::category5::atmosphere::*;
+
+use utils::{timing::*, log_prelude::*, *};
+
 pub mod task;
 use task::*;
+use super::release_info::DmabufReleaseInfo;
 
 use std::sync::mpsc::{Receiver, Sender};
 
@@ -96,7 +98,7 @@ impl WindowManager {
         let bar = rend.create_mesh(
             // TODO: make a way to change titlebar colors
             WindowContents::mem_image(&mimg),
-            ReleaseInfo::none,
+            None,
         ).unwrap();
 
         let img = image::open("images/dot.png").unwrap().to_rgba();
@@ -107,7 +109,7 @@ impl WindowManager {
                                  64);
         let dot = rend.create_mesh(
             WindowContents::mem_image(&mimg),
-            ReleaseInfo::none,
+            None,
         ).unwrap();
 
         Titlebar {
@@ -127,7 +129,7 @@ impl WindowManager {
         rend.create_mesh(
             // TODO: calculate correct cursor size
             WindowContents::mem_image(&mimg),
-            ReleaseInfo::none,
+            None,
         )
     }
 
@@ -176,7 +178,7 @@ impl WindowManager {
 
         let mesh = self.rend.create_mesh(
             WindowContents::mem_image(&mimg),
-            ReleaseInfo::none,
+            None,
         );
 
         self.background = mesh;
@@ -225,13 +227,14 @@ impl WindowManager {
         };
 
         if !app.mesh.is_none() {
-            self.rend.update_app_contents(
+            WindowManager::update_app_contents(
+                &mut self.rend,
                 app,
                 WindowContents::dmabuf(&info.ufd_dmabuf),
-                ReleaseInfo::dmabuf(DmabufReleaseInfo {
+                Some(Box::new(DmabufReleaseInfo {
                     dr_fd: info.ufd_dmabuf.db_fd,
                     dr_wl_buffer: info.ufd_wl_buffer.clone(),
-                }),
+                })),
             );
         } else {
             // If it does not have a mesh, then this must be the
@@ -239,10 +242,10 @@ impl WindowManager {
             // and make one now
             app.mesh = self.rend.create_mesh(
                 WindowContents::dmabuf(&info.ufd_dmabuf),
-                ReleaseInfo::dmabuf(DmabufReleaseInfo {
+                Some(Box::new(DmabufReleaseInfo {
                     dr_fd: info.ufd_dmabuf.db_fd,
                     dr_wl_buffer: info.ufd_wl_buffer.clone(),
-                }),
+                })),
             );
         }
     }
@@ -270,10 +273,11 @@ impl WindowManager {
         };
 
         if !app.mesh.is_none() {
-            self.rend.update_app_contents(
+            WindowManager::update_app_contents(
+                &mut self.rend,
                 app,
                 WindowContents::mem_image(&info.pixels),
-                ReleaseInfo::mem_image,
+                None,
             );
         } else {
             // If it does not have a mesh, then this must be the
@@ -281,9 +285,20 @@ impl WindowManager {
             // and make one now
             app.mesh = Some(self.rend.create_mesh(
                 WindowContents::mem_image(&info.pixels),
-                ReleaseInfo::mem_image,
+                None,
             ).unwrap());
         }
+    }
+
+    // Find an app's mesh and update its contents
+    fn update_app_contents(rend: &mut Renderer,
+                               app: &mut App,
+                               data: WindowContents,
+                               release: Option<Box<dyn Drop>>)
+    {
+        app.mesh.as_mut().map(|mesh| {
+            mesh.update_contents(rend, data, release);
+        });
     }
 
     // Handles generating draw commands for one window

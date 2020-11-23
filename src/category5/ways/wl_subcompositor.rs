@@ -6,7 +6,8 @@ use ws::Main;
 use ws::protocol::wl_subcompositor as wlsc;
 use ws::protocol::wl_subsurface as wlss;
 
-use crate::category5::utils::{atmosphere::Atmosphere,WindowId};
+use utils::WindowId;
+use crate::category5::atmosphere::Atmosphere;
 use super::surface::Surface;
 
 use std::rc::Rc;

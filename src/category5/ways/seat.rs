@@ -13,7 +13,7 @@ use ws::Main;
 use ws::protocol::{wl_seat,wl_keyboard,wl_pointer};
 use ws::protocol::wl_seat::Capability;
 
-use crate::category5::utils::ClientId;
+use utils::ClientId;
 use crate::category5::input::Input;
 use super::keyboard::wl_keyboard_handle_request;
 use super::pointer::wl_pointer_handle_request;

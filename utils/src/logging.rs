@@ -4,7 +4,7 @@
 // to be stateless
 //
 // Austin Shafer - 2020
-#[allow(dead_code)]
+#[allow(dead_code,non_camel_case_types)]
 pub enum LogLevel {
     // in order of highest priority
     critical, // Urgent and must always be displayed

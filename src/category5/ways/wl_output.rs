@@ -9,7 +9,7 @@ extern crate wayland_server as ws;
 use ws::Main;
 use ws::protocol::wl_output;
 use ws::protocol::wl_output::{Subpixel,Transform,Mode};
-use crate::category5::utils::atmosphere::Atmosphere;
+use crate::category5::atmosphere::Atmosphere;
 
 use std::rc::Rc;
 use std::cell::RefCell;

@@ -16,6 +16,9 @@ use std::marker::Copy;
 use std::mem;
 use std::cell::RefCell;
 
+#[macro_use]
+extern crate memoffset;
+
 use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::{vk, Device, Entry, Instance};
 use ash::util;
@@ -31,9 +34,11 @@ use display::Display;
 pub mod mesh;
 use mesh::Mesh;
 
-use super::App;
-use crate::log;
-use crate::category5::utils::{*, timing::*, logging::LogLevel};
+extern crate utils as cat5_utils;
+use cat5_utils::log_prelude::*;
+
+pub mod utils;
+use ::utils::WindowContents;
 
 // This is the reference data for a normal quad
 // that will be used to draw client windows.
@@ -167,7 +172,7 @@ pub struct Renderer {
     // This is the set of wayland resources used last frame
     // for rendering that should now be released
     // See WindowManger's worker_thread for more
-    r_release: Vec<ReleaseInfo>,
+    r_release: Vec<Box<dyn Drop>>,
 }
 
 // an application specific set of resources to draw.
@@ -878,8 +883,8 @@ impl Renderer {
     // We should not deal with wayland structs
     // directly, just with releaseinfo
     pub fn release_pending_resources(&mut self) {
-        log!(LogLevel::profiling, "releasing pending resources --> {:?}",
-             self.r_release);
+        log!(LogLevel::profiling, "-- releasing pending resources --");
+
         // This is the previous frames's pending release list
         // We will clear it, therefore dropping all the relinfos
         self.r_release.clear();
@@ -890,20 +895,9 @@ impl Renderer {
     //
     // Takes care of choosing what list to add info to
     pub fn register_for_release(&mut self,
-                                release: ReleaseInfo)
+                                release: Box<dyn Drop>)
     {
        self.r_release.push(release);
-    }
-
-    // Find an app's mesh and update its contents
-    pub fn update_app_contents(&mut self,
-                               app: &mut App,
-                               data: WindowContents,
-                               release: ReleaseInfo)
-    {
-        app.mesh.as_mut().map(|mesh| {
-            mesh.update_contents(self, data, release);
-        });
     }
 
     // Update an image from a VkBuffer
@@ -2272,7 +2266,7 @@ impl Renderer {
     // window_res is the size of the on screen window
     pub fn create_mesh(&mut self,
                        data: WindowContents,
-                       release: ReleaseInfo)
+                       release: Option<Box<dyn Drop>>)
                        -> Option<Mesh>
     {
         return Mesh::new(self, data, release);

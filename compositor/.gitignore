@@ -1,5 +1,0 @@
-target/
-**/.dir-locals.el
-**/*.swp
-**/*.core
-**/*~

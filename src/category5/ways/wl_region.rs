@@ -7,7 +7,7 @@ extern crate wayland_server as ws;
 use ws::Main;
 use ws::protocol::wl_region;
 
-use crate::category5::utils::region::{Offset2D,Rect};
+use utils::region::{Offset2D,Rect};
 use std::rc::Rc;
 use std::cell::RefCell;
 

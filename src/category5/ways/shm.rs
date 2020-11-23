@@ -8,8 +8,7 @@ extern crate wayland_server as ws;
 
 use ws::protocol::{wl_shm, wl_shm_pool};
 
-use crate::category5::utils::log_prelude::*;
-use crate::category5::utils::*;
+use utils::{MemImage, log_prelude::*};
 
 use std::rc::Rc;
 use std::cell::RefCell;

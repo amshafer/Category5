@@ -5,18 +5,13 @@ pub mod timing;
 #[macro_use]
 pub mod logging;
 pub mod log_prelude;
-pub mod atmosphere;
 pub mod fdwatch;
 pub mod region;
 extern crate wayland_server as ws;
 
 use ws::protocol::wl_buffer;
 
-use crate::category5::utils::{
-    timing::*, logging::LogLevel,
-};
-use crate::log;
-
+use log_prelude::*;
 use std::{slice,fmt};
 use std::ops::Deref;
 use std::os::unix::io::RawFd;
@@ -27,7 +22,7 @@ use std::os::unix::io::RawFd;
 // to the compositor. A client may have multiple surfaces,
 // eacho of which has a WindowId
 #[derive(Copy,Clone,PartialEq,Debug,Eq,Hash)]
-pub struct ClientId(u32);
+pub struct ClientId(pub u32);
 
 // Window ID
 //
@@ -36,12 +31,13 @@ pub struct ClientId(u32);
 // the resource. For now it is a u32 since there
 // is no way we have 4 million windows open
 #[derive(Copy,Clone,PartialEq,Debug,Eq,Hash)]
-pub struct WindowId(u32);
+pub struct WindowId(pub u32);
 
 // Window Contents
 //
 // This allows for easy abstraction of the type
 // of data being used to update a mesh.
+#[allow(non_camel_case_types)]
 pub enum WindowContents<'a> {
     dmabuf(&'a Dmabuf),
     mem_image(&'a MemImage),
@@ -61,6 +57,7 @@ pub enum WindowContents<'a> {
 // we can mix and match. Task handlers usually
 // accept this alongside some info struct
 #[derive(Debug)]
+#[allow(non_camel_case_types)]
 pub enum ReleaseInfo {
     none,
     mem_image,
