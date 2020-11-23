@@ -11,7 +11,7 @@ extern crate thundr;
 extern crate utils;
 
 use thundr::*;
-use thundr::mesh::Mesh;
+use thundr::image::Image;
 
 use crate::category5::atmosphere::*;
 
@@ -23,69 +23,69 @@ use super::release_info::DmabufReleaseInfo;
 
 use std::sync::mpsc::{Receiver, Sender};
 
-// This consolidates the multiple resources needed
-// to represent a titlebar
+/// This consolidates the multiple resources needed
+/// to represent a titlebar
 struct Titlebar {
-    // The thick bar itself
-    bar: Mesh,
-    // One dot to rule them all. Used for buttons
-    dot: Mesh
+    /// The thick bar itself
+    bar: Image,
+    /// One dot to rule them all. Used for buttons
+    dot: Image
 }
 
-// This represents a client window.
-//
-// All drawn components are tracked with Mesh, this struct
-// keeps track of the window components (content meshes and
-// titlebar mesh).
-//
-// See WindowManager::record_draw for how this is displayed.
+/// This represents a client window.
+///
+/// All drawn components are tracked with Image, this struct
+/// keeps track of the window components (content imagees and
+/// titlebar image).
+///
+/// See WindowManager::record_draw for how this is displayed.
 pub struct App {
-    // This id uniquely identifies the App
+    /// This id uniquely identifies the App
     id: WindowId,
-    // Because the images for meshes are used for both
-    // buffers in a double buffer system, when an App is
-    // deleted we need to avoid recording it in the next
-    // frame's cbuf.
-    //
-    // When this flag is set, the we will not be recorded
-    // and will instead be destroyed
+    /// Because the images for imagees are used for both
+    /// buffers in a double buffer system, when an App is
+    /// deleted we need to avoid recording it in the next
+    /// frame's cbuf.
+    ///
+    /// When this flag is set, the we will not be recorded
+    /// and will instead be destroyed
     marked_for_death: bool,
-    // This is the set of geometric objects in the application
-    mesh: Option<Mesh>,
+    /// This is the set of geometric objects in the application
+    image: Option<Image>,
 }
 
-// Encapsulates vkcomp and provides a sensible windowing API
-//
-// This layer provides graphical operations to the above
-// layers. It will support two classes of displayed objs,
-// windows (has content and a titlebar) and sprites.
-//
-// Sprites should only be used for desktop effects, such
-// as notifications. Sprites are not owned by a client
-// whereas windows are.
+/// Encapsulates vkcomp and provides a sensible windowing API
+///
+/// This layer provides graphical operations to the above
+/// layers. It will support two classes of displayed objs,
+/// windows (has content and a titlebar) and sprites.
+///
+/// Sprites should only be used for desktop effects, such
+/// as notifications. Sprites are not owned by a client
+/// whereas windows are.
 pub struct WindowManager {
-    // The channel to recieve work over
+    /// The channel to recieve work over
     wm_atmos: Atmosphere,
-    // The vulkan renderer. It implements the draw logic,
-    // whereas WindowManager implements organizational logic
+    /// The vulkan renderer. It implements the draw logic,
+    /// whereas WindowManager implements organizational logic
     rend: Renderer,
-    // This is the set of applications in this scene
+    /// This is the set of applications in this scene
     apps: Vec<App>,
-    // The background picture of the desktop
-    background: Option<Mesh>,
-    // Image representing the software cursor
-    cursor: Option<Mesh>,
-    // Title bar to draw above the windows
+    /// The background picture of the desktop
+    background: Option<Image>,
+    /// Image representing the software cursor
+    cursor: Option<Image>,
+    /// Title bar to draw above the windows
     titlebar: Titlebar,
 }
 
 impl WindowManager {
 
-    // Create a Titlebar resource
-    //
-    // The Titlebar will hold all of the components which make
-    // up all of the titlebars in a scene. These meshes will
-    // be colored differently when multidrawn
+    /// Create a Titlebar resource
+    ///
+    /// The Titlebar will hold all of the components which make
+    /// up all of the titlebars in a scene. These imagees will
+    /// be colored differently when multidrawn
     fn get_default_titlebar(rend: &mut Renderer) -> Titlebar {
         let img = image::open("images/bar.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
@@ -95,10 +95,9 @@ impl WindowManager {
                                  64,
                                  64);
 
-        let bar = rend.create_mesh(
-            // TODO: make a way to change titlebar colors
-            WindowContents::mem_image(&mimg),
-            None,
+        // TODO: make a way to change titlebar colors
+        let bar = Image::from_mem_image(
+            rend, &mimg, None,
         ).unwrap();
 
         let img = image::open("images/dot.png").unwrap().to_rgba();
@@ -107,9 +106,8 @@ impl WindowManager {
                                  4,
                                  64,
                                  64);
-        let dot = rend.create_mesh(
-            WindowContents::mem_image(&mimg),
-            None,
+        let dot = Image::from_mem_image(
+            rend, &mimg, None,
         ).unwrap();
 
         Titlebar {
@@ -118,7 +116,7 @@ impl WindowManager {
         }
     }
 
-    fn get_default_cursor(rend: &mut Renderer) -> Option<Mesh> {
+    fn get_default_cursor(rend: &mut Renderer) -> Option<Image> {
         let img = image::open("images/cursor.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8,
@@ -126,18 +124,14 @@ impl WindowManager {
                                  64,
                                  64);
 
-        rend.create_mesh(
-            // TODO: calculate correct cursor size
-            WindowContents::mem_image(&mimg),
-            None,
-        )
+        Image::from_mem_image(rend, &mimg, None)
     }
 
-    // Create a new WindowManager
-    //
-    // This will create all the graphical resources needed for
-    // the compositor. The WindowManager will create and own
-    // the Renderer, thereby readying the display to draw.
+    /// Create a new WindowManager
+    ///
+    /// This will create all the graphical resources needed for
+    /// the compositor. The WindowManager will create and own
+    /// the Renderer, thereby readying the display to draw.
     pub fn new(tx: Sender<Box<Hemisphere>>,
                rx: Receiver<Box<Hemisphere>>)
                -> WindowManager
@@ -162,10 +156,10 @@ impl WindowManager {
         return wm;
     }
 
-    // Set the desktop background for the renderer
-    //
-    // This basically just creates a mesh with the max
-    // depth that takes up the entire screen.
+    /// Set the desktop background for the renderer
+    ///
+    /// This basically just creates a image with the max
+    /// depth that takes up the entire screen.
     fn set_background_from_mem(&mut self,
                                texture: &[u8],
                                tex_width: u32,
@@ -176,38 +170,39 @@ impl WindowManager {
                                  tex_width as usize,
                                  tex_height as usize);
 
-        let mesh = self.rend.create_mesh(
-            WindowContents::mem_image(&mimg),
+        let image = Image::from_mem_image(
+            &mut self.rend,
+            &mimg,
             None,
         );
 
-        self.background = mesh;
+        self.background = image;
     }
     
-    // Add a mesh to the renderer to be displayed.
-    //
-    // The meshes are added to a list, and will be individually
-    // dispatched for drawing later.
-    //
-    // Meshes need to be in an indexed vertex format.
-    //
-    // tex_res is the resolution of `texture`
-    // window_res is the size of the on screen window
+    /// Add a image to the renderer to be displayed.
+    ///
+    /// The imagees are added to a list, and will be individually
+    /// dispatched for drawing later.
+    ///
+    /// Imagees need to be in an indexed vertex format.
+    ///
+    /// tex_res is the resolution of `texture`
+    /// window_res is the size of the on screen window
     fn create_window(&mut self, id: WindowId) {
         log!(LogLevel::info, "wm: Creating new window {:?}", id);
 
         self.apps.insert(0, App {
             id: id,
             marked_for_death: false,
-            mesh: None,
+            image: None,
         });
     }
 
-    // Handles an update from dmabuf task
-    //
-    // Translates the task update structure into lower
-    // level calls to import a dmabuf and update a mesh.
-    // Creates a new mesh if one doesn't exist yet.
+    /// Handles an update from dmabuf task
+    ///
+    /// Translates the task update structure into lower
+    /// level calls to import a dmabuf and update a image.
+    /// Creates a new image if one doesn't exist yet.
     fn update_window_contents_from_dmabuf(&mut self,
                                           info: &UpdateWindowContentsFromDmabuf)
     {
@@ -226,7 +221,7 @@ impl WindowManager {
             },
         };
 
-        if !app.mesh.is_none() {
+        if !app.image.is_none() {
             WindowManager::update_app_contents(
                 &mut self.rend,
                 app,
@@ -237,11 +232,12 @@ impl WindowManager {
                 })),
             );
         } else {
-            // If it does not have a mesh, then this must be the
+            // If it does not have a image, then this must be the
             // first time contents were attached to it. Go ahead
             // and make one now
-            app.mesh = self.rend.create_mesh(
-                WindowContents::dmabuf(&info.ufd_dmabuf),
+            app.image = Image::from_dmabuf(
+                &mut self.rend,
+                &info.ufd_dmabuf,
                 Some(Box::new(DmabufReleaseInfo {
                     dr_fd: info.ufd_dmabuf.db_fd,
                     dr_wl_buffer: info.ufd_wl_buffer.clone(),
@@ -250,10 +246,10 @@ impl WindowManager {
         }
     }
 
-    // Handle update from memimage task
-    //
-    // Copies the shm buffer into the app's mesh.
-    // Creates a new mesh if one doesn't exist yet.
+    /// Handle update from memimage task
+    ///
+    /// Copies the shm buffer into the app's image.
+    /// Creates a new image if one doesn't exist yet.
     fn update_window_contents_from_mem(&mut self,
                                        info: &UpdateWindowContentsFromMem)
     {
@@ -272,7 +268,7 @@ impl WindowManager {
             },
         };
 
-        if !app.mesh.is_none() {
+        if !app.image.is_none() {
             WindowManager::update_app_contents(
                 &mut self.rend,
                 app,
@@ -280,28 +276,27 @@ impl WindowManager {
                 None,
             );
         } else {
-            // If it does not have a mesh, then this must be the
+            // If it does not have a image, then this must be the
             // first time contents were attached to it. Go ahead
             // and make one now
-            app.mesh = Some(self.rend.create_mesh(
-                WindowContents::mem_image(&info.pixels),
-                None,
+            app.image = Some(Image::from_mem_image(
+                &mut self.rend, &info.pixels, None,
             ).unwrap());
         }
     }
 
-    // Find an app's mesh and update its contents
+    /// Find an app's image and update its contents
     fn update_app_contents(rend: &mut Renderer,
                                app: &mut App,
                                data: WindowContents,
                                release: Option<Box<dyn Drop>>)
     {
-        app.mesh.as_mut().map(|mesh| {
-            mesh.update_contents(rend, data, release);
+        app.image.as_mut().map(|image| {
+            image.update_contents(rend, data, release);
         });
     }
 
-    // Handles generating draw commands for one window
+    /// Handles generating draw commands for one window
     fn record_draw_for_id(&self,
                           id: WindowId,
                           order: usize,
@@ -368,10 +363,10 @@ impl WindowManager {
         }
 
         // Finally, we can draw the window itself
-        // If the mesh does not exist, then only the titlebar
+        // If the image does not exist, then only the titlebar
         // and other window decorations will be drawn
-        if let Some(mesh) = &a.mesh {
-            // TODO: else draw blank mesh?
+        if let Some(image) = &a.image {
+            // TODO: else draw blank image?
             let push = PushConstants {
                 order: order_depth, // depth
                 x: surface_pos.0,
@@ -380,18 +375,18 @@ impl WindowManager {
                 width: surface_size.0,
                 height: surface_size.1,
             };
-            mesh.record_draw(&self.rend, params, &push);
+            image.record_draw(&self.rend, params, &push);
         }
     }
 
-    // Record all the drawing operations for the current scene
-    //
-    // Vulkan requires that we record a list of operations into a command
-    // buffer which is later submitted for display. This method organizes
-    // the recording of draw operations for all elements in the desktop.
-    //
-    // params: a private info structure for the Renderer. It holds all
-    // the data about what we are recording.
+    /// Record all the drawing operations for the current scene
+    ///
+    /// Vulkan requires that we record a list of operations into a command
+    /// buffer which is later submitted for display. This method organizes
+    /// the recording of draw operations for all elements in the desktop.
+    ///
+    /// params: a private info structure for the Renderer. It holds all
+    /// the data about what we are recording.
     fn record_draw(&self, params: &RecordParams) {
         // Draw the background first for alpha reasons
         self.background.as_ref().map(|back| {
@@ -455,7 +450,9 @@ impl WindowManager {
         });
     }
 
-    // Remove any apps marked for death
+    /// Remove any apps marked for death. Usually we can't remove
+    /// a window immediately because its image(s) are still being
+    /// used by thundr
     fn reap_dead_windows(&mut self) {
         // Take a reference out here to avoid making the
         // borrow checker angry
@@ -465,8 +462,8 @@ impl WindowManager {
         self.apps.retain(|app| {
                 if app.marked_for_death {
                     // Destroy the rendering resources
-                    app.mesh.as_ref().map(
-                        |mesh| mesh.destroy(rend)
+                    app.image.as_ref().map(
+                        |image| image.destroy(rend)
                     );
 
                     return false;
@@ -475,16 +472,16 @@ impl WindowManager {
             });
     }
 
-    // A helper which records the cbuf for the next frame
-    //
-    // Recording a frame follows this general pattern:
-    //  1. The recording parameters are requested.
-    //  2. Recording is started.
-    //  3. WindowManager specifies the order/position of Meshes
-    //     to be recorded.
-    //  4. Recording is stopped.
-    //
-    // This *does not* present anything to the screen
+    /// A helper which records the cbuf for the next frame
+    ///
+    /// Recording a frame follows this general pattern:
+    ///  1. The recording parameters are requested.
+    ///  2. Recording is started.
+    ///  3. WindowManager specifies the order/position of Images
+    ///     to be recorded.
+    ///  4. Recording is stopped.
+    ///
+    /// This *does not* present anything to the screen
     fn record_next_frame(&mut self) {
         let params = self.rend.get_recording_parameters();
         self.rend.begin_recording_one_frame(&params);
@@ -494,28 +491,28 @@ impl WindowManager {
         self.rend.end_recording_one_frame(&params);
     }
 
-    // Begin rendering a frame
-    //
-    // Vulkan is asynchronous, meaning that commands are submitted
-    // and later waited on. This method records the next cbuf
-    // and asks the Renderer to submit it.
-    //
-    // The frame is not presented to the display until
-    // WindowManager::end_frame is called.
+    /// Begin rendering a frame
+    ///
+    /// Vulkan is asynchronous, meaning that commands are submitted
+    /// and later waited on. This method records the next cbuf
+    /// and asks the Renderer to submit it.
+    ///
+    /// The frame is not presented to the display until
+    /// WindowManager::end_frame is called.
     fn begin_frame(&mut self) {
         self.record_next_frame();
         self.rend.begin_frame();
     }
 
-    // End a frame
-    //
-    // Once the frame's cbuf has been recorded and submitted, we
-    // can present it to the physical display.
-    //
-    // It is possible that the upper layers may want to perform
-    // operations between submission of the frame and when that
-    // frame is presented, which is why begin/end frame is split
-    // into two methods.
+    /// End a frame
+    ///
+    /// Once the frame's cbuf has been recorded and submitted, we
+    /// can present it to the physical display.
+    ///
+    /// It is possible that the upper layers may want to perform
+    /// operations between submission of the frame and when that
+    /// frame is presented, which is why begin/end frame is split
+    /// into two methods.
     fn end_frame(&mut self) {
         self.rend.present();
     }
@@ -549,6 +546,7 @@ impl WindowManager {
         };
     }
 
+    /// The main event loop of the vkcomp thread
     pub fn worker_thread(&mut self) {
         // first set the background
         let img =
@@ -608,12 +606,12 @@ impl WindowManager {
 }
 
 impl Drop for WindowManager {
-    // We need to free our resources before we free
-    // the renderer, since they were allocated from it.
+    /// We need to free our resources before we free
+    /// the renderer, since they were allocated from it.
     fn drop(&mut self) {
-        // Free all meshes in each app
+        // Free all imagees in each app
         for a in self.apps.iter_mut() {
-            a.mesh.as_ref().unwrap().destroy(&self.rend);
+            a.image.as_ref().unwrap().destroy(&self.rend);
         }
         self.titlebar.bar.destroy(&self.rend);
         self.titlebar.dot.destroy(&self.rend);

@@ -31,14 +31,12 @@ use descpool::DescPool;
 mod display;
 use display::Display;
 
-pub mod mesh;
-use mesh::Mesh;
+pub mod image;
 
 extern crate utils as cat5_utils;
 use cat5_utils::log_prelude::*;
 
 pub mod utils;
-use ::utils::WindowContents;
 
 // This is the reference data for a normal quad
 // that will be used to draw client windows.
@@ -82,162 +80,163 @@ unsafe extern "system" fn vulkan_debug_callback(
     vk::FALSE
 }
 
-// Behold a vulkan rendering context
-//
-// The fields here are sure to change, as they are pretty
-// application specific.
-//
-// The types in ash::vk:: are the 'normal' vulkan types
-// types in ash:: are normally 'loaders'. They take care of loading
-// function pointers and things. Think of them like a wrapper for
-// the raw vk:: type. In some cases you need both, surface
-// is a good example of this.
-//
-// Application specific fields should be at the bottom of the
-// struct, with the commonly required fields at the top.
+/// Behold a vulkan rendering context
+///
+/// The fields here are sure to change, as they are pretty
+/// application specific.
+///
+/// The types in ash::vk:: are the 'normal' vulkan types
+/// types in ash:: are normally 'loaders'. They take care of loading
+/// function pointers and things. Think of them like a wrapper for
+/// the raw vk:: type. In some cases you need both, surface
+/// is a good example of this.
+///
+/// Application specific fields should be at the bottom of the
+/// struct, with the commonly required fields at the top.
 pub struct Renderer {
-    // debug callback sugar mentioned earlier
+    /// debug callback sugar mentioned earlier
     debug_loader: DebugReport,
     debug_callback: vk::DebugReportCallbackEXT,
 
-    // the entry just loads function pointers from the dynamic library
-    // I am calling it a loader, because that's what it does
+    /// the entry just loads function pointers from the dynamic library
+    /// I am calling it a loader, because that's what it does
     loader: Entry,
-    // the big vulkan instance.
+    /// the big vulkan instance.
     inst: Instance,
-    // the logical device we are using
-    // maybe I'll test around with multi-gpu
+    /// the logical device we are using
+    /// maybe I'll test around with multi-gpu
     dev: Device,
-    // the physical device selected to display to
+    /// the physical device selected to display to
     pdev: vk::PhysicalDevice,
     mem_props: vk::PhysicalDeviceMemoryProperties,
 
-    // index into the array of queue families
+    /// index into the array of queue families
     graphics_family_index: u32,
     transfer_family_index: u32,
-    // processes things to be physically displayed
+    /// processes things to be physically displayed
     present_queue: vk::Queue,
-    // queue for copy operations
+    /// queue for copy operations
     transfer_queue: vk::Queue,
 
-    // vk_khr_display and vk_khr_surface wrapper.
+    /// vk_khr_display and vk_khr_surface wrapper.
     display: Display,
     surface_format: vk::SurfaceFormatKHR,
     surface_caps: vk::SurfaceCapabilitiesKHR,
-    // resolution to create the swapchain with
+    /// resolution to create the swapchain with
     pub resolution: vk::Extent2D,
 
-    // loads swapchain extension
+    /// loads swapchain extension
     swapchain_loader: khr::Swapchain,
-    // the actual swapchain
+    /// the actual swapchain
     swapchain: vk::SwapchainKHR,
-    // index into swapchain images that we are currently using
+    /// index into swapchain images that we are currently using
     current_image: u32,
 
-    // a set of images belonging to swapchain
+    /// a set of images belonging to swapchain
     images: Vec<vk::Image>,
-    // number of framebuffers (2 is double buffering)
+    /// number of framebuffers (2 is double buffering)
     pub fb_count: usize,
-    // views describing how to access the images
+    /// views describing how to access the images
     views: Vec<vk::ImageView>,
 
-    // pools provide the memory allocated to command buffers
+    /// pools provide the memory allocated to command buffers
     pool: vk::CommandPool,
-    // the command buffers allocated from pool
+    /// the command buffers allocated from pool
     cbufs: Vec<vk::CommandBuffer>,
 
-    // ---- Application specific ----
+    /// Application specific stuff that will be set up after
+    /// the original initialization
     app_ctx: RefCell<Option<AppContext>>,
 
-    // an image for recording depth test data
+    /// an image for recording depth test data
     depth_image: vk::Image,
     depth_image_view: vk::ImageView,
-    // because we create the image, we need to back it with memory
+    /// because we create the image, we need to back it with memory
     depth_image_mem: vk::DeviceMemory,
 
-    // This signals that the latest contents have been presented.
-    // It is signaled by acquire next image and is consumed by
-    // the cbuf submission
+    /// This signals that the latest contents have been presented.
+    /// It is signaled by acquire next image and is consumed by
+    /// the cbuf submission
     present_sema: vk::Semaphore,
-    // This is signaled by start_frame, and is consumed by present.
-    // This keeps presentation from occurring until rendering is
-    // complete
+    /// This is signaled by start_frame, and is consumed by present.
+    /// This keeps presentation from occurring until rendering is
+    /// complete
     render_sema: vk::Semaphore,
-    // This fence coordinates draw call reuse. It will be signaled
-    // when submitting the draw calls to the queue has finished
+    /// This fence coordinates draw call reuse. It will be signaled
+    /// when submitting the draw calls to the queue has finished
     submit_fence: vk::Fence,
-    // needed for VkGetMemoryFdPropertiesKHR
+    /// needed for VkGetMemoryFdPropertiesKHR
     external_mem_fd_loader: khr::ExternalMemoryFd,
-    // The pending release list
-    // This is the set of wayland resources used last frame
-    // for rendering that should now be released
-    // See WindowManger's worker_thread for more
+    /// The pending release list
+    /// This is the set of wayland resources used last frame
+    /// for rendering that should now be released
+    /// See WindowManger's worker_thread for more
     r_release: Vec<Box<dyn Drop>>,
 }
 
-// an application specific set of resources to draw.
-//
-// These are the "dynamic" parts of our application. The things
-// that change depending on the scene. It holds pipelines, layouts
-// shaders, and geometry.
-//
-// Ideally the `Renderer` can render/present anything, and this
-// struct specifies what to draw. This allows the second half
-// of the initialization functions to just have a self ref.
-//
-// meshes are created with Renderer::create_mesh. The renderer is in
-// charge of creating/destroying the meshes since all of the mesh
-// resources are created from the Renderer.
+/// an application specific set of resources to draw.
+///
+/// These are the "dynamic" parts of our application. The things
+/// that change depending on the scene. It holds pipelines, layouts
+/// shaders, and geometry.
+///
+/// Ideally the `Renderer` can render/present anything, and this
+/// struct specifies what to draw. This allows the second half
+/// of the initialization functions to just have a self ref.
+///
+/// images are created with Renderer::create_image. The renderer is in
+/// charge of creating/destroying the images since all of the image
+/// resources are created from the Renderer.
 pub struct AppContext {
     pass: vk::RenderPass,
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
-    // This descriptor pool allocates only the 1 ubo
+    /// This descriptor pool allocates only the 1 ubo
     uniform_pool: vk::DescriptorPool,
-    // This is an allocator for the dynamic sets (samplers)
+    /// This is an allocator for the dynamic sets (samplers)
     desc_pool: DescPool,
-    // (as per `create_descriptor_layouts`)
-    // This will only be the sets holding the uniform buffers,
-    // any mesh specific descriptors are in the mesh's sets.
+    /// (as per `create_descriptor_layouts`)
+    /// This will only be the sets holding the uniform buffers,
+    /// any image specific descriptors are in the image's sets.
     descriptor_uniform_layout: vk::DescriptorSetLayout,
     ubo_descriptor: vk::DescriptorSet,
     shader_modules: Vec<vk::ShaderModule>,
     framebuffers: Vec<vk::Framebuffer>,
-    // shader constants are shared by all swapchain images
+    /// shader constants are shared by all swapchain images
     uniform_buffer: vk::Buffer,
     uniform_buffers_memory: vk::DeviceMemory,
-    // TODO: this should probably be a uniform texel buffer
-    // One sampler for each swapchain image
+    /// TODO: this should probably be a uniform texel buffer
+    /// One sampler for each swapchain image
     image_sampler: vk::Sampler,
-    // We will hold only one copy of the static QUAD_DATA
-    // which represents an onscreen window.
+    /// We will hold only one copy of the static QUAD_DATA
+    /// which represents an onscreen window.
     vert_buffer: vk::Buffer,
     vert_buffer_memory: vk::DeviceMemory,
     vert_count: u32,
-    // Resources for the index buffer
+    /// Resources for the index buffer
     index_buffer: vk::Buffer,
     index_buffer_memory: vk::DeviceMemory,
-    // command buffer for copying shm images
+    /// command buffer for copying shm images
     copy_cbuf: vk::CommandBuffer,
     copy_cbuf_fence: vk::Fence,
 }
 
-// Recording parameters
-//
-// Layers above this one will need to call recording
-// operations. They need a private structure to pass
-// to Renderer to begin/end recording operations
-// This is that structure.
+/// Recording parameters
+///
+/// Layers above this one will need to call recording
+/// operations. They need a private structure to pass
+/// to Renderer to begin/end recording operations
+/// This is that structure.
 pub struct RecordParams {
     cbuf: vk::CommandBuffer,
     image_num: usize,
 }
 
-// Contiains a vertex and all its related data
-//
-// Things like vertex normals and colors will be passed in
-// the same vertex input assembly, so this type provides
-// a wrapper for handling all of them at once.
+/// Contiains a vertex and all its related data
+///
+/// Things like vertex normals and colors will be passed in
+/// the same vertex input assembly, so this type provides
+/// a wrapper for handling all of them at once.
 #[repr(C)]
 #[derive(Clone,Copy)]
 struct VertData {
@@ -245,9 +244,9 @@ struct VertData {
     tex: Vector2<f32>,
 }
 
-// Shader constants are used for
-// the larger uniform values which are
-// not changed very often.
+/// Shader constants are used for
+/// the larger uniform values which are
+/// not changed very often.
 #[derive(Clone,Copy)]
 #[repr(C)]
 struct ShaderConstants {
@@ -257,22 +256,21 @@ struct ShaderConstants {
     height: f32,
 }
 
-// Push constants are used for small bits of data
-// which are changed often. We will use them to
-// transform the default square into the size of
-// the client window.
-//
-// This should to be less than 128 bytes to guarantee
-// that there will be enough push constant space.
+/// Push constants are used for small bits of data
+/// which are changed often. We will use them to
+/// transform the default square into the size of
+/// the client window.
+///
+/// This should to be less than 128 bytes to guarantee
+/// that there will be enough push constant space.
 #[derive(Clone,Copy,Serialize,Deserialize)]
 #[repr(C)]
 pub struct PushConstants {
-    // the z-ordering of the window being drawn
+    /// the z-ordering of the window being drawn
     pub order: f32,
-    // this is [0,resolution]
+    /// this is [0,resolution]
     pub x: f32,
     pub y: f32,
-    // Maybe these should be floats for HiDPI?
     pub width: f32,
     pub height: f32,
 }
@@ -282,8 +280,8 @@ pub struct PushConstants {
 // internal use.
 impl Renderer {
 
-    // Creates a new debug reporter and registers our function
-    // for debug callbacks so we get nice error messages
+    /// Creates a new debug reporter and registers our function
+    /// for debug callbacks so we get nice error messages
     unsafe fn setup_debug(entry: &Entry, instance: &Instance)
                           -> (DebugReport, vk::DebugReportCallbackEXT)
     {
@@ -302,11 +300,11 @@ impl Renderer {
         return (dr_loader, callback);
     }
 
-    // Create a vkInstance
-    //
-    // Most of the create info entries are straightforward, with
-    // some basic extensions being enabled. All of the work is
-    // done in subfunctions.
+    /// Create a vkInstance
+    ///
+    /// Most of the create info entries are straightforward, with
+    /// some basic extensions being enabled. All of the work is
+    /// done in subfunctions.
     unsafe fn create_instance() -> (Entry, Instance) {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("VulkanRenderer").unwrap();
@@ -338,9 +336,9 @@ impl Renderer {
         return (entry, instance);
     }
 
-    // Check if a queue family is suited for our needs.
-    // Queue families need to support graphical presentation and 
-    // presentation on the given surface.
+    /// Check if a queue family is suited for our needs.
+    /// Queue families need to support graphical presentation and 
+    /// presentation on the given surface.
     unsafe fn is_valid_queue_family(pdevice: vk::PhysicalDevice,
                                         info: vk::QueueFamilyProperties,
                                         index: u32,
@@ -359,12 +357,12 @@ impl Renderer {
             ).unwrap()
     }
 
-    // Choose a vkPhysicalDevice and queue family index
-    //
-    // selects a physical device and a queue family
-    // provide the surface PFN loader and the surface so
-    // that we can ensure the pdev/queue combination can
-    // present the surface
+    /// Choose a vkPhysicalDevice and queue family index.
+    ///
+    /// selects a physical device and a queue family
+    /// provide the surface PFN loader and the surface so
+    /// that we can ensure the pdev/queue combination can
+    /// present the surface.
     unsafe fn select_pdev(inst: &Instance)
                               -> vk::PhysicalDevice
     {
@@ -382,12 +380,12 @@ impl Renderer {
             .expect("Couldn't find suitable device.")
     }
 
-    // Choose a queue family
-    //
-    // returns an index into the array of queue types.
-    // provide the surface PFN loader and the surface so
-    // that we can ensure the pdev/queue combination can
-    // present the surface
+    /// Choose a queue family
+    ///
+    /// returns an index into the array of queue types.
+    /// provide the surface PFN loader and the surface so
+    /// that we can ensure the pdev/queue combination can
+    /// present the surface
     unsafe fn select_queue_family(inst: &Instance,
                                       pdev: vk::PhysicalDevice,
                                       surface_loader: &khr::Surface,
@@ -419,7 +417,7 @@ impl Renderer {
             .expect("Could not find a suitable queue family")
     }
 
-    // get the vkPhysicalDeviceMemoryProperties structure for a vkPhysicalDevice
+    /// get the vkPhysicalDeviceMemoryProperties structure for a vkPhysicalDevice
     unsafe fn get_pdev_mem_properties(inst: &Instance,
                                           pdev: vk::PhysicalDevice)
                                           -> vk::PhysicalDeviceMemoryProperties
@@ -427,14 +425,14 @@ impl Renderer {
         inst.get_physical_device_memory_properties(pdev)
     }
 
-    // Create a vkDevice from a vkPhysicalDevice
-    //
-    // Create a logical device for interfacing with the physical device.
-    // once again we specify any device extensions we need, the swapchain
-    // being the most important one.
-    //
-    // A queue is created in the specified queue family in the
-    // present_queue argument.
+    /// Create a vkDevice from a vkPhysicalDevice
+    ///
+    /// Create a logical device for interfacing with the physical device.
+    /// once again we specify any device extensions we need, the swapchain
+    /// being the most important one.
+    ///
+    /// A queue is created in the specified queue family in the
+    /// present_queue argument.
     unsafe fn create_device(inst: &Instance,
                                 pdev: vk::PhysicalDevice,
                                 queues: &[u32])
@@ -469,14 +467,14 @@ impl Renderer {
             .unwrap()
     }
 
-    // create a new vkSwapchain
-    //
-    // Swapchains contain images that can be used for WSI presentation
-    // They take a vkSurfaceKHR and provide a way to manage swapping
-    // effects such as double/triple buffering (mailbox mode). The created
-    // swapchain is dependent on the characteristics and format of the surface
-    // it is created for.
-    // The application resolution is set by this method.
+    /// create a new vkSwapchain
+    ///
+    /// Swapchains contain images that can be used for WSI presentation
+    /// They take a vkSurfaceKHR and provide a way to manage swapping
+    /// effects such as double/triple buffering (mailbox mode). The created
+    /// swapchain is dependent on the characteristics and format of the surface
+    /// it is created for.
+    /// The application resolution is set by this method.
     unsafe fn create_swapchain(swapchain_loader: &khr::Swapchain,
                                    surface_loader: &khr::Surface,
                                    pdev: vk::PhysicalDevice,
@@ -538,11 +536,11 @@ impl Renderer {
             .unwrap()
     }
 
-    // returns a new vkCommandPool
-    //
-    // Command buffers are allocated from command pools. That's about
-    // all they do. They just manage memory. Command buffers will be allocated
-    // as part of the queue_family specified.
+    /// returns a new vkCommandPool
+    ///
+    /// Command buffers are allocated from command pools. That's about
+    /// all they do. They just manage memory. Command buffers will be allocated
+    /// as part of the queue_family specified.
     unsafe fn create_command_pool(dev: &Device,
                                   queue_family: u32)
                                   -> vk::CommandPool
@@ -554,15 +552,15 @@ impl Renderer {
         dev.create_command_pool(&pool_create_info, None).unwrap()
     }
 
-    // Allocate a vec of vkCommandBuffers
-    //
-    // Command buffers are constructed once, and can be executed
-    // many times. They also have the added bonus of being added to
-    // by multiple threads. Command buffer is shortened to `cbuf` in
-    // many areas of the code.
-    //
-    // For now we are only allocating two: one to set up the resources
-    // and one to do all the work.
+    /// Allocate a vec of vkCommandBuffers
+    ///
+    /// Command buffers are constructed once, and can be executed
+    /// many times. They also have the added bonus of being added to
+    /// by multiple threads. Command buffer is shortened to `cbuf` in
+    /// many areas of the code.
+    ///
+    /// For now we are only allocating two: one to set up the resources
+    /// and one to do all the work.
     unsafe fn create_command_buffers(dev: &Device,
                                      pool: vk::CommandPool,
                                      count: u32)
@@ -577,11 +575,11 @@ impl Renderer {
             .unwrap()
     }
 
-    // Get the vkImage's for the swapchain, and create vkImageViews for them
-    //
-    // get all the presentation images for the swapchain
-    // specify the image views, which specify how we want
-    // to access our images
+    /// Get the vkImage's for the swapchain, and create vkImageViews for them
+    ///
+    /// get all the presentation images for the swapchain
+    /// specify the image views, which specify how we want
+    /// to access our images
     unsafe fn select_images_and_views(swapchain_loader: &khr::Swapchain,
                                       swapchain: vk::SwapchainKHR,
                                       dev: &Device,
@@ -623,13 +621,13 @@ impl Renderer {
         return (images, image_views);
     }
 
-    // Returns an index into the array of memory types for the memory
-    // properties
-    //
-    // Memory types specify the location and accessability of memory. Device
-    // local memory is resident on the GPU, while host visible memory can be
-    // read from the system side. Both of these are part of the
-    // vk::MemoryPropertyFlags type.
+    /// Returns an index into the array of memory types for the memory
+    /// properties
+    ///
+    /// Memory types specify the location and accessability of memory. Device
+    /// local memory is resident on the GPU, while host visible memory can be
+    /// read from the system side. Both of these are part of the
+    /// vk::MemoryPropertyFlags type.
     fn find_memory_type_index(props: &vk::PhysicalDeviceMemoryProperties,
                               reqs: &vk::MemoryRequirements,
                               flags: vk::MemoryPropertyFlags)
@@ -653,21 +651,21 @@ impl Renderer {
         None
     }
 
-    // Create a vkImage and the resources needed to use it
-    //   (vkImageView and vkDeviceMemory)
-    //
-    // Images are generic buffers which can be used as sources or
-    // destinations of data. Images are accessed through image views,
-    // which specify how the image will be modified or read. In vulkan
-    // memory management is more hands on, so we will allocate some device
-    // memory to back the image.
-    //
-    // This method may require some adjustment as it makes some assumptions
-    // about the type of image to be created.
-    //
-    // Resolution should probably be the same size as the swapchain's images
-    // usage defines the role the image will serve (transfer, depth data, etc)
-    // flags defines the memory type (probably DEVICE_LOCAL + others)
+    /// Create a vkImage and the resources needed to use it
+    ///   (vkImageView and vkDeviceMemory)
+    ///
+    /// Images are generic buffers which can be used as sources or
+    /// destinations of data. Images are accessed through image views,
+    /// which specify how the image will be modified or read. In vulkan
+    /// memory management is more hands on, so we will allocate some device
+    /// memory to back the image.
+    ///
+    /// This method may require some adjustment as it makes some assumptions
+    /// about the type of image to be created.
+    ///
+    /// Resolution should probably be the same size as the swapchain's images
+    /// usage defines the role the image will serve (transfer, depth data, etc)
+    /// flags defines the memory type (probably DEVICE_LOCAL + others)
     unsafe fn create_image(dev: &Device,
                            mem_props: &vk::PhysicalDeviceMemoryProperties,
                            resolution: &vk::Extent2D,
@@ -728,11 +726,11 @@ impl Renderer {
         return (image, view, image_memory);
     }
 
-    // Create an image sampler
-    //
-    // Samplers are used to filter data from an image when
-    // it is referenced from a fragment shader. It allows
-    // for additional processing effects on the input.
+    /// Create an image sampler
+    ///
+    /// Samplers are used to filter data from an image when
+    /// it is referenced from a fragment shader. It allows
+    /// for additional processing effects on the input.
     unsafe fn create_sampler(&self) -> vk::Sampler {
         let info = vk::SamplerCreateInfo::builder()
             // filter for magnified (oversampled) pixels
@@ -755,15 +753,15 @@ impl Renderer {
         self.dev.create_sampler(&info, None).unwrap()
     }
 
-    // Transitions `image` to the `new` layout using `cbuf`
-    //
-    // Images need to be manually transitioned from two layouts. A
-    // normal use case is transitioning an image from an undefined
-    // layout to the optimal shader access layout. This is also
-    // used  by depth images.
-    //
-    // It is assumed this is for textures referenced from the fragment
-    // shader, and so it is a bit specific.
+    /// Transitions `image` to the `new` layout using `cbuf`
+    ///
+    /// Images need to be manually transitioned from two layouts. A
+    /// normal use case is transitioning an image from an undefined
+    /// layout to the optimal shader access layout. This is also
+    /// used  by depth images.
+    ///
+    /// It is assumed this is for textures referenced from the fragment
+    /// shader, and so it is a bit specific.
     unsafe fn transition_image_layout(&self,
                                       image: vk::Image,
                                       cbuf: vk::CommandBuffer,
@@ -823,14 +821,14 @@ impl Renderer {
         );
     }
 
-    // Copies a widthxheight buffer to an image
-    //
-    // This is used to load a texture into an image
-    // to be sampled by the shaders. The buffer will
-    // usually be a staging buffer, see
-    // `create_image_with_contents` for an example.
-    //
-    // needs to be recorded in a cbuf
+    /// Copies a widthxheight buffer to an image
+    ///
+    /// This is used to load a texture into an image
+    /// to be sampled by the shaders. The buffer will
+    /// usually be a staging buffer, see
+    /// `create_image_with_contents` for an example.
+    ///
+    /// needs to be recorded in a cbuf
     unsafe fn copy_buf_to_img(&self,
                               cbuf: vk::CommandBuffer,
                               buffer: vk::Buffer,
@@ -872,16 +870,16 @@ impl Renderer {
         );
     }
 
-    // Returns true if there are any resources in
-    // the current release list.
+    /// Returns true if there are any resources in
+    /// the current release list.
     pub fn release_is_empty(&mut self) -> bool {
         return self.r_release.is_empty();
     }
 
-    // Drop all of the resources, this is used to
-    // release wl_buffers after they have been drawn.
-    // We should not deal with wayland structs
-    // directly, just with releaseinfo
+    /// Drop all of the resources, this is used to
+    /// release wl_buffers after they have been drawn.
+    /// We should not deal with wayland structs
+    /// directly, just with releaseinfo
     pub fn release_pending_resources(&mut self) {
         log!(LogLevel::profiling, "-- releasing pending resources --");
 
@@ -890,21 +888,21 @@ impl Renderer {
         self.r_release.clear();
     }
 
-    // Add a ReleaseInfo to the list of resources to be
-    // freed this frame
-    //
-    // Takes care of choosing what list to add info to
+    /// Add a ReleaseInfo to the list of resources to be
+    /// freed this frame
+    ///
+    /// Takes care of choosing what list to add info to
     pub fn register_for_release(&mut self,
                                 release: Box<dyn Drop>)
     {
        self.r_release.push(release);
     }
 
-    // Update an image from a VkBuffer
-    //
-    // It is common to copy host data into an image
-    // to initialize it. This function initializes
-    // image by copying buffer to it.
+    /// Update an image from a VkBuffer
+    ///
+    /// It is common to copy host data into an image
+    /// to initialize it. This function initializes
+    /// image by copying buffer to it.
     unsafe fn update_image_contents_from_buf(&mut self,
                                              buffer: vk::Buffer,
                                              image: vk::Image,
@@ -968,13 +966,13 @@ impl Renderer {
         }
     }
 
-    // Create a new image, and fill it with `data`
-    //
-    // This is meant for loading a texture into an image.
-    // It essentially just wraps `create_image` and
-    // `update_memory`.
-    //
-    // The resulting image will be in the shader read layout
+    /// Create a new image, and fill it with `data`
+    ///
+    /// This is meant for loading a texture into an image.
+    /// It essentially just wraps `create_image` and
+    /// `update_memory`.
+    ///
+    /// The resulting image will be in the shader read layout
     unsafe fn create_image_with_contents(
         &mut self,
         resolution: &vk::Extent2D,
@@ -1003,16 +1001,16 @@ impl Renderer {
         (image, view, img_mem)
     }
 
-    // Create a new Vulkan Renderer
-    //
-    // This renderer is very application specific. It is not meant to be
-    // a generic safe wrapper for vulkan. This method constructs a new context,
-    // creating a vulkan instance, finding a physical gpu, setting up a logical
-    // device, and creating a swapchain.
-    //
-    // All methods called after this only need to take a mutable reference to
-    // self, avoiding any nasty argument lists like the functions above. 
-    // The goal is to have this make dealing with the api less wordy.
+    /// Create a new Vulkan Renderer
+    ///
+    /// This renderer is very application specific. It is not meant to be
+    /// a generic safe wrapper for vulkan. This method constructs a new context,
+    /// creating a vulkan instance, finding a physical gpu, setting up a logical
+    /// device, and creating a swapchain.
+    ///
+    /// All methods called after this only need to take a mutable reference to
+    /// self, avoiding any nasty argument lists like the functions above. 
+    /// The goal is to have this make dealing with the api less wordy.
     pub fn new() -> Renderer {
         unsafe {
             let (entry, inst) = Renderer::create_instance();
@@ -1148,17 +1146,17 @@ impl Renderer {
         }
     }
 
-    // Records and submits a one-time command buffer.
-    //
-    // cbuf - the command buffer to use
-    // queue - the queue to submit cbuf to
-    // wait_stages - a list of pipeline stages to wait on
-    // wait_semas - semaphores we consume
-    // signal_semas - semaphores we notify
-    //
-    // All operations in the `record_fn` argument will be
-    // submitted in the command buffer `cbuf`. This aims to make
-    // constructing buffers more ergonomic.
+    /// Records and submits a one-time command buffer.
+    ///
+    /// cbuf - the command buffer to use
+    /// queue - the queue to submit cbuf to
+    /// wait_stages - a list of pipeline stages to wait on
+    /// wait_semas - semaphores we consume
+    /// signal_semas - semaphores we notify
+    ///
+    /// All operations in the `record_fn` argument will be
+    /// submitted in the command buffer `cbuf`. This aims to make
+    /// constructing buffers more ergonomic.
     fn cbuf_onetime<F: FnOnce(&Renderer, vk::CommandBuffer)>
         (&self,
          cbuf: vk::CommandBuffer,
@@ -1196,20 +1194,20 @@ impl Renderer {
         }
     }
 
-    // Submits a command buffer.
-    //
-    // This is used for synchronized submits for graphical
-    // display operations. It waits for submit_fence before
-    // submitting to queue, and will signal it when the
-    // cbuf is executed. (see cbuf_sumbmit_async)
-    //
-    // The buffer MUST have been recorded before this
-    //
-    // cbuf - the command buffer to use
-    // queue - the queue to submit cbuf to
-    // wait_stages - a list of pipeline stages to wait on
-    // wait_semas - semaphores we consume
-    // signal_semas - semaphores we notify
+    /// Submits a command buffer.
+    ///
+    /// This is used for synchronized submits for graphical
+    /// display operations. It waits for submit_fence before
+    /// submitting to queue, and will signal it when the
+    /// cbuf is executed. (see cbuf_sumbmit_async)
+    ///
+    /// The buffer MUST have been recorded before this
+    ///
+    /// cbuf - the command buffer to use
+    /// queue - the queue to submit cbuf to
+    /// wait_stages - a list of pipeline stages to wait on
+    /// wait_semas - semaphores we consume
+    /// signal_semas - semaphores we notify
     fn cbuf_submit
         (&self,
          cbuf: vk::CommandBuffer,
@@ -1249,18 +1247,18 @@ impl Renderer {
         }
     }
 
-    // Submits a command buffer asynchronously.
-    //
-    // Simple wrapper for queue submission. Does not
-    // wait for anything.
-    //
-    // The buffer MUST have been recorded before this
-    //
-    // cbuf - the command buffer to use
-    // queue - the queue to submit cbuf to
-    // wait_stages - a list of pipeline stages to wait on
-    // wait_semas - semaphores we consume
-    // signal_semas - semaphores we notify
+    /// Submits a command buffer asynchronously.
+    ///
+    /// Simple wrapper for queue submission. Does not
+    /// wait for anything.
+    ///
+    /// The buffer MUST have been recorded before this
+    ///
+    /// cbuf - the command buffer to use
+    /// queue - the queue to submit cbuf to
+    /// wait_stages - a list of pipeline stages to wait on
+    /// wait_semas - semaphores we consume
+    /// signal_semas - semaphores we notify
     fn cbuf_submit_async
         (&self,
          cbuf: vk::CommandBuffer,
@@ -1290,13 +1288,13 @@ impl Renderer {
         }
     }
 
-    // Records but does not submit a command buffer.
-    //
-    // cbuf - the command buffer to use
-    // flags - the usage flags for the buffer
-    //
-    // All operations in the `record_fn` argument will be
-    // recorded in the command buffer `cbuf`.
+    /// Records but does not submit a command buffer.
+    ///
+    /// cbuf - the command buffer to use
+    /// flags - the usage flags for the buffer
+    ///
+    /// All operations in the `record_fn` argument will be
+    /// recorded in the command buffer `cbuf`.
     fn cbuf_begin_recording(&self,
                             cbuf: vk::CommandBuffer,
                             flags: vk::CommandBufferUsageFlags)
@@ -1322,9 +1320,9 @@ impl Renderer {
     }
 
     
-    // Records but does not submit a command buffer.
-    //
-    // cbuf - the command buffer to use
+    /// Records but does not submit a command buffer.
+    ///
+    /// cbuf - the command buffer to use
     fn cbuf_end_recording(&self, cbuf: vk::CommandBuffer) {
         unsafe {
             self.dev.end_command_buffer(cbuf)
@@ -1339,11 +1337,11 @@ impl Renderer {
         }
     }
 
-    // Start recording a cbuf for one frame
-    //
-    // Each framebuffer has a set of resources, including command
-    // buffers. This records the cbufs for the framebuffer
-    // specified by `img`.
+    /// Start recording a cbuf for one frame
+    ///
+    /// Each framebuffer has a set of resources, including command
+    /// buffers. This records the cbufs for the framebuffer
+    /// specified by `img`.
     pub fn begin_recording_one_frame(&mut self,
                                      params: &RecordParams)
     {
@@ -1398,7 +1396,7 @@ impl Renderer {
                 );
 
                 // bind the vertex and index buffers from
-                // the first mesh
+                // the first image
                 self.dev.cmd_bind_vertex_buffers(
                     params.cbuf, // cbuf to draw in
                     0, // first vertex binding updated by the command
@@ -1415,7 +1413,7 @@ impl Renderer {
         }
     }
 
-    // Stop recording a cbuf for one frame
+    /// Stop recording a cbuf for one frame
     pub fn end_recording_one_frame(&mut self, params: &RecordParams) {
         unsafe {
             self.dev.cmd_end_render_pass(params.cbuf);
@@ -1423,11 +1421,11 @@ impl Renderer {
         }
     }
 
-    // set up the depth image in self.
-    //
-    // We need to transfer the format of the depth image to something
-    // usable. We will use an image barrier to set the image as a depth
-    // stencil attachment to be used later.
+    /// set up the depth image in self.
+    ///
+    /// We need to transfer the format of the depth image to something
+    /// usable. We will use an image barrier to set the image as a depth
+    /// stencil attachment to be used later.
     unsafe fn setup_depth_image(&mut self) {
         // allocate a new cbuf for us to work with
         let new_cbuf = Renderer::create_command_buffers(&self.dev,
@@ -1486,10 +1484,10 @@ impl Renderer {
         );
     }
 
-    // create a renderpass for the color/depth attachments
-    //
-    // Render passses signify what attachments are used in which
-    // stages. They are composed of one or more subpasses.
+    /// create a renderpass for the color/depth attachments
+    ///
+    /// Render passses signify what attachments are used in which
+    /// stages. They are composed of one or more subpasses.
     unsafe fn create_pass(&mut self) -> vk::RenderPass {
         let attachments = [
             // the color dest. Its the surface we slected in new
@@ -1548,13 +1546,13 @@ impl Renderer {
         self.dev.create_render_pass(&create_info, None).unwrap()
     }
 
-    // Create a vkShaderModule for one of the dynamic pipeline stages
-    //
-    // dynamic portions of the graphics pipeline are programmable with
-    // spirv code. This helper function accepts a file name (`cursor`) and
-    // creates a shader module from it.
-    //
-    // `cursor` is accepted by ash's helper function, `read_spv`
+    /// Create a vkShaderModule for one of the dynamic pipeline stages
+    ///
+    /// dynamic portions of the graphics pipeline are programmable with
+    /// spirv code. This helper function accepts a file name (`cursor`) and
+    /// creates a shader module from it.
+    ///
+    /// `cursor` is accepted by ash's helper function, `read_spv`
     unsafe fn create_shader_module(&mut self, cursor:
                                    &mut Cursor<&'static [u8]>)
                                    -> vk::ShaderModule
@@ -1569,15 +1567,15 @@ impl Renderer {
             .expect("Could not create new shader module")
     }
 
-    // Create the dynamic portions of the rendering pipeline
-    //
-    // Shader stages specify the usage of a shader module, such as the
-    // entrypoint name (usually main) and the type of shader. As of now,
-    // we only return two shader modules, vertex and fragment.
-    //
-    // `entrypoint`: should be a CString.as_ptr(). The CString that it
-    // represents should live as long as the return type of this method.
-    //  see: https://doc.rust-lang.org/std/ffi/struct.CString.html#method.as_ptr
+    /// Create the dynamic portions of the rendering pipeline
+    ///
+    /// Shader stages specify the usage of a shader module, such as the
+    /// entrypoint name (usually main) and the type of shader. As of now,
+    /// we only return two shader modules, vertex and fragment.
+    ///
+    /// `entrypoint`: should be a CString.as_ptr(). The CString that it
+    /// represents should live as long as the return type of this method.
+    ///  see: https://doc.rust-lang.org/std/ffi/struct.CString.html#method.as_ptr
     unsafe fn create_shader_stages(&mut self, entrypoint: *const i8)
                                  -> [vk::PipelineShaderStageCreateInfo; 2]
     {
@@ -1605,19 +1603,19 @@ impl Renderer {
         ]
     }
 
-    // Configure and create a graphics pipeline
-    //
-    // In vulkan, the programmer has explicit control over the format
-    // and layout of the entire graphical pipeline, both dynamic and
-    // fixed function portions. We will specify the vertex input, primitive
-    // assembly, viewport/stencil location, rasterization type, depth
-    // information, and color blending.
-    //
-    // Pipeline layouts specify the full set of resources that the pipeline
-    // can access while running.
-    //
-    // This method roughly follows the "fixed function" part of the
-    // vulkan tutorial.
+    /// Configure and create a graphics pipeline
+    ///
+    /// In vulkan, the programmer has explicit control over the format
+    /// and layout of the entire graphical pipeline, both dynamic and
+    /// fixed function portions. We will specify the vertex input, primitive
+    /// assembly, viewport/stencil location, rasterization type, depth
+    /// information, and color blending.
+    ///
+    /// Pipeline layouts specify the full set of resources that the pipeline
+    /// can access while running.
+    ///
+    /// This method roughly follows the "fixed function" part of the
+    /// vulkan tutorial.
     unsafe fn create_pipeline(&mut self,
                               layout: vk::PipelineLayout,
                               pass: vk::RenderPass,
@@ -1767,14 +1765,14 @@ impl Renderer {
         ).expect("Could not create graphics pipeline")[0]
     }
 
-    // Create framebuffers for each swapchain image
-    //
-    // Image views represent a portion of an allocated image, while
-    // framebuffers bind an image view for use in a render pass. A
-    // framebuffer is really just a collection of attachments.
-    //
-    // In our example, we pair color and depth attachments in our
-    // framebuffers.
+    /// Create framebuffers for each swapchain image
+    ///
+    /// Image views represent a portion of an allocated image, while
+    /// framebuffers bind an image view for use in a render pass. A
+    /// framebuffer is really just a collection of attachments.
+    ///
+    /// In our example, we pair color and depth attachments in our
+    /// framebuffers.
     unsafe fn create_framebuffers(&mut self,
                                   pass: vk::RenderPass,
                                   res: vk::Extent2D)
@@ -1803,11 +1801,11 @@ impl Renderer {
             .collect()
     }
 
-    // Returns a `ShaderConstants` with the default values for this application
-    //
-    // Constants will be the contents of the uniform buffers which are
-    // processed by the shaders. The most obvious entry is the model + view
-    // + perspective projection matrix.
+    /// Returns a `ShaderConstants` with the default values for this application
+    ///
+    /// Constants will be the contents of the uniform buffers which are
+    /// processed by the shaders. The most obvious entry is the model + view
+    /// + perspective projection matrix.
     fn get_shader_constants(resolution: vk::Extent2D)
                             -> ShaderConstants
     {
@@ -1821,14 +1819,14 @@ impl Renderer {
         }
     }
 
-    // Create uniform buffer descriptor layout
-    //
-    // Descriptor layouts specify the number and characteristics of descriptor
-    // sets which will be made available to the pipeline through the pipeline
-    // layout.
-    //
-    // The layouts created will be the default for this application. This should
-    // usually be at least one descriptor for the MVP martrix.
+    /// Create uniform buffer descriptor layout
+    ///
+    /// Descriptor layouts specify the number and characteristics of descriptor
+    /// sets which will be made available to the pipeline through the pipeline
+    /// layout.
+    ///
+    /// The layouts created will be the default for this application. This should
+    /// usually be at least one descriptor for the MVP martrix.
     unsafe fn create_ubo_layout(&mut self)
                                 -> vk::DescriptorSetLayout
     {
@@ -1849,12 +1847,12 @@ impl Renderer {
             .unwrap()
     }
 
-    // Create a descriptor pool for the uniform buffer
-    //
-    // All other dynamic sets are tracked using a DescPool. This pool
-    // is for statically numbered resources.
-    //
-    // The pool returned is NOT thread safe
+    /// Create a descriptor pool for the uniform buffer
+    ///
+    /// All other dynamic sets are tracked using a DescPool. This pool
+    /// is for statically numbered resources.
+    ///
+    /// The pool returned is NOT thread safe
     unsafe fn create_descriptor_pool(&mut self)
                                      -> vk::DescriptorPool
     {
@@ -1871,12 +1869,12 @@ impl Renderer {
         self.dev.create_descriptor_pool(&info, None).unwrap()
     }
 
-    // Allocate a descriptor set for each layout in `layouts`
-    //
-    // A descriptor set specifies a group of attachments that can
-    // be referenced by the graphics pipeline. Think of a descriptor
-    // as the hardware's handle to a resource. The set of descriptors
-    // allocated in each set is specified in the layout.
+    /// Allocate a descriptor set for each layout in `layouts`
+    ///
+    /// A descriptor set specifies a group of attachments that can
+    /// be referenced by the graphics pipeline. Think of a descriptor
+    /// as the hardware's handle to a resource. The set of descriptors
+    /// allocated in each set is specified in the layout.
     unsafe fn allocate_descriptor_sets(&self,
                                        pool: vk::DescriptorPool,
                                        layouts: &[vk::DescriptorSetLayout])
@@ -1890,11 +1888,11 @@ impl Renderer {
         self.dev.allocate_descriptor_sets(&info).unwrap()
     }
 
-    // Update a uniform buffer descriptor set with `buf`
-    //
-    // Update the entry in `set` at offset `element` to use the
-    // values in `buf`. Descriptor sets can be updated outside of
-    // command buffers.
+    /// Update a uniform buffer descriptor set with `buf`
+    ///
+    /// Update the entry in `set` at offset `element` to use the
+    /// values in `buf`. Descriptor sets can be updated outside of
+    /// command buffers.
     unsafe fn update_uniform_descriptor_set(&mut self,
                                             buf: vk::Buffer,
                                             set: vk::DescriptorSet,
@@ -1924,11 +1922,11 @@ impl Renderer {
         );
     }
 
-    // Update an image sampler descriptor set
-    //
-    // This is what actually sets the image that the sampler
-    // will filter for the shader. The image is referenced
-    // by the `view` argument.
+    /// Update an image sampler descriptor set
+    ///
+    /// This is what actually sets the image that the sampler
+    /// will filter for the shader. The image is referenced
+    /// by the `view` argument.
     unsafe fn update_sampler_descriptor_set(&self,
                                             set: vk::DescriptorSet,
                                             binding: u32,
@@ -1959,11 +1957,11 @@ impl Renderer {
         );
     }
 
-    // Create vertex/index buffers for the default quad
-    //
-    // All onscreen regions will be represented by a quad, and
-    // we only need to create one set of vertex/index buffers
-    // for it.
+    /// Create vertex/index buffers for the default quad
+    ///
+    /// All onscreen regions will be represented by a quad, and
+    /// we only need to create one set of vertex/index buffers
+    /// for it.
     unsafe fn create_default_geom_bufs(&self)
                                        -> (vk::Buffer, vk::DeviceMemory,
                                            vk::Buffer, vk::DeviceMemory)
@@ -1986,11 +1984,11 @@ impl Renderer {
         return (vbuf, vmem, ibuf, imem);
     }
 
-    // Create descriptors for the image samplers
-    //
-    // Each Mesh will have a descriptor for each framebuffer,
-    // since multiple frames will be in flight. This allocates
-    // `image_count` sampler descriptors.
+    /// Create descriptors for the image samplers
+    ///
+    /// Each Image will have a descriptor for each framebuffer,
+    /// since multiple frames will be in flight. This allocates
+    /// `image_count` sampler descriptors.
     unsafe fn create_sampler_descriptors(&self,
                                          pool: vk::DescriptorPool,
                                          layout: vk::DescriptorSetLayout,
@@ -2017,14 +2015,14 @@ impl Renderer {
         return (sampler, descriptors);
     }
 
-    // Set up the application. This should *always* be called
-    //
-    // Once we have allocated a renderer with `new`, we should initialize
-    // the rendering pipeline so that we can display things. This method
-    // basically sets up all of the "application" specific resources like
-    // shaders, geometry, and the like.
-    //
-    // This fills in the AppContext struct in the Renderer
+    /// Set up the application. This should *always* be called
+    ///
+    /// Once we have allocated a renderer with `new`, we should initialize
+    /// the rendering pipeline so that we can display things. This method
+    /// basically sets up all of the "application" specific resources like
+    /// shaders, geometry, and the like.
+    ///
+    /// This fills in the AppContext struct in the Renderer
     pub fn setup(&mut self) {
         unsafe {
             self.setup_depth_image();
@@ -2155,10 +2153,10 @@ impl Renderer {
         }
     }
 
-    // Allocates a buffer/memory pair of size `size`.
-    //
-    // This is just a helper for `create_buffer`. It does not fill
-    // the buffer with anything.
+    /// Allocates a buffer/memory pair of size `size`.
+    ///
+    /// This is just a helper for `create_buffer`. It does not fill
+    /// the buffer with anything.
     unsafe fn create_buffer_with_size(&self,
                                       usage: vk::BufferUsageFlags,
                                       mode: vk::SharingMode,
@@ -2194,19 +2192,19 @@ impl Renderer {
         return (buffer, memory);
     }
 
-    // Wrapper for freeing device memory
-    //
-    // Having this in one place lets us quickly handle any additional
-    // allocation tracking
+    /// Wrapper for freeing device memory
+    ///
+    /// Having this in one place lets us quickly handle any additional
+    /// allocation tracking
     unsafe fn free_memory(&self, mem: vk::DeviceMemory) {
         self.dev.free_memory(mem, None);
     }
 
-    // Writes `data` to `memory`
-    //
-    // This is a helper method for mapping and updating the value stored
-    // in device memory Memory needs to be host visible and coherent.
-    // This does not flush after writing.
+    /// Writes `data` to `memory`
+    ///
+    /// This is a helper method for mapping and updating the value stored
+    /// in device memory Memory needs to be host visible and coherent.
+    /// This does not flush after writing.
     unsafe fn update_memory<T: Copy>(&self,
                                      memory: vk::DeviceMemory,
                                      data: &[T])
@@ -2228,13 +2226,13 @@ impl Renderer {
         self.dev.unmap_memory(memory);
     }
 
-    // allocates a buffer/memory pair and fills it with `data`
-    //
-    // There are two components to a memory backed resource in vulkan:
-    // vkBuffer which is the actual buffer itself, and vkDeviceMemory which
-    // represents a region of allocated memory to hold the buffer contents.
-    //
-    // Both are returned, as both need to be destroyed when they are done.
+    /// allocates a buffer/memory pair and fills it with `data`
+    ///
+    /// There are two components to a memory backed resource in vulkan:
+    /// vkBuffer which is the actual buffer itself, and vkDeviceMemory which
+    /// represents a region of allocated memory to hold the buffer contents.
+    ///
+    /// Both are returned, as both need to be destroyed when they are done.
     unsafe fn create_buffer<T: Copy>(&self,
                                      usage: vk::BufferUsageFlags,
                                      mode: vk::SharingMode,
@@ -2258,25 +2256,11 @@ impl Renderer {
         (buffer, memory)
     }
 
-    // Create a mesh and its needed data
-    //
-    // Meshes need to be in an indexed vertex format.
-    //
-    // tex_res is the resolution of `texture`
-    // window_res is the size of the on screen window
-    pub fn create_mesh(&mut self,
-                       data: WindowContents,
-                       release: Option<Box<dyn Drop>>)
-                       -> Option<Mesh>
-    {
-        return Mesh::new(self, data, release);
-    }
-
-    // Apply a transform matrix to all meshes
-    //
-    // This updates the model matrix of the shader constants
-    // used for all models
-    pub fn transform_meshes(&mut self,
+    /// Apply a transform matrix to all images
+    ///
+    /// This updates the model matrix of the shader constants
+    /// used for all models
+    pub fn transform_images(&mut self,
                             transform: &Matrix4<f32>)
     {
         let mut consts = Renderer::get_shader_constants(self.resolution);
@@ -2289,10 +2273,10 @@ impl Renderer {
         }
     }
 
-    // Update self.current_image with the swapchain image to render to
-    //
-    // Returns if the next image index was successfully obtained
-    // false means try again later, the next image is not ready
+    /// Update self.current_image with the swapchain image to render to
+    ///
+    /// Returns if the next image index was successfully obtained
+    /// false means try again later, the next image is not ready
     pub fn get_next_swapchain_image(&mut self) -> bool {
         unsafe {
             match self.swapchain_loader.acquire_next_image(
@@ -2315,11 +2299,11 @@ impl Renderer {
         }
     }
 
-    // Render a frame, but do not present it
-    //
-    // Think of this as the "main" rendering operation. It will draw
-    // all geometry to the current framebuffer. Presentation is
-    // done later, in case operations need to occur inbetween.
+    /// Render a frame, but do not present it
+    ///
+    /// Think of this as the "main" rendering operation. It will draw
+    /// all geometry to the current framebuffer. Presentation is
+    /// done later, in case operations need to occur inbetween.
     pub fn begin_frame(&mut self) {
         // Submit the recorded cbuf to perform the draw calls
         self.cbuf_submit(
@@ -2333,7 +2317,7 @@ impl Renderer {
         );
     }
 
-    // Returns true if we are ready to call present
+    /// Returns true if we are ready to call present
     pub fn frame_submission_complete(&mut self) -> bool {
         match unsafe { self.dev.get_fence_status(self.submit_fence) } {
             // true means vk::Result::SUCCESS
@@ -2341,13 +2325,12 @@ impl Renderer {
             Ok(complete) => return complete,
             Err(_) => panic!("Failed to get fence status"),
         };
-        
     }
 
-    // Present the current swapchain image to the screen
-    //
-    // Finally we can actually flip the buffers and present
-    // this image. 
+    /// Present the current swapchain image to the screen.
+    ///
+    /// Finally we can actually flip the buffers and present
+    /// this image. 
     pub fn present(&mut self) {
         unsafe {
             self.dev.wait_for_fences(&[self.submit_fence],

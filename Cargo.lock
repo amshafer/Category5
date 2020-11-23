@@ -709,7 +709,6 @@ dependencies = [
  "bincode",
  "bitflags",
  "cgmath",
- "image",
  "memoffset",
  "nix",
  "serde",
@@ -748,7 +747,6 @@ name = "utils"
 version = "0.1.0"
 dependencies = [
  "nix",
- "wayland-server",
 ]
 
 [[package]]

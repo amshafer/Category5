@@ -7,12 +7,8 @@ pub mod logging;
 pub mod log_prelude;
 pub mod fdwatch;
 pub mod region;
-extern crate wayland_server as ws;
 
-use ws::protocol::wl_buffer;
-
-use log_prelude::*;
-use std::{slice,fmt};
+use std::{slice};
 use std::ops::Deref;
 use std::os::unix::io::RawFd;
 
@@ -41,27 +37,6 @@ pub struct WindowId(pub u32);
 pub enum WindowContents<'a> {
     dmabuf(&'a Dmabuf),
     mem_image(&'a MemImage),
-}
-
-// Release Info
-//
-// Sometimes one subsystem hands data to
-// another subsystem for processing. When
-// complete those resources need to be freed.
-//
-// The receiving subsystem will drop this
-// whenever it is done completing a task,
-// releasing any resources.
-//
-// This is separate from WindowContents so
-// we can mix and match. Task handlers usually
-// accept this alongside some info struct
-#[derive(Debug)]
-#[allow(non_camel_case_types)]
-pub enum ReleaseInfo {
-    none,
-    mem_image,
-    dmabuf(DmabufReleaseInfo),
 }
 
 // Represents a raw pointer to a region of memory
@@ -143,40 +118,6 @@ pub struct Dmabuf {
     pub db_width: i32,
     pub db_height: i32,
     pub db_mods: u64,
-}
-
-// Dmabuf release info
-//
-// Should be paired with a Dmabuf while it is being
-// imported. Once the import is complete AND it is
-// replaced by the next commit, the dmabuf's wl_buffer
-// should be released so the client can reuse it.
-pub struct DmabufReleaseInfo {
-    // the drm fd for debugging purposes
-    pub dr_fd: RawFd,
-    // The wl_buffer that represents this dmabuf
-    pub dr_wl_buffer: wl_buffer::WlBuffer,
-}
-
-impl DmabufReleaseInfo {
-    pub fn release(&mut self) {
-        log!(LogLevel::profiling, "Releasing wl_buffer for dmabuf {}", self.dr_fd);
-        self.dr_wl_buffer.release();
-    }
-}
-
-impl Drop for DmabufReleaseInfo {
-    fn drop(&mut self) {
-        self.release();
-    }
-}
-
-impl fmt::Debug for DmabufReleaseInfo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DmabufReleaseInfo")
-         .field("dr_wl_buffer", &"<wl_buffer omitted>".to_string())
-         .finish()
-    }
 }
 
 impl Dmabuf {

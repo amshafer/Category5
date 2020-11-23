@@ -8,4 +8,3 @@ edition = "2018"
 
 [dependencies]
 nix="0.17"
-wayland-server={version="0.26.3", features=["use_system_lib"]}
