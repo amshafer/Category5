@@ -11,7 +11,7 @@ extern crate ash;
 pub use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::vk;
 
-use super::Renderer;
+use super::renderer::Renderer;
 
 // The default size of each pool in DescPool
 static POOL_SIZE: u32 = 4;

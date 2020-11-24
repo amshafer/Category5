@@ -46,7 +46,7 @@ pub enum WindowContents<'a> {
 // is used to represent shm buffers from wayland.
 #[derive(Debug)]
 pub struct MemImage {
-    ptr: *mut u8,
+    ptr: *const u8,
     // size of the pixel elements, in bytes
     pub element_size: usize,
     pub width: usize,
@@ -68,7 +68,7 @@ impl MemImage {
         }
     }
 
-    pub fn new(ptr: *mut u8,
+    pub fn new(ptr: *const u8,
                element_size: usize,
                width: usize,
                height: usize)

@@ -1,6 +1,6 @@
 // A window management API for the vulkan backend
 //
-// Renderer: This is basically a big engine that
+// Thundr: This is basically a big engine that
 // drives the vulkan drawing commands.
 // This is the slimy unsafe bit
 //
@@ -10,8 +10,7 @@ extern crate image;
 extern crate thundr;
 extern crate utils;
 
-use thundr::*;
-use thundr::image::Image;
+use thundr as th;
 
 use crate::category5::atmosphere::*;
 
@@ -27,9 +26,9 @@ use std::sync::mpsc::{Receiver, Sender};
 /// to represent a titlebar
 struct Titlebar {
     /// The thick bar itself
-    bar: Image,
+    bar: th::Image,
     /// One dot to rule them all. Used for buttons
-    dot: Image
+    dot: th::Image,
 }
 
 /// This represents a client window.
@@ -41,7 +40,7 @@ struct Titlebar {
 /// See WindowManager::record_draw for how this is displayed.
 pub struct App {
     /// This id uniquely identifies the App
-    id: WindowId,
+    a_id: WindowId,
     /// Because the images for imagees are used for both
     /// buffers in a double buffer system, when an App is
     /// deleted we need to avoid recording it in the next
@@ -49,9 +48,11 @@ pub struct App {
     ///
     /// When this flag is set, the we will not be recorded
     /// and will instead be destroyed
-    marked_for_death: bool,
+    a_marked_for_death: bool,
     /// This is the set of geometric objects in the application
-    image: Option<Image>,
+    a_surf: th::Surface,
+    /// The image attached to `a_surf`
+    a_image: Option<th::Image>,
 }
 
 /// Encapsulates vkcomp and provides a sensible windowing API
@@ -68,15 +69,16 @@ pub struct WindowManager {
     wm_atmos: Atmosphere,
     /// The vulkan renderer. It implements the draw logic,
     /// whereas WindowManager implements organizational logic
-    rend: Renderer,
+    wm_thundr: th::Thundr,
+    wm_surfaces: th::SurfaceList,
     /// This is the set of applications in this scene
-    apps: Vec<App>,
+    wm_apps: Vec<App>,
     /// The background picture of the desktop
-    background: Option<Image>,
+    wm_background: Option<th::Surface>,
     /// Image representing the software cursor
-    cursor: Option<Image>,
+    wm_cursor: Option<th::Surface>,
     /// Title bar to draw above the windows
-    titlebar: Titlebar,
+    wm_titlebar: Titlebar,
 }
 
 impl WindowManager {
@@ -86,7 +88,7 @@ impl WindowManager {
     /// The Titlebar will hold all of the components which make
     /// up all of the titlebars in a scene. These imagees will
     /// be colored differently when multidrawn
-    fn get_default_titlebar(rend: &mut Renderer) -> Titlebar {
+    fn get_default_titlebar(rend: &mut th::Thundr) -> Titlebar {
         let img = image::open("images/bar.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
 
@@ -96,8 +98,8 @@ impl WindowManager {
                                  64);
 
         // TODO: make a way to change titlebar colors
-        let bar = Image::from_mem_image(
-            rend, &mimg, None,
+        let bar = rend.create_image_from_bits(
+            &mimg, None,
         ).unwrap();
 
         let img = image::open("images/dot.png").unwrap().to_rgba();
@@ -106,8 +108,8 @@ impl WindowManager {
                                  4,
                                  64,
                                  64);
-        let dot = Image::from_mem_image(
-            rend, &mimg, None,
+        let dot = rend.create_image_from_bits(
+            &mimg, None,
         ).unwrap();
 
         Titlebar {
@@ -116,7 +118,7 @@ impl WindowManager {
         }
     }
 
-    fn get_default_cursor(rend: &mut Renderer) -> Option<Image> {
+    fn get_default_cursor(rend: &mut th::Thundr) -> Option<th::Surface> {
         let img = image::open("images/cursor.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8,
@@ -124,35 +126,37 @@ impl WindowManager {
                                  64,
                                  64);
 
-        Image::from_mem_image(rend, &mimg, None)
+        let image = rend.create_image_from_bits(&mimg, None).unwrap();
+        let mut surf = rend.create_surface(0.0, 0.0, 64.0, 64.0);
+        rend.bind_image(&mut surf, image);
+
+        Some(surf)
     }
 
     /// Create a new WindowManager
     ///
     /// This will create all the graphical resources needed for
     /// the compositor. The WindowManager will create and own
-    /// the Renderer, thereby readying the display to draw.
+    /// the Thundr, thereby readying the display to draw.
     pub fn new(tx: Sender<Box<Hemisphere>>,
                rx: Receiver<Box<Hemisphere>>)
                -> WindowManager
     {
-        // creates a context, swapchain, images, and others
-        // initialize the pipeline, renderpasses, and display engine
-        let mut rend = Renderer::new();
-        rend.setup();
+        let mut rend = th::Thundr::new();
 
         let mut wm = WindowManager {
             wm_atmos: Atmosphere::new(tx, rx),
-            titlebar: WindowManager::get_default_titlebar(&mut rend),
-            cursor: WindowManager::get_default_cursor(&mut rend),
-            rend: rend,
-            apps: Vec::new(),
-            background: None,
+            wm_titlebar: WindowManager::get_default_titlebar(&mut rend),
+            wm_cursor: WindowManager::get_default_cursor(&mut rend),
+            wm_thundr: rend,
+            wm_surfaces: th::SurfaceList::new(),
+            wm_apps: Vec::new(),
+            wm_background: None,
         };
 
         // Tell the atmosphere rend's resolution
-        wm.wm_atmos.set_resolution(wm.rend.resolution.width,
-                                   wm.rend.resolution.height);
+        let res = wm.wm_thundr.get_resolution();
+        wm.wm_atmos.set_resolution(res.0, res.1);
         return wm;
     }
 
@@ -170,13 +174,11 @@ impl WindowManager {
                                  tex_width as usize,
                                  tex_height as usize);
 
-        let image = Image::from_mem_image(
-            &mut self.rend,
-            &mimg,
-            None,
-        );
-
-        self.background = image;
+        let image = self.wm_thundr.create_image_from_bits(&mimg, None).unwrap();
+        let res = self.wm_thundr.get_resolution();
+        let mut surf = self.wm_thundr.create_surface(0.0, 0.0, res.0 as f32, res.1 as f32);
+        self.wm_thundr.bind_image(&mut surf, image);
+        self.wm_background = Some(surf);
     }
     
     /// Add a image to the renderer to be displayed.
@@ -184,17 +186,18 @@ impl WindowManager {
     /// The imagees are added to a list, and will be individually
     /// dispatched for drawing later.
     ///
-    /// Imagees need to be in an indexed vertex format.
+    /// Images need to be in an indexed vertex format.
     ///
     /// tex_res is the resolution of `texture`
     /// window_res is the size of the on screen window
     fn create_window(&mut self, id: WindowId) {
         log!(LogLevel::info, "wm: Creating new window {:?}", id);
 
-        self.apps.insert(0, App {
-            id: id,
-            marked_for_death: false,
-            image: None,
+        self.wm_apps.insert(0, App {
+            a_id: id,
+            a_marked_for_death: false,
+            a_surf: self.wm_thundr.create_surface(0.0, 0.0, 0.0, 0.0),
+            a_image: None,
         });
     }
 
@@ -209,9 +212,9 @@ impl WindowManager {
         log!(LogLevel::error, "Updating window {:?} with {:#?}",
              info.ufd_id, info);
         // Find the app corresponding to that window id
-        let app = match self.apps
+        let app = match self.wm_apps
             .iter_mut()
-            .find(|app| app.id == info.ufd_id)
+            .find(|app| app.a_id == info.ufd_id)
         {
             Some(a) => a,
             // If the id is not found, then don't update anything
@@ -221,11 +224,10 @@ impl WindowManager {
             },
         };
 
-        if !app.image.is_none() {
-            WindowManager::update_app_contents(
-                &mut self.rend,
-                app,
-                WindowContents::dmabuf(&info.ufd_dmabuf),
+        if let Some(image) = app.a_image.as_mut() {
+            self.wm_thundr.update_image_from_dmabuf(
+                image,
+                &info.ufd_dmabuf,
                 Some(Box::new(DmabufReleaseInfo {
                     dr_fd: info.ufd_dmabuf.db_fd,
                     dr_wl_buffer: info.ufd_wl_buffer.clone(),
@@ -235,8 +237,7 @@ impl WindowManager {
             // If it does not have a image, then this must be the
             // first time contents were attached to it. Go ahead
             // and make one now
-            app.image = Image::from_dmabuf(
-                &mut self.rend,
+            app.a_image = self.wm_thundr.create_image_from_dmabuf(
                 &info.ufd_dmabuf,
                 Some(Box::new(DmabufReleaseInfo {
                     dr_fd: info.ufd_dmabuf.db_fd,
@@ -244,6 +245,8 @@ impl WindowManager {
                 })),
             );
         }
+        self.wm_thundr.bind_image(&mut app.a_surf, app.a_image
+                                  .as_ref().unwrap().clone());
     }
 
     /// Handle update from memimage task
@@ -256,9 +259,9 @@ impl WindowManager {
         log!(LogLevel::error, "Updating window {:?} with {:#?}",
              info.id, info);
         // Find the app corresponding to that window id
-        let app = match self.apps
+        let app = match self.wm_apps
             .iter_mut()
-            .find(|app| app.id == info.id)
+            .find(|app| app.a_id == info.id)
         {
             Some(a) => a,
             // If the id is not found, then don't update anything
@@ -268,114 +271,93 @@ impl WindowManager {
             },
         };
 
-        if !app.image.is_none() {
-            WindowManager::update_app_contents(
-                &mut self.rend,
-                app,
-                WindowContents::mem_image(&info.pixels),
-                None,
-            );
+        if let Some(image) = app.a_image.as_mut() {
+            self.wm_thundr.update_image_from_bits(image,
+                                                  &info.pixels, None);
         } else {
             // If it does not have a image, then this must be the
             // first time contents were attached to it. Go ahead
             // and make one now
-            app.image = Some(Image::from_mem_image(
-                &mut self.rend, &info.pixels, None,
-            ).unwrap());
+            app.a_image = self.wm_thundr.create_image_from_bits(
+                &info.pixels, None,
+            );
         }
-    }
-
-    /// Find an app's image and update its contents
-    fn update_app_contents(rend: &mut Renderer,
-                               app: &mut App,
-                               data: WindowContents,
-                               release: Option<Box<dyn Drop>>)
-    {
-        app.image.as_mut().map(|image| {
-            image.update_contents(rend, data, release);
-        });
+        self.wm_thundr.bind_image(&mut app.a_surf, app.a_image
+                                  .as_ref().unwrap().clone());
     }
 
     /// Handles generating draw commands for one window
-    fn record_draw_for_id(&self,
-                          id: WindowId,
-                          order: usize,
-                          params: &RecordParams)
-    {
-        let a = match self.apps.iter().find(|&a| a.id == id) {
+    fn record_draw_for_id(&mut self, id: WindowId) {
+        let a = match self.wm_apps.iter_mut().find(|a| a.a_id == id) {
             Some(a) => a,
             // app must have been closed
             None => return,
         };
         // If this window has been closed or if it is not ready for
         // rendering, ignore it
-        if a.marked_for_death || !self.wm_atmos.get_window_in_use(a.id) {
+        if a.a_marked_for_death || !self.wm_atmos.get_window_in_use(a.a_id) {
             return;
         }
 
+        // get parameters
+        // ----------------------------------------------------------------
         // The bar should be a percentage of the screen height
         let barsize = self.wm_atmos.get_barsize();
         // The dotsize should be just slightly smaller
         let dotsize = barsize * 0.95;
-        let surface_pos = self.wm_atmos.get_surface_pos(a.id);
-        let surface_size = self.wm_atmos.get_surface_size(a.id);
-        // Convert the order into a float from 0.0 to 1.0
-        let order_depth = ((order + 1) as f32) / 100.0;
+        let surface_pos = self.wm_atmos.get_surface_pos(a.a_id);
+        let surface_size = self.wm_atmos.get_surface_size(a.a_id);
+
+        // update the th::Surface pos and size
+        a.a_surf.set_pos(surface_pos.0, surface_pos.1);
+        a.a_surf.set_size(surface_size.0, surface_size.1);
+        // ----------------------------------------------------------------
 
         // Only display the bar for toplevel surfaces
         // i.e. don't for popups
         if self.wm_atmos.get_toplevel(id) {
-            // now render the bar itself, as wide as the window
-            // the bar needs to be behind the dots
-            let push = PushConstants {
-                order: order_depth - 0.001, // depth
-                // align it at the top right
-                x: surface_pos.0,
-                // draw the bar above the window
-                y: surface_pos.1 - barsize,
-                // the bar is as wide as the window
-                width: surface_size.0,
-                // use a percentage of the screen size
-                height: barsize,
-            };
-            self.titlebar.bar
-                .record_draw(&self.rend, params, &push);
-
-            // We should render the dot second, so alpha blending
-            // has a color to use
-            let push = PushConstants {
-                order: order_depth - 0.002, // depth
-                // the x position needs to be all the way to the
-                // right side of the bar
-                x: surface_pos.0
+            // draw buttons on the titlebar
+            // ----------------------------------------------------------------
+            let mut dot = self.wm_thundr.create_surface(
+                surface_pos.0
                 // Multiply by 2 (see vert shader for details)
                     + surface_size.0
                 // we don't want to go past the end of the bar
                     - barsize,
-                y: surface_pos.1 - barsize,
+                surface_pos.1 - barsize,
                 // align it at the top right
-                width: dotsize,
-                height: dotsize,
-            };
-            // render buttons on the titlebar
-            self.titlebar.dot
-                .record_draw(&self.rend, params, &push);
+                dotsize, // width
+                dotsize, // height
+            );
+            self.wm_thundr.bind_image(&mut dot, self.wm_titlebar.dot.clone());
+            self.wm_surfaces.push(dot);
+            // ----------------------------------------------------------------
+
+            // now render the bar itself, as wide as the window
+            // the bar needs to be behind the dots
+            // ----------------------------------------------------------------
+            let mut bar = self.wm_thundr.create_surface(
+                // align it at the top right
+                surface_pos.0,
+                // draw the bar above the window
+                surface_pos.1 - barsize,
+                // the bar is as wide as the window
+                surface_size.0,
+                // use a percentage of the screen size
+                barsize,
+            );
+            self.wm_thundr.bind_image(&mut bar, self.wm_titlebar.bar.clone());
+            self.wm_surfaces.push(bar);
+            // ----------------------------------------------------------------
         }
 
         // Finally, we can draw the window itself
         // If the image does not exist, then only the titlebar
         // and other window decorations will be drawn
-        if let Some(image) = &a.image {
-            // TODO: else draw blank image?
-            let push = PushConstants {
-                order: order_depth, // depth
-                x: surface_pos.0,
-                y: surface_pos.1,
-                // align it at the top right
-                width: surface_size.0,
-                height: surface_size.1,
-            };
-            image.record_draw(&self.rend, params, &push);
+        if a.a_image.is_some() {
+            // ----------------------------------------------------------------
+            self.wm_surfaces.push(a.a_surf.clone());
+            // ----------------------------------------------------------------
         }
     }
 
@@ -385,68 +367,56 @@ impl WindowManager {
     /// buffer which is later submitted for display. This method organizes
     /// the recording of draw operations for all elements in the desktop.
     ///
-    /// params: a private info structure for the Renderer. It holds all
+    /// params: a private info structure for the Thundr. It holds all
     /// the data about what we are recording.
-    fn record_draw(&self, params: &RecordParams) {
-        // Draw the background first for alpha reasons
-        self.background.as_ref().map(|back| {
-            back.record_draw(
-                &self.rend,
-                params,
-                &PushConstants {
-                    order: 0.99999, // make it the max depth
-                    // size of the window on screen
-                    x: 0.0,
-                    y: 0.0,
-                    // align it at the top left
-                    width: self.rend.resolution.width as f32,
-                    height: self.rend.resolution.height as f32,
-                },
-            );
-        });
-
-        // Each app should have one or more windows,
-        // all of which we need to draw.
-        let ids: Vec<(usize, WindowId)> = self.wm_atmos.visible_windows().enumerate().collect();
-        // draw the windows from back to front to make alpha blending work.
-        // TODO: this is terrible for performance
-        for (i, id) in ids.iter().rev() {
-            // Render any subsurfaces first
-            for (j, sub) in self.wm_atmos.visible_subsurfaces(*id).enumerate() {
-                // TODO: Make this recursive??
-                self.record_draw_for_id(sub, j, params);
-            }
-            // Now render this window
-            self.record_draw_for_id(*id, *i, params);
-        }
+    fn record_draw(&mut self) {
+        // recreate our surface list to pass to thundr
+        self.wm_surfaces.clear();
 
         // get the latest cursor position
+        // ----------------------------------------------------------------
         let (cursor_x, cursor_y) = self.wm_atmos.get_cursor_pos();
         log!(LogLevel::profiling, "Drawing cursor at ({}, {})",
              cursor_x,
              cursor_y);
+        if let Some(cursor) = self.wm_cursor.as_mut() {
+            cursor.set_pos(cursor_x as f32, cursor_y as f32);
+            self.wm_surfaces.push(cursor.clone());
+        }
+        // ----------------------------------------------------------------
 
-        self.cursor.as_ref().map(|cursor| {
-            cursor.record_draw(
-                &self.rend,
-                params,
-                &PushConstants {
-                    order: 0.0001, // make it the min depth
-                    // put it in the center
-                    x: cursor_x as f32,
-                    y: cursor_y as f32,
-                    // TODO: calculate cursor size
-                    width: 16.0,
-                    height: 16.0,
-                },
-            );
-        });
+        // Draw all of our windows on the desktop
+        // Each app should have one or more windows,
+        // all of which we need to draw.
+        // ----------------------------------------------------------------
+        let mut ids = Vec::new();
+        for id in self.wm_atmos.visible_windows() {
+            // Render any subsurfaces first
+            for sub in self.wm_atmos.visible_subsurfaces(id) {
+                ids.push(sub);
+            }
+            ids.push(id);
+        }
+        // do the draw call separately due to the borrow checker
+        // throwing a fit if it is in the loop above
+        for id in ids {
+            // Now render the windows
+            self.record_draw_for_id(id);
+        }
+        // ----------------------------------------------------------------
+
+        // Draw the desktop background last
+        // ----------------------------------------------------------------
+        if let Some(back) = self.wm_background.as_ref() {
+            self.wm_surfaces.push(back.clone());
+        }
+        // ----------------------------------------------------------------
     }
 
     fn close_window(&mut self, id: WindowId) {
         // if it exists, mark it for death
-        self.apps.iter_mut().find(|app| app.id == id).map(|app| {
-            app.marked_for_death = true;
+        self.wm_apps.iter_mut().find(|app| app.a_id == id).map(|app| {
+            app.a_marked_for_death = true;
         });
     }
 
@@ -456,14 +426,14 @@ impl WindowManager {
     fn reap_dead_windows(&mut self) {
         // Take a reference out here to avoid making the
         // borrow checker angry
-        let rend = &self.rend;
+        let thundr = &mut self.wm_thundr;
 
         // Only retain alive windows in the array
-        self.apps.retain(|app| {
-                if app.marked_for_death {
+        self.wm_apps.retain(|app| {
+                if app.a_marked_for_death {
                     // Destroy the rendering resources
-                    app.image.as_ref().map(
-                        |image| image.destroy(rend)
+                    app.a_image.as_ref().map(
+                        |image| thundr.destroy_image(image.clone())
                     );
 
                     return false;
@@ -472,36 +442,17 @@ impl WindowManager {
             });
     }
 
-    /// A helper which records the cbuf for the next frame
-    ///
-    /// Recording a frame follows this general pattern:
-    ///  1. The recording parameters are requested.
-    ///  2. Recording is started.
-    ///  3. WindowManager specifies the order/position of Images
-    ///     to be recorded.
-    ///  4. Recording is stopped.
-    ///
-    /// This *does not* present anything to the screen
-    fn record_next_frame(&mut self) {
-        let params = self.rend.get_recording_parameters();
-        self.rend.begin_recording_one_frame(&params);
-
-        self.record_draw(&params);
-
-        self.rend.end_recording_one_frame(&params);
-    }
-
     /// Begin rendering a frame
     ///
     /// Vulkan is asynchronous, meaning that commands are submitted
     /// and later waited on. This method records the next cbuf
-    /// and asks the Renderer to submit it.
+    /// and asks the Thundr to submit it.
     ///
     /// The frame is not presented to the display until
     /// WindowManager::end_frame is called.
     fn begin_frame(&mut self) {
-        self.record_next_frame();
-        self.rend.begin_frame();
+        self.record_draw();
+        self.wm_thundr.draw_frame(&self.wm_surfaces);
     }
 
     /// End a frame
@@ -514,7 +465,7 @@ impl WindowManager {
     /// frame is presented, which is why begin/end frame is split
     /// into two methods.
     fn end_frame(&mut self) {
-        self.rend.present();
+        self.wm_thundr.present();
     }
 
     pub fn process_task(&mut self, task: &Task) {
@@ -569,7 +520,7 @@ impl WindowManager {
             // release all the resources used to construct it while
             // we wait for our draw calls
             // note: -bad- this probably calls wayland locks
-            self.rend.release_pending_resources();
+            self.wm_thundr.release_pending_resources();
 
             // Flip hemispheres to push our updates to vkcomp
             // this must be terrible for the local fauna
@@ -587,9 +538,6 @@ impl WindowManager {
             // start recording how much time we spent doing graphics
             log!(LogLevel::debug, "_____________________________ FRAME BEGIN");
             draw_stop.start();
-
-            // get the next frame to draw into
-            self.rend.get_next_swapchain_image();
 
             // Create a frame out of the hemisphere we got from ways
             self.begin_frame();
@@ -610,16 +558,10 @@ impl Drop for WindowManager {
     /// the renderer, since they were allocated from it.
     fn drop(&mut self) {
         // Free all imagees in each app
-        for a in self.apps.iter_mut() {
-            a.image.as_ref().unwrap().destroy(&self.rend);
+        for a in self.wm_apps.iter_mut() {
+            // now destroy the image
+            self.wm_thundr.destroy_image(a.a_image.as_ref().unwrap().clone());
         }
-        self.titlebar.bar.destroy(&self.rend);
-        self.titlebar.dot.destroy(&self.rend);
-
-        if let Some(m) = &mut self.background {
-            m.destroy(&self.rend);
-        }
-
-        std::mem::drop(&self.rend);
+        std::mem::drop(&self.wm_thundr);
     }
 }

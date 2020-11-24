@@ -7,7 +7,7 @@ extern crate wayland_server as ws;
 use ws::Main;
 use ws::protocol::wl_region;
 
-use utils::region::{Offset2D,Rect};
+use utils::region::Rect;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -16,10 +16,10 @@ use std::cell::RefCell;
 pub struct Region {
     /// A list of rectangles which make up the
     /// active portion of the region
-    pub r_add: Vec<Rect>,
+    pub r_add: Vec<Rect<i32>>,
     /// List of rectangles to be subtracted from the
     /// active area
-    pub r_sub: Vec<Rect>,
+    pub r_sub: Vec<Rect<i32>>,
 }
 
 // Register a new wl_region
@@ -42,26 +42,10 @@ impl Region {
                           req: wl_region::Request)
     {
         match req {
-            wl_region::Request::Add { x, y, width, height } => {
-                self.r_add.push(Rect {
-                    r_start: Offset2D {
-                        x: x, y: y
-                    },
-                    r_size: Offset2D {
-                        x: width, y: height,
-                    },
-                });
-            },
-            wl_region::Request::Subtract { x, y, width, height } => {
-                self.r_sub.push(Rect {
-                    r_start: Offset2D {
-                        x: x, y: y
-                    },
-                    r_size: Offset2D {
-                        x: width, y: height,
-                    },
-                });
-            },
+            wl_region::Request::Add { x, y, width, height } =>
+                self.r_add.push(Rect::new(x, y, width, height)),
+            wl_region::Request::Subtract { x, y, width, height } =>
+                self.r_sub.push(Rect::new(x, y, width, height)),
             // don't do anything special when destroying
             _ => (),
         }
