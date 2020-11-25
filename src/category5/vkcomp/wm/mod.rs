@@ -127,7 +127,7 @@ impl WindowManager {
                                  64);
 
         let image = rend.create_image_from_bits(&mimg, None).unwrap();
-        let mut surf = rend.create_surface(0.0, 0.0, 64.0, 64.0);
+        let mut surf = rend.create_surface(0.0, 0.0, 16.0, 16.0);
         rend.bind_image(&mut surf, image);
 
         Some(surf)

@@ -19,7 +19,7 @@ use std::cell::RefCell;
 use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::{vk, Device, Entry, Instance};
 use ash::util;
-use ash::extensions::ext::DebugReport;
+use ash::extensions::ext;
 use ash::extensions::khr;
 
 use super::list::SurfaceList;
@@ -86,7 +86,7 @@ unsafe extern "system" fn vulkan_debug_callback(
 /// struct, with the commonly required fields at the top.
 pub struct Renderer {
     /// debug callback sugar mentioned earlier
-    debug_loader: DebugReport,
+    debug_loader: ext::DebugReport,
     debug_callback: vk::DebugReportCallbackEXT,
 
     /// the entry just loads function pointers from the dynamic library
@@ -273,7 +273,7 @@ impl Renderer {
     /// Creates a new debug reporter and registers our function
     /// for debug callbacks so we get nice error messages
     unsafe fn setup_debug(entry: &Entry, instance: &Instance)
-                          -> (DebugReport, vk::DebugReportCallbackEXT)
+                          -> (ext::DebugReport, vk::DebugReportCallbackEXT)
     {
         let debug_info = vk::DebugReportCallbackCreateInfoEXT::builder()
             .flags(
@@ -283,7 +283,7 @@ impl Renderer {
             )
             .pfn_callback(Some(vulkan_debug_callback));
 
-        let dr_loader = DebugReport::new(entry, instance);
+        let dr_loader = ext::DebugReport::new(entry, instance);
         let callback = dr_loader
             .create_debug_report_callback(&debug_info, None)
             .unwrap();
@@ -299,7 +299,8 @@ impl Renderer {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("VulkanRenderer").unwrap();
 
-        let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
+        //let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
+        let layer_names = [];
 
         let layer_names_raw: Vec<*const i8> = layer_names.iter()
             .map(|raw_name: &CString| raw_name.as_ptr())
@@ -428,8 +429,13 @@ impl Renderer {
                                 queues: &[u32])
                                 -> Device
     {
-        let dev_extension_names = [khr::Swapchain::name().as_ptr(),
-                                   khr::ExternalMemoryFd::name().as_ptr()];
+        let dev_extension_names = [
+            khr::Swapchain::name().as_ptr(),
+            khr::ExternalMemoryFd::name().as_ptr(),
+            // We need to wait for this to be supported in mesa
+            // for now it somehow happens to work
+            //vk::ExtImageDrmFormatModifierFn::name().as_ptr(),
+        ];
 
         let features = vk::PhysicalDeviceFeatures {
             shader_clip_distance: 1,
@@ -2298,10 +2304,10 @@ impl Renderer {
     /// The frame is not submitted to be drawn until
     /// `begin_frame` is called.
     pub fn draw(&mut self, surfaces: &SurfaceList) {
-        let params = self.get_recording_parameters();
-
         // get the next frame to draw into
         self.get_next_swapchain_image();
+        let params = self.get_recording_parameters();
+
         self.begin_recording_one_frame(&params);
 
         for (i, surf) in surfaces.iter().enumerate() {
