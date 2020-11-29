@@ -9,6 +9,7 @@ mod damage;
 mod list;
 mod image;
 mod surface;
+mod pipelines;
 
 pub use list::SurfaceList;
 pub use renderer::Renderer;
@@ -32,7 +33,6 @@ impl Thundr {
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
         let mut rend = Renderer::new();
-        rend.setup();
 
         Thundr {
             th_rend: rend,

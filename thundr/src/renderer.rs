@@ -25,35 +25,10 @@ use ash::extensions::khr;
 use super::list::SurfaceList;
 use super::descpool::DescPool;
 use super::display::Display;
+use super::pipelines::geometric::AppContext;
 
 extern crate utils as cat5_utils;
 use cat5_utils::log_prelude::*;
-
-// This is the reference data for a normal quad
-// that will be used to draw client windows.
-static QUAD_DATA: [VertData; 4] = [
-    VertData {
-        vertex: Vector2::new(0.0, 0.0),
-        tex: Vector2::new(0.0, 0.0),
-    },
-    VertData {
-        vertex: Vector2::new(1.0, 0.0),
-        tex: Vector2::new(1.0, 0.0),
-    },
-    VertData {
-        vertex: Vector2::new(0.0, 1.0),
-        tex: Vector2::new(0.0, 1.0),
-    },
-    VertData {
-        vertex: Vector2::new(1.0, 1.0),
-        tex: Vector2::new(1.0, 1.0),
-    },
-];
-
-static QUAD_INDICES: [Vector3::<u32>; 2] = [
-    Vector3::new(1, 2, 3),
-    Vector3::new(1, 4, 2),
-];
 
 // this happy little debug callback is from the ash examples
 // all it does is print any errors/warnings thrown.
@@ -91,7 +66,7 @@ pub struct Renderer {
 
     /// the entry just loads function pointers from the dynamic library
     /// I am calling it a loader, because that's what it does
-    loader: Entry,
+    pub(crate) loader: Entry,
     /// the big vulkan instance.
     pub(crate) inst: Instance,
     /// the logical device we are using
@@ -105,45 +80,45 @@ pub struct Renderer {
     pub(crate) graphics_family_index: u32,
     pub(crate) transfer_family_index: u32,
     /// processes things to be physically displayed
-    present_queue: vk::Queue,
+    pub(crate) present_queue: vk::Queue,
     /// queue for copy operations
-    transfer_queue: vk::Queue,
+    pub(crate) transfer_queue: vk::Queue,
 
     /// vk_khr_display and vk_khr_surface wrapper.
     display: Display,
-    surface_format: vk::SurfaceFormatKHR,
-    surface_caps: vk::SurfaceCapabilitiesKHR,
+    pub(crate) surface_format: vk::SurfaceFormatKHR,
+    pub(crate) surface_caps: vk::SurfaceCapabilitiesKHR,
     /// resolution to create the swapchain with
     pub(crate) resolution: vk::Extent2D,
 
     /// loads swapchain extension
-    swapchain_loader: khr::Swapchain,
+    pub(crate) swapchain_loader: khr::Swapchain,
     /// the actual swapchain
-    swapchain: vk::SwapchainKHR,
+    pub(crate) swapchain: vk::SwapchainKHR,
     /// index into swapchain images that we are currently using
     pub(crate) current_image: u32,
 
     /// a set of images belonging to swapchain
-    images: Vec<vk::Image>,
+    pub(crate) images: Vec<vk::Image>,
     /// number of framebuffers (2 is double buffering)
     pub(crate) fb_count: usize,
     /// views describing how to access the images
-    views: Vec<vk::ImageView>,
+    pub(crate) views: Vec<vk::ImageView>,
 
     /// pools provide the memory allocated to command buffers
-    pool: vk::CommandPool,
+    pub(crate) pool: vk::CommandPool,
     /// the command buffers allocated from pool
-    cbufs: Vec<vk::CommandBuffer>,
+    pub(crate) cbufs: Vec<vk::CommandBuffer>,
 
     /// Application specific stuff that will be set up after
     /// the original initialization
     pub(crate) app_ctx: RefCell<Option<AppContext>>,
 
     /// an image for recording depth test data
-    depth_image: vk::Image,
-    depth_image_view: vk::ImageView,
+    pub(crate) depth_image: vk::Image,
+    pub(crate) depth_image_view: vk::ImageView,
     /// because we create the image, we need to back it with memory
-    depth_image_mem: vk::DeviceMemory,
+    pub(crate) depth_image_mem: vk::DeviceMemory,
 
     /// This signals that the latest contents have been presented.
     /// It is signaled by acquire next image and is consumed by
@@ -163,53 +138,9 @@ pub struct Renderer {
     /// for rendering that should now be released
     /// See WindowManger's worker_thread for more
     pub(crate) r_release: Vec<Box<dyn Drop>>,
-}
-
-/// an application specific set of resources to draw.
-///
-/// These are the "dynamic" parts of our application. The things
-/// that change depending on the scene. It holds pipelines, layouts
-/// shaders, and geometry.
-///
-/// Ideally the `Renderer` can render/present anything, and this
-/// struct specifies what to draw. This allows the second half
-/// of the initialization functions to just have a self ref.
-///
-/// images are created with Renderer::create_image. The renderer is in
-/// charge of creating/destroying the images since all of the image
-/// resources are created from the Renderer.
-pub struct AppContext {
-    pass: vk::RenderPass,
-    pipeline: vk::Pipeline,
-    pub(crate) pipeline_layout: vk::PipelineLayout,
-    /// This descriptor pool allocates only the 1 ubo
-    uniform_pool: vk::DescriptorPool,
-    /// This is an allocator for the dynamic sets (samplers)
-    pub(crate) desc_pool: DescPool,
-    /// (as per `create_descriptor_layouts`)
-    /// This will only be the sets holding the uniform buffers,
-    /// any image specific descriptors are in the image's sets.
-    descriptor_uniform_layout: vk::DescriptorSetLayout,
-    pub(crate) ubo_descriptor: vk::DescriptorSet,
-    shader_modules: Vec<vk::ShaderModule>,
-    framebuffers: Vec<vk::Framebuffer>,
-    /// shader constants are shared by all swapchain images
-    uniform_buffer: vk::Buffer,
-    uniform_buffers_memory: vk::DeviceMemory,
-    /// TODO: this should probably be a uniform texel buffer
-    /// One sampler for each swapchain image
-    pub(crate) image_sampler: vk::Sampler,
-    /// We will hold only one copy of the static QUAD_DATA
-    /// which represents an onscreen window.
-    vert_buffer: vk::Buffer,
-    vert_buffer_memory: vk::DeviceMemory,
-    pub(crate) vert_count: u32,
-    /// Resources for the index buffer
-    index_buffer: vk::Buffer,
-    index_buffer_memory: vk::DeviceMemory,
     /// command buffer for copying shm images
-    copy_cbuf: vk::CommandBuffer,
-    copy_cbuf_fence: vk::Fence,
+    pub(crate) copy_cbuf: vk::CommandBuffer,
+    pub(crate) copy_cbuf_fence: vk::Fence,
 }
 
 /// Recording parameters
@@ -221,48 +152,6 @@ pub struct AppContext {
 pub struct RecordParams {
     pub cbuf: vk::CommandBuffer,
     pub image_num: usize,
-}
-
-/// Contiains a vertex and all its related data
-///
-/// Things like vertex normals and colors will be passed in
-/// the same vertex input assembly, so this type provides
-/// a wrapper for handling all of them at once.
-#[repr(C)]
-#[derive(Clone,Copy)]
-struct VertData {
-    pub vertex: Vector2<f32>,
-    pub tex: Vector2<f32>,
-}
-
-/// Shader constants are used for
-/// the larger uniform values which are
-/// not changed very often.
-#[derive(Clone,Copy)]
-#[repr(C)]
-struct ShaderConstants {
-    pub model: Matrix4<f32>,
-    pub width: f32,
-    pub height: f32,
-}
-
-/// Push constants are used for small bits of data
-/// which are changed often. We will use them to
-/// transform the default square into the size of
-/// the client window.
-///
-/// This should to be less than 128 bytes to guarantee
-/// that there will be enough push constant space.
-#[derive(Clone,Copy,Serialize,Deserialize)]
-#[repr(C)]
-pub struct PushConstants {
-    /// the z-ordering of the window being drawn
-    pub order: f32,
-    /// this is [0,resolution]
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    pub height: f32,
 }
 
 // Most of the functions below will be unsafe. Only the safe functions
@@ -425,9 +314,9 @@ impl Renderer {
     /// A queue is created in the specified queue family in the
     /// present_queue argument.
     unsafe fn create_device(inst: &Instance,
-                                pdev: vk::PhysicalDevice,
-                                queues: &[u32])
-                                -> Device
+                            pdev: vk::PhysicalDevice,
+                            queues: &[u32])
+                            -> Device
     {
         let dev_extension_names = [
             khr::Swapchain::name().as_ptr(),
@@ -472,13 +361,13 @@ impl Renderer {
     /// it is created for.
     /// The application resolution is set by this method.
     unsafe fn create_swapchain(swapchain_loader: &khr::Swapchain,
-                                   surface_loader: &khr::Surface,
-                                   pdev: vk::PhysicalDevice,
-                                   surface: vk::SurfaceKHR,
-                                   surface_caps: &vk::SurfaceCapabilitiesKHR,
-                                   surface_format: vk::SurfaceFormatKHR,
-                                   resolution: &vk::Extent2D)
-                                   -> vk::SwapchainKHR
+                               surface_loader: &khr::Surface,
+                               pdev: vk::PhysicalDevice,
+                               surface: vk::SurfaceKHR,
+                               surface_caps: &vk::SurfaceCapabilitiesKHR,
+                               surface_format: vk::SurfaceFormatKHR,
+                               resolution: &vk::Extent2D)
+                               -> vk::SwapchainKHR
     {
         // how many images we want the swapchain to contain
         let mut desired_image_count = surface_caps.min_image_count + 1;
@@ -727,7 +616,7 @@ impl Renderer {
     /// Samplers are used to filter data from an image when
     /// it is referenced from a fragment shader. It allows
     /// for additional processing effects on the input.
-    unsafe fn create_sampler(&self) -> vk::Sampler {
+    pub(crate) unsafe fn create_sampler(&self) -> vk::Sampler {
         let info = vk::SamplerCreateInfo::builder()
             // filter for magnified (oversampled) pixels
             .mag_filter(vk::Filter::LINEAR)
@@ -905,61 +794,59 @@ impl Renderer {
                                                         width: u32,
                                                         height: u32)
     {
-        if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
-            // If a previous copy is still happening, wait for it
-            match self.dev.get_fence_status(ctx.copy_cbuf_fence) {
-                // true means vk::Result::SUCCESS
-                Ok(true) => {},
-                // false means vk::Result::NOT_READY
-                Ok(false) => {
-                    self.dev.wait_for_fences(&[ctx.copy_cbuf_fence],
-                                             true, // wait for all
-                                             std::u64::MAX, //timeout
-                    ).unwrap();
-                    // unsignal it, may be extraneous
-                    self.dev.reset_fences(&[ctx.copy_cbuf_fence]).unwrap();
-                }
-                Err(_) => panic!("Failed to get fence status"),
-            };
+        // If a previous copy is still happening, wait for it
+        match self.dev.get_fence_status(self.copy_cbuf_fence) {
+            // true means vk::Result::SUCCESS
+            Ok(true) => {},
+            // false means vk::Result::NOT_READY
+            Ok(false) => {
+                self.dev.wait_for_fences(&[self.copy_cbuf_fence],
+                                         true, // wait for all
+                                         std::u64::MAX, //timeout
+                ).unwrap();
+                // unsignal it, may be extraneous
+                self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
+            }
+            Err(_) => panic!("Failed to get fence status"),
+        };
 
-            // now perform the copy
-            self.cbuf_begin_recording(
-                ctx.copy_cbuf,
-                vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT
-            );
+        // now perform the copy
+        self.cbuf_begin_recording(
+            self.copy_cbuf,
+            vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT
+        );
 
-            // transition our image to be a transfer destination
-            self.transition_image_layout(
-                image,
-                ctx.copy_cbuf,
-                vk::ImageLayout::UNDEFINED,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            );
+        // transition our image to be a transfer destination
+        self.transition_image_layout(
+            image,
+            self.copy_cbuf,
+            vk::ImageLayout::UNDEFINED,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        );
 
-            self.copy_buf_to_img(ctx.copy_cbuf,
-                                 buffer,
-                                 image,
-                                 width,
-                                 height);
+        self.copy_buf_to_img(self.copy_cbuf,
+                             buffer,
+                             image,
+                             width,
+                             height);
 
-            // transition back to the optimal color format
-            self.transition_image_layout(
-                image,
-                ctx.copy_cbuf,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            );
+        // transition back to the optimal color format
+        self.transition_image_layout(
+            image,
+            self.copy_cbuf,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        );
 
-            self.cbuf_end_recording(ctx.copy_cbuf);
-            self.cbuf_submit_async(
-                ctx.copy_cbuf,
-                self.present_queue,
-                &[], // wait_stages
-                &[], // wait_semas
-                &[], // signal_semas
-                ctx.copy_cbuf_fence,
-            );
-        }
+        self.cbuf_end_recording(self.copy_cbuf);
+        self.cbuf_submit_async(
+            self.copy_cbuf,
+            self.present_queue,
+            &[], // wait_stages
+            &[], // wait_semas
+            &[], // signal_semas
+            self.copy_cbuf_fence,
+        );
     }
 
     /// Create a new image, and fill it with `data`
@@ -969,7 +856,7 @@ impl Renderer {
     /// `update_memory`.
     ///
     /// The resulting image will be in the shader read layout
-     pub(crate) unsafe fn create_image_with_contents(
+    pub(crate) unsafe fn create_image_with_contents(
         &mut self,
         resolution: &vk::Extent2D,
         format: vk::Format,
@@ -1103,9 +990,22 @@ impl Renderer {
 
             let ext_mem_loader = khr::ExternalMemoryFd::new(&inst, &dev);
 
+            // Create a cbuf for copying data to shm images
+            let copy_cbuf = Renderer::create_command_buffers(&dev,
+                                                             pool,
+                                                             1)[0];
+
+            // Make a fence which will be signalled after
+            // copies are completed
+            let copy_fence = dev.create_fence(
+                &vk::FenceCreateInfo::builder()
+                    .flags(vk::FenceCreateFlags::SIGNALED),
+                None,
+            ).expect("Could not create fence");
+
             // you are now the proud owner of a half complete
             // rendering context
-            Renderer {
+            let mut rend = Renderer {
                 debug_loader: dr_loader,
                 debug_callback: d_callback,
                 loader: entry,
@@ -1138,7 +1038,15 @@ impl Renderer {
                 app_ctx: RefCell::new(None),
                 external_mem_fd_loader: ext_mem_loader,
                 r_release: Vec::new(),
-            }
+                copy_cbuf: copy_cbuf,
+                copy_cbuf_fence: copy_fence,
+            };
+
+            rend.app_ctx = RefCell::new(Some(
+                AppContext::setup(&mut rend)
+            ));
+
+            return rend;
         }
     }
 
@@ -1219,7 +1127,7 @@ impl Renderer {
                 .borrow_mut()
                 .as_ref() {
                     Some(ctx) => vec![self.submit_fence,
-                                      ctx.copy_cbuf_fence],
+                                      self.copy_cbuf_fence],
                     None => vec![self.submit_fence],
                 };
 
@@ -1291,9 +1199,9 @@ impl Renderer {
     ///
     /// All operations in the `record_fn` argument will be
     /// recorded in the command buffer `cbuf`.
-    fn cbuf_begin_recording(&self,
-                            cbuf: vk::CommandBuffer,
-                            flags: vk::CommandBufferUsageFlags)
+    pub fn cbuf_begin_recording(&self,
+                                cbuf: vk::CommandBuffer,
+                                flags: vk::CommandBufferUsageFlags)
     {
         unsafe {
             // first reset the queue so we know it is empty
@@ -1319,7 +1227,7 @@ impl Renderer {
     /// Records but does not submit a command buffer.
     ///
     /// cbuf - the command buffer to use
-    fn cbuf_end_recording(&self, cbuf: vk::CommandBuffer) {
+    pub fn cbuf_end_recording(&self, cbuf: vk::CommandBuffer) {
         unsafe {
             self.dev.end_command_buffer(cbuf)
                 .expect("Could not end command buffer");
@@ -1333,6 +1241,7 @@ impl Renderer {
         }
     }
 
+    
     /// Start recording a cbuf for one frame
     ///
     /// Each framebuffer has a set of resources, including command
@@ -1341,71 +1250,8 @@ impl Renderer {
     pub fn begin_recording_one_frame(&mut self,
                                      params: &RecordParams)
     {
-        unsafe {
-            // we need to clear any existing data when we start a pass
-            let clear_vals = [
-                vk::ClearValue {
-                    color: vk::ClearColorValue {
-                        float32: [0.0, 0.0, 0.0, 0.0],
-                    },
-                },
-                vk::ClearValue {
-                    depth_stencil: vk::ClearDepthStencilValue {
-                        depth: 1.0,
-                        stencil: 0,
-                    },
-                },
-            ];
-
-            // Most of the resources we use are app specific
-            if let Some(ctx) = &*self.app_ctx.borrow() {
-                // We want to start a render pass to hold all of
-                // our drawing. The actual pass is started in the cbuf
-                let pass_begin_info = vk::RenderPassBeginInfo::builder()
-                    .render_pass(ctx.pass)
-                    .framebuffer(ctx.framebuffers[params.image_num])
-                    .render_area(vk::Rect2D {
-                        offset: vk::Offset2D { x: 0, y: 0 },
-                        extent: self.resolution,
-                    })
-                    .clear_values(&clear_vals);
-
-                // start the cbuf
-                self.cbuf_begin_recording(
-                    params.cbuf,
-                    vk::CommandBufferUsageFlags::SIMULTANEOUS_USE
-                );
-
-                // -- Setup static drawing resources
-                // All of our drawing operations need
-                // to be recorded inside a render pass.
-                self.dev.cmd_begin_render_pass(
-                    params.cbuf,
-                    &pass_begin_info,
-                    vk::SubpassContents::INLINE,
-                );
-
-                self.dev.cmd_bind_pipeline(
-                    params.cbuf,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    ctx.pipeline
-                );
-
-                // bind the vertex and index buffers from
-                // the first image
-                self.dev.cmd_bind_vertex_buffers(
-                    params.cbuf, // cbuf to draw in
-                    0, // first vertex binding updated by the command
-                    &[ctx.vert_buffer], // set of buffers to bind
-                    &[0], // offsets for the above buffers
-                );
-                self.dev.cmd_bind_index_buffer(
-                    params.cbuf,
-                    ctx.index_buffer,
-                    0, // offset
-                    vk::IndexType::UINT32,
-                );
-            }
+        if let Some(ctx) = &*self.app_ctx.borrow() {
+            ctx.begin_recording_one_frame(self, params);
         }
     }
 
@@ -1422,7 +1268,7 @@ impl Renderer {
     /// We need to transfer the format of the depth image to something
     /// usable. We will use an image barrier to set the image as a depth
     /// stencil attachment to be used later.
-    unsafe fn setup_depth_image(&mut self) {
+    pub unsafe fn setup_depth_image(&mut self) {
         // allocate a new cbuf for us to work with
         let new_cbuf = Renderer::create_command_buffers(&self.dev,
                                                         self.pool,
@@ -1480,376 +1326,13 @@ impl Renderer {
         );
     }
 
-    /// create a renderpass for the color/depth attachments
-    ///
-    /// Render passses signify what attachments are used in which
-    /// stages. They are composed of one or more subpasses.
-    unsafe fn create_pass(&mut self) -> vk::RenderPass {
-        let attachments = [
-            // the color dest. Its the surface we slected in new
-            vk::AttachmentDescription {
-                format: self.surface_format.format,
-                samples: vk::SampleCountFlags::TYPE_1,
-                load_op: vk::AttachmentLoadOp::CLEAR,
-                store_op: vk::AttachmentStoreOp::STORE,
-                final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
-                ..Default::default()
-            },
-            // the depth attachment
-            vk::AttachmentDescription {
-                format: vk::Format::D16_UNORM,
-                samples: vk::SampleCountFlags::TYPE_1,
-                load_op: vk::AttachmentLoadOp::CLEAR,
-                initial_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                ..Default::default()
-            },
-        ];
-
-        // identify which of the above attachments
-        let color_refs = [ vk::AttachmentReference {
-            attachment: 0, // index into the attachments variable
-            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        }];
-        let depth_refs = vk::AttachmentReference {
-            attachment: 1,
-            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        };
-
-        // our subpass isn't dependent on anything, and it writes to color output
-        let dependencies = [ vk::SubpassDependency {
-            src_subpass: vk::SUBPASS_EXTERNAL,
-            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ
-                | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            ..Default::default()
-        }];
-
-        // our render pass only has one subpass, which only does graphical ops
-        let subpasses = [vk::SubpassDescription::builder()
-                         .color_attachments(&color_refs)
-                         .depth_stencil_attachment(&depth_refs)
-                         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-                         .build()
-        ];
-
-        let create_info = vk::RenderPassCreateInfo::builder()
-            .attachments(&attachments)
-            .subpasses(&subpasses)
-            .dependencies(&dependencies);
-
-        self.dev.create_render_pass(&create_info, None).unwrap()
-    }
-
-    /// Create a vkShaderModule for one of the dynamic pipeline stages
-    ///
-    /// dynamic portions of the graphics pipeline are programmable with
-    /// spirv code. This helper function accepts a file name (`cursor`) and
-    /// creates a shader module from it.
-    ///
-    /// `cursor` is accepted by ash's helper function, `read_spv`
-    unsafe fn create_shader_module(&mut self, cursor:
-                                   &mut Cursor<&'static [u8]>)
-                                   -> vk::ShaderModule
-    {
-        let code = util::read_spv(cursor)
-            .expect("Could not read spv file");
-
-        let info = vk::ShaderModuleCreateInfo::builder()
-            .code(&code);
-
-        self.dev.create_shader_module(&info, None)
-            .expect("Could not create new shader module")
-    }
-
-    /// Create the dynamic portions of the rendering pipeline
-    ///
-    /// Shader stages specify the usage of a shader module, such as the
-    /// entrypoint name (usually main) and the type of shader. As of now,
-    /// we only return two shader modules, vertex and fragment.
-    ///
-    /// `entrypoint`: should be a CString.as_ptr(). The CString that it
-    /// represents should live as long as the return type of this method.
-    ///  see: https://doc.rust-lang.org/std/ffi/struct.CString.html#method.as_ptr
-    unsafe fn create_shader_stages(&mut self, entrypoint: *const i8)
-                                 -> [vk::PipelineShaderStageCreateInfo; 2]
-    {
-        let vert_shader = self.create_shader_module(
-            &mut Cursor::new(&include_bytes!("./shaders/vert.spv")[..])
-        );
-        let frag_shader = self.create_shader_module(
-            &mut Cursor::new(&include_bytes!("./shaders/frag.spv")[..])
-        );
-
-        // note that the return size is 2 elements to match the return type
-        [
-            vk::PipelineShaderStageCreateInfo {
-                module: vert_shader,
-                p_name: entrypoint,
-                stage: vk::ShaderStageFlags::VERTEX,
-                ..Default::default()
-            },
-            vk::PipelineShaderStageCreateInfo {
-                module: frag_shader,
-                p_name: entrypoint,
-                stage: vk::ShaderStageFlags::FRAGMENT,
-                ..Default::default()
-            },
-        ]
-    }
-
-    /// Configure and create a graphics pipeline
-    ///
-    /// In vulkan, the programmer has explicit control over the format
-    /// and layout of the entire graphical pipeline, both dynamic and
-    /// fixed function portions. We will specify the vertex input, primitive
-    /// assembly, viewport/stencil location, rasterization type, depth
-    /// information, and color blending.
-    ///
-    /// Pipeline layouts specify the full set of resources that the pipeline
-    /// can access while running.
-    ///
-    /// This method roughly follows the "fixed function" part of the
-    /// vulkan tutorial.
-    unsafe fn create_pipeline(&mut self,
-                              layout: vk::PipelineLayout,
-                              pass: vk::RenderPass,
-                              shader_stages:
-                              &[vk::PipelineShaderStageCreateInfo])
-                              -> vk::Pipeline
-    {
-        // This binds our vertex input to location 0 to be passed to the shader
-        // Think of it like specifying the data stream given to the shader
-        let vertex_bindings = [vk::VertexInputBindingDescription {
-            binding: 0, // (location = 0)
-            stride: mem::size_of::<VertData>() as u32,
-            input_rate: vk::VertexInputRate::VERTEX,
-        }];
-
-        // These describe how the shader should parse the data passed
-        // think of it like breaking the above data stream into variables
-        let vertex_attributes = [
-            // vertex location
-            vk::VertexInputAttributeDescription {
-                binding: 0, // The data binding to parse
-                location: 0, // the location of the attribute we are specifying
-                // Common types
-                //     float: VK_FORMAT_R32_SFLOAT
-                //     vec2:  VK_FORMAT_R32G32_SFLOAT
-                //     vec3:  VK_FORMAT_R32G32B32_SFLOAT
-                //     vec4:  VK_FORMAT_R32G32B32A32_SFLOAT
-                format: vk::Format::R32G32_SFLOAT,
-                offset: offset_of!(VertData, vertex) as u32,
-            },
-            // Texture coordinates
-            vk::VertexInputAttributeDescription {
-                binding: 0, // The data binding to parse
-                location: 1, // the location of the attribute we are specifying
-                format: vk::Format::R32G32_SFLOAT,
-                offset: offset_of!(VertData, tex) as u32,
-            },
-        ];
-
-        // now for the fixed function portions of the pipeline
-        // This describes the layout of resources passed to the shaders
-        let vertex_info = vk::PipelineVertexInputStateCreateInfo::builder()
-            .vertex_binding_descriptions(&vertex_bindings)
-            .vertex_attribute_descriptions(&vertex_attributes);
-
-        // input assembly describes how to turn the vertex
-        // and index buffers into primatives
-        let assembly = vk::PipelineInputAssemblyStateCreateInfo {
-            topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-            ..Default::default()
-        };
-
-        // will almost always be (0,0) with size (width, height)
-        let viewport = [vk::Viewport {
-            x: 0.0,
-            y: 0.0,
-            width: self.resolution.width as f32,
-            height: self.resolution.height as f32,
-            min_depth: 0.0,
-            max_depth: 1.0,
-        }];
-        // no scissor test
-        let scissor = [vk::Rect2D {
-            offset: vk::Offset2D { x: 0, y: 0 },
-            extent: self.resolution,
-        }];
-
-        let viewport_info = vk::PipelineViewportStateCreateInfo::builder()
-            .scissors(&scissor)
-            .viewports(&viewport);
-
-        // we want the normal counter-clockwise vertices, and filled in polys
-        let raster_info = vk::PipelineRasterizationStateCreateInfo {
-            front_face: vk::FrontFace::CLOCKWISE,
-            line_width: 1.0,
-            polygon_mode: vk::PolygonMode::FILL,
-            ..Default::default()
-        };
-
-        // combines all of the fragments found at a pixel for anti-aliasing
-        // just disable this
-        let multisample_info = vk::PipelineMultisampleStateCreateInfo {
-            rasterization_samples: vk::SampleCountFlags::TYPE_1,
-            ..Default::default()
-        };
-
-        // no stencil operations, so this just keeps everything
-        let stencil_state = vk::StencilOpState {
-            fail_op: vk::StencilOp::KEEP,
-            pass_op: vk::StencilOp::KEEP,
-            depth_fail_op: vk::StencilOp::KEEP,
-            compare_op: vk::CompareOp::ALWAYS,
-            ..Default::default()
-        };
-        
-        // we do want a depth test enabled for this, using our noop stencil
-        // test. This should record Z-order to 1,000
-        let depth_info = vk::PipelineDepthStencilStateCreateInfo {
-            depth_test_enable: 1,
-            depth_write_enable: 1,
-            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
-            front: stencil_state,
-            back: stencil_state,
-            max_depth_bounds: 1.0,
-            ..Default::default()
-        };
-
-        // just do basic alpha blending. This is straight from the tutorial
-        let blend_attachment_states = [vk::PipelineColorBlendAttachmentState {
-            blend_enable: 1, // VK_TRUE
-            // blend the new contents over the old
-            src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
-            dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
-            color_blend_op: vk::BlendOp::ADD,
-            src_alpha_blend_factor: vk::BlendFactor::ONE,
-            dst_alpha_blend_factor: vk::BlendFactor::ZERO,
-            alpha_blend_op: vk::BlendOp::ADD,
-            color_write_mask: vk::ColorComponentFlags::all(),
-        }];
-
-        let blend_info = vk::PipelineColorBlendStateCreateInfo::builder()
-            .logic_op(vk::LogicOp::CLEAR)
-            .attachments(&blend_attachment_states);
-
-        // dynamic state specifies what parts of the pipeline will be
-        // specified at draw time. (like moving the viewport)
-        // we don't want any of that atm
-
-        let pipeline_info = vk::GraphicsPipelineCreateInfo::builder()
-            .stages(&shader_stages)
-            .vertex_input_state(&vertex_info)
-            .input_assembly_state(&assembly)
-            .viewport_state(&viewport_info)
-            .rasterization_state(&raster_info)
-            .multisample_state(&multisample_info)
-            .depth_stencil_state(&depth_info)
-            .color_blend_state(&blend_info)
-            .layout(layout)
-            .render_pass(pass)
-            .build();
-
-        // Allocate one pipeline and return it
-        self.dev.create_graphics_pipelines(
-            vk::PipelineCache::null(),
-            &[pipeline_info],
-            None,
-        ).expect("Could not create graphics pipeline")[0]
-    }
-
-    /// Create framebuffers for each swapchain image
-    ///
-    /// Image views represent a portion of an allocated image, while
-    /// framebuffers bind an image view for use in a render pass. A
-    /// framebuffer is really just a collection of attachments.
-    ///
-    /// In our example, we pair color and depth attachments in our
-    /// framebuffers.
-    unsafe fn create_framebuffers(&mut self,
-                                  pass: vk::RenderPass,
-                                  res: vk::Extent2D)
-                                  -> Vec<vk::Framebuffer>
-    {
-        // A framebuffer should be created for each of the swapchain
-        // images. Reuse the depth buffer for all images since it
-        // doesn't change.
-        self.views.iter()
-            .map(|&view| {
-                // color, depth
-                let attachments = [
-                    view, self.depth_image_view,
-                ];
-
-                let info = vk::FramebufferCreateInfo::builder()
-                    .render_pass(pass)
-                    .attachments(&attachments)
-                    .width(res.width)
-                    .height(res.height)
-                    .layers(1);
-
-                self.dev.create_framebuffer(&info, None)
-                    .unwrap()
-            })
-            .collect()
-    }
-
-    /// Returns a `ShaderConstants` with the default values for this application
-    ///
-    /// Constants will be the contents of the uniform buffers which are
-    /// processed by the shaders. The most obvious entry is the model + view
-    /// + perspective projection matrix.
-    fn get_shader_constants(resolution: vk::Extent2D)
-                            -> ShaderConstants
-    {
-        // transform from blender's coordinate system to vulkan
-        let model = Matrix4::from_translation(Vector3::new(-1.0, -1.0, 0.0));
-
-        ShaderConstants {
-            model: model,
-            width: resolution.width as f32,
-            height: resolution.height as f32,
-        }
-    }
-
-    /// Create uniform buffer descriptor layout
-    ///
-    /// Descriptor layouts specify the number and characteristics of descriptor
-    /// sets which will be made available to the pipeline through the pipeline
-    /// layout.
-    ///
-    /// The layouts created will be the default for this application. This should
-    /// usually be at least one descriptor for the MVP martrix.
-    unsafe fn create_ubo_layout(&mut self)
-                                -> vk::DescriptorSetLayout
-    {
-        // supplies `descriptor_uniform_layouts`
-        // ubos for the MVP matrix and image samplers for textures
-        let bindings = [vk::DescriptorSetLayoutBinding::builder()
-                        .binding(0)
-                        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                        .stage_flags(vk::ShaderStageFlags::VERTEX)
-                        .descriptor_count(1)
-                        .build(),
-        ];
-
-        let info = vk::DescriptorSetLayoutCreateInfo::builder()
-            .bindings(&bindings);
-
-        self.dev.create_descriptor_set_layout(&info, None)
-            .unwrap()
-    }
-
     /// Create a descriptor pool for the uniform buffer
     ///
     /// All other dynamic sets are tracked using a DescPool. This pool
     /// is for statically numbered resources.
     ///
     /// The pool returned is NOT thread safe
-    unsafe fn create_descriptor_pool(&mut self)
+    pub unsafe fn create_descriptor_pool(&mut self)
                                      -> vk::DescriptorPool
     {
         let size = [vk::DescriptorPoolSize::builder()
@@ -1871,7 +1354,7 @@ impl Renderer {
     /// be referenced by the graphics pipeline. Think of a descriptor
     /// as the hardware's handle to a resource. The set of descriptors
     /// allocated in each set is specified in the layout.
-    unsafe fn allocate_descriptor_sets(&self,
+    pub(crate) unsafe fn allocate_descriptor_sets(&self,
                                        pool: vk::DescriptorPool,
                                        layouts: &[vk::DescriptorSetLayout])
                                        -> Vec<vk::DescriptorSet>
@@ -1882,40 +1365,6 @@ impl Renderer {
             .build();
 
         self.dev.allocate_descriptor_sets(&info).unwrap()
-    }
-
-    /// Update a uniform buffer descriptor set with `buf`
-    ///
-    /// Update the entry in `set` at offset `element` to use the
-    /// values in `buf`. Descriptor sets can be updated outside of
-    /// command buffers.
-    unsafe fn update_uniform_descriptor_set(&mut self,
-                                            buf: vk::Buffer,
-                                            set: vk::DescriptorSet,
-                                            binding: u32,
-                                            element: u32)
-    {
-        let info = vk::DescriptorBufferInfo::builder()
-            .buffer(buf)
-            .offset(0)
-            .range(mem::size_of::<ShaderConstants>() as u64)
-            .build();
-        let write_info = [
-            vk::WriteDescriptorSet::builder()
-                .dst_set(set)
-                .dst_binding(binding)
-                // descriptors can be arrays, so we need to specify an offset
-                // into that array if applicable
-                .dst_array_element(element)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                .buffer_info(&[info])
-                .build()
-        ];
-
-        self.dev.update_descriptor_sets(
-            &write_info, // descriptor writes
-            &[], // descriptor copies
-        );
     }
 
     /// Update an image sampler descriptor set
@@ -1953,33 +1402,6 @@ impl Renderer {
         );
     }
 
-    /// Create vertex/index buffers for the default quad
-    ///
-    /// All onscreen regions will be represented by a quad, and
-    /// we only need to create one set of vertex/index buffers
-    /// for it.
-    unsafe fn create_default_geom_bufs(&self)
-                                       -> (vk::Buffer, vk::DeviceMemory,
-                                           vk::Buffer, vk::DeviceMemory)
-    {
-        let (vbuf, vmem) = self.create_buffer(
-            vk::BufferUsageFlags::VERTEX_BUFFER,
-            vk::SharingMode::EXCLUSIVE,
-            vk::MemoryPropertyFlags::HOST_VISIBLE
-                | vk::MemoryPropertyFlags::HOST_COHERENT,
-            &QUAD_DATA,
-        );
-        let (ibuf, imem) = self.create_buffer(
-            vk::BufferUsageFlags::INDEX_BUFFER,
-            vk::SharingMode::EXCLUSIVE,
-            vk::MemoryPropertyFlags::HOST_VISIBLE
-                | vk::MemoryPropertyFlags::HOST_COHERENT,
-            &QUAD_INDICES,
-        );
-
-        return (vbuf, vmem, ibuf, imem);
-    }
-
     /// Create descriptors for the image samplers
     ///
     /// Each Image will have a descriptor for each framebuffer,
@@ -2009,144 +1431,6 @@ impl Renderer {
         }
 
         return (sampler, descriptors);
-    }
-
-    /// Set up the application. This should *always* be called
-    ///
-    /// Once we have allocated a renderer with `new`, we should initialize
-    /// the rendering pipeline so that we can display things. This method
-    /// basically sets up all of the "application" specific resources like
-    /// shaders, geometry, and the like.
-    ///
-    /// This fills in the AppContext struct in the Renderer
-    pub fn setup(&mut self) {
-        unsafe {
-            self.setup_depth_image();
-            
-            let pass = self.create_pass();
-            
-            // This is a really annoying issue with CString ptrs
-            let program_entrypoint_name = CString::new("main").unwrap();
-            // If the CString is created in `create_shaders`, and is inserted in
-            // the return struct using the `.as_ptr()` method, then the CString
-            // will still be dropped on return and our pointer will be garbage.
-            // Instead we need to ensure that the CString will live long
-            // enough. I have no idea why it is like this.
-            let shader_stages = Box::new(
-                self.create_shader_stages(program_entrypoint_name.as_ptr())
-            );
-
-            // Each window is going to have a sampler descriptor for every
-            // framebuffer image. Unfortunately this means the descriptor
-            // count will be runtime dependent.
-            // This is an allocator for those descriptors
-            let descpool = DescPool::create(&self);
-
-            // prepare descriptors for all of the uniforms to pass to shaders
-            //
-            // NOTE: These need to be referenced in order by the `set` modifier
-            // in the shaders
-            let ubo_layout = self.create_ubo_layout();
-            // These are the layout recognized by the pipeline
-            let descriptor_layouts = &[
-                ubo_layout,      // set 0
-                descpool.layout, // set 1
-            ];
-
-            // make a push constant entry for the z ordering of a window
-            let constants = &[vk::PushConstantRange::builder()
-                              .stage_flags(vk::ShaderStageFlags::VERTEX)
-                              .offset(0)
-                              // depth is measured as a normalized float
-                              .size(std::mem::size_of::<PushConstants>() as u32)
-                              .build()];
-
-            // even though we don't have anything special in our layout, we
-            // still need to have a created layout for the pipeline
-            let layout_info = vk::PipelineLayoutCreateInfo::builder()
-                .push_constant_ranges(constants)
-                .set_layouts(descriptor_layouts);
-            let layout = self.dev.create_pipeline_layout(&layout_info, None)
-                .unwrap();
-            
-            let pipeline = self.create_pipeline(layout, pass, &*shader_stages);
-
-            let framebuffers = self.create_framebuffers(pass, self.resolution);
-
-            // Allocate a pool only for the ubo descriptors
-            let uniform_pool = self.create_descriptor_pool();
-            let ubo = self.allocate_descriptor_sets(
-                uniform_pool,
-                &[ubo_layout],
-            )[0];
-
-            let consts = Renderer::get_shader_constants(self.resolution);
-
-            // create a uniform buffer
-            let (buf, mem) = self.create_buffer(
-                vk::BufferUsageFlags::UNIFORM_BUFFER,
-                vk::SharingMode::EXCLUSIVE,
-                vk::MemoryPropertyFlags::HOST_VISIBLE
-                    | vk::MemoryPropertyFlags::HOST_COHERENT,
-                // this specifies the constants to copy into the buffer
-                &[consts],
-            );
-
-            // now we need to update the descriptor set with the
-            // buffer of the uniform constants to use
-            self.update_uniform_descriptor_set(
-                buf,
-                ubo,
-                0, // binding
-                0, // element
-            );
-
-            // Allocate buffers for all geometry to be used
-            let (vbuf, vmem, ibuf, imem) = self.create_default_geom_bufs();
-
-            // One image sampler is going to be used for everything
-            let sampler = self.create_sampler();
-
-            // Create a cbuf for copying data to shm images
-            let copy_cbuf = Renderer::create_command_buffers(&self.dev,
-                                                             self.pool,
-                                                             1)[0];
-
-            // Make a fence which will be signalled after
-            // copies are completed
-            let copy_fence = self.dev.create_fence(
-                &vk::FenceCreateInfo::builder()
-                    .flags(vk::FenceCreateFlags::SIGNALED),
-                None,
-            ).expect("Could not create fence");
-
-            // The app context contains the scene specific data
-            self.app_ctx = RefCell::new(Some(AppContext {
-                pass: pass,
-                pipeline: pipeline,
-                pipeline_layout: layout,
-                descriptor_uniform_layout: ubo_layout,
-                framebuffers: framebuffers,
-                uniform_buffer: buf,
-                uniform_buffers_memory: mem,
-                image_sampler: sampler,
-                uniform_pool: uniform_pool,
-                desc_pool: descpool,
-                ubo_descriptor: ubo,
-                shader_modules: shader_stages
-                    .iter()
-                    .map(|info| { info.module })
-                    .collect(),
-                vert_buffer: vbuf,
-                vert_buffer_memory: vmem,
-                // multiply the index len by the vector size
-                vert_count: QUAD_INDICES.len() as u32 * 3,
-                index_buffer: ibuf,
-                index_buffer_memory: imem,
-                copy_cbuf: copy_cbuf,
-                copy_cbuf_fence: copy_fence,
-            }));
-        }
     }
 
     /// Allocates a buffer/memory pair of size `size`.
@@ -2250,23 +1534,6 @@ impl Renderer {
         self.dev.bind_buffer_memory(buffer, memory, 0).unwrap();
 
         (buffer, memory)
-    }
-
-    /// Apply a transform matrix to all images
-    ///
-    /// This updates the model matrix of the shader constants
-    /// used for all models
-    pub fn transform_images(&mut self,
-                            transform: &Matrix4<f32>)
-    {
-        let mut consts = Renderer::get_shader_constants(self.resolution);
-        consts.model = consts.model * transform;
-
-        unsafe {
-            if let Some(ctx) = &*self.app_ctx.borrow() {
-                self.update_memory(ctx.uniform_buffers_memory, &[consts]);
-            }
-        }
     }
 
     /// Update self.current_image with the swapchain image to render to
@@ -2391,38 +1658,8 @@ impl Drop for Renderer {
             self.dev.device_wait_idle().unwrap();
 
             // first destroy the application specific resources
-            if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
-
-                self.free_memory(ctx.vert_buffer_memory);
-                self.free_memory(ctx.index_buffer_memory);
-                self.dev.destroy_buffer(ctx.vert_buffer, None);
-                self.dev.destroy_buffer(ctx.index_buffer, None);
-
-                self.dev.destroy_sampler(ctx.image_sampler, None);
-
-                self.dev.destroy_buffer(ctx.uniform_buffer, None);
-                self.free_memory(ctx.uniform_buffers_memory);
-
-                self.dev.destroy_render_pass(ctx.pass, None);
-
-                self.dev.destroy_descriptor_set_layout(
-                    ctx.descriptor_uniform_layout, None
-                );
-
-                self.dev.destroy_descriptor_pool(ctx.uniform_pool, None);
-                ctx.desc_pool.destroy(&self);
-
-                self.dev.destroy_pipeline_layout(ctx.pipeline_layout, None);
-
-                for m in ctx.shader_modules.iter() {
-                    self.dev.destroy_shader_module(*m, None);
-                }
-
-                for f in ctx.framebuffers.iter() {
-                    self.dev.destroy_framebuffer(*f, None);
-                }
-
-                self.dev.destroy_pipeline(ctx.pipeline, None);
+            if let Some(ctx) = &*self.app_ctx.borrow() {
+                ctx.destroy(self);
             }
 
             self.dev.destroy_semaphore(self.present_sema, None);
