@@ -7,15 +7,11 @@
 // Austin Shafer - 2020
 #![allow(dead_code)]
 extern crate nix;
-extern crate ash;
 
 use super::image::Image;
 use super::damage::Damage;
-use super::renderer::{Renderer,RecordParams,PushConstants};
 use utils::region::Rect;
 
-use ash::version::{DeviceV1_0};
-use ash::vk;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -34,7 +30,7 @@ pub(crate) struct SurfaceInternal {
 
 #[derive(PartialEq,Clone)]
 pub struct Surface {
-    s_internal: Rc<RefCell<SurfaceInternal>>,
+    pub(crate) s_internal: Rc<RefCell<SurfaceInternal>>,
 }
 
 impl Surface {
@@ -79,85 +75,5 @@ impl Surface {
         let mut surf = self.s_internal.borrow_mut();
         surf.s_rect.r_size.0 = w;
         surf.s_rect.r_size.1 = h;
-    }
-}
-
-impl Renderer {
-    /// Generate draw calls for this image
-    ///
-    /// It is a very common operation to draw a image, this
-    /// helper draws itself at the locations passed by `push`
-    ///
-    /// First all descriptor sets and input assembly is bound
-    /// before the call to vkCmdDrawIndexed. The descriptor
-    /// sets should be updated whenever window contents are
-    /// changed, and then cbufs should be regenerated using this.
-    ///
-    /// Must be called while recording a cbuf
-    pub fn record_surface_draw(&self,
-                               params: &RecordParams,
-                               thundr_surf: &Surface,
-                               depth: f32)
-    {
-        let surf = thundr_surf.s_internal.borrow();
-        let image = match surf.s_image.as_ref() {
-            Some(i) => i,
-            None => return,
-        }.i_internal.borrow();
-
-        let push = PushConstants {
-            order: depth,
-            x: surf.s_rect.r_pos.0,
-            y: surf.s_rect.r_pos.1,
-            width: surf.s_rect.r_size.0,
-            height: surf.s_rect.r_size.1,
-        };
-
-        unsafe {
-            if let Some(ctx) = &*self.app_ctx.borrow() {
-                // Descriptor sets can be updated elsewhere, but
-                // they must be bound before drawing
-                //
-                // We need to bind both the uniform set, and the per-Image
-                // set for the image sampler
-                self.dev.cmd_bind_descriptor_sets(
-                    params.cbuf,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    ctx.pipeline_layout,
-                    0, // first set
-                    &[
-                        ctx.ubo_descriptor,
-                        image.i_sampler_descriptors[params.image_num],
-                    ],
-                    &[], // dynamic offsets
-                );
-
-                // Set the z-ordering of the window we want to render
-                // (this sets the visible window ordering)
-                self.dev.cmd_push_constants(
-                    params.cbuf,
-                    ctx.pipeline_layout,
-                    vk::ShaderStageFlags::VERTEX,
-                    0, // offset
-                    // get a &[u8] from our struct
-                    // TODO: This should go. It is showing up as a noticeable
-                    // hit in profiling. Idk if there is a safe way to
-                    // replace it.
-                    bincode::serialize(&push).unwrap().as_slice(),
-                );
-
-                // Here is where everything is actually drawn
-                // technically 3 vertices are being drawn
-                // by the shader
-                self.dev.cmd_draw_indexed(
-                    params.cbuf, // drawing command buffer
-                    ctx.vert_count, // number of verts
-                    1, // number of instances
-                    0, // first vertex
-                    0, // vertex offset
-                    1, // first instance
-                );
-            }
-        }
     }
 }

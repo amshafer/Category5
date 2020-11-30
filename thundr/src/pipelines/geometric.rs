@@ -7,26 +7,18 @@ use serde::{Serialize, Deserialize};
 
 use cgmath::{Vector3,Vector2,Matrix4};
 
-use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_void};
+use std::ffi::CString;
 use std::io::Cursor;
 use std::marker::Copy;
 use std::mem;
-use std::cell::RefCell;
 
-use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
-use ash::{vk, Device, Entry, Instance};
-use ash::util;
-use ash::extensions::ext;
-use ash::extensions::khr;
+use ash::version::DeviceV1_0;
+use ash::{util,vk};
 
 use crate::list::SurfaceList;
 use crate::descpool::DescPool;
-use crate::display::Display;
+use crate::Surface;
 use crate::renderer::{Renderer,RecordParams};
-
-extern crate utils as cat5_utils;
-use cat5_utils::log_prelude::*;
 
 // This is the reference data for a normal quad
 // that will be used to draw client windows.
@@ -468,7 +460,7 @@ impl AppContext {
     /// Constants will be the contents of the uniform buffers which are
     /// processed by the shaders. The most obvious entry is the model + view
     /// + perspective projection matrix.
-    pub fn get_shader_constants(resolution: vk::Extent2D)
+    fn get_shader_constants(resolution: vk::Extent2D)
                             -> ShaderConstants
     {
         // transform from blender's coordinate system to vulkan
@@ -685,7 +677,8 @@ impl AppContext {
             // Instead we need to ensure that the CString will live long
             // enough. I have no idea why it is like this.
             let shader_stages = Box::new(
-                AppContext::create_shader_stages(rend, program_entrypoint_name.as_ptr())
+                AppContext::create_shader_stages(rend, program_entrypoint_name
+                                                 .as_ptr())
             );
 
             // Each window is going to have a sampler descriptor for every
@@ -721,9 +714,11 @@ impl AppContext {
             let layout = rend.dev.create_pipeline_layout(&layout_info, None)
                 .unwrap();
             
-            let pipeline = AppContext::create_pipeline(rend, layout, pass, &*shader_stages);
+            let pipeline = AppContext::create_pipeline(rend, layout,
+                                                       pass, &*shader_stages);
 
-            let framebuffers = AppContext::create_framebuffers(rend, pass, rend.resolution);
+            let framebuffers = AppContext::create_framebuffers(rend,
+                                                               pass, rend.resolution);
 
             // Allocate a pool only for the ubo descriptors
             let uniform_pool = rend.create_descriptor_pool();
@@ -750,16 +745,8 @@ impl AppContext {
             // One image sampler is going to be used for everything
             let sampler = rend.create_sampler();
 
-            // Make a fence which will be signalled after
-            // copies are completed
-            let copy_fence = rend.dev.create_fence(
-                &vk::FenceCreateInfo::builder()
-                    .flags(vk::FenceCreateFlags::SIGNALED),
-                None,
-            ).expect("Could not create fence");
-
             // The app context contains the scene specific data
-            let ctx = AppContext {
+            let mut ctx = AppContext {
                 pass: pass,
                 pipeline: pipeline,
                 pipeline_layout: layout,
@@ -798,36 +785,131 @@ impl AppContext {
         }
     }
 
+    /// Generate draw calls for this image
+    ///
+    /// It is a very common operation to draw a image, this
+    /// helper draws itself at the locations passed by `push`
+    ///
+    /// First all descriptor sets and input assembly is bound
+    /// before the call to vkCmdDrawIndexed. The descriptor
+    /// sets should be updated whenever window contents are
+    /// changed, and then cbufs should be regenerated using this.
+    ///
+    /// Must be called while recording a cbuf
+    pub fn record_surface_draw(&self,
+                               rend: &Renderer,
+                               params: &RecordParams,
+                               thundr_surf: &Surface,
+                               depth: f32)
+    {
+        let surf = thundr_surf.s_internal.borrow();
+        let image = match surf.s_image.as_ref() {
+            Some(i) => i,
+            None => return,
+        }.i_internal.borrow();
+
+        let push = PushConstants {
+            order: depth,
+            x: surf.s_rect.r_pos.0,
+            y: surf.s_rect.r_pos.1,
+            width: surf.s_rect.r_size.0,
+            height: surf.s_rect.r_size.1,
+        };
+
+        unsafe {
+            // Descriptor sets can be updated elsewhere, but
+            // they must be bound before drawing
+            //
+            // We need to bind both the uniform set, and the per-Image
+            // set for the image sampler
+            rend.dev.cmd_bind_descriptor_sets(
+                params.cbuf,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.pipeline_layout,
+                0, // first set
+                &[
+                    self.ubo_descriptor,
+                    image.i_sampler_descriptors[params.image_num],
+                ],
+                &[], // dynamic offsets
+            );
+
+            // Set the z-ordering of the window we want to render
+            // (this sets the visible window ordering)
+            rend.dev.cmd_push_constants(
+                params.cbuf,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::VERTEX,
+                0, // offset
+                // get a &[u8] from our struct
+                // TODO: This should go. It is showing up as a noticeable
+                // hit in profiling. Idk if there is a safe way to
+                // replace it.
+                bincode::serialize(&push).unwrap().as_slice(),
+            );
+
+            // Here is where everything is actually drawn
+            // technically 3 vertices are being drawn
+            // by the shader
+            rend.dev.cmd_draw_indexed(
+                params.cbuf, // drawing command buffer
+                self.vert_count, // number of verts
+                1, // number of instances
+                0, // first vertex
+                0, // vertex offset
+                1, // first instance
+            );
+        }
+    }
+
+    /// Our implementation of drawing one frame using geometry
+    pub fn draw(&mut self,
+                rend: &Renderer,
+                params: &RecordParams,
+                surfaces: &SurfaceList)
+    {
+        for (i, surf) in surfaces.iter().rev().enumerate() {
+            // TODO: make a limit to the number of windows
+            // we have to call rev before enumerate, so we need
+            // to correct this by setting the depth of the earliest
+            // surfaces to the deepest
+            let depth = 1.0 - 0.000001 * i as f32;
+            self.record_surface_draw(rend, params, surf, depth);
+        }
+    }
+
     pub fn destroy(&mut self, rend: &mut Renderer) {
-        rend.free_memory(self.vert_buffer_memory);
-        rend.free_memory(self.index_buffer_memory);
-        rend.dev.destroy_buffer(self.vert_buffer, None);
-        rend.dev.destroy_buffer(self.index_buffer, None);
+        unsafe {
+            rend.free_memory(self.vert_buffer_memory);
+            rend.free_memory(self.index_buffer_memory);
+            rend.dev.destroy_buffer(self.vert_buffer, None);
+            rend.dev.destroy_buffer(self.index_buffer, None);
 
-        rend.dev.destroy_sampler(self.image_sampler, None);
+            rend.dev.destroy_sampler(self.image_sampler, None);
 
-        rend.dev.destroy_buffer(self.uniform_buffer, None);
-        rend.free_memory(self.uniform_buffers_memory);
+            rend.dev.destroy_buffer(self.uniform_buffer, None);
+            rend.free_memory(self.uniform_buffers_memory);
 
-        rend.dev.destroy_render_pass(self.pass, None);
+            rend.dev.destroy_render_pass(self.pass, None);
 
-        rend.dev.destroy_descriptor_set_layout(
-            self.descriptor_uniform_layout, None
-        );
+            rend.dev.destroy_descriptor_set_layout(
+                self.descriptor_uniform_layout, None
+            );
 
-        rend.dev.destroy_descriptor_pool(self.uniform_pool, None);
-        self.desc_pool.destroy(&rend);
+            rend.dev.destroy_descriptor_pool(self.uniform_pool, None);
+            self.desc_pool.destroy(&rend);
 
-        rend.dev.destroy_pipeline_layout(self.pipeline_layout, None);
+            rend.dev.destroy_pipeline_layout(self.pipeline_layout, None);
 
-        for m in self.shader_modules.iter() {
-            rend.dev.destroy_shader_module(*m, None);
+            for m in self.shader_modules.iter() {
+                rend.dev.destroy_shader_module(*m, None);
+            }
+
+            for f in self.framebuffers.iter() {
+                rend.dev.destroy_framebuffer(*f, None);
+            }
+
+            rend.dev.destroy_pipeline(self.pipeline, None);
         }
-
-        for f in self.framebuffers.iter() {
-            rend.dev.destroy_framebuffer(*f, None);
-        }
-
-        rend.dev.destroy_pipeline(self.pipeline, None);
     }
 }

@@ -5,25 +5,17 @@
 //
 // Austin Shafer - 2020
 #![allow(dead_code, non_camel_case_types)]
-use serde::{Serialize, Deserialize};
-
-use cgmath::{Vector3,Vector2,Matrix4};
-
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
-use std::io::Cursor;
 use std::marker::Copy;
-use std::mem;
 use std::cell::RefCell;
 
 use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::{vk, Device, Entry, Instance};
-use ash::util;
 use ash::extensions::ext;
 use ash::extensions::khr;
 
 use super::list::SurfaceList;
-use super::descpool::DescPool;
 use super::display::Display;
 use super::pipelines::geometric::AppContext;
 
@@ -1126,7 +1118,7 @@ impl Renderer {
             let fences = match self.app_ctx
                 .borrow_mut()
                 .as_ref() {
-                    Some(ctx) => vec![self.submit_fence,
+                    Some(_ctx) => vec![self.submit_fence,
                                       self.copy_cbuf_fence],
                     None => vec![self.submit_fence],
                 };
@@ -1577,9 +1569,8 @@ impl Renderer {
 
         self.begin_recording_one_frame(&params);
 
-        for (i, surf) in surfaces.iter().enumerate() {
-            // TODO: make a limit to the number of windows
-            self.record_surface_draw(&params, surf, 0.001 * i as f32);
+        if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
+            ctx.draw(self, &params, surfaces);
         }
 
         self.end_recording_one_frame(&params);
@@ -1658,9 +1649,8 @@ impl Drop for Renderer {
             self.dev.device_wait_idle().unwrap();
 
             // first destroy the application specific resources
-            if let Some(ctx) = &*self.app_ctx.borrow() {
-                ctx.destroy(self);
-            }
+            let mut ctx = self.app_ctx.borrow_mut().take().unwrap();
+            ctx.destroy(self);
 
             self.dev.destroy_semaphore(self.present_sema, None);
             self.dev.destroy_semaphore(self.render_sema, None);

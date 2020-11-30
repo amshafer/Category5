@@ -32,10 +32,8 @@ impl Thundr {
     pub fn new() -> Thundr {
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
-        let mut rend = Renderer::new();
-
         Thundr {
-            th_rend: rend,
+            th_rend: Renderer::new(),
         }
     }
 

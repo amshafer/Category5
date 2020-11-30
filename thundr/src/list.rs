@@ -4,7 +4,7 @@
 
 use super::surface::Surface;
 use super::damage::Damage;
-use std::iter::Iterator;
+use std::iter::DoubleEndedIterator;
 
 pub struct SurfaceList {
     l_vec: Vec<Surface>,
@@ -36,7 +36,7 @@ impl SurfaceList {
         self.l_vec.push(surf);
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Surface> {
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &Surface> {
         self.l_vec.iter()
     }
 
