@@ -8,16 +8,15 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::marker::Copy;
-use std::cell::RefCell;
 
 use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::{vk, Device, Entry, Instance};
 use ash::extensions::ext;
 use ash::extensions::khr;
 
-use super::list::SurfaceList;
-use super::display::Display;
-use super::pipelines::geometric::AppContext;
+use crate::descpool::DescPool;
+use crate::list::SurfaceList;
+use crate::display::Display;
 
 extern crate utils as cat5_utils;
 use cat5_utils::log_prelude::*;
@@ -92,6 +91,8 @@ pub struct Renderer {
 
     /// a set of images belonging to swapchain
     pub(crate) images: Vec<vk::Image>,
+    /// One sampler for all swapchain images
+    pub(crate) image_sampler: vk::Sampler,
     /// number of framebuffers (2 is double buffering)
     pub(crate) fb_count: usize,
     /// views describing how to access the images
@@ -101,17 +102,6 @@ pub struct Renderer {
     pub(crate) pool: vk::CommandPool,
     /// the command buffers allocated from pool
     pub(crate) cbufs: Vec<vk::CommandBuffer>,
-
-    /// Application specific stuff that will be set up after
-    /// the original initialization
-    pub(crate) app_ctx: RefCell<Option<AppContext>>,
-
-    /// an image for recording depth test data
-    pub(crate) depth_image: vk::Image,
-    pub(crate) depth_image_view: vk::ImageView,
-    /// because we create the image, we need to back it with memory
-    pub(crate) depth_image_mem: vk::DeviceMemory,
-
     /// This signals that the latest contents have been presented.
     /// It is signaled by acquire next image and is consumed by
     /// the cbuf submission
@@ -133,6 +123,8 @@ pub struct Renderer {
     /// command buffer for copying shm images
     pub(crate) copy_cbuf: vk::CommandBuffer,
     pub(crate) copy_cbuf_fence: vk::Fence,
+    /// This is an allocator for the dynamic sets (samplers)
+    pub(crate) desc_pool: DescPool,
 }
 
 /// Recording parameters
@@ -180,8 +172,8 @@ impl Renderer {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("VulkanRenderer").unwrap();
 
-        //let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
-        let layer_names = [];
+        let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
+        //let layer_names = [];
 
         let layer_names_raw: Vec<*const i8> = layer_names.iter()
             .map(|raw_name: &CString| raw_name.as_ptr())
@@ -315,7 +307,7 @@ impl Renderer {
             khr::ExternalMemoryFd::name().as_ptr(),
             // We need to wait for this to be supported in mesa
             // for now it somehow happens to work
-            //vk::ExtImageDrmFormatModifierFn::name().as_ptr(),
+            vk::ExtImageDrmFormatModifierFn::name().as_ptr(),
         ];
 
         let features = vk::PhysicalDeviceFeatures {
@@ -438,10 +430,10 @@ impl Renderer {
     ///
     /// For now we are only allocating two: one to set up the resources
     /// and one to do all the work.
-    unsafe fn create_command_buffers(dev: &Device,
-                                     pool: vk::CommandPool,
-                                     count: u32)
-                                     -> Vec<vk::CommandBuffer>
+    pub(crate) unsafe fn create_command_buffers(dev: &Device,
+                                                pool: vk::CommandPool,
+                                                count: u32)
+                                                -> Vec<vk::CommandBuffer>
     {
         let cbuf_allocate_info = vk::CommandBufferAllocateInfo::builder()
             .command_buffer_count(count)
@@ -543,14 +535,14 @@ impl Renderer {
     /// Resolution should probably be the same size as the swapchain's images
     /// usage defines the role the image will serve (transfer, depth data, etc)
     /// flags defines the memory type (probably DEVICE_LOCAL + others)
-    unsafe fn create_image(dev: &Device,
-                           mem_props: &vk::PhysicalDeviceMemoryProperties,
-                           resolution: &vk::Extent2D,
-                           format: vk::Format,
-                           usage: vk::ImageUsageFlags,
-                           aspect: vk::ImageAspectFlags,
-                           flags: vk::MemoryPropertyFlags)
-                           -> (vk::Image, vk::ImageView, vk::DeviceMemory)
+    pub(crate) unsafe fn create_image(dev: &Device,
+                                      mem_props: &vk::PhysicalDeviceMemoryProperties,
+                                      resolution: &vk::Extent2D,
+                                      format: vk::Format,
+                                      usage: vk::ImageUsageFlags,
+                                      aspect: vk::ImageAspectFlags,
+                                      flags: vk::MemoryPropertyFlags)
+                                      -> (vk::Image, vk::ImageView, vk::DeviceMemory)
     {
         // we create the image now, but will have to bind
         // some memory to it later.
@@ -603,12 +595,12 @@ impl Renderer {
         return (image, view, image_memory);
     }
 
-    /// Create an image sampler
+    /// Create an image sampler for the swapchain fbs
     ///
     /// Samplers are used to filter data from an image when
     /// it is referenced from a fragment shader. It allows
     /// for additional processing effects on the input.
-    pub(crate) unsafe fn create_sampler(&self) -> vk::Sampler {
+    pub(crate) unsafe fn create_sampler(dev: &Device) -> vk::Sampler {
         let info = vk::SamplerCreateInfo::builder()
             // filter for magnified (oversampled) pixels
             .mag_filter(vk::Filter::LINEAR)
@@ -627,7 +619,7 @@ impl Renderer {
             .compare_op(vk::CompareOp::ALWAYS)
             .mipmap_mode(vk::SamplerMipmapMode::LINEAR);
 
-        self.dev.create_sampler(&info, None).unwrap()
+        dev.create_sampler(&info, None).unwrap()
     }
 
     /// Transitions `image` to the `new` layout using `cbuf`
@@ -928,6 +920,14 @@ impl Renderer {
 
             let dev = Renderer::create_device(&inst, pdev,
                                               &[graphics_queue_family]);
+
+            // Each window is going to have a sampler descriptor for every
+            // framebuffer image. Unfortunately this means the descriptor
+            // count will be runtime dependent.
+            // This is an allocator for those descriptors
+            let descpool = DescPool::create(&dev);
+            let sampler = Renderer::create_sampler(&dev);
+
             let present_queue = dev.get_device_queue(graphics_queue_family, 0);
             let transfer_queue = dev.get_device_queue(transfer_queue_family, 0);
 
@@ -952,18 +952,6 @@ impl Renderer {
             let buffers = Renderer::create_command_buffers(&dev,
                                                            pool,
                                                            images.len() as u32);
-
-            // the depth attachment needs to have its own resources
-            let (depth_image, depth_image_view, depth_image_mem) =
-                Renderer::create_image(
-                    &dev,
-                    &mem_props,
-                    &surface_resolution,
-                    vk::Format::D16_UNORM,
-                    vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                    vk::ImageAspectFlags::DEPTH,
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL
-                );
 
             let sema_create_info = vk::SemaphoreCreateInfo::default();
 
@@ -997,7 +985,8 @@ impl Renderer {
 
             // you are now the proud owner of a half complete
             // rendering context
-            let mut rend = Renderer {
+            // p.s. you still need a Pipeline
+            Renderer {
                 debug_loader: dr_loader,
                 debug_callback: d_callback,
                 loader: entry,
@@ -1018,27 +1007,19 @@ impl Renderer {
                 current_image: 0,
                 fb_count: images.len(),
                 images: images,
+                image_sampler: sampler,
                 views: image_views,
-                depth_image: depth_image,
-                depth_image_view: depth_image_view,
-                depth_image_mem: depth_image_mem,
                 pool: pool,
                 cbufs: buffers,
                 present_sema: present_sema,
                 render_sema: render_sema,
                 submit_fence: fence,
-                app_ctx: RefCell::new(None),
                 external_mem_fd_loader: ext_mem_loader,
                 r_release: Vec::new(),
                 copy_cbuf: copy_cbuf,
                 copy_cbuf_fence: copy_fence,
-            };
-
-            rend.app_ctx = RefCell::new(Some(
-                AppContext::setup(&mut rend)
-            ));
-
-            return rend;
+                desc_pool: descpool,
+            }
         }
     }
 
@@ -1053,7 +1034,7 @@ impl Renderer {
     /// All operations in the `record_fn` argument will be
     /// submitted in the command buffer `cbuf`. This aims to make
     /// constructing buffers more ergonomic.
-    fn cbuf_onetime<F: FnOnce(&Renderer, vk::CommandBuffer)>
+    pub(crate) fn cbuf_onetime<F: FnOnce(&Renderer, vk::CommandBuffer)>
         (&self,
          cbuf: vk::CommandBuffer,
          queue: vk::Queue,
@@ -1104,7 +1085,7 @@ impl Renderer {
     /// wait_stages - a list of pipeline stages to wait on
     /// wait_semas - semaphores we consume
     /// signal_semas - semaphores we notify
-    fn cbuf_submit
+    pub(crate) fn cbuf_submit
         (&self,
          cbuf: vk::CommandBuffer,
          queue: vk::Queue,
@@ -1113,15 +1094,8 @@ impl Renderer {
          signal_semas: &[vk::Semaphore])
     {
         unsafe {
-            // If the app context has been initialized,
-            // then include the fence for copy operations
-            let fences = match self.app_ctx
-                .borrow_mut()
-                .as_ref() {
-                    Some(_ctx) => vec![self.submit_fence,
-                                      self.copy_cbuf_fence],
-                    None => vec![self.submit_fence],
-                };
+            let fences = vec![self.submit_fence,
+                              self.copy_cbuf_fence];
 
             // Before we submit ourselves, we need to wait for the
             // previous frame's execution and any copy commands to finish
@@ -1155,7 +1129,7 @@ impl Renderer {
     /// wait_stages - a list of pipeline stages to wait on
     /// wait_semas - semaphores we consume
     /// signal_semas - semaphores we notify
-    fn cbuf_submit_async
+    pub(crate) fn cbuf_submit_async
         (&self,
          cbuf: vk::CommandBuffer,
          queue: vk::Queue,
@@ -1239,12 +1213,16 @@ impl Renderer {
     /// Each framebuffer has a set of resources, including command
     /// buffers. This records the cbufs for the framebuffer
     /// specified by `img`.
-    pub fn begin_recording_one_frame(&mut self,
-                                     params: &RecordParams)
+    ///
+    /// The frame is not submitted to be drawn until
+    /// `begin_frame` is called. `end_recording_one_frame` must be called
+    /// before `begin_frame`
+    pub fn begin_recording_one_frame(&mut self, _surfaces: &SurfaceList)
+                                     -> RecordParams
     {
-        if let Some(ctx) = &*self.app_ctx.borrow() {
-            ctx.begin_recording_one_frame(self, params);
-        }
+        // get the next frame to draw into
+        self.get_next_swapchain_image();
+        self.get_recording_parameters()
     }
 
     /// Stop recording a cbuf for one frame
@@ -1253,69 +1231,6 @@ impl Renderer {
             self.dev.cmd_end_render_pass(params.cbuf);
             self.cbuf_end_recording(params.cbuf);
         }
-    }
-
-    /// set up the depth image in self.
-    ///
-    /// We need to transfer the format of the depth image to something
-    /// usable. We will use an image barrier to set the image as a depth
-    /// stencil attachment to be used later.
-    pub unsafe fn setup_depth_image(&mut self) {
-        // allocate a new cbuf for us to work with
-        let new_cbuf = Renderer::create_command_buffers(&self.dev,
-                                                        self.pool,
-                                                        1)[0]; // only get one
-
-        // the depth image and view have already been created by new
-        // we need to execute a cbuf to set up the memory we are
-        // going to use later
-        self.cbuf_onetime(
-            new_cbuf,
-            self.present_queue,
-            &[], // wait_stages
-            &[], // wait_semas
-            &[], // signal_semas
-            // this closure will be the contents of the cbuf
-            |rend, cbuf| {
-                // We need to initialize the depth attachment by
-                // performing a layout transition to the optimal
-                // depth layout
-                //
-                // we do not use rend.transition_image_layout since that
-                // is specific to texture images
-                let layout_barrier = vk::ImageMemoryBarrier::builder()
-                    .image(rend.depth_image)
-                    // access patern for the resulting layout
-                    .dst_access_mask(
-                        vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
-                            | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                    )
-                    // go from an undefined old layout to whatever the
-                    // driver decides is the optimal depth layout
-                    .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                    .old_layout(vk::ImageLayout::UNDEFINED)
-                    .subresource_range(
-                        vk::ImageSubresourceRange::builder()
-                            .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                            .layer_count(1)
-                            .level_count(1)
-                            .build(),
-                    )
-                    .build();
-
-                // process the barrier we created, which will perform
-                // the actual transition.
-                rend.dev.cmd_pipeline_barrier(
-                    cbuf,
-                    vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                    vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &[layout_barrier],
-                );
-            },
-        );
     }
 
     /// Create a descriptor pool for the uniform buffer
@@ -1407,7 +1322,7 @@ impl Renderer {
                                              Vec<vk::DescriptorSet>)
     {
         // One image sampler is going to be used for everything
-        let sampler = self.create_sampler();
+        let sampler = Renderer::create_sampler(&self.dev);
         // A descriptor needs to be created for every swapchaing image
         // so we can prepare the next frame while the current one is
         // processing.
@@ -1554,28 +1469,6 @@ impl Renderer {
         }
     }
 
-    /// Record the draw calls for a frame
-    ///
-    /// Vulkan is asynchronous, meaning that commands are submitted
-    /// and later waited on. This method records the next cbuf
-    /// and asks the Renderer to submit it.
-    ///
-    /// The frame is not submitted to be drawn until
-    /// `begin_frame` is called.
-    pub fn draw(&mut self, surfaces: &SurfaceList) {
-        // get the next frame to draw into
-        self.get_next_swapchain_image();
-        let params = self.get_recording_parameters();
-
-        self.begin_recording_one_frame(&params);
-
-        if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
-            ctx.draw(self, &params, surfaces);
-        }
-
-        self.end_recording_one_frame(&params);
-    }
-
     /// Render a frame, but do not present it
     ///
     /// Think of this as the "main" rendering operation. It will draw
@@ -1648,23 +1541,17 @@ impl Drop for Renderer {
             // first wait for the device to finish working
             self.dev.device_wait_idle().unwrap();
 
-            // first destroy the application specific resources
-            let mut ctx = self.app_ctx.borrow_mut().take().unwrap();
-            ctx.destroy(self);
-
             self.dev.destroy_semaphore(self.present_sema, None);
             self.dev.destroy_semaphore(self.render_sema, None);
-
-            self.free_memory(self.depth_image_mem);
-            self.dev.destroy_image_view(self.depth_image_view, None);
-            self.dev.destroy_image(self.depth_image, None);
             
             for &view in self.views.iter() {
                 self.dev.destroy_image_view(view, None);
             }
 
+            self.desc_pool.destroy(&self.dev);
             self.dev.destroy_command_pool(self.pool, None);
 
+            self.dev.destroy_sampler(self.image_sampler, None);
             self.swapchain_loader.destroy_swapchain(self.swapchain, None);
             self.dev.destroy_fence(self.submit_fence, None);
             self.dev.destroy_device(None);

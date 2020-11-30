@@ -9,38 +9,36 @@
 extern crate ash;
 
 pub use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
-use ash::vk;
+use ash::{vk, Device};
 
-use super::renderer::Renderer;
-
-// The default size of each pool in DescPool
+/// The default size of each pool in DescPool
 static POOL_SIZE: u32 = 4;
 
-// A pool of descriptor pools
-// All resources allocated by the Renderer which holds this
+/// A pool of descriptor pools
+/// All resources allocated by the Renderer which holds this
 pub struct DescPool {
-    // these are the layouts for mesh specific (texture) descriptors
-    // Window-speccific descriptors (texture sampler)
-    // one for each framebuffer image
+    /// these are the layouts for mesh specific (texture) descriptors
+    /// Window-speccific descriptors (texture sampler)
+    /// one for each framebuffer image
     pub layout: vk::DescriptorSetLayout,
     pools: Vec<vk::DescriptorPool>,
-    // number of allocations in each pool, from 0 to POOL_SIZE
+    /// number of allocations in each pool, from 0 to POOL_SIZE
     capacities: Vec<usize>,
 }
 
 impl DescPool {
 
-    // Create an image sampler layout
-    //
-    // Descriptor layouts specify the number and characteristics
-    // of descriptor sets which will be made available to the
-    // pipeline through the pipeline layout.
-    fn create_layout(rend: &Renderer) -> vk::DescriptorSetLayout {
-        // supplies `descriptor_mesh_layouts`
-        // There will be a sampler for each window
-        //
-        // This descriptor needs to be second in the pipeline list
-        // so the shader can reference it as set 1
+    /// Create an image sampler layout
+    ///
+    /// Descriptor layouts specify the number and characteristics
+    /// of descriptor sets which will be made available to the
+    /// pipeline through the pipeline layout.
+    fn create_layout(dev: &Device) -> vk::DescriptorSetLayout {
+        /// supplies `descriptor_mesh_layouts`
+        /// There will be a sampler for each window
+        ///
+        /// This descriptor needs to be second in the pipeline list
+        /// so the shader can reference it as set 1
         let bindings=[vk::DescriptorSetLayoutBinding::builder()
                       .binding(1)
                       .descriptor_type(
@@ -53,13 +51,13 @@ impl DescPool {
             .bindings(&bindings);
 
         unsafe {
-            rend.dev.create_descriptor_set_layout(&info, None)
+            dev.create_descriptor_set_layout(&info, None)
                 .unwrap()
         }
     }
 
-    // Returns the index of the new pool
-    pub fn add_pool(&mut self, rend: &Renderer) -> usize {
+    /// Returns the index of the new pool
+    pub fn add_pool(&mut self, dev: &Device) -> usize {
         println!("Adding another descriptor pool");
         let sizes = [vk::DescriptorPoolSize::builder()
                     .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
@@ -74,7 +72,7 @@ impl DescPool {
 
         self.pools.push(
             unsafe {
-                rend.dev.create_descriptor_pool(&info, None)
+                dev.create_descriptor_pool(&info, None)
                     .unwrap()
             }
         );
@@ -85,21 +83,21 @@ impl DescPool {
         return self.pools.len() - 1;
     }
 
-    // rend should own this struct
-    pub fn create(rend: &Renderer) -> DescPool {
+    /// rend should own this struct
+    pub fn create(dev: &Device) -> DescPool {
         let mut ret = DescPool {
-            layout: DescPool::create_layout(rend),
+            layout: DescPool::create_layout(dev),
             pools: Vec::new(),
             capacities: Vec::new(),
         };
 
         // Add one default pool to begin with
-        ret.add_pool(rend);
+        ret.add_pool(dev);
 
         return ret;
     }
 
-    fn get_ideal_pool(&mut self, rend: &Renderer, size: usize) -> usize {
+    fn get_ideal_pool(&mut self, dev: &Device, size: usize) -> usize {
         for (i, cap) in self.capacities.iter().enumerate() {
             // Check if this pool has room for the sets
             if cap + size < POOL_SIZE as usize {
@@ -109,20 +107,20 @@ impl DescPool {
         }
 
         // No existing pool was found, so create a new one
-        return self.add_pool(rend);
+        return self.add_pool(&dev);
     }
 
-    // Allocate an image sampler descriptor set
-    //
-    // A descriptor set specifies a group of attachments that can
-    // be referenced by the graphics pipeline. Think of a descriptor
-    // as the hardware's handle to a resource. The set of descriptors
-    // allocated in each set is specified in the layout.
-    pub fn allocate_samplers(&mut self, rend: &Renderer, count: usize)
+    /// Allocate an image sampler descriptor set
+    ///
+    /// A descriptor set specifies a group of attachments that can
+    /// be referenced by the graphics pipeline. Think of a descriptor
+    /// as the hardware's handle to a resource. The set of descriptors
+    /// allocated in each set is specified in the layout.
+    pub fn allocate_samplers(&mut self, dev: &Device, count: usize)
                             -> (usize, Vec<vk::DescriptorSet>)
     {
         // Find a pool to allocate from
-        let pool_handle = self.get_ideal_pool(rend, count);
+        let pool_handle = self.get_ideal_pool(dev, count);
 
         // We should repeat the layout n times, so that only one
         // call to the allocation function needs to be made
@@ -143,13 +141,13 @@ impl DescPool {
             return (
                 pool_handle,
                 // Allocates a set for each layout specified
-                rend.dev.allocate_descriptor_sets(&info).unwrap()
+                dev.allocate_descriptor_sets(&info).unwrap()
             )
         }
     }
 
     pub fn destroy_samplers(&mut self,
-                            rend: &Renderer,
+                            dev: &Device,
                             pool_handle: usize,
                             samplers: &[vk::DescriptorSet])
     {
@@ -157,20 +155,20 @@ impl DescPool {
 
         unsafe {
             for s in samplers {
-                rend.dev.free_descriptor_sets(
+                dev.free_descriptor_sets(
                     self.pools[pool_handle], &[*s]
                 );
             }
         }
     }
 
-    // Explicit destructor
-    pub fn destroy(&mut self, rend: &Renderer) {
+    /// Explicit destructor
+    pub fn destroy(&mut self, dev: &Device) {
         unsafe {
             for p in self.pools.iter() {
-                rend.dev.destroy_descriptor_pool(*p, None);
+                dev.destroy_descriptor_pool(*p, None);
             }
-            rend.dev.destroy_descriptor_set_layout(
+            dev.destroy_descriptor_set_layout(
                 self.layout, None
             );
         }

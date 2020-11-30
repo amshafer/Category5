@@ -16,9 +16,9 @@ use ash::version::DeviceV1_0;
 use ash::{util,vk};
 
 use crate::list::SurfaceList;
-use crate::descpool::DescPool;
 use crate::Surface;
 use crate::renderer::{Renderer,RecordParams};
+use super::Pipeline;
 
 // This is the reference data for a normal quad
 // that will be used to draw client windows.
@@ -60,14 +60,12 @@ static QUAD_INDICES: [Vector3::<u32>; 2] = [
 /// images are created with Renderer::create_image. The renderer is in
 /// charge of creating/destroying the images since all of the image
 /// resources are created from the Renderer.
-pub struct AppContext {
+pub struct GeomPipeline {
     pass: vk::RenderPass,
     pipeline: vk::Pipeline,
     pub(crate) pipeline_layout: vk::PipelineLayout,
     /// This descriptor pool allocates only the 1 ubo
     uniform_pool: vk::DescriptorPool,
-    /// This is an allocator for the dynamic sets (samplers)
-    pub(crate) desc_pool: DescPool,
     /// (as per `create_descriptor_layouts`)
     /// This will only be the sets holding the uniform buffers,
     /// any image specific descriptors are in the image's sets.
@@ -78,9 +76,6 @@ pub struct AppContext {
     /// shader constants are shared by all swapchain images
     uniform_buffer: vk::Buffer,
     uniform_buffers_memory: vk::DeviceMemory,
-    /// TODO: this should probably be a uniform texel buffer
-    /// One sampler for each swapchain image
-    pub(crate) image_sampler: vk::Sampler,
     /// We will hold only one copy of the static QUAD_DATA
     /// which represents an onscreen window.
     vert_buffer: vk::Buffer,
@@ -89,6 +84,12 @@ pub struct AppContext {
     /// Resources for the index buffer
     index_buffer: vk::Buffer,
     index_buffer_memory: vk::DeviceMemory,
+    
+    /// an image for recording depth test data
+    pub(crate) depth_image: vk::Image,
+    pub(crate) depth_image_view: vk::ImageView,
+    /// because we create the image, we need to back it with memory
+    pub(crate) depth_image_mem: vk::DeviceMemory,
 }
 
 
@@ -134,7 +135,274 @@ pub struct PushConstants {
     pub height: f32,
 }
 
-impl AppContext {
+impl Pipeline for GeomPipeline {
+    fn is_ready(&self) -> bool { true }
+
+    /// Our implementation of drawing one frame using geometry
+    fn draw(&mut self,
+                rend: &Renderer,
+                params: &RecordParams,
+                surfaces: &SurfaceList)
+    {
+        self.begin_recording(rend, params);
+
+        for (i, surf) in surfaces.iter().rev().enumerate() {
+            // TODO: make a limit to the number of windows
+            // we have to call rev before enumerate, so we need
+            // to correct this by setting the depth of the earliest
+            // surfaces to the deepest
+            let depth = 1.0 - 0.000001 * i as f32;
+            self.record_surface_draw(rend, params, surf, depth);
+        }
+    }
+
+    fn destroy(&mut self, rend: &mut Renderer) {
+        unsafe {
+            rend.free_memory(self.vert_buffer_memory);
+            rend.free_memory(self.index_buffer_memory);
+            rend.dev.destroy_buffer(self.vert_buffer, None);
+            rend.dev.destroy_buffer(self.index_buffer, None);
+
+            rend.free_memory(self.depth_image_mem);
+            rend.dev.destroy_image_view(self.depth_image_view, None);
+            rend.dev.destroy_image(self.depth_image, None);
+
+            rend.dev.destroy_buffer(self.uniform_buffer, None);
+            rend.free_memory(self.uniform_buffers_memory);
+
+            rend.dev.destroy_render_pass(self.pass, None);
+
+            rend.dev.destroy_descriptor_set_layout(
+                self.descriptor_uniform_layout, None
+            );
+
+            rend.dev.destroy_descriptor_pool(self.uniform_pool, None);
+
+            rend.dev.destroy_pipeline_layout(self.pipeline_layout, None);
+
+            for m in self.shader_modules.iter() {
+                rend.dev.destroy_shader_module(*m, None);
+            }
+
+            for f in self.framebuffers.iter() {
+                rend.dev.destroy_framebuffer(*f, None);
+            }
+
+            rend.dev.destroy_pipeline(self.pipeline, None);
+        }
+    }    
+}
+
+impl GeomPipeline {
+    /// Set up the application. This should *always* be called
+    ///
+    /// Once we have allocated a renderer with `new`, we should initialize
+    /// the rendering pipeline so that we can display things. This method
+    /// basically sets up all of the "application" specific resources like
+    /// shaders, geometry, and the like.
+    ///
+    /// This fills in the GeomPipeline struct in the Renderer
+    pub fn new(rend: &mut Renderer) -> GeomPipeline {
+        unsafe {
+            let pass = GeomPipeline::create_pass(rend);
+
+            // This is a really annoying issue with CString ptrs
+            let program_entrypoint_name = CString::new("main").unwrap();
+            // If the CString is created in `create_shaders`, and is inserted in
+            // the return struct using the `.as_ptr()` method, then the CString
+            // will still be dropped on return and our pointer will be garbage.
+            // Instead we need to ensure that the CString will live long
+            // enough. I have no idea why it is like this.
+            let shader_stages = Box::new(
+                GeomPipeline::create_shader_stages(rend,
+                                                   program_entrypoint_name
+                                                   .as_ptr())
+            );
+
+            // prepare descriptors for all of the uniforms to pass to shaders
+            //
+            // NOTE: These need to be referenced in order by the `set` modifier
+            // in the shaders
+            let ubo_layout = GeomPipeline::create_ubo_layout(rend);
+            // These are the layout recognized by the pipeline
+            let descriptor_layouts = &[
+                ubo_layout,      // set 0
+                rend.desc_pool.layout, // set 1
+            ];
+
+            // make a push constant entry for the z ordering of a window
+            let constants = &[vk::PushConstantRange::builder()
+                              .stage_flags(vk::ShaderStageFlags::VERTEX)
+                              .offset(0)
+                              // depth is measured as a normalized float
+                              .size(std::mem::size_of::<PushConstants>() as u32)
+                              .build()];
+
+            // even though we don't have anything special in our layout, we
+            // still need to have a created layout for the pipeline
+            let layout_info = vk::PipelineLayoutCreateInfo::builder()
+                .push_constant_ranges(constants)
+                .set_layouts(descriptor_layouts);
+            let layout = rend.dev.create_pipeline_layout(&layout_info, None)
+                .unwrap();
+
+            let pipeline = GeomPipeline::create_pipeline(rend, layout,
+                                                       pass, &*shader_stages);
+
+            // the depth attachment needs to have its own resources
+            let (depth_image, depth_image_view, depth_image_mem) =
+                Renderer::create_image(
+                    &rend.dev,
+                    &rend.mem_props,
+                    &rend.resolution,
+                    vk::Format::D16_UNORM,
+                    vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                    vk::ImageAspectFlags::DEPTH,
+                    vk::MemoryPropertyFlags::DEVICE_LOCAL
+                );
+
+            let framebuffers = GeomPipeline::create_framebuffers(rend,
+                                                               pass,
+                                                               rend.resolution,
+                                                               depth_image_view);
+
+            // Allocate a pool only for the ubo descriptors
+            let uniform_pool = rend.create_descriptor_pool();
+            let ubo = rend.allocate_descriptor_sets(
+                uniform_pool,
+                &[ubo_layout],
+            )[0];
+
+            let consts = GeomPipeline::get_shader_constants(rend.resolution);
+
+            // create a uniform buffer
+            let (buf, mem) = rend.create_buffer(
+                vk::BufferUsageFlags::UNIFORM_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                // this specifies the constants to copy into the buffer
+                &[consts],
+            );
+
+            // Allocate buffers for all geometry to be used
+            let (vbuf, vmem, ibuf, imem) = GeomPipeline::create_default_geom_bufs(rend);
+
+            // The app context contains the scene specific data
+            let mut ctx = GeomPipeline {
+                pass: pass,
+                pipeline: pipeline,
+                pipeline_layout: layout,
+                descriptor_uniform_layout: ubo_layout,
+                framebuffers: framebuffers,
+                uniform_buffer: buf,
+                uniform_buffers_memory: mem,
+                uniform_pool: uniform_pool,
+                ubo_descriptor: ubo,
+                shader_modules: shader_stages
+                    .iter()
+                    .map(|info| { info.module })
+                    .collect(),
+                vert_buffer: vbuf,
+                vert_buffer_memory: vmem,
+                // multiply the index len by the vector size
+                vert_count: QUAD_INDICES.len() as u32 * 3,
+                index_buffer: ibuf,
+                index_buffer_memory: imem,
+                depth_image: depth_image,
+                depth_image_view: depth_image_view,
+                depth_image_mem: depth_image_mem,
+            };
+
+            // now we need to update the descriptor set with the
+            // buffer of the uniform constants to use
+            ctx.update_uniform_descriptor_set(
+                rend,
+                buf,
+                ubo,
+                0, // binding
+                0, // element
+            );
+            ctx.setup_depth_image(rend);
+
+            return ctx;
+        }
+    }
+
+    /// Start recording a cbuf for one frame
+    ///
+    /// Each framebuffer has a set of resources, including command
+    /// buffers. This records the cbufs for the framebuffer
+    /// specified by `img`.
+    fn begin_recording(&mut self,
+                       rend: &Renderer,
+                       params: &RecordParams)
+    {
+        unsafe {
+            // we need to clear any existing data when we start a pass
+            let clear_vals = [
+                vk::ClearValue {
+                    color: vk::ClearColorValue {
+                        float32: [0.0, 0.0, 0.0, 0.0],
+                    },
+                },
+                vk::ClearValue {
+                    depth_stencil: vk::ClearDepthStencilValue {
+                        depth: 1.0,
+                        stencil: 0,
+                    },
+                },
+            ];
+
+            // We want to start a render pass to hold all of
+            // our drawing. The actual pass is started in the cbuf
+            let pass_begin_info = vk::RenderPassBeginInfo::builder()
+                .render_pass(self.pass)
+                .framebuffer(self.framebuffers[params.image_num])
+                .render_area(vk::Rect2D {
+                    offset: vk::Offset2D { x: 0, y: 0 },
+                    extent: rend.resolution,
+                })
+                .clear_values(&clear_vals);
+
+            // start the cbuf
+            rend.cbuf_begin_recording(
+                params.cbuf,
+                vk::CommandBufferUsageFlags::SIMULTANEOUS_USE
+            );
+
+            // -- Setup static drawing resources
+            // All of our drawing operations need
+            // to be recorded inside a render pass.
+            rend.dev.cmd_begin_render_pass(
+                params.cbuf,
+                &pass_begin_info,
+                vk::SubpassContents::INLINE,
+            );
+
+            rend.dev.cmd_bind_pipeline(
+                params.cbuf,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.pipeline
+            );
+
+            // bind the vertex and index buffers from
+            // the first image
+            rend.dev.cmd_bind_vertex_buffers(
+                params.cbuf, // cbuf to draw in
+                0, // first vertex binding updated by the command
+                &[self.vert_buffer], // set of buffers to bind
+                &[0], // offsets for the above buffers
+            );
+            rend.dev.cmd_bind_index_buffer(
+                params.cbuf,
+                self.index_buffer,
+                0, // offset
+                vk::IndexType::UINT32,
+            );
+        }
+    }
+
     /// create a renderpass for the color/depth attachments
     ///
     /// Render passses signify what attachments are used in which
@@ -231,11 +499,11 @@ impl AppContext {
                                    entrypoint: *const i8)
                                    -> [vk::PipelineShaderStageCreateInfo; 2]
     {
-        let vert_shader = AppContext::create_shader_module(
+        let vert_shader = GeomPipeline::create_shader_module(
             rend,
             &mut Cursor::new(&include_bytes!("./shaders/vert.spv")[..])
         );
-        let frag_shader = AppContext::create_shader_module(
+        let frag_shader = GeomPipeline::create_shader_module(
             rend,
             &mut Cursor::new(&include_bytes!("./shaders/frag.spv")[..])
         );
@@ -429,7 +697,8 @@ impl AppContext {
     /// framebuffers.
     unsafe fn create_framebuffers(rend: &mut Renderer,
                                   pass: vk::RenderPass,
-                                  res: vk::Extent2D)
+                                  res: vk::Extent2D,
+                                  depth_image_view: vk::ImageView)
                                   -> Vec<vk::Framebuffer>
     {
         // A framebuffer should be created for each of the swapchain
@@ -439,7 +708,7 @@ impl AppContext {
             .map(|&view| {
                 // color, depth
                 let attachments = [
-                    view, rend.depth_image_view,
+                    view, depth_image_view,
                 ];
 
                 let info = vk::FramebufferCreateInfo::builder()
@@ -573,7 +842,7 @@ impl AppContext {
                             rend: &Renderer,
                             transform: &Matrix4<f32>)
     {
-        let mut consts = AppContext::get_shader_constants(rend.resolution);
+        let mut consts = GeomPipeline::get_shader_constants(rend.resolution);
         consts.model = consts.model * transform;
 
         unsafe {
@@ -581,208 +850,68 @@ impl AppContext {
         }
     }
 
-    /// Start recording a cbuf for one frame
+    /// set up the depth image in self.
     ///
-    /// Each framebuffer has a set of resources, including command
-    /// buffers. This records the cbufs for the framebuffer
-    /// specified by `img`.
-    pub fn begin_recording_one_frame(&self,
-                                     rend: &Renderer,
-                                     params: &RecordParams)
-    {
-        unsafe {
-            // we need to clear any existing data when we start a pass
-            let clear_vals = [
-                vk::ClearValue {
-                    color: vk::ClearColorValue {
-                        float32: [0.0, 0.0, 0.0, 0.0],
-                    },
-                },
-                vk::ClearValue {
-                    depth_stencil: vk::ClearDepthStencilValue {
-                        depth: 1.0,
-                        stencil: 0,
-                    },
-                },
-            ];
+    /// We need to transfer the format of the depth image to something
+    /// usable. We will use an image barrier to set the image as a depth
+    /// stencil attachment to be used later.
+    pub unsafe fn setup_depth_image(&mut self, rend: &Renderer) {
+        // allocate a new cbuf for us to work with
+        let new_cbuf = Renderer::create_command_buffers(&rend.dev,
+                                                        rend.pool,
+                                                        1)[0]; // only get one
 
-            // We want to start a render pass to hold all of
-            // our drawing. The actual pass is started in the cbuf
-            let pass_begin_info = vk::RenderPassBeginInfo::builder()
-                .render_pass(self.pass)
-                .framebuffer(self.framebuffers[params.image_num])
-                .render_area(vk::Rect2D {
-                    offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: rend.resolution,
-                })
-                .clear_values(&clear_vals);
+        // the depth image and view have already been created by new
+        // we need to execute a cbuf to set up the memory we are
+        // going to use later
+        rend.cbuf_onetime(
+            new_cbuf,
+            rend.present_queue,
+            &[], // wait_stages
+            &[], // wait_semas
+            &[], // signal_semas
+            // this closure will be the contents of the cbuf
+            |rend, cbuf| {
+                // We need to initialize the depth attachment by
+                // performing a layout transition to the optimal
+                // depth layout
+                //
+                // we do not use rend.transition_image_layout since that
+                // is specific to texture images
+                let layout_barrier = vk::ImageMemoryBarrier::builder()
+                    .image(self.depth_image)
+                    // access patern for the resulting layout
+                    .dst_access_mask(
+                        vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                            | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                    )
+                    // go from an undefined old layout to whatever the
+                    // driver decides is the optimal depth layout
+                    .new_layout(
+                        vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .subresource_range(
+                        vk::ImageSubresourceRange::builder()
+                            .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                            .layer_count(1)
+                            .level_count(1)
+                            .build(),
+                    )
+                    .build();
 
-            // start the cbuf
-            rend.cbuf_begin_recording(
-                params.cbuf,
-                vk::CommandBufferUsageFlags::SIMULTANEOUS_USE
-            );
-
-            // -- Setup static drawing resources
-            // All of our drawing operations need
-            // to be recorded inside a render pass.
-            rend.dev.cmd_begin_render_pass(
-                params.cbuf,
-                &pass_begin_info,
-                vk::SubpassContents::INLINE,
-            );
-
-            rend.dev.cmd_bind_pipeline(
-                params.cbuf,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.pipeline
-            );
-
-            // bind the vertex and index buffers from
-            // the first image
-            rend.dev.cmd_bind_vertex_buffers(
-                params.cbuf, // cbuf to draw in
-                0, // first vertex binding updated by the command
-                &[self.vert_buffer], // set of buffers to bind
-                &[0], // offsets for the above buffers
-            );
-            rend.dev.cmd_bind_index_buffer(
-                params.cbuf,
-                self.index_buffer,
-                0, // offset
-                vk::IndexType::UINT32,
-            );
-        }
-    }
-    
-    /// Set up the application. This should *always* be called
-    ///
-    /// Once we have allocated a renderer with `new`, we should initialize
-    /// the rendering pipeline so that we can display things. This method
-    /// basically sets up all of the "application" specific resources like
-    /// shaders, geometry, and the like.
-    ///
-    /// This fills in the AppContext struct in the Renderer
-    pub fn setup(rend: &mut Renderer) -> AppContext {
-        unsafe {
-            rend.setup_depth_image();
-            
-            let pass = AppContext::create_pass(rend);
-            
-            // This is a really annoying issue with CString ptrs
-            let program_entrypoint_name = CString::new("main").unwrap();
-            // If the CString is created in `create_shaders`, and is inserted in
-            // the return struct using the `.as_ptr()` method, then the CString
-            // will still be dropped on return and our pointer will be garbage.
-            // Instead we need to ensure that the CString will live long
-            // enough. I have no idea why it is like this.
-            let shader_stages = Box::new(
-                AppContext::create_shader_stages(rend, program_entrypoint_name
-                                                 .as_ptr())
-            );
-
-            // Each window is going to have a sampler descriptor for every
-            // framebuffer image. Unfortunately this means the descriptor
-            // count will be runtime dependent.
-            // This is an allocator for those descriptors
-            let descpool = DescPool::create(&rend);
-
-            // prepare descriptors for all of the uniforms to pass to shaders
-            //
-            // NOTE: These need to be referenced in order by the `set` modifier
-            // in the shaders
-            let ubo_layout = AppContext::create_ubo_layout(rend);
-            // These are the layout recognized by the pipeline
-            let descriptor_layouts = &[
-                ubo_layout,      // set 0
-                descpool.layout, // set 1
-            ];
-
-            // make a push constant entry for the z ordering of a window
-            let constants = &[vk::PushConstantRange::builder()
-                              .stage_flags(vk::ShaderStageFlags::VERTEX)
-                              .offset(0)
-                              // depth is measured as a normalized float
-                              .size(std::mem::size_of::<PushConstants>() as u32)
-                              .build()];
-
-            // even though we don't have anything special in our layout, we
-            // still need to have a created layout for the pipeline
-            let layout_info = vk::PipelineLayoutCreateInfo::builder()
-                .push_constant_ranges(constants)
-                .set_layouts(descriptor_layouts);
-            let layout = rend.dev.create_pipeline_layout(&layout_info, None)
-                .unwrap();
-            
-            let pipeline = AppContext::create_pipeline(rend, layout,
-                                                       pass, &*shader_stages);
-
-            let framebuffers = AppContext::create_framebuffers(rend,
-                                                               pass, rend.resolution);
-
-            // Allocate a pool only for the ubo descriptors
-            let uniform_pool = rend.create_descriptor_pool();
-            let ubo = rend.allocate_descriptor_sets(
-                uniform_pool,
-                &[ubo_layout],
-            )[0];
-
-            let consts = AppContext::get_shader_constants(rend.resolution);
-
-            // create a uniform buffer
-            let (buf, mem) = rend.create_buffer(
-                vk::BufferUsageFlags::UNIFORM_BUFFER,
-                vk::SharingMode::EXCLUSIVE,
-                vk::MemoryPropertyFlags::HOST_VISIBLE
-                    | vk::MemoryPropertyFlags::HOST_COHERENT,
-                // this specifies the constants to copy into the buffer
-                &[consts],
-            );
-
-            // Allocate buffers for all geometry to be used
-            let (vbuf, vmem, ibuf, imem) = AppContext::create_default_geom_bufs(rend);
-
-            // One image sampler is going to be used for everything
-            let sampler = rend.create_sampler();
-
-            // The app context contains the scene specific data
-            let mut ctx = AppContext {
-                pass: pass,
-                pipeline: pipeline,
-                pipeline_layout: layout,
-                descriptor_uniform_layout: ubo_layout,
-                framebuffers: framebuffers,
-                uniform_buffer: buf,
-                uniform_buffers_memory: mem,
-                image_sampler: sampler,
-                uniform_pool: uniform_pool,
-                desc_pool: descpool,
-                ubo_descriptor: ubo,
-                shader_modules: shader_stages
-                    .iter()
-                    .map(|info| { info.module })
-                    .collect(),
-                vert_buffer: vbuf,
-                vert_buffer_memory: vmem,
-                // multiply the index len by the vector size
-                vert_count: QUAD_INDICES.len() as u32 * 3,
-                index_buffer: ibuf,
-                index_buffer_memory: imem,
-            };
-
-            
-            // now we need to update the descriptor set with the
-            // buffer of the uniform constants to use
-            ctx.update_uniform_descriptor_set(
-                rend,
-                buf,
-                ubo,
-                0, // binding
-                0, // element
-            );
-
-            return ctx;
-        }
+                // process the barrier we created, which will perform
+                // the actual transition.
+                rend.dev.cmd_pipeline_barrier(
+                    cbuf,
+                    vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                    vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[layout_barrier],
+                );
+            },
+        );
     }
 
     /// Generate draw calls for this image
@@ -859,57 +988,6 @@ impl AppContext {
                 0, // vertex offset
                 1, // first instance
             );
-        }
-    }
-
-    /// Our implementation of drawing one frame using geometry
-    pub fn draw(&mut self,
-                rend: &Renderer,
-                params: &RecordParams,
-                surfaces: &SurfaceList)
-    {
-        for (i, surf) in surfaces.iter().rev().enumerate() {
-            // TODO: make a limit to the number of windows
-            // we have to call rev before enumerate, so we need
-            // to correct this by setting the depth of the earliest
-            // surfaces to the deepest
-            let depth = 1.0 - 0.000001 * i as f32;
-            self.record_surface_draw(rend, params, surf, depth);
-        }
-    }
-
-    pub fn destroy(&mut self, rend: &mut Renderer) {
-        unsafe {
-            rend.free_memory(self.vert_buffer_memory);
-            rend.free_memory(self.index_buffer_memory);
-            rend.dev.destroy_buffer(self.vert_buffer, None);
-            rend.dev.destroy_buffer(self.index_buffer, None);
-
-            rend.dev.destroy_sampler(self.image_sampler, None);
-
-            rend.dev.destroy_buffer(self.uniform_buffer, None);
-            rend.free_memory(self.uniform_buffers_memory);
-
-            rend.dev.destroy_render_pass(self.pass, None);
-
-            rend.dev.destroy_descriptor_set_layout(
-                self.descriptor_uniform_layout, None
-            );
-
-            rend.dev.destroy_descriptor_pool(self.uniform_pool, None);
-            self.desc_pool.destroy(&rend);
-
-            rend.dev.destroy_pipeline_layout(self.pipeline_layout, None);
-
-            for m in self.shader_modules.iter() {
-                rend.dev.destroy_shader_module(*m, None);
-            }
-
-            for f in self.framebuffers.iter() {
-                rend.dev.destroy_framebuffer(*f, None);
-            }
-
-            rend.dev.destroy_pipeline(self.pipeline, None);
         }
     }
 }

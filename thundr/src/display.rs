@@ -94,7 +94,7 @@ impl Display {
                 // if the surface does not specify a desired format
                 // then we can choose our own
                 vk::Format::UNDEFINED => vk::SurfaceFormatKHR {
-                    format: vk::Format::B8G8R8_UNORM,
+                    format: vk::Format::B8G8R8A8_SRGB,
                     color_space: fmt.color_space,
                 },
                 // if the surface has a desired format we will just

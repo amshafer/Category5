@@ -396,44 +396,41 @@ impl Renderer {
                            release: Option<Box<dyn Drop>>)
                            -> Option<Image>
     {
-        if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
-            // each image holds a set of descriptors that it will
-            // bind before drawing itself. This set holds the
-            // image sampler.
-            //
-            // right now they only hold an image sampler
-            let (handle, descriptors) = ctx.desc_pool.allocate_samplers(
-                &self,
-                self.fb_count,
-            );
+        // each image holds a set of descriptors that it will
+        // bind before drawing itself. This set holds the
+        // image sampler.
+        //
+        // right now they only hold an image sampler
+        let (handle, descriptors) = self.desc_pool.allocate_samplers(
+            &self.dev,
+            self.fb_count,
+        );
 
-            for i in 0..self.fb_count {
-                unsafe {
-                    // bind the texture for our window
-                    self.update_sampler_descriptor_set(
-                        descriptors[i],
-                        1, //n binding
-                        0, // element
-                        ctx.image_sampler,
-                        view,
-                    );
-                }
+        for i in 0..self.fb_count {
+            unsafe {
+                // bind the texture for our window
+                self.update_sampler_descriptor_set(
+                    descriptors[i],
+                    1, //n binding
+                    0, // element
+                    self.image_sampler,
+                    view,
+                );
             }
-
-            return Some(Image {
-                i_internal: Rc::new(RefCell::new(ImageInternal {
-                    i_image: image,
-                    i_image_view: view,
-                    i_image_mem: image_mem,
-                    i_image_resolution: *res,
-                    i_pool_handle: handle,
-                    i_sampler_descriptors: descriptors,
-                    i_priv: private,
-                    i_release_info: release,
-                })),
-            });
         }
-        return None;
+
+        return Some(Image {
+            i_internal: Rc::new(RefCell::new(ImageInternal {
+                i_image: image,
+                i_image_view: view,
+                i_image_mem: image_mem,
+                i_image_resolution: *res,
+                i_pool_handle: handle,
+                i_sampler_descriptors: descriptors,
+                i_priv: private,
+                i_release_info: release,
+            })),
+        });
     }
 
     /// Update image contents from a shm buffer
@@ -600,7 +597,7 @@ impl Renderer {
 
     /// A simple teardown function. The renderer is needed since
     /// it allocated all these objects.
-    pub fn destroy_image(&self, thundr_image: &Image) {
+    pub fn destroy_image(&mut self, thundr_image: &Image) {
         let image = thundr_image.i_internal.borrow();
         unsafe {
             self.dev.destroy_image(image.i_image, None);
@@ -614,14 +611,11 @@ impl Renderer {
                     self.free_memory(m.transfer_mem);
                 },
             }
-            // get the descriptor pool
-            if let Some(ctx) = &mut *self.app_ctx.borrow_mut() {
-                // free our descriptors
-                ctx.desc_pool.destroy_samplers(self,
-                                               image.i_pool_handle,
-                                               image.i_sampler_descriptors
-                                               .as_slice());
-            }
+            // free our descriptors
+            self.desc_pool.destroy_samplers(&self.dev,
+                                            image.i_pool_handle,
+                                            image.i_sampler_descriptors
+                                            .as_slice());
         }
     }
 }
