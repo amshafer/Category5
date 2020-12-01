@@ -16,11 +16,13 @@ pub use renderer::Renderer;
 pub use image::Image;
 pub use surface::Surface;
 
+use renderer::RendererCreateInfo;
+
 #[macro_use]
 extern crate memoffset;
 extern crate utils;
 use crate::utils::{MemImage,Dmabuf};
-use pipelines::{Pipeline, geometric::GeomPipeline};
+use pipelines::*;
 
 pub struct Thundr {
     th_rend: Renderer,
@@ -37,8 +39,11 @@ impl Thundr {
     pub fn new() -> Thundr {
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
-        let mut rend = Renderer::new();
-        let pipe = Box::new(GeomPipeline::new(&mut rend));
+        let info = RendererCreateInfo {
+            enabled_pipelines: vec! { PipelineType::COMPUTE },
+        };
+        let mut rend = Renderer::new(&info);
+        let pipe = Box::new(CompPipeline::new(&mut rend));
 
         Thundr {
             th_rend: rend,
@@ -129,10 +134,6 @@ impl Thundr {
         // record rendering commands
         let params = self.th_rend.begin_recording_one_frame(surfaces);
         self.th_pipe.draw(&self.th_rend, &params, surfaces);
-        self.th_rend.end_recording_one_frame(&params);
-
-        // now start rendering
-        self.th_rend.begin_frame();
     }
 
     // present

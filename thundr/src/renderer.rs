@@ -17,6 +17,7 @@ use ash::extensions::khr;
 use crate::descpool::DescPool;
 use crate::list::SurfaceList;
 use crate::display::Display;
+use crate::pipelines::PipelineType;
 
 extern crate utils as cat5_utils;
 use cat5_utils::log_prelude::*;
@@ -76,7 +77,7 @@ pub struct Renderer {
     pub(crate) transfer_queue: vk::Queue,
 
     /// vk_khr_display and vk_khr_surface wrapper.
-    display: Display,
+    pub(crate) display: Display,
     pub(crate) surface_format: vk::SurfaceFormatKHR,
     pub(crate) surface_caps: vk::SurfaceCapabilitiesKHR,
     /// resolution to create the swapchain with
@@ -127,6 +128,16 @@ pub struct Renderer {
     pub(crate) desc_pool: DescPool,
 }
 
+/// Parameters for Renderer creation.
+///
+/// These will be set by Thundr based on the Pipelines that will
+/// be enabled. See `Pipeline` for methods that drive the data
+/// contained here.
+pub struct RendererCreateInfo {
+    /// A list of queue family indexes to create the device with
+    pub enabled_pipelines: Vec<PipelineType>,
+}
+
 /// Recording parameters
 ///
 /// Layers above this one will need to call recording
@@ -172,8 +183,8 @@ impl Renderer {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("VulkanRenderer").unwrap();
 
-        let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
-        //let layer_names = [];
+        //let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
+        let layer_names = [];
 
         let layer_names_raw: Vec<*const i8> = layer_names.iter()
             .map(|raw_name: &CString| raw_name.as_ptr())
@@ -204,12 +215,12 @@ impl Renderer {
     /// Queue families need to support graphical presentation and 
     /// presentation on the given surface.
     unsafe fn is_valid_queue_family(pdevice: vk::PhysicalDevice,
-                                        info: vk::QueueFamilyProperties,
-                                        index: u32,
-                                        surface_loader: &khr::Surface,
-                                        surface: vk::SurfaceKHR,
-                                        flags: vk::QueueFlags)
-                                        -> bool
+                                    info: vk::QueueFamilyProperties,
+                                    index: u32,
+                                    surface_loader: &khr::Surface,
+                                    surface: vk::SurfaceKHR,
+                                    flags: vk::QueueFlags)
+                                    -> bool
     {
         info.queue_flags.contains(flags)
             && surface_loader
@@ -228,7 +239,7 @@ impl Renderer {
     /// that we can ensure the pdev/queue combination can
     /// present the surface.
     unsafe fn select_pdev(inst: &Instance)
-                              -> vk::PhysicalDevice
+                          -> vk::PhysicalDevice
     {
         let pdevices = inst
             .enumerate_physical_devices()
@@ -250,7 +261,7 @@ impl Renderer {
     /// provide the surface PFN loader and the surface so
     /// that we can ensure the pdev/queue combination can
     /// present the surface
-    unsafe fn select_queue_family(inst: &Instance,
+    pub unsafe fn select_queue_family(inst: &Instance,
                                       pdev: vk::PhysicalDevice,
                                       surface_loader: &khr::Surface,
                                       surface: vk::SurfaceKHR,
@@ -282,9 +293,10 @@ impl Renderer {
     }
 
     /// get the vkPhysicalDeviceMemoryProperties structure for a vkPhysicalDevice
-    pub(crate) unsafe fn get_pdev_mem_properties(inst: &Instance,
-                                                 pdev: vk::PhysicalDevice)
-                                                 -> vk::PhysicalDeviceMemoryProperties
+    pub(crate) unsafe fn get_pdev_mem_properties(
+        inst: &Instance,
+        pdev: vk::PhysicalDevice)
+        -> vk::PhysicalDeviceMemoryProperties
     {
         inst.get_physical_device_memory_properties(pdev)
     }
@@ -878,7 +890,7 @@ impl Renderer {
     /// All methods called after this only need to take a mutable reference to
     /// self, avoiding any nasty argument lists like the functions above. 
     /// The goal is to have this make dealing with the api less wordy.
-    pub fn new() -> Renderer {
+    pub fn new(info: &RendererCreateInfo) -> Renderer {
         unsafe {
             let (entry, inst) = Renderer::create_instance();
             
@@ -918,8 +930,14 @@ impl Renderer {
             log!(LogLevel::profiling, "Rendering with resolution {:?}",
                  surface_resolution);
 
-            let dev = Renderer::create_device(&inst, pdev,
-                                              &[graphics_queue_family]);
+            // create the graphics,transfer, and pipeline specific queues
+            let mut families = vec![graphics_queue_family, transfer_queue_family];
+            for t in info.enabled_pipelines.iter() {
+                if let Some(family) = t.get_queue_family(&inst, &display, pdev) {
+                    families.push(family);
+                }
+            }
+            let dev = Renderer::create_device(&inst, pdev, families.as_slice());
 
             // Each window is going to have a sampler descriptor for every
             // framebuffer image. Unfortunately this means the descriptor
@@ -1225,14 +1243,6 @@ impl Renderer {
         self.get_recording_parameters()
     }
 
-    /// Stop recording a cbuf for one frame
-    pub fn end_recording_one_frame(&mut self, params: &RecordParams) {
-        unsafe {
-            self.dev.cmd_end_render_pass(params.cbuf);
-            self.cbuf_end_recording(params.cbuf);
-        }
-    }
-
     /// Create a descriptor pool for the uniform buffer
     ///
     /// All other dynamic sets are tracked using a DescPool. This pool
@@ -1344,12 +1354,12 @@ impl Renderer {
     ///
     /// This is just a helper for `create_buffer`. It does not fill
     /// the buffer with anything.
-    unsafe fn create_buffer_with_size(&self,
-                                      usage: vk::BufferUsageFlags,
-                                      mode: vk::SharingMode,
-                                      flags: vk::MemoryPropertyFlags,
-                                      size: u64)
-                                      -> (vk::Buffer, vk::DeviceMemory)
+    pub unsafe fn create_buffer_with_size(&self,
+                                          usage: vk::BufferUsageFlags,
+                                          mode: vk::SharingMode,
+                                          flags: vk::MemoryPropertyFlags,
+                                          size: u64)
+                                          -> (vk::Buffer, vk::DeviceMemory)
     {
         let create_info = vk::BufferCreateInfo::builder()
             .size(size)
@@ -1467,24 +1477,6 @@ impl Renderer {
                     panic!("Could not acquire next image: {:?}", err),
             };
         }
-    }
-
-    /// Render a frame, but do not present it
-    ///
-    /// Think of this as the "main" rendering operation. It will draw
-    /// all geometry to the current framebuffer. Presentation is
-    /// done later, in case operations need to occur inbetween.
-    pub fn begin_frame(&mut self) {
-        // Submit the recorded cbuf to perform the draw calls
-        self.cbuf_submit(
-            // submit the cbuf for the current image
-            self.cbufs[self.current_image as usize],
-            self.present_queue,
-            // wait_stages
-            &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT],
-            &[self.present_sema], // wait_semas
-            &[self.render_sema], // signal_semas
-        );
     }
 
     /// Returns true if we are ready to call present

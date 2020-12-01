@@ -154,6 +154,15 @@ impl Pipeline for GeomPipeline {
             let depth = 1.0 - 0.000001 * i as f32;
             self.record_surface_draw(rend, params, surf, depth);
         }
+
+        // make sure to end recording
+        unsafe {
+            rend.dev.cmd_end_render_pass(params.cbuf);
+            rend.cbuf_end_recording(params.cbuf);
+        }
+
+        // now start rendering
+        self.begin_frame(rend);
     }
 
     fn destroy(&mut self, rend: &mut Renderer) {
@@ -247,7 +256,7 @@ impl GeomPipeline {
                 .unwrap();
 
             let pipeline = GeomPipeline::create_pipeline(rend, layout,
-                                                       pass, &*shader_stages);
+                                                         pass, &*shader_stages);
 
             // the depth attachment needs to have its own resources
             let (depth_image, depth_image_view, depth_image_mem) =
@@ -401,6 +410,24 @@ impl GeomPipeline {
                 vk::IndexType::UINT32,
             );
         }
+    }
+
+    /// Render a frame, but do not present it
+    ///
+    /// Think of this as the "main" rendering operation. It will draw
+    /// all geometry to the current framebuffer. Presentation is
+    /// done later, in case operations need to occur inbetween.
+    fn begin_frame(&mut self, rend: &Renderer) {
+        // Submit the recorded cbuf to perform the draw calls
+        rend.cbuf_submit(
+            // submit the cbuf for the current image
+            rend.cbufs[rend.current_image as usize],
+            rend.present_queue, // the graphics queue
+            // wait_stages
+            &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT],
+            &[rend.present_sema], // wait_semas
+            &[rend.render_sema], // signal_semas
+        );
     }
 
     /// create a renderpass for the color/depth attachments

@@ -34,11 +34,11 @@ impl DescPool {
     /// of descriptor sets which will be made available to the
     /// pipeline through the pipeline layout.
     fn create_layout(dev: &Device) -> vk::DescriptorSetLayout {
-        /// supplies `descriptor_mesh_layouts`
-        /// There will be a sampler for each window
-        ///
-        /// This descriptor needs to be second in the pipeline list
-        /// so the shader can reference it as set 1
+        // supplies `descriptor_mesh_layouts`
+        // There will be a sampler for each window
+        //
+        // This descriptor needs to be second in the pipeline list
+        // so the shader can reference it as set 1
         let bindings=[vk::DescriptorSetLayoutBinding::builder()
                       .binding(1)
                       .descriptor_type(

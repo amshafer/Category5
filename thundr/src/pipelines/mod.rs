@@ -1,12 +1,17 @@
 // Pipeline trait implementations.
 //
 // Austin Shafer - 2020
+use ash::{vk,Instance};
 
 pub mod geometric;
 pub mod compute;
 
+pub use compute::CompPipeline;
+pub use geometric::GeomPipeline;
+
 use crate::renderer::{Renderer,RecordParams};
 use crate::SurfaceList;
+use crate::display::Display;
 
 // The pipeline trait is essentially a mini-backend for the
 // renderer. It determines what draw calls we generate for the
@@ -31,4 +36,23 @@ pub trait Pipeline {
             surfaces: &SurfaceList);
 
     fn destroy(&mut self, rend: &mut Renderer);
+}
+
+pub enum PipelineType {
+    COMPUTE,
+    GEOMETRIC,
+}
+
+impl PipelineType {
+    pub fn get_queue_family(&self,
+                            inst: &Instance,
+                            display: &Display,
+                            pdev: vk::PhysicalDevice)
+                            -> Option<u32>
+    {
+        match self {
+            Self::COMPUTE => CompPipeline::get_queue_family(inst, display, pdev),
+            Self::GEOMETRIC => None,
+        }
+    }
 }
