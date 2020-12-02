@@ -436,9 +436,11 @@ impl GeomPipeline {
     /// stages. They are composed of one or more subpasses.
     unsafe fn create_pass(rend: &Renderer) -> vk::RenderPass {
         let attachments = [
-            // the color dest. Its the surface we slected in new
+            // the color dest. Its the surface we slected in Renderer::new.
+            // see Renderer::create_swapchain for why we aren't using
+            // the native surface formate
             vk::AttachmentDescription {
-                format: rend.surface_format.format,
+                format: vk::Format::R8G8B8A8_UNORM,
                 samples: vk::SampleCountFlags::TYPE_1,
                 load_op: vk::AttachmentLoadOp::CLEAR,
                 store_op: vk::AttachmentStoreOp::STORE,

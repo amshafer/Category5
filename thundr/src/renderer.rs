@@ -185,8 +185,8 @@ impl Renderer {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("VulkanRenderer").unwrap();
 
-        let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
-        //let layer_names = [];
+        //let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
+        let layer_names = [];
 
         let layer_names_raw: Vec<*const i8> = layer_names.iter()
             .map(|raw_name: &CString| raw_name.as_ptr())
@@ -880,7 +880,7 @@ impl Renderer {
                              width,
                              height);
 
-        // transition back to the optimal color format
+        // transition back to the optimal color layout
         self.transition_image_layout(
             image,
             self.copy_cbuf,
