@@ -99,6 +99,8 @@ pub struct Renderer {
     /// views describing how to access the images
     pub(crate) views: Vec<vk::ImageView>,
 
+    // TODO: move cbuf management from Renderer to the pipelines
+
     /// pools provide the memory allocated to command buffers
     pub(crate) pool: vk::CommandPool,
     /// the command buffers allocated from pool
@@ -183,8 +185,8 @@ impl Renderer {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("VulkanRenderer").unwrap();
 
-        //let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
-        let layer_names = [];
+        let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
+        //let layer_names = [];
 
         let layer_names_raw: Vec<*const i8> = layer_names.iter()
             .map(|raw_name: &CString| raw_name.as_ptr())
@@ -320,6 +322,7 @@ impl Renderer {
             // We need to wait for this to be supported in mesa
             // for now it somehow happens to work
             vk::ExtImageDrmFormatModifierFn::name().as_ptr(),
+            vk::KhrMaintenance2Fn::name().as_ptr(),
         ];
 
         let features = vk::PhysicalDeviceFeatures {
@@ -356,7 +359,8 @@ impl Renderer {
     /// swapchain is dependent on the characteristics and format of the surface
     /// it is created for.
     /// The application resolution is set by this method.
-    unsafe fn create_swapchain(swapchain_loader: &khr::Swapchain,
+    unsafe fn create_swapchain(inst: &Instance,
+                               swapchain_loader: &khr::Swapchain,
                                surface_loader: &khr::Surface,
                                pdev: vk::PhysicalDevice,
                                surface: vk::SurfaceKHR,
@@ -395,20 +399,46 @@ impl Renderer {
             // fallback to FIFO if the mailbox mode is not available
             .unwrap_or(vk::PresentModeKHR::FIFO);
 
-        let create_info = vk::SwapchainCreateInfoKHR::builder()
+        // we need to check if the surface format supports the
+        // storage image type
+        let extra_usage = match surface_caps.supported_usage_flags
+            .contains(vk::ImageUsageFlags::STORAGE)
+        {
+            false => vk::ImageUsageFlags::STORAGE,
+            true => vk::ImageUsageFlags::empty(),
+        };
+
+        // see this for how to get storage swapchain on intel:
+        // https://github.com/doitsujin/dxvk/issues/504
+
+        let mut create_info = vk::SwapchainCreateInfoKHR::builder()
+            .flags(vk::SwapchainCreateFlagsKHR::MUTABLE_FORMAT)
             .surface(surface)
             .min_image_count(desired_image_count)
             .image_color_space(surface_format.color_space)
             .image_format(surface_format.format)
             .image_extent(*resolution)
             // the color attachment is guaranteed to be available
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT
+                         | vk::ImageUsageFlags::STORAGE)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
             .present_mode(mode)
             .clipped(true)
             .image_array_layers(1);
+
+        // specifying the mutable format flag also requires that we add a
+        // list of additional formats. We need this so that mesa will
+        // set VK_IMAGE_CREATE_EXTENDED_USAGE_BIT_KHR for the swapchain images
+        // we also need to include the surface format, since it seems mesa wants
+        // the supported format + any new formats we select.
+        let add_formats = vk::ImageFormatListCreateInfoKHR::builder()
+            // just add rgba32 because it's the most common.
+            .view_formats(&[vk::Format::R8G8B8A8_UNORM, surface_format.format])
+            .build();
+        create_info.p_next = &add_formats
+            as *const _ as *mut std::ffi::c_void;
 
         // views for all of the swapchains images will be set up in
         // select_images_and_views
@@ -461,7 +491,9 @@ impl Renderer {
     /// get all the presentation images for the swapchain
     /// specify the image views, which specify how we want
     /// to access our images
-    unsafe fn select_images_and_views(swapchain_loader: &khr::Swapchain,
+    unsafe fn select_images_and_views(inst: &Instance,
+                                      pdev: vk::PhysicalDevice,
+                                      swapchain_loader: &khr::Swapchain,
                                       swapchain: vk::SwapchainKHR,
                                       dev: &Device,
                                       surface_format: vk::SurfaceFormatKHR)
@@ -473,11 +505,16 @@ impl Renderer {
 
         let image_views = images.iter()
             .map(|&image| {
+                let format_props =  inst
+                    .get_physical_device_format_properties(pdev, surface_format.format);
+                log!(LogLevel::debug, "format props: {:#?}", format_props);
+
                 // we want to interact with this image as a 2D
                 // array of RGBA pixels (i.e. the "normal" way)
-                let create_info = vk::ImageViewCreateInfo::builder()
+                let mut create_info = vk::ImageViewCreateInfo::builder()
                     .view_type(vk::ImageViewType::TYPE_2D)
-                    .format(surface_format.format)
+                    // see `create_swapchain` for why we don't use surface_format
+                    .format(vk::Format::R8G8B8A8_UNORM)
                     // select the normal RGBA type
                     .components(vk::ComponentMapping {
                         r: vk::ComponentSwizzle::R,
@@ -493,7 +530,24 @@ impl Renderer {
                         base_array_layer: 0,
                         layer_count: 1,
                     })
-                    .image(image);
+                    .image(image)
+                    .build();
+
+                let ext_info = vk::ImageViewUsageCreateInfoKHR::builder()
+                    .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT
+                           | vk::ImageUsageFlags::STORAGE)
+                    .build();
+
+                // if the format doesn't support storage (intel doesn't),
+                // then we need to attach an extra struct telling to to
+                // allow the storage format in the view even though the
+                // underlying format doesn't
+                if !format_props.optimal_tiling_features
+                    .contains(vk::FormatFeatureFlags::STORAGE_IMAGE)
+                {
+                    create_info.p_next = &ext_info
+                        as *const _ as *mut std::ffi::c_void;
+                }
 
                 dev.create_image_view(&create_info, None).unwrap()
             })
@@ -951,6 +1005,7 @@ impl Renderer {
 
             let swapchain_loader = khr::Swapchain::new(&inst, &dev);
             let swapchain = Renderer::create_swapchain(
+                &inst,
                 &swapchain_loader,
                 &display.surface_loader,
                 pdev,
@@ -961,7 +1016,9 @@ impl Renderer {
             );
             
             let (images, image_views) =
-                Renderer::select_images_and_views(&swapchain_loader,
+                Renderer::select_images_and_views(&inst,
+                                                  pdev,
+                                                  &swapchain_loader,
                                                   swapchain,
                                                   &dev,
                                                   surface_format);

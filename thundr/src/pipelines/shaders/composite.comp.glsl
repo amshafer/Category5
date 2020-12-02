@@ -27,9 +27,5 @@ void main() {
     if(gl_GlobalInvocationID.x >= width || gl_GlobalInvocationID.y >= height)
         return;
 
-    /* get the position of this invocation in the framebuffer */
-    uint x = gl_GlobalInvocationID.x / width;
-    uint y = gl_GlobalInvocationID.y / height;
-
-    imageStore(frame, ivec2(x, y), vec4(0, 1, 0, 1));
+    imageStore(frame, ivec2(gl_GlobalInvocationID.xy), vec4(float(gl_GlobalInvocationID.x) / float(width), float(gl_GlobalInvocationID.y) / float(height), 1, 1));
 }

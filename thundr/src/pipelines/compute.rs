@@ -33,6 +33,7 @@ pub struct CompPipeline {
     cp_shader_modules: vk::ShaderModule,
     /// The pool that all descs in this struct are allocated from
     cp_desc_pool: vk::DescriptorPool,
+    cp_descs: vk::DescriptorSet,
 
     /// Our buffer containing our window locations
     cp_data: vk::Buffer,
@@ -45,35 +46,60 @@ pub struct CompPipeline {
 }
 
 /// Our representation of window positions in the storage buffer
-#[derive(Copy,Clone)]
+#[derive(Copy,Clone,Serialize,Deserialize)]
 struct StorageData {
     // TODO: implement me
-    width: i32,
-    height: i32,
+    width: u32,
+    height: u32,
 }
 
 impl CompPipeline {
     pub fn new(rend: &mut Renderer) -> Self {
         let layout = Self::create_descriptor_layout(rend);
         let pool = Self::create_descriptor_pool(rend);
-        let descs = unsafe { rend.allocate_descriptor_sets(pool, &[layout]) };
+        let descs = unsafe {
+            rend.allocate_descriptor_sets(pool, &[layout])[0]
+        };
 
         // create our data and a storage buffer
         let data = StorageData {
-            width: rend.resolution.width as i32,
-            height: rend.resolution.height as i32,
+            width: rend.resolution.width,
+            height: rend.resolution.height,
         };
         let (storage, storage_mem) = unsafe {
-            rend.create_buffer_with_size(
+            rend.create_buffer(
                 vk::BufferUsageFlags::STORAGE_BUFFER,
                 vk::SharingMode::EXCLUSIVE,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL
                     | vk::MemoryPropertyFlags::HOST_VISIBLE
                     | vk::MemoryPropertyFlags::HOST_COHERENT,
-                std::mem::size_of_val(&data) as u64,
+                bincode::serialize(&data).unwrap().as_slice()
             )
         };
-        unsafe { rend.update_memory(storage_mem, &[data]); }
+
+        // now update the storage descriptor
+        let info = vk::DescriptorBufferInfo::builder()
+            .buffer(storage)
+            .offset(0)
+            .range(mem::size_of::<StorageData>() as u64)
+            .build();
+        let write_info = [
+            vk::WriteDescriptorSet::builder()
+                .dst_set(descs)
+                .dst_binding(1)
+                // descriptors can be arrays, so we need to specify an offset
+                // into that array if applicable
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(&[info])
+                .build()
+        ];
+        unsafe {
+            rend.dev.update_descriptor_sets(
+                &write_info, // descriptor writes
+                &[], // descriptor copies
+            );
+        }
 
         // This is a really annoying issue with CString ptrs
         let program_entrypoint_name = CString::new("main").unwrap();
@@ -119,6 +145,7 @@ impl CompPipeline {
             cp_descriptor_layout: layout,
             cp_shader_modules: shader_stage.module,
             cp_desc_pool: pool,
+            cp_descs: descs,
             cp_data: storage,
             cp_data_mem: storage_mem,
             cp_queue: queue,
@@ -239,7 +266,102 @@ impl Pipeline for CompPipeline {
             rend: &Renderer,
             params: &RecordParams,
             surfaces: &SurfaceList)
-    {}
+    {
+        unsafe {
+            // before recording, update our descriptor for our render target
+            // get the current swapchain image
+            let info = vk::DescriptorImageInfo::builder()
+                .sampler(rend.image_sampler)
+                .image_view(rend.views[rend.current_image as usize])
+                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .build();
+            let binfo = vk::DescriptorBufferInfo::builder()
+                .buffer(self.cp_data)
+                .offset(0)
+                .range(mem::size_of::<StorageData>() as u64)
+                .build();
 
-    fn destroy(&mut self, rend: &mut Renderer) {}
+            let write_info = [
+                vk::WriteDescriptorSet::builder()
+                    .dst_set(self.cp_descs)
+                    .dst_binding(0)
+                    // descriptors can be arrays, so we need to specify an offset
+                    // into that array if applicable
+                    .dst_array_element(0)
+                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                    .image_info(&[info])
+                    .build(),
+                vk::WriteDescriptorSet::builder()
+                    .dst_set(self.cp_descs)
+                    .dst_binding(1)
+                    .dst_array_element(0)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .buffer_info(&[binfo])
+                    .build()
+            ];
+            rend.dev.update_descriptor_sets(
+                &write_info, // descriptor writes
+                &[], // descriptor copies
+            );
+
+            // ------------------------------------------- RECORD
+            rend.cbuf_begin_recording(
+                params.cbuf,
+                vk::CommandBufferUsageFlags::SIMULTANEOUS_USE
+            );
+
+            rend.dev.cmd_bind_pipeline(
+                params.cbuf,
+                vk::PipelineBindPoint::COMPUTE,
+                self.cp_pipeline
+            );
+
+            rend.dev.cmd_bind_descriptor_sets(
+                params.cbuf,
+                vk::PipelineBindPoint::COMPUTE,
+                self.cp_pipeline_layout,
+                0, // first set
+                &[self.cp_descs],
+                &[], // dynamic offsets
+            );
+
+            rend.dev.cmd_dispatch(
+                params.cbuf,
+                // Add an extra wg in to account for not dividing perfectly
+                rend.resolution.width / 16 + 1,
+                rend.resolution.height / 16 + 1,
+                1,
+            );
+
+            rend.cbuf_end_recording(params.cbuf);
+            // -------------------------------------------
+
+            rend.cbuf_submit(
+                // submit the cbuf for the current image
+                rend.cbufs[rend.current_image as usize],
+                self.cp_queue, // use our compute queue
+                // wait_stages
+                &[vk::PipelineStageFlags::COMPUTE_SHADER],
+                &[rend.present_sema], // wait_semas
+                &[rend.render_sema], // signal_semas
+            );
+        }
+    }
+
+    fn destroy(&mut self, rend: &mut Renderer) {
+        unsafe {
+            rend.free_memory(self.cp_data_mem);
+            rend.dev.destroy_buffer(self.cp_data, None);
+
+            rend.dev.destroy_descriptor_set_layout(
+                self.cp_descriptor_layout, None
+            );
+
+            rend.dev.destroy_descriptor_pool(self.cp_desc_pool, None);
+
+            rend.dev.destroy_pipeline_layout(self.cp_pipeline_layout, None);
+            rend.dev.destroy_shader_module(self.cp_shader_modules, None);
+            rend.dev.destroy_pipeline(self.cp_pipeline, None);
+        }
+    }
 }

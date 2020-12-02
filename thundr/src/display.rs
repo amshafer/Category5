@@ -81,8 +81,7 @@ impl Display {
     //
     // This selects the color space and layout for a surface. This should
     // be called by the Renderer after creating a Display.
-    pub unsafe fn select_surface_format(&self,
-                                        pdev: vk::PhysicalDevice)
+    pub unsafe fn select_surface_format(&self, pdev: vk::PhysicalDevice)
                                         -> vk::SurfaceFormatKHR
     {
         let formats = self.surface_loader
@@ -94,7 +93,7 @@ impl Display {
                 // if the surface does not specify a desired format
                 // then we can choose our own
                 vk::Format::UNDEFINED => vk::SurfaceFormatKHR {
-                    format: vk::Format::B8G8R8A8_SRGB,
+                    format: vk::Format::R8G8B8A8_UNORM,
                     color_space: fmt.color_space,
                 },
                 // if the surface has a desired format we will just
@@ -134,8 +133,7 @@ impl Display {
             .unwrap();
 
         for (i,p) in disp_props.iter().enumerate() {
-            println!("{} display: {:?}", i,
-                     CStr::from_ptr(p.display_name));
+            println!("{} display: {:#?}", i, p);
         }
 
         // The available modes for the display. This holds
@@ -146,8 +144,7 @@ impl Display {
             .unwrap();
 
         for (i,m) in mode_props.iter().enumerate() {
-            println!("display 0 - {} mode: {:?}", i,
-                     m.parameters.refresh_rate);
+            println!("display 0 - {} mode: {:#?}", i, m);
         }
 
         // As of now we are not doing anything important with planes,
@@ -158,8 +155,7 @@ impl Display {
             .unwrap();
 
         for (i,p) in plane_props.iter().enumerate() {
-            println!("display 0 - plane: {} at stack {}", i,
-                     p.current_stack_index);
+            println!("display 0 - plane: {} props = {:#?}", i, p);
 
             let supported = loader
                 .get_display_plane_supported_displays(pdev,
