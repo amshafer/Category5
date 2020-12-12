@@ -2,14 +2,10 @@
 //
 // Austin Shafer - 2020
 pub extern crate wayland_server as ws;
-use ws::{Filter,Client};
+use ws::{Client, Filter};
 
-use utils::{
-    ClientId,
-    timing::get_current_millis,
-    log_prelude::*,
-};
 use crate::category5::atmosphere::Atmosphere;
+use utils::{log, timing::get_current_millis, ClientId};
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -21,9 +17,7 @@ use std::rc::Rc;
 /// we can register the new client with the atmos
 ///
 /// Returns the id created
-pub fn register_new_client(atmos_cell: Rc<RefCell<Atmosphere>>, client: Client)
-                           -> ClientId
-{
+pub fn register_new_client(atmos_cell: Rc<RefCell<Atmosphere>>, client: Client) -> ClientId {
     let id;
     {
         let mut atmos = atmos_cell.borrow_mut();
@@ -31,7 +25,7 @@ pub fn register_new_client(atmos_cell: Rc<RefCell<Atmosphere>>, client: Client)
         id = atmos.mint_client_id();
 
         if !client.data_map().insert_if_missing(move || id) {
-            log!(LogLevel::error, "registering a client that has already been registered");
+            log::error!("registering a client that has already been registered");
         }
     }
 
@@ -51,9 +45,7 @@ pub fn register_new_client(atmos_cell: Rc<RefCell<Atmosphere>>, client: Client)
 /// we wrap it here so it can change easily
 ///
 /// If the client does not currently have an id, register it
-pub fn get_id_from_client(atmos: Rc<RefCell<Atmosphere>>, client: Client)
-                          -> ClientId
-{
+pub fn get_id_from_client(atmos: Rc<RefCell<Atmosphere>>, client: Client) -> ClientId {
     match client.data_map().get::<ClientId>() {
         Some(id) => *id,
         // The client hasn't been assigned an id

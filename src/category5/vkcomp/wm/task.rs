@@ -13,8 +13,8 @@ extern crate wayland_server as ws;
 use ws::protocol::wl_buffer;
 
 extern crate utils;
+use utils::{log, WindowId};
 use utils::{Dmabuf, MemImage};
-use utils::{timing::*, log_prelude::*, WindowId};
 
 // Tell wm the desktop background
 //
@@ -73,7 +73,7 @@ impl fmt::Debug for UpdateWindowContentsFromMem {
 
 impl Drop for UpdateWindowContentsFromMem {
     fn drop(&mut self) {
-        log!(LogLevel::profiling, "Releasing shm buffer");
+        log::profiling!("Releasing shm buffer");
         self.ufm_wl_buffer.release();
     }
 }
@@ -94,11 +94,7 @@ pub enum Task {
 }
 
 impl Task {
-    pub fn set_background_from_mem(tex: Vec<u8>,
-                                   tex_width: u32,
-                                   tex_height: u32)
-                                   -> Task
-    {
+    pub fn set_background_from_mem(tex: Vec<u8>, tex_width: u32, tex_height: u32) -> Task {
         Task::sbfm(SetBackgroundFromMem {
             pixels: tex,
             width: tex_width,
@@ -106,11 +102,11 @@ impl Task {
         })
     }
 
-    pub fn update_window_contents_from_dmabuf(id: WindowId,
-                                              dmabuf: Dmabuf,
-                                              buffer: wl_buffer::WlBuffer)
-                                              -> Task
-    {
+    pub fn update_window_contents_from_dmabuf(
+        id: WindowId,
+        dmabuf: Dmabuf,
+        buffer: wl_buffer::WlBuffer,
+    ) -> Task {
         Task::uwcfd(UpdateWindowContentsFromDmabuf {
             ufd_id: id,
             ufd_dmabuf: dmabuf,
@@ -118,13 +114,13 @@ impl Task {
         })
     }
 
-    pub fn update_window_contents_from_mem(id: WindowId,
-                                           tex: MemImage,
-                                           buffer: wl_buffer::WlBuffer,
-                                           tex_width: usize,
-                                           tex_height: usize)
-                                           -> Task
-    {
+    pub fn update_window_contents_from_mem(
+        id: WindowId,
+        tex: MemImage,
+        buffer: wl_buffer::WlBuffer,
+        tex_width: usize,
+        tex_height: usize,
+    ) -> Task {
         Task::uwcfm(UpdateWindowContentsFromMem {
             id: id,
             width: tex_width,

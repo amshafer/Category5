@@ -6,26 +6,21 @@ extern crate wayland_server as ws;
 use ws::protocol::wl_surface;
 
 mod property;
-use property::{PropertyId,Property};
+use property::{Property, PropertyId};
 mod property_map;
 use property_map::PropertyMap;
 mod skiplist;
 
-use crate::category5::ways::{
-    surface::*,
-    seat::Seat,
-    xdg_shell::xdg_toplevel::ResizeEdge,
-};
 use crate::category5::vkcomp::wm;
-use utils::{WindowId,ClientId};
-use utils::log_prelude::*;
+use crate::category5::ways::{seat::Seat, surface::*, xdg_shell::xdg_toplevel::ResizeEdge};
+use utils::{log, ClientId, WindowId};
 
-use std::rc::Rc;
-use std::vec::Vec;
 use std::cell::RefCell;
-use std::collections::{HashMap,VecDeque};
-use std::sync::mpsc::{Sender,Receiver};
+use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
+use std::sync::mpsc::{Receiver, Sender};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::vec::Vec;
 
 // Global data not tied to a client or window
 //
@@ -33,7 +28,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Copy, Clone, Debug, AtmosECSGetSet)]
 enum GlobalProperty {
     // !! IF YOU CHANGE THIS UPDATE property_count BELOW!!
-
     cursor_pos(f64, f64),
     resolution(u32, u32),
     grabbed(Option<WindowId>),
@@ -157,74 +151,69 @@ impl Property for ClientPriv {
     }
 }
 
-// Global state tracking
-//
-// Don't make fun of my naming convention pls. We need a
-// place for all wayland code to stash meta information.
-// This is such a place, but it should not hold anything
-// exceptionally protocol-specific for sync reasons.
-//
-// Although this is referenced everywhere, both sides
-// will have their own version of it. a_hemisphere is
-// the shared part.
-//
-// Keep in mind this only holds any shared data, data
-// exclusive to subsystems will be held by said subsystem
+/// Global state tracking
+///
+/// Don't make fun of my naming convention pls. We need a
+/// place for all wayland code to stash meta information.
+/// This is such a place, but it should not hold anything
+/// exceptionally protocol-specific for sync reasons.
+///
+/// Although this is referenced everywhere, both sides
+/// will have their own version of it. a_hemisphere is
+/// the shared part.
+///
+/// Keep in mind this only holds any shared data, data
+/// exclusive to subsystems will be held by said subsystem
 #[allow(dead_code)]
 pub struct Atmosphere {
-    // transfer channel
+    /// transfer channel
     a_tx: Sender<Box<Hemisphere>>,
-    // receive channel
+    /// receive channel
     a_rx: Receiver<Box<Hemisphere>>,
-    // The current hemisphere
-    //
-    // While this is held we will retain ownership of the
-    // current hemisphere's mutex, and be able to service
-    // requests on this hemisphere
-    //
-    // To switch hemispheres we send this through the
-    // channel to the other subsystem.
+    /// The current hemisphere
+    ///
+    /// While this is held we will retain ownership of the
+    /// current hemisphere's mutex, and be able to service
+    /// requests on this hemisphere
+    ///
+    /// To switch hemispheres we send this through the
+    /// channel to the other subsystem.
     a_hemi: Option<Box<Hemisphere>>,
 
     // -- private subsystem specific resources --
-
-    // These keep track of what ids we have handed out to the
-    // property maps. We need to track this here since we are
-    // patching the prop maps and can't rely on them
+    /// These keep track of what ids we have handed out to the
+    /// property maps. We need to track this here since we are
+    /// patching the prop maps and can't rely on them
     a_client_id_map: Vec<bool>,
     a_window_id_map: Vec<bool>,
 
     // -- ways --
-    
     a_window_priv: PropertyMap<Priv>,
     a_client_priv: PropertyMap<ClientPriv>,
-    // A hashmap of patches based on the window id and the
-    // property name
-    //
-    // This needs to be a hashmap since we want to quickly
-    // update information. Searching would take too long.
-    //
-    // ways performs patch replay:
-    // Changes will be accrued in a batch here during hemisphere
-    // construction, and will then be applied before flipping.
-    // when receiving the other hemisphere, first replay all
-    // patches before constructing a new changeset.
+    /// A hashmap of patches based on the window id and the
+    /// property name
+    ///
+    /// This needs to be a hashmap since we want to quickly
+    /// update information. Searching would take too long.
+    ///
+    /// ways performs patch replay:
+    /// Changes will be accrued in a batch here during hemisphere
+    /// construction, and will then be applied before flipping.
+    /// when receiving the other hemisphere, first replay all
+    /// patches before constructing a new changeset.
     a_window_patches: HashMap<(WindowId, PropertyId), WindowProperty>,
     a_client_patches: HashMap<(ClientId, PropertyId), ClientProperty>,
     a_global_patches: HashMap<PropertyId, GlobalProperty>,
 }
 
 impl Atmosphere {
-    // Create a new atmosphere to be shared within a subsystem
-    //
-    // We pass in the hemispheres and lock(s) since they will have to
-    // also be passed to the other subsystem.
-    // One subsystem must be setup as index 0 and the other
-    // as index 1
-    pub fn new(tx: Sender<Box<Hemisphere>>,
-               rx: Receiver<Box<Hemisphere>>)
-               -> Atmosphere
-    {
+    /// Create a new atmosphere to be shared within a subsystem
+    ///
+    /// We pass in the hemispheres and lock(s) since they will have to
+    /// also be passed to the other subsystem.
+    /// One subsystem must be setup as index 0 and the other
+    /// as index 1
+    pub fn new(tx: Sender<Box<Hemisphere>>, rx: Receiver<Box<Hemisphere>>) -> Atmosphere {
         let mut atmos = Atmosphere {
             a_tx: tx,
             a_rx: rx,
@@ -250,8 +239,8 @@ impl Atmosphere {
         return atmos;
     }
 
-    // Gets the next available id in a vec of bools
-    // generic id getter
+    /// Gets the next available id in a vec of bools
+    /// generic id getter
     fn get_next_id(v: &mut Vec<bool>) -> u32 {
         for (i, in_use) in v.iter_mut().enumerate() {
             if !*in_use {
@@ -264,10 +253,10 @@ impl Atmosphere {
         return (v.len() - 1) as u32;
     }
 
-    // Get the next id
-    //
-    // Find a free id if one is available, if not then
-    // add a new one
+    /// Get the next id
+    ///
+    /// Find a free id if one is available, if not then
+    /// add a new one
     pub fn mint_client_id(&mut self) -> ClientId {
         let id = ClientId(Atmosphere::get_next_id(&mut self.a_client_id_map));
         self.reserve_client_id(id);
@@ -280,11 +269,11 @@ impl Atmosphere {
         return id;
     }
 
-    // Add a patch to be replayed on a flip
-    //
-    // All changes to the current hemisphere will get
-    // batched up into a set of patches. This is needed to
-    // keep both hemispheres in sync.
+    /// Add a patch to be replayed on a flip
+    ///
+    /// All changes to the current hemisphere will get
+    /// batched up into a set of patches. This is needed to
+    /// keep both hemispheres in sync.
     fn set_global_prop(&mut self, value: &GlobalProperty) {
         self.mark_changed();
         let prop_id = value.get_property_id();
@@ -297,15 +286,12 @@ impl Atmosphere {
         }
     }
 
-    fn get_global_prop(&self, prop_id: PropertyId)
-                       -> Option<&GlobalProperty>
-    {
+    fn get_global_prop(&self, prop_id: PropertyId) -> Option<&GlobalProperty> {
         // check if there is an existing patch to grab
         if let Some(v) = self.a_global_patches.get(&prop_id) {
             return Some(v);
         }
-        return self.a_hemi.as_ref().unwrap()
-            .get_global_prop(prop_id);
+        return self.a_hemi.as_ref().unwrap().get_global_prop(prop_id);
     }
 
     fn set_client_prop(&mut self, client: ClientId, value: &ClientProperty) {
@@ -316,18 +302,20 @@ impl Atmosphere {
             // if so, just update it
             *v = value.clone();
         } else {
-            self.a_client_patches.insert((client, prop_id), value.clone());
+            self.a_client_patches
+                .insert((client, prop_id), value.clone());
         }
     }
 
-    fn get_client_prop(&self, client: ClientId, prop_id: PropertyId)
-                       -> Option<&ClientProperty>
-    {
+    fn get_client_prop(&self, client: ClientId, prop_id: PropertyId) -> Option<&ClientProperty> {
         // check if there is an existing patch to grab
         if let Some(v) = self.a_client_patches.get(&(client, prop_id)) {
             return Some(v);
         }
-        return self.a_hemi.as_ref().unwrap()
+        return self
+            .a_hemi
+            .as_ref()
+            .unwrap()
             .get_client_prop(client, prop_id);
     }
 
@@ -343,36 +331,33 @@ impl Atmosphere {
         }
     }
 
-    fn get_window_prop(&self, id: WindowId, prop_id: PropertyId)
-                       -> Option<&WindowProperty>
-    {
+    fn get_window_prop(&self, id: WindowId, prop_id: PropertyId) -> Option<&WindowProperty> {
         // check if there is an existing patch to grab
         if let Some(v) = self.a_window_patches.get(&(id, prop_id)) {
             return Some(v);
         }
-        return self.a_hemi.as_ref().unwrap()
-            .get_window_prop(id, prop_id);
+        return self.a_hemi.as_ref().unwrap().get_window_prop(id, prop_id);
     }
 
-    // Commit all our patches into the hemisphere
-    //
-    // We are batching all the changes into patches. We
-    // then need to apply those patches to the current
-    // hemisphere before we send it to update it. We also
-    // need to replay the patches on the new hemisphere to
-    // update it will all the info it's missing
+    /// Commit all our patches into the hemisphere
+    ///
+    /// We are batching all the changes into patches. We
+    /// then need to apply those patches to the current
+    /// hemisphere before we send it to update it. We also
+    /// need to replay the patches on the new hemisphere to
+    /// update it will all the info it's missing
     fn replay(&mut self, hemi: &mut Hemisphere) {
-        log!(LogLevel::info, "replaying on hemisphere");
+        log::info!("replaying on hemisphere");
         for (prop_id, prop) in self.a_global_patches.iter() {
-            log!(LogLevel::info, "   replaying {:?}", prop);
+            log::info!("   replaying {:?}", prop);
             hemi.set_global_prop(*prop_id, prop);
         }
         for ((id, prop_id), prop) in self.a_client_patches.iter() {
-            log!(LogLevel::info, "   replaying {:?}", prop);
+            log::info!("   replaying {:?}", prop);
             hemi.set_client_prop(*id, *prop_id, prop);
         }
         for ((id, prop_id), prop) in self.a_window_patches.iter() {
-            log!(LogLevel::info, "   replaying {:?}", prop);
+            log::info!("   replaying {:?}", prop);
             hemi.set_window_prop(*id, *prop_id, prop);
         }
 
@@ -381,31 +366,30 @@ impl Atmosphere {
         hemi.commit();
     }
 
-    // Must be called before recv_hemisphere
+    /// Must be called before recv_hemisphere
     pub fn send_hemisphere(&mut self) {
         // first grab our own hemi
         if let Some(mut h) = self.a_hemi.take() {
-            log!(LogLevel::info, "sending hemisphere");
+            log::info!("sending hemisphere");
             // second, we need to apply our changes to
             // our own hemisphere before we send it
             self.replay(&mut h);
 
             // actually flip hemispheres
-            self.a_tx.send(h)
-                .expect("Could not send hemisphere");
+            self.a_tx.send(h).expect("Could not send hemisphere");
         }
     }
 
-    // Must be called after send_hemisphere
-    // returns true if we were able to get the other hemisphere
-    // if returns false, this needs to be called again
+    /// Must be called after send_hemisphere
+    /// returns true if we were able to get the other hemisphere
+    /// if returns false, this needs to be called again
     pub fn recv_hemisphere(&mut self) -> bool {
-        log!(LogLevel::info, "trying to recv hemisphere");
+        log::info!("trying to recv hemisphere");
         let mut new_hemi = match self.a_rx.recv() {
             Ok(h) => h,
             Err(_) => return false,
         };
-        log!(LogLevel::info, "recieved hemisphere");
+        log::info!("recieved hemisphere");
 
         // while we have the new one, go ahead and apply the
         // patches to make it up to date
@@ -423,20 +407,20 @@ impl Atmosphere {
         return true;
     }
 
-    // Exchange hemispheres between the two subsystems
-    //
-    // This is in charge of sending and receiving hemisphere
-    // boxes over the channels. It also organizes the replays
-    // and clears the patches
+    /// Exchange hemispheres between the two subsystems
+    ///
+    /// This is in charge of sending and receiving hemisphere
+    /// boxes over the channels. It also organizes the replays
+    /// and clears the patches
     pub fn flip_hemispheres(&mut self) {
         self.send_hemisphere();
         self.recv_hemisphere();
     }
 
-    // Has the current hemisphere been changed
-    //
-    // Ways will use this to know if it should flip
-    // hemispheres and wake up vkcomp
+    /// Has the current hemisphere been changed
+    ///
+    /// Ways will use this to know if it should flip
+    /// hemispheres and wake up vkcomp
     pub fn is_changed(&mut self) -> bool {
         match self.a_hemi.as_mut() {
             Some(h) => h.is_changed(),
@@ -462,18 +446,12 @@ impl Atmosphere {
     // to the hemisphere
     // ------------------------------
 
-    // Create a new window for the id
-    //
-    // This wraps a couple actions into one helper
-    // since there are multiple 
-    pub fn create_new_window(&mut self,
-                             id: WindowId,
-                             owner: ClientId,
-                             is_toplevel: bool)
-    {
-        self.add_wm_task(
-            wm::task::Task::create_window(id)
-        );
+    /// Create a new window for the id
+    ///
+    /// This wraps a couple actions into one helper
+    /// since there are multiple
+    pub fn create_new_window(&mut self, id: WindowId, owner: ClientId, is_toplevel: bool) {
+        self.add_wm_task(wm::task::Task::create_window(id));
 
         let barsize = self.get_barsize();
 
@@ -489,10 +467,10 @@ impl Atmosphere {
         self.focus_on(Some(id));
     }
 
-    // Reserve a new client id
-    //
-    // Should be done the first time we interact with
-    // a new client
+    /// Reserve a new client id
+    ///
+    /// Should be done the first time we interact with
+    /// a new client
     pub fn reserve_client_id(&mut self, id: ClientId) {
         self.set_client_in_use(id, true);
         self.set_windows_for_client(id, Vec::new());
@@ -503,9 +481,8 @@ impl Atmosphere {
         self.a_client_priv.activate(raw_id);
         // Add a new priv entry
         // This is kept separately for ways
-        self.a_client_priv.set(raw_id,
-                               ClientPriv::SEAT,
-                               &ClientPriv::seat(None));
+        self.a_client_priv
+            .set(raw_id, ClientPriv::SEAT, &ClientPriv::seat(None));
     }
 
     // Mark the specified id as in-use
@@ -535,9 +512,8 @@ impl Atmosphere {
         self.a_window_priv.activate(raw_id);
         // Add a new priv entry
         // This is kept separately for ways
-        self.a_window_priv.set(raw_id,
-                               Priv::SURFACE,
-                               &Priv::surface(None));
+        self.a_window_priv
+            .set(raw_id, Priv::SURFACE, &Priv::surface(None));
 
         // This is a bit too expensive atm
         let mut windows = self.get_windows_for_client(client);
@@ -574,8 +550,8 @@ impl Atmosphere {
         self.set_window_in_use(id, false);
         // Clear the private wayland rc data
         let WindowId(raw_id) = id;
-        self.a_window_priv.set(raw_id, Priv::SURFACE,
-                               &Priv::surface(None));
+        self.a_window_priv
+            .set(raw_id, Priv::SURFACE, &Priv::surface(None));
     }
 
     // Find if there is a toplevel window under (x,y)
@@ -583,9 +559,7 @@ impl Atmosphere {
     // This is used first to find if the cursor intersects
     // with a window. If it does, point_is_on_titlebar is
     // used to check for a grab or relay input event.
-    pub fn find_window_at_point(&self, x: f32, y: f32)
-                                -> Option<WindowId>
-    {
+    pub fn find_window_at_point(&self, x: f32, y: f32) -> Option<WindowId> {
         let barsize = self.get_barsize();
 
         for win in self.visible_windows() {
@@ -593,32 +567,23 @@ impl Atmosphere {
             let (ww, wh) = self.get_surface_size(win);
 
             // If this window contains (x, y) then return it
-            if x > wx && y > (wy - barsize)
-                && x < (wx + ww)
-                && y < (wy + wh)
-            {
+            if x > wx && y > (wy - barsize) && x < (wx + ww) && y < (wy + wh) {
                 return Some(win);
             }
         }
         return None;
     }
 
-    
     // Is the current point over the titlebar of the window
     //
     // Id should have first been found with find_window_at_point
-    pub fn point_is_on_titlebar(&self, id: WindowId, x: f32, y: f32)
-                          -> bool
-    {
+    pub fn point_is_on_titlebar(&self, id: WindowId, x: f32, y: f32) -> bool {
         let barsize = self.get_barsize();
         let (wx, wy) = self.get_surface_pos(id);
         let (ww, _wh) = self.get_surface_size(id);
 
         // If this window contains (x, y) then return it
-        if x > wx && y > (wy - barsize)
-            && x < (wx + ww)
-            && y < wy
-        {
+        if x > wx && y > (wy - barsize) && x < (wx + ww) && y < wy {
             return true;
         }
         return false;
@@ -626,9 +591,7 @@ impl Atmosphere {
 
     // convert a global location to a surface local coordinates.
     // Returns None if the location given is not over the surface
-    pub fn global_coords_to_surf(&self, id: WindowId,  x: f64, y: f64)
-                                 -> Option<(f64, f64)>
-    {
+    pub fn global_coords_to_surf(&self, id: WindowId, x: f64, y: f64) -> Option<(f64, f64)> {
         // get the surface-local position
         let (wx, wy) = self.get_surface_pos(id);
         let (ww, wh) = self.get_surface_size(id);
@@ -646,9 +609,7 @@ impl Atmosphere {
 
     // calculates if a position is over the part of a window that
     // procs a resize
-    pub fn point_is_on_window_edge(&self, id: WindowId, x: f32, y: f32)
-                                   -> ResizeEdge
-    {
+    pub fn point_is_on_window_edge(&self, id: WindowId, x: f32, y: f32) -> ResizeEdge {
         let barsize = self.get_barsize();
         // TODO: how should this be done with xdg-decoration?
         let (wx, wy) = self.get_surface_pos(id);
@@ -661,18 +622,14 @@ impl Atmosphere {
 
         // closures for helping us with overlap calculations
         // v is val to check, a is axis location
-        let near_edge = |p, a| {
-            p > (a - prox) && p < (a + prox)
-        };
+        let near_edge = |p, a| p > (a - prox) && p < (a + prox);
         // same thing but for corners
         // v is the point and c is the corner
-        let near_corner = |vx, vy, cx, cy| {
-            near_edge(vx, cx) && near_edge(vy, cy)
-        };
+        let near_corner = |vx, vy, cx, cy| near_edge(vx, cx) && near_edge(vy, cy);
 
         // first check if we are over a corner
         if near_corner(x, y, wx, wy) {
-             ResizeEdge::TopLeft
+            ResizeEdge::TopLeft
         } else if near_corner(x, y, wx + ww, wy) {
             ResizeEdge::TopRight
         } else if near_corner(x, y, wx, wy + wh) {
@@ -732,19 +689,14 @@ impl Atmosphere {
 
     // These are getters for the private wayland structures
     // that do not get shared across hemispheres
-    pub fn add_surface(&mut self, id: WindowId,
-                       surf: Rc<RefCell<Surface>>)
-    {
+    pub fn add_surface(&mut self, id: WindowId, surf: Rc<RefCell<Surface>>) {
         let WindowId(raw_id) = id;
-        self.a_window_priv.set(raw_id,
-                               Priv::SURFACE,
-                               &Priv::surface(Some(surf)));
+        self.a_window_priv
+            .set(raw_id, Priv::SURFACE, &Priv::surface(Some(surf)));
     }
 
     // Grab our Surface struct for this id
-    pub fn get_surface_from_id(&self, id: WindowId)
-                               -> Option<Rc<RefCell<Surface>>>
-    {
+    pub fn get_surface_from_id(&self, id: WindowId) -> Option<Rc<RefCell<Surface>>> {
         let WindowId(raw_id) = id;
         match self.a_window_priv.get(raw_id, Priv::SURFACE) {
             Some(Priv::surface(Some(s))) => Some(s.clone()),
@@ -753,44 +705,31 @@ impl Atmosphere {
     }
 
     // Grab the wayland protocol object wl_surface for this id
-    pub fn get_wl_surface_from_id(&self, id: WindowId)
-                                  -> Option<wl_surface::WlSurface>
-    {
+    pub fn get_wl_surface_from_id(&self, id: WindowId) -> Option<wl_surface::WlSurface> {
         let WindowId(raw_id) = id;
         match self.a_window_priv.get(raw_id, Priv::WL_SURFACE) {
             Some(Priv::wl_surface(s)) => Some(s.clone()),
             _ => None,
         }
     }
-    pub fn set_wl_surface(&mut self,
-                          id: WindowId,
-                          surf: wl_surface::WlSurface)
-    {
+    pub fn set_wl_surface(&mut self, id: WindowId, surf: wl_surface::WlSurface) {
         let WindowId(raw_id) = id;
-        self.a_window_priv.set(raw_id,
-                               Priv::WL_SURFACE,
-                               &Priv::wl_surface(surf));
+        self.a_window_priv
+            .set(raw_id, Priv::WL_SURFACE, &Priv::wl_surface(surf));
     }
 
-    pub fn add_seat(&mut self, id: ClientId,
-                    seat: Rc<RefCell<Seat>>)
-    {
+    pub fn add_seat(&mut self, id: ClientId, seat: Rc<RefCell<Seat>>) {
         let ClientId(raw_id) = id;
-        self.a_client_priv.set(raw_id,
-                               ClientPriv::SEAT,
-                               &ClientPriv::seat(Some(seat)));
+        self.a_client_priv
+            .set(raw_id, ClientPriv::SEAT, &ClientPriv::seat(Some(seat)));
     }
 
-    pub fn get_seat_from_window_id(&self, id: WindowId)
-                                   -> Option<Rc<RefCell<Seat>>>
-    {
+    pub fn get_seat_from_window_id(&self, id: WindowId) -> Option<Rc<RefCell<Seat>>> {
         // get the client id
         let owner = self.get_owner(id);
         self.get_seat_from_client_id(owner)
     }
-    pub fn get_seat_from_client_id(&self, id: ClientId)
-                                   -> Option<Rc<RefCell<Seat>>>
-    {
+    pub fn get_seat_from_client_id(&self, id: ClientId) -> Option<Rc<RefCell<Seat>>> {
         let ClientId(raw_id) = id;
         match self.a_client_priv.get(raw_id, ClientPriv::SEAT) {
             Some(ClientPriv::seat(Some(s))) => Some(s.clone()),
@@ -808,9 +747,7 @@ impl Atmosphere {
         // get each valid id in the mapping
         for id in self.a_window_priv.active_id_iter() {
             // get the refcell for the surface for this id
-            if let Some(Priv::surface(Some(cell))) = self.a_window_priv
-                .get(id, Priv::SURFACE)
-            {
+            if let Some(Priv::surface(Some(cell))) = self.a_window_priv.get(id, Priv::SURFACE) {
                 let mut surf = cell.borrow_mut();
                 if surf.s_frame_callbacks.len() > 0 {
                     // frame callbacks are signaled in the order that they
@@ -818,10 +755,12 @@ impl Atmosphere {
                     for callback in surf.s_frame_callbacks.iter() {
                         // frame callbacks return the current time
                         // in milliseconds.
-                        callback.done(SystemTime::now()
-                                      .duration_since(UNIX_EPOCH)
-                                      .expect("Error getting system time")
-                                      .as_millis() as u32);
+                        callback.done(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .expect("Error getting system time")
+                                .as_millis() as u32,
+                        );
                     }
 
                     surf.s_frame_callbacks.clear();
@@ -873,7 +812,6 @@ pub struct Hemisphere {
     h_wm_tasks: VecDeque<wm::task::Task>,
 }
 
-
 impl Hemisphere {
     fn new() -> Hemisphere {
         Hemisphere {
@@ -892,27 +830,18 @@ impl Hemisphere {
     // flipping hemispheres we will apply the patch
     // list to the current hemisphere, and then again
     // to the new one to keep things up to date.
-    fn set_global_prop(&mut self,
-                       id: PropertyId,
-                       prop: &GlobalProperty)
-    {
+    fn set_global_prop(&mut self, id: PropertyId, prop: &GlobalProperty) {
         self.mark_changed();
         // for global properties just always pass the id as 0
         // since we don't care about window/client indexing
         self.h_global_props.set(0, id, prop);
     }
 
-    fn get_global_prop(&self, id: PropertyId)
-                       -> Option<&GlobalProperty>
-    {
+    fn get_global_prop(&self, id: PropertyId) -> Option<&GlobalProperty> {
         self.h_global_props.get(0, id)
     }
 
-    fn set_client_prop(&mut self,
-                       client: ClientId,
-                       id: PropertyId,
-                       prop: &ClientProperty)
-    {
+    fn set_client_prop(&mut self, client: ClientId, id: PropertyId, prop: &ClientProperty) {
         self.mark_changed();
         // for global properties just always pass the id as 0
         // since we don't care about window/client indexing
@@ -920,18 +849,12 @@ impl Hemisphere {
         self.h_client_props.set(raw_client, id, prop);
     }
 
-    fn get_client_prop(&self, client: ClientId, id: PropertyId)
-                       -> Option<&ClientProperty>
-    {
+    fn get_client_prop(&self, client: ClientId, id: PropertyId) -> Option<&ClientProperty> {
         let ClientId(raw_client) = client;
         self.h_client_props.get(raw_client, id)
     }
 
-    fn set_window_prop(&mut self,
-                       win: WindowId,
-                       id: PropertyId,
-                       prop: &WindowProperty)
-    {
+    fn set_window_prop(&mut self, win: WindowId, id: PropertyId, prop: &WindowProperty) {
         self.mark_changed();
         // for global properties just always pass the id as 0
         // since we don't care about window/client indexing
@@ -939,9 +862,7 @@ impl Hemisphere {
         self.h_window_props.set(raw_win, id, prop);
     }
 
-    fn get_window_prop(&self, win: WindowId, id: PropertyId)
-                       -> Option<&WindowProperty>
-    {
+    fn get_window_prop(&self, win: WindowId, id: PropertyId) -> Option<&WindowProperty> {
         let WindowId(raw_win) = win;
         self.h_window_props.get(raw_win, id)
     }

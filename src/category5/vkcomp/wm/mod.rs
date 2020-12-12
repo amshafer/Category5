@@ -14,11 +14,11 @@ use thundr as th;
 
 use crate::category5::atmosphere::*;
 
-use utils::{timing::*, log_prelude::*, *};
+use utils::{log, timing::*, *};
 
 pub mod task;
-use task::*;
 use super::release_info::DmabufReleaseInfo;
+use task::*;
 
 use std::sync::mpsc::{Receiver, Sender};
 
@@ -82,7 +82,6 @@ pub struct WindowManager {
 }
 
 impl WindowManager {
-
     /// Create a Titlebar resource
     ///
     /// The Titlebar will hold all of the components which make
@@ -92,39 +91,23 @@ impl WindowManager {
         let img = image::open("images/bar.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
 
-        let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8,
-                                 4,
-                                 64,
-                                 64);
+        let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
 
         // TODO: make a way to change titlebar colors
-        let bar = rend.create_image_from_bits(
-            &mimg, None,
-        ).unwrap();
+        let bar = rend.create_image_from_bits(&mimg, None).unwrap();
 
         let img = image::open("images/dot.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
-        let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8,
-                                 4,
-                                 64,
-                                 64);
-        let dot = rend.create_image_from_bits(
-            &mimg, None,
-        ).unwrap();
+        let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
+        let dot = rend.create_image_from_bits(&mimg, None).unwrap();
 
-        Titlebar {
-            bar: bar,
-            dot: dot,
-        }
+        Titlebar { bar: bar, dot: dot }
     }
 
     fn get_default_cursor(rend: &mut th::Thundr) -> Option<th::Surface> {
         let img = image::open("images/cursor.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
-        let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8,
-                                 4,
-                                 64,
-                                 64);
+        let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
 
         let image = rend.create_image_from_bits(&mimg, None).unwrap();
         let mut surf = rend.create_surface(0.0, 0.0, 16.0, 16.0);
@@ -138,10 +121,7 @@ impl WindowManager {
     /// This will create all the graphical resources needed for
     /// the compositor. The WindowManager will create and own
     /// the Thundr, thereby readying the display to draw.
-    pub fn new(tx: Sender<Box<Hemisphere>>,
-               rx: Receiver<Box<Hemisphere>>)
-               -> WindowManager
-    {
+    pub fn new(tx: Sender<Box<Hemisphere>>, rx: Receiver<Box<Hemisphere>>) -> WindowManager {
         let mut rend = th::Thundr::new();
 
         let mut wm = WindowManager {
@@ -164,23 +144,23 @@ impl WindowManager {
     ///
     /// This basically just creates a image with the max
     /// depth that takes up the entire screen.
-    fn set_background_from_mem(&mut self,
-                               texture: &[u8],
-                               tex_width: u32,
-                               tex_height: u32)
-    {
-        let mimg = MemImage::new(texture.as_ptr() as *mut u8,
-                                 4,
-                                 tex_width as usize,
-                                 tex_height as usize);
+    fn set_background_from_mem(&mut self, texture: &[u8], tex_width: u32, tex_height: u32) {
+        let mimg = MemImage::new(
+            texture.as_ptr() as *mut u8,
+            4,
+            tex_width as usize,
+            tex_height as usize,
+        );
 
         let image = self.wm_thundr.create_image_from_bits(&mimg, None).unwrap();
         let res = self.wm_thundr.get_resolution();
-        let mut surf = self.wm_thundr.create_surface(0.0, 0.0, res.0 as f32, res.1 as f32);
+        let mut surf = self
+            .wm_thundr
+            .create_surface(0.0, 0.0, res.0 as f32, res.1 as f32);
         self.wm_thundr.bind_image(&mut surf, image);
         self.wm_background = Some(surf);
     }
-    
+
     /// Add a image to the renderer to be displayed.
     ///
     /// The imagees are added to a list, and will be individually
@@ -191,14 +171,17 @@ impl WindowManager {
     /// tex_res is the resolution of `texture`
     /// window_res is the size of the on screen window
     fn create_window(&mut self, id: WindowId) {
-        log!(LogLevel::info, "wm: Creating new window {:?}", id);
+        log::info!("wm: Creating new window {:?}", id);
 
-        self.wm_apps.insert(0, App {
-            a_id: id,
-            a_marked_for_death: false,
-            a_surf: self.wm_thundr.create_surface(0.0, 0.0, 0.0, 0.0),
-            a_image: None,
-        });
+        self.wm_apps.insert(
+            0,
+            App {
+                a_id: id,
+                a_marked_for_death: false,
+                a_surf: self.wm_thundr.create_surface(0.0, 0.0, 0.0, 0.0),
+                a_image: None,
+            },
+        );
     }
 
     /// Handles an update from dmabuf task
@@ -206,22 +189,16 @@ impl WindowManager {
     /// Translates the task update structure into lower
     /// level calls to import a dmabuf and update a image.
     /// Creates a new image if one doesn't exist yet.
-    fn update_window_contents_from_dmabuf(&mut self,
-                                          info: &UpdateWindowContentsFromDmabuf)
-    {
-        log!(LogLevel::error, "Updating window {:?} with {:#?}",
-             info.ufd_id, info);
+    fn update_window_contents_from_dmabuf(&mut self, info: &UpdateWindowContentsFromDmabuf) {
+        log::error!("Updating window {:?} with {:#?}", info.ufd_id, info);
         // Find the app corresponding to that window id
-        let app = match self.wm_apps
-            .iter_mut()
-            .find(|app| app.a_id == info.ufd_id)
-        {
+        let app = match self.wm_apps.iter_mut().find(|app| app.a_id == info.ufd_id) {
             Some(a) => a,
             // If the id is not found, then don't update anything
             None => {
-                log!(LogLevel::error, "Could not find id {:?}", info.ufd_id);
+                log::error!("Could not find id {:?}", info.ufd_id);
                 return;
-            },
+            }
         };
 
         if let Some(image) = app.a_image.as_mut() {
@@ -245,45 +222,37 @@ impl WindowManager {
                 })),
             );
         }
-        self.wm_thundr.bind_image(&mut app.a_surf, app.a_image
-                                  .as_ref().unwrap().clone());
+        self.wm_thundr
+            .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
     }
 
     /// Handle update from memimage task
     ///
     /// Copies the shm buffer into the app's image.
     /// Creates a new image if one doesn't exist yet.
-    fn update_window_contents_from_mem(&mut self,
-                                       info: &UpdateWindowContentsFromMem)
-    {
-        log!(LogLevel::error, "Updating window {:?} with {:#?}",
-             info.id, info);
+    fn update_window_contents_from_mem(&mut self, info: &UpdateWindowContentsFromMem) {
+        log::error!("Updating window {:?} with {:#?}", info.id, info);
         // Find the app corresponding to that window id
-        let app = match self.wm_apps
-            .iter_mut()
-            .find(|app| app.a_id == info.id)
-        {
+        let app = match self.wm_apps.iter_mut().find(|app| app.a_id == info.id) {
             Some(a) => a,
             // If the id is not found, then don't update anything
             None => {
-                log!(LogLevel::error, "Could not find id {:?}", info.id);
+                log::error!("Could not find id {:?}", info.id);
                 return;
-            },
+            }
         };
 
         if let Some(image) = app.a_image.as_mut() {
-            self.wm_thundr.update_image_from_bits(image,
-                                                  &info.pixels, None);
+            self.wm_thundr
+                .update_image_from_bits(image, &info.pixels, None);
         } else {
             // If it does not have a image, then this must be the
             // first time contents were attached to it. Go ahead
             // and make one now
-            app.a_image = self.wm_thundr.create_image_from_bits(
-                &info.pixels, None,
-            );
+            app.a_image = self.wm_thundr.create_image_from_bits(&info.pixels, None);
         }
-        self.wm_thundr.bind_image(&mut app.a_surf, app.a_image
-                                  .as_ref().unwrap().clone());
+        self.wm_thundr
+            .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
     }
 
     /// Handles generating draw commands for one window
@@ -329,7 +298,8 @@ impl WindowManager {
                 dotsize, // width
                 dotsize, // height
             );
-            self.wm_thundr.bind_image(&mut dot, self.wm_titlebar.dot.clone());
+            self.wm_thundr
+                .bind_image(&mut dot, self.wm_titlebar.dot.clone());
             self.wm_surfaces.push(dot);
             // ----------------------------------------------------------------
 
@@ -346,7 +316,8 @@ impl WindowManager {
                 // use a percentage of the screen size
                 barsize,
             );
-            self.wm_thundr.bind_image(&mut bar, self.wm_titlebar.bar.clone());
+            self.wm_thundr
+                .bind_image(&mut bar, self.wm_titlebar.bar.clone());
             self.wm_surfaces.push(bar);
             // ----------------------------------------------------------------
         }
@@ -376,9 +347,7 @@ impl WindowManager {
         // get the latest cursor position
         // ----------------------------------------------------------------
         let (cursor_x, cursor_y) = self.wm_atmos.get_cursor_pos();
-        log!(LogLevel::profiling, "Drawing cursor at ({}, {})",
-             cursor_x,
-             cursor_y);
+        log::profiling!("Drawing cursor at ({}, {})", cursor_x, cursor_y);
         if let Some(cursor) = self.wm_cursor.as_mut() {
             cursor.set_pos(cursor_x as f32, cursor_y as f32);
             self.wm_surfaces.push(cursor.clone());
@@ -415,9 +384,12 @@ impl WindowManager {
 
     fn close_window(&mut self, id: WindowId) {
         // if it exists, mark it for death
-        self.wm_apps.iter_mut().find(|app| app.a_id == id).map(|app| {
-            app.a_marked_for_death = true;
-        });
+        self.wm_apps
+            .iter_mut()
+            .find(|app| app.a_id == id)
+            .map(|app| {
+                app.a_marked_for_death = true;
+            });
     }
 
     /// Remove any apps marked for death. Usually we can't remove
@@ -430,16 +402,16 @@ impl WindowManager {
 
         // Only retain alive windows in the array
         self.wm_apps.retain(|app| {
-                if app.a_marked_for_death {
-                    // Destroy the rendering resources
-                    app.a_image.as_ref().map(
-                        |image| thundr.destroy_image(image.clone())
-                    );
+            if app.a_marked_for_death {
+                // Destroy the rendering resources
+                app.a_image
+                    .as_ref()
+                    .map(|image| thundr.destroy_image(image.clone()));
 
-                    return false;
-                }
-                return true;
-            });
+                return false;
+            }
+            return true;
+        });
     }
 
     /// Begin rendering a frame
@@ -469,22 +441,18 @@ impl WindowManager {
     }
 
     pub fn process_task(&mut self, task: &Task) {
-        log!(LogLevel::info, "wm: got task {:?}", task);
+        log::info!("wm: got task {:?}", task);
         match task {
             Task::begin_frame => self.begin_frame(),
             Task::end_frame => self.end_frame(),
             // set background from mem
             Task::sbfm(sb) => {
-                self.set_background_from_mem(
-                    sb.pixels.as_ref(),
-                    sb.width,
-                    sb.height,
-                );
-            },
+                self.set_background_from_mem(sb.pixels.as_ref(), sb.width, sb.height);
+            }
             // create new window
             Task::create_window(id) => {
                 self.create_window(*id);
-            },
+            }
             Task::close_window(id) => self.close_window(*id),
             // update window from gpu buffer
             Task::uwcfd(uw) => {
@@ -500,8 +468,7 @@ impl WindowManager {
     /// The main event loop of the vkcomp thread
     pub fn worker_thread(&mut self) {
         // first set the background
-        let img =
-            image::open("/home/ashafer/git/compositor_playground/images/hurricane.png")
+        let img = image::open("/home/ashafer/git/compositor_playground/images/hurricane.png")
             .unwrap()
             .to_rgba();
         let pixels: Vec<u8> = img.into_vec();
@@ -536,7 +503,7 @@ impl WindowManager {
             }
 
             // start recording how much time we spent doing graphics
-            log!(LogLevel::debug, "_____________________________ FRAME BEGIN");
+            log::debug!("_____________________________ FRAME BEGIN");
             draw_stop.start();
 
             // Create a frame out of the hemisphere we got from ways
@@ -545,10 +512,12 @@ impl WindowManager {
             // present our frame
             self.end_frame();
             draw_stop.end();
-            log!(LogLevel::debug, "_____________________________ FRAME END");
+            log::debug!("_____________________________ FRAME END");
 
-            log!(LogLevel::profiling, "spent {} ms drawing this frame",
-                 draw_stop.get_duration().as_millis());
+            log::profiling!(
+                "spent {} ms drawing this frame",
+                draw_stop.get_duration().as_millis()
+            );
         }
     }
 }
@@ -560,7 +529,8 @@ impl Drop for WindowManager {
         // Free all imagees in each app
         for a in self.wm_apps.iter_mut() {
             // now destroy the image
-            self.wm_thundr.destroy_image(a.a_image.as_ref().unwrap().clone());
+            self.wm_thundr
+                .destroy_image(a.a_image.as_ref().unwrap().clone());
         }
         std::mem::drop(&self.wm_thundr);
     }

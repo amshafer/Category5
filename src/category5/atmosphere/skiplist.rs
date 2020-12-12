@@ -3,8 +3,8 @@
 // Austin Shafer - 2020
 
 use super::*;
-use utils::{ClientId,WindowId};
 use crate::category5::input::Input;
+use utils::{log, ClientId, WindowId};
 
 // A skiplist is an entry in a linked list designed to be
 // added in the atmosphere's property system
@@ -44,10 +44,7 @@ impl Atmosphere {
     /// Add a window above another
     ///
     /// This is used for the subsurface ordering requests
-    pub fn skiplist_place_above(&mut self,
-                                id: WindowId,
-                                target: WindowId)
-    {
+    pub fn skiplist_place_above(&mut self, id: WindowId, target: WindowId) {
         // remove id from its skiplist just in case
         self.skiplist_remove_window(id);
 
@@ -66,10 +63,7 @@ impl Atmosphere {
     /// Add a window below another
     ///
     /// This is used for the subsurface ordering requests
-    pub fn skiplist_place_below(&mut self,
-                                id: WindowId,
-                                target: WindowId)
-    {
+    pub fn skiplist_place_below(&mut self, id: WindowId, target: WindowId) {
         // remove id from its skiplist just in case
         self.skiplist_remove_window(id);
 
@@ -108,7 +102,7 @@ impl Atmosphere {
 
     /// Set the window currently in focus
     pub fn focus_on(&mut self, win: Option<WindowId>) {
-        log!(LogLevel::debug, "focusing on window {:?}", win);
+        log::debug!("focusing on window {:?}", win);
         if let Some(id) = win {
             let prev_focus = self.get_window_in_focus();
             // If they clicked on the focused window, don't
@@ -150,9 +144,7 @@ impl<'a> Atmosphere {
     /// return an iterator over the subsurfaces of id
     ///
     /// This will be all ids that are have been `activate`d
-    pub fn visible_subsurfaces(&'a self, id: WindowId)
-                               -> VisibleWindowIterator<'a>
-    {
+    pub fn visible_subsurfaces(&'a self, id: WindowId) -> VisibleWindowIterator<'a> {
         VisibleWindowIterator {
             vwi_atmos: &self,
             vwi_cur: self.get_top_child(id),

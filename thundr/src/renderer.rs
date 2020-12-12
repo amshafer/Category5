@@ -6,21 +6,21 @@
 // Austin Shafer - 2020
 #![allow(dead_code, non_camel_case_types)]
 use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_void};
 use std::marker::Copy;
+use std::os::raw::{c_char, c_void};
 
-use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
-use ash::{vk, Device, Entry, Instance};
 use ash::extensions::ext;
 use ash::extensions::khr;
+use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
+use ash::{vk, Device, Entry, Instance};
 
 use crate::descpool::DescPool;
-use crate::list::SurfaceList;
 use crate::display::Display;
+use crate::list::SurfaceList;
 use crate::pipelines::PipelineType;
 
 extern crate utils as cat5_utils;
-use cat5_utils::log_prelude::*;
+use cat5_utils::log;
 
 // this happy little debug callback is from the ash examples
 // all it does is print any errors/warnings thrown.
@@ -34,7 +34,7 @@ unsafe extern "system" fn vulkan_debug_callback(
     p_message: *const c_char,
     _: *mut c_void,
 ) -> u32 {
-    log!(LogLevel::profiling, "[RENDERER] {:?}", CStr::from_ptr(p_message));
+    log::profiling!("[RENDERER] {:?}", CStr::from_ptr(p_message));
     vk::FALSE
 }
 
@@ -100,7 +100,6 @@ pub struct Renderer {
     pub(crate) views: Vec<vk::ImageView>,
 
     // TODO: move cbuf management from Renderer to the pipelines
-
     /// pools provide the memory allocated to command buffers
     pub(crate) pool: vk::CommandPool,
     /// the command buffers allocated from pool
@@ -155,12 +154,12 @@ pub struct RecordParams {
 // should be used by the applications. The unsafe functions are mostly for
 // internal use.
 impl Renderer {
-
     /// Creates a new debug reporter and registers our function
     /// for debug callbacks so we get nice error messages
-    unsafe fn setup_debug(entry: &Entry, instance: &Instance)
-                          -> (ext::DebugReport, vk::DebugReportCallbackEXT)
-    {
+    unsafe fn setup_debug(
+        entry: &Entry,
+        instance: &Instance,
+    ) -> (ext::DebugReport, vk::DebugReportCallbackEXT) {
         let debug_info = vk::DebugReportCallbackCreateInfoEXT::builder()
             .flags(
                 vk::DebugReportFlagsEXT::ERROR
@@ -188,7 +187,8 @@ impl Renderer {
         //let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
         let layer_names = [];
 
-        let layer_names_raw: Vec<*const i8> = layer_names.iter()
+        let layer_names_raw: Vec<*const i8> = layer_names
+            .iter()
             .map(|raw_name: &CString| raw_name.as_ptr())
             .collect();
 
@@ -214,24 +214,21 @@ impl Renderer {
     }
 
     /// Check if a queue family is suited for our needs.
-    /// Queue families need to support graphical presentation and 
+    /// Queue families need to support graphical presentation and
     /// presentation on the given surface.
-    unsafe fn is_valid_queue_family(pdevice: vk::PhysicalDevice,
-                                    info: vk::QueueFamilyProperties,
-                                    index: u32,
-                                    surface_loader: &khr::Surface,
-                                    surface: vk::SurfaceKHR,
-                                    flags: vk::QueueFlags)
-                                    -> bool
-    {
+    unsafe fn is_valid_queue_family(
+        pdevice: vk::PhysicalDevice,
+        info: vk::QueueFamilyProperties,
+        index: u32,
+        surface_loader: &khr::Surface,
+        surface: vk::SurfaceKHR,
+        flags: vk::QueueFlags,
+    ) -> bool {
         info.queue_flags.contains(flags)
             && surface_loader
-            // ensure compatibility with the surface
-            .get_physical_device_surface_support(
-                pdevice,
-                index,
-                surface,
-            ).unwrap()
+                // ensure compatibility with the surface
+                .get_physical_device_surface_support(pdevice, index, surface)
+                .unwrap()
     }
 
     /// Choose a vkPhysicalDevice and queue family index.
@@ -240,9 +237,7 @@ impl Renderer {
     /// provide the surface PFN loader and the surface so
     /// that we can ensure the pdev/queue combination can
     /// present the surface.
-    unsafe fn select_pdev(inst: &Instance)
-                          -> vk::PhysicalDevice
-    {
+    unsafe fn select_pdev(inst: &Instance) -> vk::PhysicalDevice {
         let pdevices = inst
             .enumerate_physical_devices()
             .expect("Physical device error");
@@ -263,28 +258,29 @@ impl Renderer {
     /// provide the surface PFN loader and the surface so
     /// that we can ensure the pdev/queue combination can
     /// present the surface
-    pub unsafe fn select_queue_family(inst: &Instance,
-                                      pdev: vk::PhysicalDevice,
-                                      surface_loader: &khr::Surface,
-                                      surface: vk::SurfaceKHR,
-                                      flags: vk::QueueFlags)
-                                      -> u32
-    {
+    pub unsafe fn select_queue_family(
+        inst: &Instance,
+        pdev: vk::PhysicalDevice,
+        surface_loader: &khr::Surface,
+        surface: vk::SurfaceKHR,
+        flags: vk::QueueFlags,
+    ) -> u32 {
         // get the properties per queue family
-        inst
-            .get_physical_device_queue_family_properties(pdev)
+        inst.get_physical_device_queue_family_properties(pdev)
             // for each property info
             .iter()
             .enumerate()
             .filter_map(|(index, info)| {
                 // add the device and the family to a list of
                 // candidates for use later
-                match Renderer::is_valid_queue_family(pdev,
-                                                      *info,
-                                                      index as u32,
-                                                      surface_loader,
-                                                      surface,
-                                                      flags) {
+                match Renderer::is_valid_queue_family(
+                    pdev,
+                    *info,
+                    index as u32,
+                    surface_loader,
+                    surface,
+                    flags,
+                ) {
                     // return the pdevice/family pair
                     true => Some(index as u32),
                     false => None,
@@ -297,9 +293,8 @@ impl Renderer {
     /// get the vkPhysicalDeviceMemoryProperties structure for a vkPhysicalDevice
     pub(crate) unsafe fn get_pdev_mem_properties(
         inst: &Instance,
-        pdev: vk::PhysicalDevice)
-        -> vk::PhysicalDeviceMemoryProperties
-    {
+        pdev: vk::PhysicalDevice,
+    ) -> vk::PhysicalDeviceMemoryProperties {
         inst.get_physical_device_memory_properties(pdev)
     }
 
@@ -311,11 +306,7 @@ impl Renderer {
     ///
     /// A queue is created in the specified queue family in the
     /// present_queue argument.
-    unsafe fn create_device(inst: &Instance,
-                            pdev: vk::PhysicalDevice,
-                            queues: &[u32])
-                            -> Device
-    {
+    unsafe fn create_device(inst: &Instance, pdev: vk::PhysicalDevice, queues: &[u32]) -> Device {
         let dev_extension_names = [
             khr::Swapchain::name().as_ptr(),
             khr::ExternalMemoryFd::name().as_ptr(),
@@ -334,10 +325,12 @@ impl Renderer {
         let priorities = [1.0];
         let mut queue_infos = Vec::new();
         for i in queues {
-            queue_infos.push(vk::DeviceQueueCreateInfo::builder()
-                             .queue_family_index(*i)
-                             .queue_priorities(&priorities)
-                             .build());
+            queue_infos.push(
+                vk::DeviceQueueCreateInfo::builder()
+                    .queue_family_index(*i)
+                    .queue_priorities(&priorities)
+                    .build(),
+            );
         }
 
         let dev_create_info = vk::DeviceCreateInfo::builder()
@@ -347,8 +340,7 @@ impl Renderer {
             .build();
 
         // return a newly created device
-        inst.create_device(pdev, &dev_create_info, None)
-            .unwrap()
+        inst.create_device(pdev, &dev_create_info, None).unwrap()
     }
 
     /// create a new vkSwapchain
@@ -359,24 +351,22 @@ impl Renderer {
     /// swapchain is dependent on the characteristics and format of the surface
     /// it is created for.
     /// The application resolution is set by this method.
-    unsafe fn create_swapchain(inst: &Instance,
-                               swapchain_loader: &khr::Swapchain,
-                               surface_loader: &khr::Surface,
-                               pdev: vk::PhysicalDevice,
-                               surface: vk::SurfaceKHR,
-                               surface_caps: &vk::SurfaceCapabilitiesKHR,
-                               surface_format: vk::SurfaceFormatKHR,
-                               resolution: &vk::Extent2D)
-                               -> vk::SwapchainKHR
-    {
+    unsafe fn create_swapchain(
+        inst: &Instance,
+        swapchain_loader: &khr::Swapchain,
+        surface_loader: &khr::Surface,
+        pdev: vk::PhysicalDevice,
+        surface: vk::SurfaceKHR,
+        surface_caps: &vk::SurfaceCapabilitiesKHR,
+        surface_format: vk::SurfaceFormatKHR,
+        resolution: &vk::Extent2D,
+    ) -> vk::SwapchainKHR {
         // how many images we want the swapchain to contain
         let mut desired_image_count = surface_caps.min_image_count + 1;
-        if surface_caps.max_image_count > 0
-            && desired_image_count > surface_caps.max_image_count
-        {
+        if surface_caps.max_image_count > 0 && desired_image_count > surface_caps.max_image_count {
             desired_image_count = surface_caps.max_image_count;
         }
-        
+
         let transform = if surface_caps
             .supported_transforms
             .contains(vk::SurfaceTransformFlagsKHR::IDENTITY)
@@ -401,7 +391,8 @@ impl Renderer {
 
         // we need to check if the surface format supports the
         // storage image type
-        let extra_usage = match surface_caps.supported_usage_flags
+        let extra_usage = match surface_caps
+            .supported_usage_flags
             .contains(vk::ImageUsageFlags::STORAGE)
         {
             false => vk::ImageUsageFlags::STORAGE,
@@ -419,8 +410,7 @@ impl Renderer {
             .image_format(surface_format.format)
             .image_extent(*resolution)
             // the color attachment is guaranteed to be available
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT
-                         | vk::ImageUsageFlags::STORAGE)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
@@ -437,8 +427,7 @@ impl Renderer {
             // just add rgba32 because it's the most common.
             .view_formats(&[vk::Format::R8G8B8A8_UNORM, surface_format.format])
             .build();
-        create_info.p_next = &add_formats
-            as *const _ as *mut std::ffi::c_void;
+        create_info.p_next = &add_formats as *const _ as *mut std::ffi::c_void;
 
         // views for all of the swapchains images will be set up in
         // select_images_and_views
@@ -452,10 +441,7 @@ impl Renderer {
     /// Command buffers are allocated from command pools. That's about
     /// all they do. They just manage memory. Command buffers will be allocated
     /// as part of the queue_family specified.
-    unsafe fn create_command_pool(dev: &Device,
-                                  queue_family: u32)
-                                  -> vk::CommandPool
-    {
+    unsafe fn create_command_pool(dev: &Device, queue_family: u32) -> vk::CommandPool {
         let pool_create_info = vk::CommandPoolCreateInfo::builder()
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
             .queue_family_index(queue_family);
@@ -472,18 +458,17 @@ impl Renderer {
     ///
     /// For now we are only allocating two: one to set up the resources
     /// and one to do all the work.
-    pub(crate) unsafe fn create_command_buffers(dev: &Device,
-                                                pool: vk::CommandPool,
-                                                count: u32)
-                                                -> Vec<vk::CommandBuffer>
-    {
+    pub(crate) unsafe fn create_command_buffers(
+        dev: &Device,
+        pool: vk::CommandPool,
+        count: u32,
+    ) -> Vec<vk::CommandBuffer> {
         let cbuf_allocate_info = vk::CommandBufferAllocateInfo::builder()
             .command_buffer_count(count)
             .command_pool(pool)
             .level(vk::CommandBufferLevel::PRIMARY);
 
-        dev.allocate_command_buffers(&cbuf_allocate_info)
-            .unwrap()
+        dev.allocate_command_buffers(&cbuf_allocate_info).unwrap()
     }
 
     /// Get the vkImage's for the swapchain, and create vkImageViews for them
@@ -491,23 +476,22 @@ impl Renderer {
     /// get all the presentation images for the swapchain
     /// specify the image views, which specify how we want
     /// to access our images
-    unsafe fn select_images_and_views(inst: &Instance,
-                                      pdev: vk::PhysicalDevice,
-                                      swapchain_loader: &khr::Swapchain,
-                                      swapchain: vk::SwapchainKHR,
-                                      dev: &Device,
-                                      surface_format: vk::SurfaceFormatKHR)
-                                      -> (Vec<vk::Image>, Vec<vk::ImageView>)
-    {
-        let images = swapchain_loader
-            .get_swapchain_images(swapchain)
-            .unwrap();
+    unsafe fn select_images_and_views(
+        inst: &Instance,
+        pdev: vk::PhysicalDevice,
+        swapchain_loader: &khr::Swapchain,
+        swapchain: vk::SwapchainKHR,
+        dev: &Device,
+        surface_format: vk::SurfaceFormatKHR,
+    ) -> (Vec<vk::Image>, Vec<vk::ImageView>) {
+        let images = swapchain_loader.get_swapchain_images(swapchain).unwrap();
 
-        let image_views = images.iter()
+        let image_views = images
+            .iter()
             .map(|&image| {
-                let format_props =  inst
-                    .get_physical_device_format_properties(pdev, surface_format.format);
-                log!(LogLevel::debug, "format props: {:#?}", format_props);
+                let format_props =
+                    inst.get_physical_device_format_properties(pdev, surface_format.format);
+                log::debug!("format props: {:#?}", format_props);
 
                 // we want to interact with this image as a 2D
                 // array of RGBA pixels (i.e. the "normal" way)
@@ -534,19 +518,18 @@ impl Renderer {
                     .build();
 
                 let ext_info = vk::ImageViewUsageCreateInfoKHR::builder()
-                    .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT
-                           | vk::ImageUsageFlags::STORAGE)
+                    .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
                     .build();
 
                 // if the format doesn't support storage (intel doesn't),
                 // then we need to attach an extra struct telling to to
                 // allow the storage format in the view even though the
                 // underlying format doesn't
-                if !format_props.optimal_tiling_features
+                if !format_props
+                    .optimal_tiling_features
                     .contains(vk::FormatFeatureFlags::STORAGE_IMAGE)
                 {
-                    create_info.p_next = &ext_info
-                        as *const _ as *mut std::ffi::c_void;
+                    create_info.p_next = &ext_info as *const _ as *mut std::ffi::c_void;
                 }
 
                 dev.create_image_view(&create_info, None).unwrap()
@@ -563,11 +546,11 @@ impl Renderer {
     /// local memory is resident on the GPU, while host visible memory can be
     /// read from the system side. Both of these are part of the
     /// vk::MemoryPropertyFlags type.
-    fn find_memory_type_index(props: &vk::PhysicalDeviceMemoryProperties,
-                              reqs: &vk::MemoryRequirements,
-                              flags: vk::MemoryPropertyFlags)
-                              -> Option<u32>
-    {
+    fn find_memory_type_index(
+        props: &vk::PhysicalDeviceMemoryProperties,
+        reqs: &vk::MemoryRequirements,
+        flags: vk::MemoryPropertyFlags,
+    ) -> Option<u32> {
         // for each memory type
         for (i, ref mem_type) in props.memory_types.iter().enumerate() {
             // Bit i of memoryBitTypes will be set if the resource supports
@@ -575,12 +558,11 @@ impl Renderer {
             //
             // ash autogenerates common operations for bitfield style structs
             // they can be found in `vk_bitflags_wrapped`
-            if (reqs.memory_type_bits >> i) & 1 == 1
-                && mem_type.property_flags.contains(flags) {
-                    // log!(LogLevel::profiling, "Selected type with flags {:?}",
-                    //          mem_type.property_flags);
-                    // return the index into the memory type array
-                    return Some(i as u32);
+            if (reqs.memory_type_bits >> i) & 1 == 1 && mem_type.property_flags.contains(flags) {
+                // log!(LogLevel::profiling, "Selected type with flags {:?}",
+                //          mem_type.property_flags);
+                // return the index into the memory type array
+                return Some(i as u32);
             }
         }
         None
@@ -601,15 +583,15 @@ impl Renderer {
     /// Resolution should probably be the same size as the swapchain's images
     /// usage defines the role the image will serve (transfer, depth data, etc)
     /// flags defines the memory type (probably DEVICE_LOCAL + others)
-    pub(crate) unsafe fn create_image(dev: &Device,
-                                      mem_props: &vk::PhysicalDeviceMemoryProperties,
-                                      resolution: &vk::Extent2D,
-                                      format: vk::Format,
-                                      usage: vk::ImageUsageFlags,
-                                      aspect: vk::ImageAspectFlags,
-                                      flags: vk::MemoryPropertyFlags)
-                                      -> (vk::Image, vk::ImageView, vk::DeviceMemory)
-    {
+    pub(crate) unsafe fn create_image(
+        dev: &Device,
+        mem_props: &vk::PhysicalDeviceMemoryProperties,
+        resolution: &vk::Extent2D,
+        format: vk::Format,
+        usage: vk::ImageUsageFlags,
+        aspect: vk::ImageAspectFlags,
+        flags: vk::MemoryPropertyFlags,
+    ) -> (vk::Image, vk::ImageView, vk::DeviceMemory) {
         // we create the image now, but will have to bind
         // some memory to it later.
         let create_info = vk::ImageCreateInfo::builder()
@@ -631,10 +613,7 @@ impl Renderer {
         // we need to find a memory type that matches the type our
         // new image needs
         let mem_reqs = dev.get_image_memory_requirements(image);
-        let memtype_index =
-            Renderer::find_memory_type_index(mem_props,
-                                             &mem_reqs,
-                                             flags).unwrap();
+        let memtype_index = Renderer::find_memory_type_index(mem_props, &mem_reqs, flags).unwrap();
 
         let alloc_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(mem_reqs.size)
@@ -650,7 +629,7 @@ impl Renderer {
                     .aspect_mask(aspect)
                     .level_count(1)
                     .layer_count(1)
-                    .build()
+                    .build(),
             )
             .image(image)
             .format(create_info.format)
@@ -697,12 +676,13 @@ impl Renderer {
     ///
     /// It is assumed this is for textures referenced from the fragment
     /// shader, and so it is a bit specific.
-    unsafe fn transition_image_layout(&self,
-                                      image: vk::Image,
-                                      cbuf: vk::CommandBuffer,
-                                      old: vk::ImageLayout,
-                                      new: vk::ImageLayout)
-    {
+    unsafe fn transition_image_layout(
+        &self,
+        image: vk::Image,
+        cbuf: vk::CommandBuffer,
+        old: vk::ImageLayout,
+        new: vk::ImageLayout,
+    ) {
         // use defaults here, and set them in the next section
         let mut layout_barrier = vk::ImageMemoryBarrier::builder()
             .image(image)
@@ -764,30 +744,28 @@ impl Renderer {
     /// `create_image_with_contents` for an example.
     ///
     /// needs to be recorded in a cbuf
-    unsafe fn copy_buf_to_img(&self,
-                              cbuf: vk::CommandBuffer,
-                              buffer: vk::Buffer,
-                              image: vk::Image,
-                              width: u32,
-                              height: u32)
-    {
+    unsafe fn copy_buf_to_img(
+        &self,
+        cbuf: vk::CommandBuffer,
+        buffer: vk::Buffer,
+        image: vk::Image,
+        width: u32,
+        height: u32,
+    ) {
         let region = vk::BufferImageCopy::builder()
             // 0 specifies that the pixels are tightly packed
             .buffer_offset(0)
             .buffer_row_length(0)
             .buffer_image_height(0)
-            .image_subresource(vk::ImageSubresourceLayers::builder()
-                               .aspect_mask(vk::ImageAspectFlags::COLOR)
-                               .mip_level(0)
-                               .base_array_layer(0)
-                               .layer_count(1)
-                               .build()
+            .image_subresource(
+                vk::ImageSubresourceLayers::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .mip_level(0)
+                    .base_array_layer(0)
+                    .layer_count(1)
+                    .build(),
             )
-            .image_offset(vk::Offset3D {
-                x: 0,
-                y: 0,
-                z: 0
-            })
+            .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
             .image_extent(vk::Extent3D {
                 width: width,
                 height: height,
@@ -801,7 +779,7 @@ impl Renderer {
             image,
             // this is the layout the image is currently using
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            &[region]
+            &[region],
         );
     }
 
@@ -816,7 +794,7 @@ impl Renderer {
     /// We should not deal with wayland structs
     /// directly, just with releaseinfo
     pub fn release_pending_resources(&mut self) {
-        log!(LogLevel::profiling, "-- releasing pending resources --");
+        log::profiling!("-- releasing pending resources --");
 
         // This is the previous frames's pending release list
         // We will clear it, therefore dropping all the relinfos
@@ -827,10 +805,8 @@ impl Renderer {
     /// freed this frame
     ///
     /// Takes care of choosing what list to add info to
-    pub fn register_for_release(&mut self,
-                                release: Box<dyn Drop>)
-    {
-       self.r_release.push(release);
+    pub fn register_for_release(&mut self, release: Box<dyn Drop>) {
+        self.r_release.push(release);
     }
 
     /// Update an image from a VkBuffer
@@ -838,22 +814,26 @@ impl Renderer {
     /// It is common to copy host data into an image
     /// to initialize it. This function initializes
     /// image by copying buffer to it.
-    pub(crate) unsafe fn update_image_contents_from_buf(&mut self,
-                                                        buffer: vk::Buffer,
-                                                        image: vk::Image,
-                                                        width: u32,
-                                                        height: u32)
-    {
+    pub(crate) unsafe fn update_image_contents_from_buf(
+        &mut self,
+        buffer: vk::Buffer,
+        image: vk::Image,
+        width: u32,
+        height: u32,
+    ) {
         // If a previous copy is still happening, wait for it
         match self.dev.get_fence_status(self.copy_cbuf_fence) {
             // true means vk::Result::SUCCESS
-            Ok(true) => {},
+            Ok(true) => {}
             // false means vk::Result::NOT_READY
             Ok(false) => {
-                self.dev.wait_for_fences(&[self.copy_cbuf_fence],
-                                         true, // wait for all
-                                         std::u64::MAX, //timeout
-                ).unwrap();
+                self.dev
+                    .wait_for_fences(
+                        &[self.copy_cbuf_fence],
+                        true,          // wait for all
+                        std::u64::MAX, //timeout
+                    )
+                    .unwrap();
                 // unsignal it, may be extraneous
                 self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
             }
@@ -861,10 +841,7 @@ impl Renderer {
         };
 
         // now perform the copy
-        self.cbuf_begin_recording(
-            self.copy_cbuf,
-            vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT
-        );
+        self.cbuf_begin_recording(self.copy_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
         // transition our image to be a transfer destination
         self.transition_image_layout(
@@ -874,11 +851,7 @@ impl Renderer {
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         );
 
-        self.copy_buf_to_img(self.copy_cbuf,
-                             buffer,
-                             image,
-                             width,
-                             height);
+        self.copy_buf_to_img(self.copy_cbuf, buffer, image, width, height);
 
         // transition back to the optimal color layout
         self.transition_image_layout(
@@ -913,23 +886,19 @@ impl Renderer {
         usage: vk::ImageUsageFlags,
         aspect_flags: vk::ImageAspectFlags,
         mem_flags: vk::MemoryPropertyFlags,
-        src_buf: vk::Buffer)
-        -> (vk::Image, vk::ImageView, vk::DeviceMemory)
-    {
-        let (image, view, img_mem) = Renderer::create_image(&self.dev,
-                                                            &self.mem_props,
-                                                            resolution,
-                                                            format,
-                                                            usage,
-                                                            aspect_flags,
-                                                            mem_flags);
-
-        self.update_image_contents_from_buf(
-            src_buf,
-            image,
-            resolution.width,
-            resolution.height,
+        src_buf: vk::Buffer,
+    ) -> (vk::Image, vk::ImageView, vk::DeviceMemory) {
+        let (image, view, img_mem) = Renderer::create_image(
+            &self.dev,
+            &self.mem_props,
+            resolution,
+            format,
+            usage,
+            aspect_flags,
+            mem_flags,
         );
+
+        self.update_image_contents_from_buf(src_buf, image, resolution.width, resolution.height);
 
         (image, view, img_mem)
     }
@@ -942,14 +911,13 @@ impl Renderer {
     /// device, and creating a swapchain.
     ///
     /// All methods called after this only need to take a mutable reference to
-    /// self, avoiding any nasty argument lists like the functions above. 
+    /// self, avoiding any nasty argument lists like the functions above.
     /// The goal is to have this make dealing with the api less wordy.
     pub fn new(info: &RendererCreateInfo) -> Renderer {
         unsafe {
             let (entry, inst) = Renderer::create_instance();
-            
-            let (dr_loader, d_callback) = Renderer::setup_debug(&entry,
-                                                                &inst);
+
+            let (dr_loader, d_callback) = Renderer::setup_debug(&entry, &inst);
 
             let pdev = Renderer::select_pdev(&inst);
 
@@ -957,32 +925,31 @@ impl Renderer {
             // and will create a surface on that medium
             let display = Display::new(&entry, &inst, pdev);
 
-            let graphics_queue_family =
-                Renderer::select_queue_family(&inst,
-                                              pdev,
-                                              &display.surface_loader,
-                                              display.surface,
-                                              vk::QueueFlags::GRAPHICS);
-            let transfer_queue_family =
-                Renderer::select_queue_family(&inst,
-                                              pdev,
-                                              &display.surface_loader,
-                                              display.surface,
-                                              vk::QueueFlags::TRANSFER);
+            let graphics_queue_family = Renderer::select_queue_family(
+                &inst,
+                pdev,
+                &display.surface_loader,
+                display.surface,
+                vk::QueueFlags::GRAPHICS,
+            );
+            let transfer_queue_family = Renderer::select_queue_family(
+                &inst,
+                pdev,
+                &display.surface_loader,
+                display.surface,
+                vk::QueueFlags::TRANSFER,
+            );
             let mem_props = Renderer::get_pdev_mem_properties(&inst, pdev);
 
             // do this after we have gotten a valid physical device
             let surface_format = display.select_surface_format(pdev);
 
-            let surface_caps = display.surface_loader
-                .get_physical_device_surface_capabilities(pdev,
-                                                          display.surface)
+            let surface_caps = display
+                .surface_loader
+                .get_physical_device_surface_capabilities(pdev, display.surface)
                 .unwrap();
-            let surface_resolution = display.select_resolution(
-                &surface_caps
-            );
-            log!(LogLevel::profiling, "Rendering with resolution {:?}",
-                 surface_resolution);
+            let surface_resolution = display.select_resolution(&surface_caps);
+            log::profiling!("Rendering with resolution {:?}", surface_resolution);
 
             // create the graphics,transfer, and pipeline specific queues
             let mut families = vec![graphics_queue_family, transfer_queue_family];
@@ -1012,51 +979,46 @@ impl Renderer {
                 display.surface,
                 &surface_caps,
                 surface_format,
-                &surface_resolution
+                &surface_resolution,
             );
-            
-            let (images, image_views) =
-                Renderer::select_images_and_views(&inst,
-                                                  pdev,
-                                                  &swapchain_loader,
-                                                  swapchain,
-                                                  &dev,
-                                                  surface_format);
+
+            let (images, image_views) = Renderer::select_images_and_views(
+                &inst,
+                pdev,
+                &swapchain_loader,
+                swapchain,
+                &dev,
+                surface_format,
+            );
 
             let pool = Renderer::create_command_pool(&dev, graphics_queue_family);
-            let buffers = Renderer::create_command_buffers(&dev,
-                                                           pool,
-                                                           images.len() as u32);
+            let buffers = Renderer::create_command_buffers(&dev, pool, images.len() as u32);
 
             let sema_create_info = vk::SemaphoreCreateInfo::default();
 
-            let present_sema = dev
-                .create_semaphore(&sema_create_info, None)
-                .unwrap();
-            let render_sema = dev
-                .create_semaphore(&sema_create_info, None)
-                .unwrap();
+            let present_sema = dev.create_semaphore(&sema_create_info, None).unwrap();
+            let render_sema = dev.create_semaphore(&sema_create_info, None).unwrap();
 
-            let fence = dev.create_fence(
-                &vk::FenceCreateInfo::builder()
-                    .flags(vk::FenceCreateFlags::SIGNALED),
-                None,
-            ).expect("Could not create fence");
+            let fence = dev
+                .create_fence(
+                    &vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED),
+                    None,
+                )
+                .expect("Could not create fence");
 
             let ext_mem_loader = khr::ExternalMemoryFd::new(&inst, &dev);
 
             // Create a cbuf for copying data to shm images
-            let copy_cbuf = Renderer::create_command_buffers(&dev,
-                                                             pool,
-                                                             1)[0];
+            let copy_cbuf = Renderer::create_command_buffers(&dev, pool, 1)[0];
 
             // Make a fence which will be signalled after
             // copies are completed
-            let copy_fence = dev.create_fence(
-                &vk::FenceCreateInfo::builder()
-                    .flags(vk::FenceCreateFlags::SIGNALED),
-                None,
-            ).expect("Could not create fence");
+            let copy_fence = dev
+                .create_fence(
+                    &vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED),
+                    None,
+                )
+                .expect("Could not create fence");
 
             // you are now the proud owner of a half complete
             // rendering context
@@ -1109,37 +1071,33 @@ impl Renderer {
     /// All operations in the `record_fn` argument will be
     /// submitted in the command buffer `cbuf`. This aims to make
     /// constructing buffers more ergonomic.
-    pub(crate) fn cbuf_onetime<F: FnOnce(&Renderer, vk::CommandBuffer)>
-        (&self,
-         cbuf: vk::CommandBuffer,
-         queue: vk::Queue,
-         wait_stages: &[vk::PipelineStageFlags],
-         wait_semas: &[vk::Semaphore],
-         signal_semas: &[vk::Semaphore],
-         record_fn: F)
-    {
-        self.cbuf_begin_recording(
-            cbuf,
-            vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT
-        );
+    pub(crate) fn cbuf_onetime<F: FnOnce(&Renderer, vk::CommandBuffer)>(
+        &self,
+        cbuf: vk::CommandBuffer,
+        queue: vk::Queue,
+        wait_stages: &[vk::PipelineStageFlags],
+        wait_semas: &[vk::Semaphore],
+        signal_semas: &[vk::Semaphore],
+        record_fn: F,
+    ) {
+        self.cbuf_begin_recording(cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
         record_fn(self, cbuf);
 
         self.cbuf_end_recording(cbuf);
 
-        self.cbuf_submit(cbuf,
-                         queue,
-                         wait_stages,
-                         wait_semas,
-                         signal_semas);
+        self.cbuf_submit(cbuf, queue, wait_stages, wait_semas, signal_semas);
 
         unsafe {
             // We need to wait for the command submission to finish, this
             // is why you should avoid using this function
-            self.dev.wait_for_fences(&[self.submit_fence],
-			             true, // wait for all
-			             std::u64::MAX, //timeout
-            ).unwrap();
+            self.dev
+                .wait_for_fences(
+                    &[self.submit_fence],
+                    true,          // wait for all
+                    std::u64::MAX, //timeout
+                )
+                .unwrap();
 
             // do not reset the fence since the next cbuf_submit will
             // expect it to be signaled
@@ -1160,35 +1118,39 @@ impl Renderer {
     /// wait_stages - a list of pipeline stages to wait on
     /// wait_semas - semaphores we consume
     /// signal_semas - semaphores we notify
-    pub(crate) fn cbuf_submit
-        (&self,
-         cbuf: vk::CommandBuffer,
-         queue: vk::Queue,
-         wait_stages: &[vk::PipelineStageFlags],
-         wait_semas: &[vk::Semaphore],
-         signal_semas: &[vk::Semaphore])
-    {
+    pub(crate) fn cbuf_submit(
+        &self,
+        cbuf: vk::CommandBuffer,
+        queue: vk::Queue,
+        wait_stages: &[vk::PipelineStageFlags],
+        wait_semas: &[vk::Semaphore],
+        signal_semas: &[vk::Semaphore],
+    ) {
         unsafe {
-            let fences = vec![self.submit_fence,
-                              self.copy_cbuf_fence];
+            let fences = vec![self.submit_fence, self.copy_cbuf_fence];
 
             // Before we submit ourselves, we need to wait for the
             // previous frame's execution and any copy commands to finish
-            self.dev.wait_for_fences(fences.as_slice(),
-			             true, // wait for all
-			             std::u64::MAX, //timeout
-            ).unwrap();
+            self.dev
+                .wait_for_fences(
+                    fences.as_slice(),
+                    true,          // wait for all
+                    std::u64::MAX, //timeout
+                )
+                .unwrap();
 
             // we need to reset the fence since it has been signaled
             // copy fence will be handled elsewhere
             self.dev.reset_fences(&[self.submit_fence]).unwrap();
 
-            self.cbuf_submit_async(cbuf,
-                                   queue,
-                                   wait_stages,
-                                   wait_semas,
-                                   signal_semas,
-                                   self.submit_fence);
+            self.cbuf_submit_async(
+                cbuf,
+                queue,
+                wait_stages,
+                wait_semas,
+                signal_semas,
+                self.submit_fence,
+            );
         }
     }
 
@@ -1204,15 +1166,15 @@ impl Renderer {
     /// wait_stages - a list of pipeline stages to wait on
     /// wait_semas - semaphores we consume
     /// signal_semas - semaphores we notify
-    pub(crate) fn cbuf_submit_async
-        (&self,
-         cbuf: vk::CommandBuffer,
-         queue: vk::Queue,
-         wait_stages: &[vk::PipelineStageFlags],
-         wait_semas: &[vk::Semaphore],
-         signal_semas: &[vk::Semaphore],
-         signal_fence: vk::Fence)
-    {
+    pub(crate) fn cbuf_submit_async(
+        &self,
+        cbuf: vk::CommandBuffer,
+        queue: vk::Queue,
+        wait_stages: &[vk::PipelineStageFlags],
+        wait_semas: &[vk::Semaphore],
+        signal_semas: &[vk::Semaphore],
+        signal_fence: vk::Fence,
+    ) {
         unsafe {
             // The buffer must have been recorded before we can submit
             // it for execution.
@@ -1225,11 +1187,9 @@ impl Renderer {
 
             // create a fence to be notified when the commands have finished
             // executing.
-            self.dev.queue_submit(
-                queue,
-                &[submit_info],
-                signal_fence,
-            ).unwrap();
+            self.dev
+                .queue_submit(queue, &[submit_info], signal_fence)
+                .unwrap();
         }
     }
 
@@ -1240,49 +1200,48 @@ impl Renderer {
     ///
     /// All operations in the `record_fn` argument will be
     /// recorded in the command buffer `cbuf`.
-    pub fn cbuf_begin_recording(&self,
-                                cbuf: vk::CommandBuffer,
-                                flags: vk::CommandBufferUsageFlags)
-    {
+    pub fn cbuf_begin_recording(
+        &self,
+        cbuf: vk::CommandBuffer,
+        flags: vk::CommandBufferUsageFlags,
+    ) {
         unsafe {
             // first reset the queue so we know it is empty
-            self.dev.reset_command_buffer(
-                cbuf,
-                vk::CommandBufferResetFlags::RELEASE_RESOURCES,
-            ).expect("Could not reset command buffer");
+            self.dev
+                .reset_command_buffer(cbuf, vk::CommandBufferResetFlags::RELEASE_RESOURCES)
+                .expect("Could not reset command buffer");
 
             // this cbuf will only be used once, so tell vulkan that
             // so it can optimize accordingly
-            let record_info = vk::CommandBufferBeginInfo::builder()
-                .flags(flags);
+            let record_info = vk::CommandBufferBeginInfo::builder().flags(flags);
 
             // start recording the command buffer, call the function
             // passed to load it with operations, and then end the
             // command buffer
-            self.dev.begin_command_buffer(cbuf, &record_info)
+            self.dev
+                .begin_command_buffer(cbuf, &record_info)
                 .expect("Could not start command buffer");
         }
     }
 
-    
     /// Records but does not submit a command buffer.
     ///
     /// cbuf - the command buffer to use
     pub fn cbuf_end_recording(&self, cbuf: vk::CommandBuffer) {
         unsafe {
-            self.dev.end_command_buffer(cbuf)
+            self.dev
+                .end_command_buffer(cbuf)
                 .expect("Could not end command buffer");
         }
     }
 
-    pub fn get_recording_parameters(&self) -> RecordParams{
+    pub fn get_recording_parameters(&self) -> RecordParams {
         RecordParams {
             cbuf: self.cbufs[self.current_image as usize],
             image_num: self.current_image as usize,
         }
     }
 
-    
     /// Start recording a cbuf for one frame
     ///
     /// Each framebuffer has a set of resources, including command
@@ -1292,9 +1251,7 @@ impl Renderer {
     /// The frame is not submitted to be drawn until
     /// `begin_frame` is called. `end_recording_one_frame` must be called
     /// before `begin_frame`
-    pub fn begin_recording_one_frame(&mut self, _surfaces: &SurfaceList)
-                                     -> RecordParams
-    {
+    pub fn begin_recording_one_frame(&mut self, _surfaces: &SurfaceList) -> RecordParams {
         // get the next frame to draw into
         self.get_next_swapchain_image();
         self.get_recording_parameters()
@@ -1306,14 +1263,11 @@ impl Renderer {
     /// is for statically numbered resources.
     ///
     /// The pool returned is NOT thread safe
-    pub unsafe fn create_descriptor_pool(&mut self)
-                                     -> vk::DescriptorPool
-    {
+    pub unsafe fn create_descriptor_pool(&mut self) -> vk::DescriptorPool {
         let size = [vk::DescriptorPoolSize::builder()
-                    .ty(vk::DescriptorType::UNIFORM_BUFFER)
-                    .descriptor_count(1)
-                    .build(),
-        ];
+            .ty(vk::DescriptorType::UNIFORM_BUFFER)
+            .descriptor_count(1)
+            .build()];
 
         let info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&size)
@@ -1328,11 +1282,11 @@ impl Renderer {
     /// be referenced by the graphics pipeline. Think of a descriptor
     /// as the hardware's handle to a resource. The set of descriptors
     /// allocated in each set is specified in the layout.
-    pub(crate) unsafe fn allocate_descriptor_sets(&self,
-                                       pool: vk::DescriptorPool,
-                                       layouts: &[vk::DescriptorSetLayout])
-                                       -> Vec<vk::DescriptorSet>
-    {
+    pub(crate) unsafe fn allocate_descriptor_sets(
+        &self,
+        pool: vk::DescriptorPool,
+        layouts: &[vk::DescriptorSetLayout],
+    ) -> Vec<vk::DescriptorSet> {
         let info = vk::DescriptorSetAllocateInfo::builder()
             .descriptor_pool(pool)
             .set_layouts(layouts)
@@ -1346,33 +1300,32 @@ impl Renderer {
     /// This is what actually sets the image that the sampler
     /// will filter for the shader. The image is referenced
     /// by the `view` argument.
-    pub(crate) unsafe fn update_sampler_descriptor_set(&self,
-                                                       set: vk::DescriptorSet,
-                                                       binding: u32,
-                                                       element: u32,
-                                                       sampler: vk::Sampler,
-                                                       view: vk::ImageView)
-    {
+    pub(crate) unsafe fn update_sampler_descriptor_set(
+        &self,
+        set: vk::DescriptorSet,
+        binding: u32,
+        element: u32,
+        sampler: vk::Sampler,
+        view: vk::ImageView,
+    ) {
         let info = vk::DescriptorImageInfo::builder()
             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
             .image_view(view)
             .sampler(sampler)
             .build();
-        let write_info = [
-            vk::WriteDescriptorSet::builder()
-                .dst_set(set)
-                .dst_binding(binding)
-                // descriptors can be arrays, so we need to specify an offset
-                // into that array if applicable
-                .dst_array_element(element)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(&[info])
-                .build()
-        ];
+        let write_info = [vk::WriteDescriptorSet::builder()
+            .dst_set(set)
+            .dst_binding(binding)
+            // descriptors can be arrays, so we need to specify an offset
+            // into that array if applicable
+            .dst_array_element(element)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&[info])
+            .build()];
 
         self.dev.update_descriptor_sets(
             &write_info, // descriptor writes
-            &[], // descriptor copies
+            &[],         // descriptor copies
         );
     }
 
@@ -1381,13 +1334,12 @@ impl Renderer {
     /// Each Image will have a descriptor for each framebuffer,
     /// since multiple frames will be in flight. This allocates
     /// `image_count` sampler descriptors.
-    unsafe fn create_sampler_descriptors(&self,
-                                         pool: vk::DescriptorPool,
-                                         layout: vk::DescriptorSetLayout,
-                                         image_count: u32)
-                                         -> (vk::Sampler,
-                                             Vec<vk::DescriptorSet>)
-    {
+    unsafe fn create_sampler_descriptors(
+        &self,
+        pool: vk::DescriptorPool,
+        layout: vk::DescriptorSetLayout,
+        image_count: u32,
+    ) -> (vk::Sampler, Vec<vk::DescriptorSet>) {
         // One image sampler is going to be used for everything
         let sampler = Renderer::create_sampler(&self.dev);
         // A descriptor needs to be created for every swapchaing image
@@ -1396,10 +1348,7 @@ impl Renderer {
         let mut descriptors = Vec::new();
 
         for _ in 0..image_count {
-            let set = self.allocate_descriptor_sets(
-                pool,
-                &[layout]
-            )[0];
+            let set = self.allocate_descriptor_sets(pool, &[layout])[0];
 
             descriptors.push(set);
         }
@@ -1411,13 +1360,13 @@ impl Renderer {
     ///
     /// This is just a helper for `create_buffer`. It does not fill
     /// the buffer with anything.
-    pub unsafe fn create_buffer_with_size(&self,
-                                          usage: vk::BufferUsageFlags,
-                                          mode: vk::SharingMode,
-                                          flags: vk::MemoryPropertyFlags,
-                                          size: u64)
-                                          -> (vk::Buffer, vk::DeviceMemory)
-    {
+    pub unsafe fn create_buffer_with_size(
+        &self,
+        usage: vk::BufferUsageFlags,
+        mode: vk::SharingMode,
+        flags: vk::MemoryPropertyFlags,
+        size: u64,
+    ) -> (vk::Buffer, vk::DeviceMemory) {
         let create_info = vk::BufferCreateInfo::builder()
             .size(size)
             .usage(usage)
@@ -1428,11 +1377,7 @@ impl Renderer {
         // get the memory types for this pdev
         let props = Renderer::get_pdev_mem_properties(&self.inst, self.pdev);
         // find the memory type that best suits our requirements
-        let index = Renderer::find_memory_type_index(
-            &props,
-            &req,
-            flags,
-        ).unwrap();
+        let index = Renderer::find_memory_type_index(&props, &req, flags).unwrap();
 
         // now we need to allocate memory to back the buffer
         let alloc_info = vk::MemoryAllocateInfo {
@@ -1459,18 +1404,18 @@ impl Renderer {
     /// This is a helper method for mapping and updating the value stored
     /// in device memory Memory needs to be host visible and coherent.
     /// This does not flush after writing.
-    pub(crate) unsafe fn update_memory<T: Copy>(&self,
-                                                memory: vk::DeviceMemory,
-                                                data: &[T])
-    {
+    pub(crate) unsafe fn update_memory<T: Copy>(&self, memory: vk::DeviceMemory, data: &[T]) {
         // Now we copy our data into the buffer
         let data_size = std::mem::size_of_val(data) as u64;
-        let ptr = self.dev.map_memory(
-            memory,
-            0, // offset
-            data_size,
-            vk::MemoryMapFlags::empty()
-        ).unwrap();
+        let ptr = self
+            .dev
+            .map_memory(
+                memory,
+                0, // offset
+                data_size,
+                vk::MemoryMapFlags::empty(),
+            )
+            .unwrap();
 
         // rust doesn't have a raw memcpy, so we need to transform the void
         // ptr to a slice. This is unsafe as the length needs to be correct
@@ -1487,20 +1432,15 @@ impl Renderer {
     /// represents a region of allocated memory to hold the buffer contents.
     ///
     /// Both are returned, as both need to be destroyed when they are done.
-    pub(crate) unsafe fn create_buffer<T: Copy>(&self,
-                                                usage: vk::BufferUsageFlags,
-                                                mode: vk::SharingMode,
-                                                flags: vk::MemoryPropertyFlags,
-                                                data: &[T])
-                                                -> (vk::Buffer, vk::DeviceMemory)
-    {
+    pub(crate) unsafe fn create_buffer<T: Copy>(
+        &self,
+        usage: vk::BufferUsageFlags,
+        mode: vk::SharingMode,
+        flags: vk::MemoryPropertyFlags,
+        data: &[T],
+    ) -> (vk::Buffer, vk::DeviceMemory) {
         let size = std::mem::size_of_val(data) as u64;
-        let (buffer, memory) = self.create_buffer_with_size(
-            usage,
-            mode,
-            flags,
-            size,
-        );
+        let (buffer, memory) = self.create_buffer_with_size(usage, mode, flags, size);
 
         self.update_memory(memory, data);
 
@@ -1518,20 +1458,19 @@ impl Renderer {
         unsafe {
             match self.swapchain_loader.acquire_next_image(
                 self.swapchain,
-                std::u64::MAX, // use a zero timeout to immediately get the state
+                std::u64::MAX,     // use a zero timeout to immediately get the state
                 self.present_sema, // signals presentation
-                vk::Fence::null())
-            {
+                vk::Fence::null(),
+            ) {
                 // TODO: handle suboptimal surface regeneration
                 Ok((index, _)) => {
                     self.current_image = index;
                     return true;
-                },
+                }
                 Err(vk::Result::NOT_READY) => return false,
                 Err(vk::Result::TIMEOUT) => return false,
                 // the call did not succeed
-                Err(err) =>
-                    panic!("Could not acquire next image: {:?}", err),
+                Err(err) => panic!("Could not acquire next image: {:?}", err),
             };
         }
     }
@@ -1549,13 +1488,16 @@ impl Renderer {
     /// Present the current swapchain image to the screen.
     ///
     /// Finally we can actually flip the buffers and present
-    /// this image. 
+    /// this image.
     pub fn present(&mut self) {
         unsafe {
-            self.dev.wait_for_fences(&[self.submit_fence],
-                                     true, // wait for all
-                                     std::u64::MAX, //timeout
-            ).unwrap();
+            self.dev
+                .wait_for_fences(
+                    &[self.submit_fence],
+                    true,          // wait for all
+                    std::u64::MAX, //timeout
+                )
+                .unwrap();
         }
 
         let wait_semas = [self.render_sema];
@@ -1585,14 +1527,14 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
-            log!(LogLevel::profiling, "Stoping the renderer");
+            log::profiling!("Stoping the renderer");
 
             // first wait for the device to finish working
             self.dev.device_wait_idle().unwrap();
 
             self.dev.destroy_semaphore(self.present_sema, None);
             self.dev.destroy_semaphore(self.render_sema, None);
-            
+
             for &view in self.views.iter() {
                 self.dev.destroy_image_view(view, None);
             }
@@ -1601,7 +1543,8 @@ impl Drop for Renderer {
             self.dev.destroy_command_pool(self.pool, None);
 
             self.dev.destroy_sampler(self.image_sampler, None);
-            self.swapchain_loader.destroy_swapchain(self.swapchain, None);
+            self.swapchain_loader
+                .destroy_swapchain(self.swapchain, None);
             self.dev.destroy_fence(self.submit_fence, None);
             self.dev.destroy_device(None);
 

@@ -10,42 +10,37 @@
 pub mod codes;
 pub mod event;
 
-extern crate wayland_server as ws;
 extern crate input;
-extern crate udev;
 extern crate nix;
+extern crate udev;
+extern crate wayland_server as ws;
 extern crate xkbcommon;
 
 use ws::protocol::wl_pointer;
 
-use event::*;
-use crate::category5::ways::{
-    role::Role,
-    xdg_shell::xdg_toplevel::ResizeEdge,
-};
-use utils::{
-    timing::*, log_prelude::*, WindowId,
-};
 use crate::category5::atmosphere::Atmosphere;
+use crate::category5::ways::{role::Role, xdg_shell::xdg_toplevel::ResizeEdge};
+use event::*;
+use utils::{log, timing::*, WindowId};
 
-use udev::{Enumerator,Context};
-use input::{Libinput,LibinputInterface};
-use input::event::Event;
+use input::event::keyboard::{KeyState, KeyboardEvent, KeyboardEventTrait};
 use input::event::pointer;
 use input::event::pointer::{ButtonState, PointerEvent};
-use input::event::keyboard::{KeyboardEvent, KeyboardEventTrait, KeyState};
+use input::event::Event;
+use input::{Libinput, LibinputInterface};
+use udev::{Context, Enumerator};
 
 use xkbcommon::xkb;
 pub use xkbcommon::xkb::{keysyms, Keysym};
 
-use std::fs::{File,OpenOptions};
-use std::path::Path;
-use std::os::unix::io::RawFd;
-use std::os::unix::io::{AsRawFd,IntoRawFd,FromRawFd};
+use std::fs::{File, OpenOptions};
 use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::io::RawFd;
+use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
+use std::path::Path;
 
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use std::mem::drop;
 
@@ -69,11 +64,9 @@ struct Inkit {
 // custom flags.
 impl LibinputInterface for Inkit {
     // open a device
-    fn open_restricted(&mut self, path: &Path, flags: i32)
-                       -> Result<RawFd, i32>
-    {
-	log!(LogLevel::debug, "Opening device {:?}", path);
-	match OpenOptions::new()
+    fn open_restricted(&mut self, path: &Path, flags: i32) -> Result<RawFd, i32> {
+        log::debug!(" Opening device {:?}", path);
+        match OpenOptions::new()
             // the unix extension's custom_flag field below
             // masks out O_ACCMODE, i.e. read/write, so add
             // them back in
@@ -83,28 +76,28 @@ impl LibinputInterface for Inkit {
             .custom_flags(flags)
             .open(path)
         {
-	    Ok(f) => {
+            Ok(f) => {
                 // this turns the File into an int, so we
                 // don't need to worry about the File's
                 // lifetime.
-		let fd = f.into_raw_fd();
-		log!(LogLevel::error, "Returning raw fd {}", fd);
-		Ok(fd)
-	    },
-	    Err(e) => {
+                let fd = f.into_raw_fd();
+                log::error!("Returning raw fd {}", fd);
+                Ok(fd)
+            }
+            Err(e) => {
                 // leave this in, it gives great error msgs
-                log!(LogLevel::error, "Error on opening {:?}", e);
+                log::error!("Error on opening {:?}", e);
                 Err(-1)
-            },
-	}
+            }
+        }
     }
 
     // close a device
     fn close_restricted(&mut self, fd: RawFd) {
-	unsafe {
+        unsafe {
             // this will close the file
-	    drop(File::from_raw_fd(fd));
-	}
+            drop(File::from_raw_fd(fd));
+        }
     }
 }
 
@@ -164,9 +157,9 @@ impl Input {
         let mut udev_enum = Enumerator::new(&uctx).unwrap();
         let devices = udev_enum.scan_devices().unwrap();
 
-        log!(LogLevel::debug, "Printing all input devices:");
+        log::debug!("Printing all input devices:");
         for dev in devices {
-            log!(LogLevel::debug, " - {:?}", dev.syspath());
+            log::debug!(" - {:?}", dev.syspath());
         }
 
         let kit: Inkit = Inkit { _inner: 0 };
@@ -182,10 +175,14 @@ impl Input {
         let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
         let keymap = xkb::Keymap::new_from_names(
             &context,
-            &"", &"", &"", &"", // These should be env vars
+            &"",
+            &"",
+            &"",
+            &"", // These should be env vars
             None,
             xkb::KEYMAP_COMPILE_NO_FLAGS,
-        ).expect("Could not initialize a xkb keymap");
+        )
+        .expect("Could not initialize a xkb keymap");
         let km_name = keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
 
         let state = xkb::State::new(&keymap);
@@ -225,7 +222,7 @@ impl Input {
     // It will then handle all the available input events
     // before returning.
     pub fn dispatch(&mut self) {
-	self.libin.dispatch().unwrap();
+        self.libin.dispatch().unwrap();
 
         // now go through each event
         while let Some(iev) = self.next_available() {
@@ -238,47 +235,47 @@ impl Input {
     // Dispatch should be called before this so libinput can
     // internally read and prepare all events.
     fn next_available(&mut self) -> Option<InputEvent> {
-         // TODO: need to fix this wrapper
-	 let ev = self.libin.next();
-         match ev {
-             Some(Event::Pointer(PointerEvent::Motion(m))) => {
-                 log!(LogLevel::debug, "moving mouse by ({}, {})",
-                          m.dx(), m.dy());
+        // TODO: need to fix this wrapper
+        let ev = self.libin.next();
+        match ev {
+            Some(Event::Pointer(PointerEvent::Motion(m))) => {
+                log::debug!("moving mouse by ({}, {})", m.dx(), m.dy());
 
-                 return Some(InputEvent::pointer_move(PointerMove {
-                     pm_dx: m.dx(),
-                     pm_dy: m.dy(),
-                 }));
-             },
-             Some(Event::Pointer(PointerEvent::Axis(a))) => {
-                 log!(LogLevel::debug, "scrolling by ({}, {})",
-                      a.axis_value(pointer::Axis::Horizontal),
-                      a.axis_value(pointer::Axis::Vertical),
-                 );
+                return Some(InputEvent::pointer_move(PointerMove {
+                    pm_dx: m.dx(),
+                    pm_dy: m.dy(),
+                }));
+            }
+            Some(Event::Pointer(PointerEvent::Axis(a))) => {
+                log::debug!(
+                    "scrolling by ({}, {})",
+                    a.axis_value(pointer::Axis::Horizontal),
+                    a.axis_value(pointer::Axis::Vertical),
+                );
 
-                 return Some(InputEvent::axis(Axis {
-                     a_hori_val: a.axis_value(pointer::Axis::Horizontal),
-                     a_vert_val: a.axis_value(pointer::Axis::Vertical),
-                 }));
-             },
-             Some(Event::Pointer(PointerEvent::Button(b))) => {
-                 log!(LogLevel::debug, "pointer button {:?}", b.button());
+                return Some(InputEvent::axis(Axis {
+                    a_hori_val: a.axis_value(pointer::Axis::Horizontal),
+                    a_vert_val: a.axis_value(pointer::Axis::Vertical),
+                }));
+            }
+            Some(Event::Pointer(PointerEvent::Button(b))) => {
+                log::debug!("pointer button {:?}", b.button());
 
-                 return Some(InputEvent::click(Click {
-                     c_code: b.button(),
-                     c_state: b.button_state(),
-                 }));
-             },
-             Some(Event::Keyboard(KeyboardEvent::Key(k))) => {
-                 log!(LogLevel::debug, "keyboard event: {:?}", k.key());
-                 return Some(InputEvent::key(Key {
-                     k_code: k.key(),
-                     k_state: k.key_state(),
-                 }));
-             },
-             Some(e) => log!(LogLevel::error, "Unhandled Input Event: {:?}", e),
-             None => (),
-         };
+                return Some(InputEvent::click(Click {
+                    c_code: b.button(),
+                    c_state: b.button_state(),
+                }));
+            }
+            Some(Event::Keyboard(KeyboardEvent::Key(k))) => {
+                log::debug!("keyboard event: {:?}", k.key());
+                return Some(InputEvent::key(Key {
+                    k_code: k.key(),
+                    k_state: k.key_state(),
+                }));
+            }
+            Some(e) => log::error!("Unhandled Input Event: {:?}", e),
+            None => (),
+        };
 
         return None;
     }
@@ -298,19 +295,11 @@ impl Input {
                     let time = get_current_millis();
                     // deliver the axis events, one for each direction
                     if a.a_hori_val > 0.0 {
-                        pointer.axis(
-                            time,
-                            wl_pointer::Axis::HorizontalScroll,
-                            a.a_hori_val,
-                        );
+                        pointer.axis(time, wl_pointer::Axis::HorizontalScroll, a.a_hori_val);
                     }
 
                     if a.a_vert_val > 0.0 {
-                        pointer.axis(
-                            time,
-                            wl_pointer::Axis::VerticalScroll,
-                            a.a_vert_val,
-                        );
+                        pointer.axis(time, wl_pointer::Axis::VerticalScroll, a.a_vert_val);
                     }
                 }
             }
@@ -326,15 +315,12 @@ impl Input {
                 match &surf.s_role {
                     Some(Role::xdg_shell_toplevel(ss)) => {
                         // send the xdg configure events
-                        ss.borrow_mut()
-                            .configure(
-                                &mut atmos, &surf,
-                                Some((
-                                    self.i_resize_diff.0 as f32,
-                                    self.i_resize_diff.1 as f32,
-                                )),
-                            );
-                    },
+                        ss.borrow_mut().configure(
+                            &mut atmos,
+                            &surf,
+                            Some((self.i_resize_diff.0 as f32, self.i_resize_diff.1 as f32)),
+                        );
+                    }
                     _ => (),
                 }
             }
@@ -374,10 +360,7 @@ impl Input {
             let seat = cell.borrow_mut();
             if let Some(keyboard) = &seat.s_keyboard {
                 if let Some(surf) = atmos.get_wl_surface_from_id(id) {
-                    keyboard.leave(
-                        seat.s_serial,
-                        &surf,
-                    );
+                    keyboard.leave(seat.s_serial, &surf);
                 }
             }
         }
@@ -394,13 +377,12 @@ impl Input {
             if let Some(pointer) = &seat.s_pointer {
                 if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                     let (cx, cy) = atmos.get_cursor_pos();
-                    if let Some((sx, sy)) = atmos
-                        .global_coords_to_surf(id, cx, cy)
-                    {
+                    if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
                         pointer.enter(
                             seat.s_serial,
                             &surf,
-                            sx as f64, sy, // surface local coordinates
+                            sx as f64,
+                            sy, // surface local coordinates
                         );
                     }
                 }
@@ -418,10 +400,7 @@ impl Input {
             let seat = cell.borrow_mut();
             if let Some(pointer) = &seat.s_pointer {
                 if let Some(surf) = atmos.get_wl_surface_from_id(id) {
-                    pointer.leave(
-                        seat.s_serial,
-                        &surf,
-                    );
+                    pointer.leave(seat.s_serial, &surf);
                 }
             }
         }
@@ -468,9 +447,7 @@ impl Input {
                 // Get the pointer
                 if let Some(pointer) = &seat.s_pointer {
                     // If the pointer is over this surface
-                    if let Some((sx, sy)) = atmos
-                        .global_coords_to_surf(id, cx, cy)
-                    {
+                    if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
                         // deliver the motion event
                         pointer.motion(get_current_millis(), sx, sy);
                     }
@@ -498,10 +475,10 @@ impl Input {
         if let Some(id) = atmos.get_grabbed() {
             match c.c_state {
                 ButtonState::Released => {
-                    log!(LogLevel::debug, "Ungrabbing window {:?}", id);
+                    log::debug!("Ungrabbing window {:?}", id);
                     atmos.set_grabbed(None);
                     return;
-                },
+                }
                 _ => (),
             }
         }
@@ -519,25 +496,21 @@ impl Input {
                             match c.c_state {
                                 // The release is handled above
                                 ButtonState::Released => {
-                                    log!(LogLevel::debug,
-                                         "Stopping resize of {:?}", id);
+                                    log::debug!("Stopping resize of {:?}", id);
                                     atmos.set_resizing(None);
-                                    ss.borrow_mut()
-                                        .ss_cur_tlstate.tl_resizing = false;
+                                    ss.borrow_mut().ss_cur_tlstate.tl_resizing = false;
                                     // TODO: send final configure here?
-                                },
+                                }
                                 // this should never be pressed
                                 _ => (),
                             }
-                        },
+                        }
                         // TODO: resizing for other shell types
                         _ => (),
                     }
                 }
             }
-        } else if let Some(id) = atmos.find_window_at_point(cursor.0 as f32,
-                                                            cursor.1 as f32)
-        {
+        } else if let Some(id) = atmos.find_window_at_point(cursor.0 as f32, cursor.1 as f32) {
             // If the window is not in focus, make it in focus
             if let Some(focus) = atmos.get_window_in_focus() {
                 if id != focus && c.c_state == ButtonState::Pressed {
@@ -548,8 +521,7 @@ impl Input {
             }
 
             // do this first here so we don't do it more than once
-            let edge = atmos.point_is_on_window_edge(id, cursor.0 as f32,
-                                                     cursor.1 as f32);
+            let edge = atmos.point_is_on_window_edge(id, cursor.0 as f32, cursor.1 as f32);
 
             // First check if we are over an edge, or if we are resizing
             // and released the click
@@ -560,32 +532,28 @@ impl Input {
                         Some(Role::xdg_shell_toplevel(ss)) => {
                             match c.c_state {
                                 ButtonState::Pressed => {
-                                    log!(LogLevel::debug,
-                                         "Resizing window {:?}", id);
+                                    log::debug!("Resizing window {:?}", id);
                                     atmos.set_resizing(Some(id));
-                                    ss.borrow_mut()
-                                        .ss_cur_tlstate.tl_resizing = true;
-                                },
+                                    ss.borrow_mut().ss_cur_tlstate.tl_resizing = true;
+                                }
                                 // releasing is handled above
                                 _ => (),
                             }
-                        },
+                        }
                         // TODO: resizing for other shell types
                         _ => (),
                     }
                 }
-            } else if atmos.point_is_on_titlebar(id, cursor.0 as f32,
-                                                 cursor.1 as f32)
-            {
+            } else if atmos.point_is_on_titlebar(id, cursor.0 as f32, cursor.1 as f32) {
                 // now check if we are over the titlebar
                 // if so we will grab the bar
                 match c.c_state {
                     ButtonState::Pressed => {
-                        log!(LogLevel::debug, "Grabbing window {:?}", id);
+                        log::debug!("Grabbing window {:?}", id);
                         atmos.set_grabbed(Some(id));
-                    },
+                    }
                     ButtonState::Released => {
-                        log!(LogLevel::debug, "Ungrabbing window {:?}", id);
+                        log::debug!("Ungrabbing window {:?}", id);
                         atmos.set_grabbed(None);
                     }
                 }
@@ -603,10 +571,8 @@ impl Input {
                             get_current_millis(),
                             c.c_code,
                             match c.c_state {
-                                ButtonState::Pressed =>
-                                    wl_pointer::ButtonState::Pressed,
-                                ButtonState::Released =>
-                                    wl_pointer::ButtonState::Released,
+                                ButtonState::Pressed => wl_pointer::ButtonState::Pressed,
+                                ButtonState::Released => wl_pointer::ButtonState::Released,
                             },
                         );
                     }
@@ -634,17 +600,29 @@ impl Input {
                         match key.k_state {
                             KeyState::Pressed => xkb::KeyDirection::Down,
                             KeyState::Released => xkb::KeyDirection::Up,
-                        }
+                        },
                     );
                     // if any modifiers were touched we should send their event
                     if changed != 0 {
                         // First we need to update our own tracking of what keys are held down
-                        self.i_mod_ctrl = self.i_xkb_state.mod_name_is_active(&xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
-                        self.i_mod_alt = self.i_xkb_state.mod_name_is_active(&xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
-                        self.i_mod_shift = self.i_xkb_state.mod_name_is_active(&xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
-                        self.i_mod_caps = self.i_xkb_state.mod_name_is_active(&xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
-                        self.i_mod_meta = self.i_xkb_state.mod_name_is_active(&xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
-                        self.i_mod_num = self.i_xkb_state.mod_name_is_active(&xkb::MOD_NAME_NUM, xkb::STATE_MODS_EFFECTIVE);
+                        self.i_mod_ctrl = self
+                            .i_xkb_state
+                            .mod_name_is_active(&xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
+                        self.i_mod_alt = self
+                            .i_xkb_state
+                            .mod_name_is_active(&xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
+                        self.i_mod_shift = self
+                            .i_xkb_state
+                            .mod_name_is_active(&xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
+                        self.i_mod_caps = self
+                            .i_xkb_state
+                            .mod_name_is_active(&xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
+                        self.i_mod_meta = self
+                            .i_xkb_state
+                            .mod_name_is_active(&xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
+                        self.i_mod_num = self
+                            .i_xkb_state
+                            .mod_name_is_active(&xkb::MOD_NAME_NUM, xkb::STATE_MODS_EFFECTIVE);
 
                         // Now we can serialize the modifiers into a format suitable
                         // for sending to the client
@@ -654,17 +632,13 @@ impl Input {
                         let layout = self.i_xkb_state.serialize_layout(xkb::STATE_LAYOUT_LOCKED);
 
                         // Finally fire the wayland event
-                        log!(LogLevel::debug,"Sending modifiers to window {:?}",id);
-                        keyboard.modifiers(
-                            seat.s_serial,
-                            depressed, latched, locked, layout,
-                        );
+                        log::debug!("Sending modifiers to window {:?}", id);
+                        keyboard.modifiers(seat.s_serial, depressed, latched, locked, layout);
                     }
                     // give the keycode to the client
                     let time = get_current_millis();
                     let state = map_key_state(key.k_state);
-                    log!(LogLevel::debug,"Sending {} key to window {:?}",
-                         key.k_code, id);
+                    log::debug!("Sending {} key to window {:?}", key.k_code, id);
                     keyboard.key(seat.s_serial, time, key.k_code, state);
 
                     // increment the serial for next time
@@ -683,14 +657,10 @@ impl Input {
     // the right action.
     pub fn handle_input_event(&mut self, iev: &InputEvent) {
         match iev {
-            InputEvent::pointer_move(m) =>
-                self.handle_pointer_move(m),
-            InputEvent::axis(a) =>
-                self.handle_pointer_axis(a),
-            InputEvent::click(c) =>
-                self.handle_click_on_window(c),
-            InputEvent::key(k) =>
-                self.handle_keyboard(k),
+            InputEvent::pointer_move(m) => self.handle_pointer_move(m),
+            InputEvent::axis(a) => self.handle_pointer_axis(a),
+            InputEvent::click(c) => self.handle_click_on_window(c),
+            InputEvent::key(k) => self.handle_keyboard(k),
         }
     }
 }

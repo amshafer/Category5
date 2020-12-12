@@ -4,13 +4,13 @@
 // to be stateless
 //
 // Austin Shafer - 2020
-#[allow(dead_code,non_camel_case_types)]
+#[allow(dead_code, non_camel_case_types)]
 pub enum LogLevel {
     // in order of highest priority
     critical, // Urgent and must always be displayed
     error,
-    debug, // debugging related, not verbose
-    info, // more verbose
+    debug,     // debugging related, not verbose
+    info,      // more verbose
     profiling, // profiling related timing
 }
 
@@ -37,14 +37,43 @@ impl LogLevel {
 }
 
 #[macro_export]
-macro_rules! log {
+macro_rules! debug {
+    ($($format_args:tt)+) => {{
+        log::log_internal!(log::LogLevel::debug, $($format_args)+)
+    }};
+}
+
+#[macro_export]
+macro_rules! profiling {
+    ($($format_args:tt)+) => {{
+        log::log_internal!(log::LogLevel::profiling, $($format_args)+)
+    }};
+}
+
+#[macro_export]
+macro_rules! info {
+    ($($format_args:tt)+) => {{
+        log::log_internal!(log::LogLevel::info, $($format_args)+)
+    }};
+}
+
+#[macro_export]
+macro_rules! error {
+    ($($format_args:tt)+) => {{
+        log::log_internal!(log::LogLevel::error, $($format_args)+)
+    }};
+}
+
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! log_internal{
     ($loglevel:expr, $($format_args:tt)+) => ({
         // !! NOTE: current log level set here !!
         //
         // Currently set to the debug level (2)
         if $loglevel.get_level() <= 2 {
             println!("[{:?}]<{}> {}:{} - {}",
-                     get_current_millis(),
+                     log::get_current_millis(),
                      $loglevel.get_name(),
                      file!(),
                      line!(),

@@ -8,14 +8,14 @@ extern crate wayland_server as ws;
 
 use ws::protocol::{wl_shm, wl_shm_pool};
 
-use utils::{MemImage, log_prelude::*};
+use utils::{log, MemImage};
 
-use std::rc::Rc;
+use nix::{sys::mman, unistd};
 use std::cell::RefCell;
-use std::os::unix::io::RawFd;
 use std::ffi::c_void;
-use nix::{unistd, sys::mman};
 use std::ops::Deref;
+use std::os::unix::io::RawFd;
+use std::rc::Rc;
 
 // A ShmRegion is a mmapped anonymous region of
 // shared memory
@@ -46,8 +46,8 @@ impl ShmRegion {
                 mman::ProtFlags::PROT_READ,
                 mman::MapFlags::MAP_SHARED,
                 fd,
-                0)
-            {
+                0,
+            ) {
                 Ok(p) => p,
                 Err(_) => return None,
             };
@@ -73,8 +73,8 @@ impl ShmRegion {
                 mman::ProtFlags::PROT_READ,
                 mman::MapFlags::MAP_SHARED,
                 self.sr_fd,
-                0)
-            {
+                0,
+            ) {
                 Ok(p) => p,
                 Err(_) => panic!("Could not resize the shm pool"),
             }
@@ -100,29 +100,23 @@ impl Drop for ShmRegion {
 // There is essentially only one thing going on here,
 // we immediately create a shared memory pool and
 // create a wl_shm_pool resource to represent it.
-pub fn shm_handle_request(req: wl_shm::Request,
-                          shm: wl_shm::WlShm)
-{
+pub fn shm_handle_request(req: wl_shm::Request, shm: wl_shm::WlShm) {
     match req {
         wl_shm::Request::CreatePool { id: pool, fd, size } => {
             // We only handle valid sized pools
             if size <= 0 {
-                shm.as_ref().post_error(
-                    wl_shm::Error::InvalidFd as u32,
-                    "Invalid Fd".to_string(),
-                ); 
+                shm.as_ref()
+                    .post_error(wl_shm::Error::InvalidFd as u32, "Invalid Fd".to_string());
             }
 
-            let reg = Rc::new(RefCell::new(
-                ShmRegion::new(fd, size as usize).unwrap()
-            ));
+            let reg = Rc::new(RefCell::new(ShmRegion::new(fd, size as usize).unwrap()));
             // Register a callback for the wl_shm_pool interface
             pool.quick_assign(|p, r, _| {
                 shm_pool_handle_request(r, p.deref().clone());
             });
             // Add our ShmRegion as the private data for the pool
             pool.as_ref().user_data().set(move || reg);
-        },
+        }
         _ => unimplemented!(),
     }
 }
@@ -153,10 +147,11 @@ impl ShmBuffer {
     // it as a MemImage
     pub fn get_mem_image(&self) -> MemImage {
         MemImage::new(
-            unsafe { self.sb_reg
-                     .borrow()
-                     .sr_raw_ptr
-                     .offset(self.sb_offset as isize)
+            unsafe {
+                self.sb_reg
+                    .borrow()
+                    .sr_raw_ptr
+                    .offset(self.sb_offset as isize)
             } as *mut u8,
             4, // 4 bytes per pixel hardcoded
             self.sb_width as usize,
@@ -170,11 +165,13 @@ impl ShmBuffer {
 // The shared memory pool is going to handle creation of
 // buffers, we will carve out a portion of the shared
 // memory region to supply one.
-pub fn shm_pool_handle_request(req: wl_shm_pool::Request,
-                               pool: wl_shm_pool::WlShmPool)
-{
+pub fn shm_pool_handle_request(req: wl_shm_pool::Request, pool: wl_shm_pool::WlShmPool) {
     // Get the userdata from this resource
-    let reg = pool.as_ref().user_data().get::<Rc<RefCell<ShmRegion>>>().unwrap();
+    let reg = pool
+        .as_ref()
+        .user_data()
+        .get::<Rc<RefCell<ShmRegion>>>()
+        .unwrap();
 
     match req {
         #[allow(unused_variables)]
@@ -203,18 +200,17 @@ pub fn shm_pool_handle_request(req: wl_shm_pool::Request,
                 sb_stride: stride,
                 sb_format: format,
             };
-            log!(LogLevel::debug, "Created new shm buf with size {}x{}",
-                 width, height);
+            log::debug!("Created new shm buf with size {}x{}", width, height);
 
             // We still need to register a void callback
             buffer.quick_assign(|_, _, _| {});
             // Add our buffer priv data to the userdata
             buffer.as_ref().user_data().set(move || data);
-        },
+        }
         wl_shm_pool::Request::Resize { size } => {
             reg.borrow_mut().resize(size as usize);
-        },
-        wl_shm_pool::Request::Destroy => {},
+        }
+        wl_shm_pool::Request::Destroy => {}
         _ => unimplemented!(),
     }
 }

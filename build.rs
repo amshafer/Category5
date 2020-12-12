@@ -4,7 +4,7 @@
 extern crate wayland_scanner;
 
 use std::path::Path;
-use wayland_scanner::{Side, generate_code};
+use wayland_scanner::{generate_code, Side};
 
 fn main() {
     // tell cargo to link with libwayland-server.so
@@ -23,15 +23,10 @@ fn main() {
     ];
     // These are the names to be used when generating
     // binding files.
-    let protocol_names = vec![
-        "linux_dmabuf",
-        "xdg_shell",
-    ];
+    let protocol_names = vec!["linux_dmabuf", "xdg_shell"];
 
     for (i, p) in protocols.iter().enumerate() {
-        let protocol_file = format!("{}{}",
-                                    protocols_base,
-                                    p);
+        let protocol_file = format!("{}{}", protocols_base, p);
 
         // Target directory for the generate files
         let out_dir = Path::new(&out_dir_str);

@@ -6,16 +6,15 @@
 extern crate nix;
 extern crate wayland_server as ws;
 
-use utils::log_prelude::*;
 use nix::unistd::close;
-use ws::{Filter,Main,Resource};
+use utils::log;
 use ws::protocol::wl_buffer;
+use ws::{Filter, Main, Resource};
 
-use utils::Dmabuf;
 use super::protocol::linux_dmabuf::{
-    zwp_linux_dmabuf_v1 as zldv1,
-    zwp_linux_buffer_params_v1 as zlbpv1,
+    zwp_linux_buffer_params_v1 as zlbpv1, zwp_linux_dmabuf_v1 as zldv1,
 };
+use utils::Dmabuf;
 
 use std::os::unix::io::RawFd;
 
@@ -50,10 +49,7 @@ pub fn linux_dmabuf_setup(dma: Main<zldv1::ZwpLinuxDmabufV1>) {
     dma.modifier(WL_DRM_FORMAT_ARGB8888, 0, 0);
 }
 
-
-pub fn linux_dmabuf_handle_request(req: zldv1::Request,
-                                   _dma: Main<zldv1::ZwpLinuxDmabufV1>)
-{
+pub fn linux_dmabuf_handle_request(req: zldv1::Request, _dma: Main<zldv1::ZwpLinuxDmabufV1>) {
     match req {
         zldv1::Request::CreateParams { params_id } => {
             let mut params = Params { p_bufs: Vec::new() };
@@ -61,8 +57,8 @@ pub fn linux_dmabuf_handle_request(req: zldv1::Request,
             params_id.quick_assign(move |p, r, _| {
                 params.handle_request(r, p);
             });
-        },
-        zldv1::Request::Destroy => {},
+        }
+        zldv1::Request::Destroy => {}
     };
 }
 
@@ -73,20 +69,21 @@ struct Params {
 
 impl Params {
     #[allow(unused_variables)]
-    fn handle_request(&mut self,
-                      req: zlbpv1::Request,
-                      _params: Main<zlbpv1::ZwpLinuxBufferParamsV1>)
-    {
+    fn handle_request(
+        &mut self,
+        req: zlbpv1::Request,
+        _params: Main<zlbpv1::ZwpLinuxBufferParamsV1>,
+    ) {
         match req {
-            zlbpv1::Request::CreateImmed { buffer_id,
-                                           width,
-                                           height,
-                                           format,
-                                           flags } => {
-                log!(LogLevel::debug,
-                     "linux_dmabuf_params: Creating a new wl_buffer");
-                log!(LogLevel::debug,
-                     "                     of size {}x{}", width, height);
+            zlbpv1::Request::CreateImmed {
+                buffer_id,
+                width,
+                height,
+                format,
+                flags,
+            } => {
+                log::debug!("linux_dmabuf_params: Creating a new wl_buffer");
+                log::debug!("                     of size {}x{}", width, height);
 
                 // TODO
                 // for now just only assign the first dmabuf
@@ -100,42 +97,46 @@ impl Params {
                 buffer_id.assign_destructor(Filter::new(
                     move |r: Resource<wl_buffer::WlBuffer>, _, _| {
                         let ud = r.user_data().get::<Dmabuf>().unwrap();
-                        log!(LogLevel::profiling,
-                             "Destroying wl_buffer: closing dmabuf with fd {}",
-                             ud.db_fd);
+                        log::profiling!(
+                            "Destroying wl_buffer: closing dmabuf with fd {}",
+                            ud.db_fd
+                        );
                         close(ud.db_fd).unwrap();
-                    }
+                    },
                 ));
 
-                buffer_id.as_ref()
-                    .user_data()
-                    .set(move || dmabuf);
-            },
-            zlbpv1::Request::Add { fd,
-                                   plane_idx,
-                                   offset,
-                                   stride,
-                                   modifier_hi,
-                                   modifier_lo } =>
-                self.add(fd, plane_idx, offset, stride,
-                         modifier_hi, modifier_lo),
-            zlbpv1::Request::Destroy => {},
+                buffer_id.as_ref().user_data().set(move || dmabuf);
+            }
+            zlbpv1::Request::Add {
+                fd,
+                plane_idx,
+                offset,
+                stride,
+                modifier_hi,
+                modifier_lo,
+            } => self.add(fd, plane_idx, offset, stride, modifier_hi, modifier_lo),
+            zlbpv1::Request::Destroy => {}
             _ => unimplemented!(),
         };
     }
 
-    fn add(&mut self,
-           fd: RawFd,
-           plane_idx: u32,
-           offset: u32,
-           stride: u32,
-           mod_hi: u32,
-           mod_low: u32) {
+    fn add(
+        &mut self,
+        fd: RawFd,
+        plane_idx: u32,
+        offset: u32,
+        stride: u32,
+        mod_hi: u32,
+        mod_low: u32,
+    ) {
         let d = Dmabuf::new(
-            fd, plane_idx, offset, stride,
-            (mod_hi as u64) << 32 | (mod_low as u64)
+            fd,
+            plane_idx,
+            offset,
+            stride,
+            (mod_hi as u64) << 32 | (mod_low as u64),
         );
-        log!(LogLevel::profiling, "linux_dmabuf_params:Adding {:#?}", d);
+        log::profiling!("linux_dmabuf_params:Adding {:#?}", d);
         self.p_bufs.push(d);
     }
 }

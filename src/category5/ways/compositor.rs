@@ -7,46 +7,31 @@
 // Austin Shafer - 2019
 extern crate input;
 pub extern crate wayland_server as ws;
-use ws::{Filter,Main,Resource};
+use ws::{Filter, Main, Resource};
 
 use ws::protocol::{
-    wl_compositor as wlci,
+    wl_compositor as wlci, wl_output, wl_seat, wl_shell, wl_shm, wl_subcompositor as wlsc,
     wl_surface as wlsi,
-    wl_shm,
-    wl_shell,
-    wl_seat,
-    wl_output,
-    wl_subcompositor as wlsc,
 };
 
 extern crate utils as cat5_utils;
-use cat5_utils::{
-    timing::*, log_prelude::*, fdwatch::FdWatch,
-};
-use crate::category5::atmosphere::{Atmosphere,Hemisphere};
-use crate::category5::input::Input;
-use super::{
-    shm::*,
-    surface::*,
-    wl_shell::wl_shell_handle_request,
-    wl_output::wl_output_broadcast,
-    xdg_shell::xdg_wm_base_handle_request,
-    linux_dmabuf::*,
-    wl_region,
-    wl_subcompositor::wl_subcompositor_handle_request,
-};
-use super::protocol::{
-    xdg_shell::xdg_wm_base,
-    linux_dmabuf::zwp_linux_dmabuf_v1 as zldv1,
-};
+use super::protocol::{linux_dmabuf::zwp_linux_dmabuf_v1 as zldv1, xdg_shell::xdg_wm_base};
 use super::seat::Seat;
 use super::utils;
+use super::{
+    linux_dmabuf::*, shm::*, surface::*, wl_output::wl_output_broadcast, wl_region,
+    wl_shell::wl_shell_handle_request, wl_subcompositor::wl_subcompositor_handle_request,
+    xdg_shell::xdg_wm_base_handle_request,
+};
+use crate::category5::atmosphere::{Atmosphere, Hemisphere};
+use crate::category5::input::Input;
+use cat5_utils::{fdwatch::FdWatch, log, timing::*};
 
-use std::time::Duration;
 use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::mpsc::{Sender,Receiver};
 use std::ops::Deref;
+use std::rc::Rc;
+use std::sync::mpsc::{Receiver, Sender};
+use std::time::Duration;
 
 // A wayland compositor wrapper
 //
@@ -87,7 +72,6 @@ pub struct EventManager {
 }
 
 impl Compositor {
-
     // wl_compositor interface create surface
     //
     // This request creates a new wl_surface and
@@ -96,17 +80,20 @@ impl Compositor {
     pub fn create_surface(&mut self, surf: Main<wlsi::WlSurface>) {
         let client = utils::get_id_from_client(
             self.c_atmos.clone(),
-            surf.as_ref().client()
-                .expect("client for this surface seems to have disappeared")
+            surf.as_ref()
+                .client()
+                .expect("client for this surface seems to have disappeared"),
         );
         let id = self.c_atmos.borrow_mut().mint_window_id(client);
-        log!(LogLevel::debug, "Creating new surface {:?}", id);
+        log::debug!("Creating new surface {:?}", id);
 
         // Create a reference counted object
         // in charge of this new surface
-        let new_surface = Rc::new(RefCell::new(
-            Surface::new(self.c_atmos.clone(), surf.clone(), id))
-        );
+        let new_surface = Rc::new(RefCell::new(Surface::new(
+            self.c_atmos.clone(),
+            surf.clone(),
+            id,
+        )));
         // Add the new surface to the atmosphere
         {
             let mut atmos = self.c_atmos.borrow_mut();
@@ -132,42 +119,36 @@ impl Compositor {
 
         // We have to manually assign a destructor, or else
         // Destroy request doesn't seem to proc
-        surf.assign_destructor(Filter::new(
-            move |_: Resource<wlsi::WlSurface>, _, _| {
-                let mut nsurf = ns_clone.borrow_mut();
-                nsurf.destroy();
-            }
-        ));
+        surf.assign_destructor(Filter::new(move |_: Resource<wlsi::WlSurface>, _, _| {
+            let mut nsurf = ns_clone.borrow_mut();
+            nsurf.destroy();
+        }));
     }
 }
 
 impl EventManager {
     // Returns a new struct in charge of running the main event loop
     //
-    // This creates a new wayland compositor, setting up all 
+    // This creates a new wayland compositor, setting up all
     // the needed resources for the struct. It will create a
     // wl_display, initialize a new socket, create the client/surface
     //  lists, and create a compositor global resource.
     //
     // This kicks off the global callback chain, starting with
     //    Compositor::bind_compositor_callback
-    pub fn new(tx: Sender<Box<Hemisphere>>,
-               rx: Receiver<Box<Hemisphere>>)
-               -> Box<EventManager>
-    {
+    pub fn new(tx: Sender<Box<Hemisphere>>, rx: Receiver<Box<Hemisphere>>) -> Box<EventManager> {
         let mut display = ws::Display::new();
-        display.add_socket_auto()
+        display
+            .add_socket_auto()
             .expect("Failed to add a socket to the wayland server");
 
         // Do some teraforming and generate an atmosphere
         let atmos = Rc::new(RefCell::new(Atmosphere::new(tx, rx)));
 
         // Later moved into the closure
-        let comp_cell = Rc::new(RefCell::new(
-            Compositor {
-                c_atmos: atmos.clone(),
-            }
-        ));
+        let comp_cell = Rc::new(RefCell::new(Compositor {
+            c_atmos: atmos.clone(),
+        }));
 
         let mut evman = Box::new(EventManager {
             em_atmos: atmos.clone(),
@@ -196,8 +177,7 @@ impl EventManager {
     // In wayland we create global objects which tell the client
     // what protocols we implement. Each of these methods initializes
     // one such global
-    fn create_compositor_global(&mut self,
-                                comp_cell: Rc<RefCell<Compositor>>) {
+    fn create_compositor_global(&mut self, comp_cell: Rc<RefCell<Compositor>>) {
         // create interface for our compositor
         // this global is independent of any one client, and
         // will be the first thing they bind
@@ -214,15 +194,13 @@ impl EventManager {
                     r.quick_assign(move |_proxy, request, _| {
                         let mut comp = comp_clone.borrow_mut();
                         match request {
-                            wlci::Request::CreateSurface { id } =>
-                                comp.create_surface(id),
-                            wlci::Request::CreateRegion { id } =>
-                                wl_region::register_new(id),
+                            wlci::Request::CreateSurface { id } => comp.create_surface(id),
+                            wlci::Request::CreateRegion { id } => wl_region::register_new(id),
                             // All other requests are invalid
                             _ => unimplemented!(),
                         }
                     });
-                }
+                },
             ),
         );
     }
@@ -245,7 +223,7 @@ impl EventManager {
                         shm_handle_request(r, shm.deref().clone());
                     });
                     r.format(wl_shm::Format::Xrgb8888);
-                }
+                },
             ),
         );
     }
@@ -263,7 +241,7 @@ impl EventManager {
                     r.quick_assign(move |p, r, _| {
                         wl_shell_handle_request(r, p);
                     });
-                }
+                },
             ),
         );
     }
@@ -281,7 +259,7 @@ impl EventManager {
                     res.quick_assign(move |x, r, _| {
                         xdg_wm_base_handle_request(r, x);
                     });
-                }
+                },
             ),
         );
     }
@@ -303,7 +281,7 @@ impl EventManager {
                     res.quick_assign(move |l, r, _| {
                         linux_dmabuf_handle_request(r, l);
                     });
-                }
+                },
             ),
         );
     }
@@ -320,24 +298,20 @@ impl EventManager {
 
         self.em_display.create_global::<wl_seat::WlSeat, _>(
             5, // version
-            Filter::new(
-                move |(res, _): (ws::Main<wl_seat::WlSeat>, u32), _, _| {
-                    // as_ref turns the Main into a Resource
-                    let client = res.as_ref().client().unwrap();
-                    // get the id representing this client in the atmos
-                    let id = utils::get_id_from_client(atmos.clone(), client);
+            Filter::new(move |(res, _): (ws::Main<wl_seat::WlSeat>, u32), _, _| {
+                // as_ref turns the Main into a Resource
+                let client = res.as_ref().client().unwrap();
+                // get the id representing this client in the atmos
+                let id = utils::get_id_from_client(atmos.clone(), client);
 
-                    // add a new seat to this client
-                    let seat = Rc::new(RefCell::new(
-                        Seat::new(input_sys.clone(), id, res.clone())
-                    ));
-                    atmos.borrow_mut().add_seat(id, seat.clone());
-                    // now we can handle the event
-                    res.quick_assign(move |s, r, _| {
-                        seat.borrow_mut().handle_request(r, s);
-                    });
-                }
-            ),
+                // add a new seat to this client
+                let seat = Rc::new(RefCell::new(Seat::new(input_sys.clone(), id, res.clone())));
+                atmos.borrow_mut().add_seat(id, seat.clone());
+                // now we can handle the event
+                res.quick_assign(move |s, r, _| {
+                    seat.borrow_mut().handle_request(r, s);
+                });
+            }),
         );
     }
 
@@ -355,7 +329,7 @@ impl EventManager {
             Filter::new(
                 move |(res, _): (ws::Main<wl_output::WlOutput>, u32), _, _| {
                     wl_output_broadcast(atmos.clone(), res);
-                }
+                },
             ),
         );
     }
@@ -373,7 +347,7 @@ impl EventManager {
                     res.quick_assign(move |s, r, _| {
                         wl_subcompositor_handle_request(r, s);
                     });
-                }
+                },
             ),
         );
     }
@@ -404,7 +378,7 @@ impl EventManager {
         // reset the timer before we start
         tm.reset();
         while fdw.wait_for_events(tm.time_remaining()) {
-            log!(LogLevel::profiling, "starting loop");
+            log::profiling!("starting loop");
             // First thing to do is to dispatch libinput
             // It has time sensitive operations which need to take
             // place as soon as the fd is readable
@@ -412,7 +386,7 @@ impl EventManager {
 
             // TODO: This might not be the most accurate
             if tm.is_overdue() {
-                log!(LogLevel::profiling, "timer out");
+                log::profiling!("timer out");
                 // TODO: fix frame timings to prevent the current state of
                 // 3 frames of latency
                 //
@@ -433,21 +407,21 @@ impl EventManager {
                 // continue processing wayland updates so the system
                 // doesn't lag
                 if self.em_atmos.borrow_mut().is_changed() {
-                    log!(LogLevel::profiling, "finished frame");
+                    log::profiling!("finished frame");
                     if needs_send {
                         needs_send = false;
-                        log!(LogLevel::debug, "_____________________________ SENT HEMI");
-                        self.em_atmos.borrow_mut().send_hemisphere(); 
+                        log::debug!("_____________________________ SENT HEMI");
+                        self.em_atmos.borrow_mut().send_hemisphere();
                     }
                     if self.em_atmos.borrow_mut().recv_hemisphere() {
-                        log!(LogLevel::debug, "_____________________________ RECV HEMI");
+                        log::debug!("_____________________________ RECV HEMI");
                         // reset our timer
                         tm.reset();
                         needs_send = true;
                         needs_frame = true;
                     }
                 } else {
-                    // The atmosphere was not changed, 
+                    // The atmosphere was not changed,
                     tm.reset();
                     needs_frame = true;
                     needs_send = true;
@@ -460,8 +434,7 @@ impl EventManager {
                 .unwrap();
             self.em_display.flush_clients(&mut ());
 
-            log!(LogLevel::profiling, "EventManager: Blocking for max {} ms",
-                 tm.time_remaining());
+            log::profiling!("EventManager: Blocking for max {} ms", tm.time_remaining());
         }
     }
 }

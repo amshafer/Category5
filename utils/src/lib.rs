@@ -4,20 +4,20 @@
 pub mod timing;
 #[macro_use]
 pub mod logging;
-pub mod log_prelude;
 pub mod fdwatch;
+pub mod log;
 pub mod region;
 
-use std::{slice};
 use std::ops::Deref;
 use std::os::unix::io::RawFd;
+use std::slice;
 
 // Client Id
 //
 // This uniquely identifies one client program connected
 // to the compositor. A client may have multiple surfaces,
 // eacho of which has a WindowId
-#[derive(Copy,Clone,PartialEq,Debug,Eq,Hash)]
+#[derive(Copy, Clone, PartialEq, Debug, Eq, Hash)]
 pub struct ClientId(pub u32);
 
 // Window ID
@@ -26,7 +26,7 @@ pub struct ClientId(pub u32);
 // is used as an ECS property id to tie data to
 // the resource. For now it is a u32 since there
 // is no way we have 4 million windows open
-#[derive(Copy,Clone,PartialEq,Debug,Eq,Hash)]
+#[derive(Copy, Clone, PartialEq, Debug, Eq, Hash)]
 pub struct WindowId(pub u32);
 
 // Window Contents
@@ -68,12 +68,7 @@ impl MemImage {
         }
     }
 
-    pub fn new(ptr: *const u8,
-               element_size: usize,
-               width: usize,
-               height: usize)
-               -> MemImage
-    {
+    pub fn new(ptr: *const u8, element_size: usize, width: usize, height: usize) -> MemImage {
         MemImage {
             ptr: ptr,
             element_size: element_size,
@@ -108,7 +103,7 @@ impl Deref for MemImage {
 // Will be referenced by Params during wl_buffer
 // creation.
 #[allow(dead_code)]
-#[derive(Debug,Copy,Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct Dmabuf {
     pub db_fd: RawFd,
     pub db_plane_idx: u32,
@@ -121,13 +116,7 @@ pub struct Dmabuf {
 }
 
 impl Dmabuf {
-    pub fn new(fd: RawFd,
-               plane: u32,
-               offset: u32,
-               stride: u32,
-               mods: u64)
-               -> Dmabuf
-    {
+    pub fn new(fd: RawFd, plane: u32, offset: u32, stride: u32, mods: u64) -> Dmabuf {
         Dmabuf {
             db_fd: fd,
             db_plane_idx: plane,

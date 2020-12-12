@@ -4,9 +4,9 @@
 extern crate wayland_server as ws;
 use ws::protocol::wl_buffer;
 
-use utils::log_prelude::*;
 use std::fmt;
 use std::os::unix::io::RawFd;
+use utils::log;
 
 /// Dmabuf release info
 ///
@@ -23,7 +23,7 @@ pub struct DmabufReleaseInfo {
 
 impl DmabufReleaseInfo {
     pub fn release(&mut self) {
-        log!(LogLevel::profiling, "Releasing wl_buffer for dmabuf {}", self.dr_fd);
+        log::profiling!("Releasing wl_buffer for dmabuf {}", self.dr_fd);
         self.dr_wl_buffer.release();
     }
 }

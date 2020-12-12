@@ -4,21 +4,21 @@
 // Austin Shafer - 2020
 extern crate wayland_server as ws;
 
-use ws::Main;
 use ws::protocol::wl_surface;
+use ws::Main;
 
-use super::utils;
-use super::surface::*;
-use super::role::Role;
 pub use super::protocol::xdg_shell::*;
+use super::role::Role;
+use super::surface::*;
+use super::utils;
 
 extern crate utils as cat5_utils;
-use cat5_utils::log_prelude::*;
 use crate::category5::atmosphere::Atmosphere;
+use cat5_utils::log;
 
-use std::rc::Rc;
 use std::cell::RefCell;
 use std::clone::Clone;
+use std::rc::Rc;
 
 /// This is the set of outstanding
 /// configuration changes which have not
@@ -88,7 +88,7 @@ impl XdgState {
 ///
 /// This contains basic information about the sizing of a surface.
 /// It is tracked on a per configuration serial basis.
-#[derive(Debug,PartialEq,Eq,Copy,Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct TLState {
     // self-explanitory I think
     pub tl_maximized: bool,
@@ -144,13 +144,15 @@ impl TLConfig {
 /// The xdg_shell interface implements functionality regarding
 /// the lifecycle of the window. Essentially it just creates
 /// a xdg_shell_surface.
-pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request,
-                                  _wm_base: Main<xdg_wm_base::XdgWmBase>)
-{
+pub fn xdg_wm_base_handle_request(
+    req: xdg_wm_base::Request,
+    _wm_base: Main<xdg_wm_base::XdgWmBase>,
+) {
     match req {
         xdg_wm_base::Request::GetXdgSurface { id: xdg, surface } => {
             // get category5's surface from the userdata
-            let surf = surface.as_ref()
+            let surf = surface
+                .as_ref()
                 .user_data()
                 .get::<Rc<RefCell<Surface>>>()
                 .unwrap();
@@ -175,10 +177,13 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request,
             });
             // Pass ourselves as user data
             xdg.as_ref().user_data().set(move || shsurf);
-        },
+        }
         xdg_wm_base::Request::CreatePositioner { id } => {
             let pos = Positioner {
-                p_x: 0, p_y: 0, p_width: 0, p_height: 0,
+                p_x: 0,
+                p_y: 0,
+                p_width: 0,
+                p_height: 0,
                 p_anchor_rect: (0, 0, 0, 0),
                 p_anchor: xdg_positioner::Anchor::None,
                 p_gravity: xdg_positioner::Gravity::None,
@@ -194,7 +199,7 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request,
             // We will add the positioner as userdata since nothing
             // else needs to look it up
             id.as_ref().user_data().set(move || pos);
-        },
+        }
         _ => unimplemented!(),
     };
 }
@@ -205,40 +210,51 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request,
 /// tracks window characteristics and roles. It is
 /// highly recommended to read wayland.xml for all
 /// the gory details.
-fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>,
-                              req: xdg_surface::Request)
-{
+fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>, req: xdg_surface::Request) {
     // first clone the ShellSurface to be used as
     // userdata later
-    let ss_clone = surf.as_ref()
+    let ss_clone = surf
+        .as_ref()
         .user_data()
         .get::<Rc<RefCell<ShellSurface>>>()
         .unwrap()
         .clone();
 
     // Now get a ref to the ShellSurface
-    let mut shsurf = surf.as_ref()
+    let mut shsurf = surf
+        .as_ref()
         .user_data()
         .get::<Rc<RefCell<ShellSurface>>>()
         .unwrap()
         .borrow_mut();
 
     match req {
-        xdg_surface::Request::GetToplevel { id: xdg } =>
-            shsurf.get_toplevel(xdg, ss_clone),
-        xdg_surface::Request::GetPopup { id, parent, positioner } =>
-            shsurf.get_popup(id, parent, positioner, ss_clone),
+        xdg_surface::Request::GetToplevel { id: xdg } => shsurf.get_toplevel(xdg, ss_clone),
+        xdg_surface::Request::GetPopup {
+            id,
+            parent,
+            positioner,
+        } => shsurf.get_popup(id, parent, positioner, ss_clone),
         xdg_surface::Request::AckConfigure { serial } => {
-            log!(LogLevel::debug, "xdg_surface: client acked configure event {}",
-                 serial);
+            log::debug!("xdg_surface: client acked configure event {}", serial);
             shsurf.ack_configure(serial);
         }
-        xdg_surface::Request::SetWindowGeometry { x, y, width, height } => {
-            log!(LogLevel::debug, "xdg_surface: set geometry to:");
-            log!(LogLevel::debug, "              x={} y={} width={} height={}",
-                 x, y, width, height);
+        xdg_surface::Request::SetWindowGeometry {
+            x,
+            y,
+            width,
+            height,
+        } => {
+            log::debug!("xdg_surface: set geometry to:");
+            log::debug!(
+                "              x={} y={} width={} height={}",
+                x,
+                y,
+                width,
+                height
+            );
             shsurf.set_win_geom(x, y, width, height);
-        },
+        }
         xdg_surface::Request::Destroy => (),
     };
 }
@@ -248,7 +264,7 @@ fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>,
 /// This is used to position popups relative to the toplevel parent
 /// surface. It handles offsets and anchors for hovering the popup
 /// surface.
-#[derive(Copy,Clone)]
+#[derive(Copy, Clone)]
 struct Positioner {
     /// The dimensions of the positioned surface
     p_x: i32, // from set_offset
@@ -272,8 +288,10 @@ impl Positioner {
     /// This should be called to reevaluate the end result of the popup location.
     fn get_loc(&self) -> (i32, i32) {
         // TODO: add the rest of the positioner elements
-        (self.p_anchor_rect.0 + self.p_x,
-         self.p_anchor_rect.1 + self.p_y)
+        (
+            self.p_anchor_rect.0 + self.p_x,
+            self.p_anchor_rect.1 + self.p_y,
+        )
     }
 }
 
@@ -281,10 +299,12 @@ impl Positioner {
 ///
 /// These requests are used to build up a `Positioner`, which will
 /// later be used during the creation of an `xdg_popup` surface.
-fn xdg_positioner_handle_request(res: Main<xdg_positioner::XdgPositioner>,
-                                 req: xdg_positioner::Request)
-{
-    let mut pos = *res.as_ref()
+fn xdg_positioner_handle_request(
+    res: Main<xdg_positioner::XdgPositioner>,
+    req: xdg_positioner::Request,
+) {
+    let mut pos = *res
+        .as_ref()
         .user_data()
         .get::<Positioner>()
         .expect("xdg_positioner did not contain the correct userdata");
@@ -294,28 +314,33 @@ fn xdg_positioner_handle_request(res: Main<xdg_positioner::XdgPositioner>,
         xdg_positioner::Request::SetSize { width, height } => {
             pos.p_width = width;
             pos.p_height = height;
-        },
-        xdg_positioner::Request::SetAnchorRect { x, y, width, height } => {
+        }
+        xdg_positioner::Request::SetAnchorRect {
+            x,
+            y,
+            width,
+            height,
+        } => {
             pos.p_anchor_rect = (x, y, width, height);
-        },
-        xdg_positioner::Request::SetAnchor { anchor } =>
-            pos.p_anchor = anchor,
-        xdg_positioner::Request::SetGravity { gravity } =>
-            pos.p_gravity = gravity,
-        xdg_positioner::Request::SetConstraintAdjustment { constraint_adjustment } =>
-            pos.p_constraint = xdg_positioner::ConstraintAdjustment::from_raw(
-                constraint_adjustment
-            ).unwrap(),
+        }
+        xdg_positioner::Request::SetAnchor { anchor } => pos.p_anchor = anchor,
+        xdg_positioner::Request::SetGravity { gravity } => pos.p_gravity = gravity,
+        xdg_positioner::Request::SetConstraintAdjustment {
+            constraint_adjustment,
+        } => {
+            pos.p_constraint =
+                xdg_positioner::ConstraintAdjustment::from_raw(constraint_adjustment).unwrap()
+        }
         xdg_positioner::Request::SetOffset { x, y } => {
             pos.p_x = x;
             pos.p_y = y;
-        },
-        xdg_positioner::Request::SetReactive =>
-            pos.p_reactive = true,
-        xdg_positioner::Request::SetParentSize { parent_width, parent_height } =>
-            pos.p_parent_size = Some((parent_width, parent_height)),
-        xdg_positioner::Request::SetParentConfigure { serial } =>
-            pos.p_parent_configure = serial,
+        }
+        xdg_positioner::Request::SetReactive => pos.p_reactive = true,
+        xdg_positioner::Request::SetParentSize {
+            parent_width,
+            parent_height,
+        } => pos.p_parent_size = Some((parent_width, parent_height)),
+        xdg_positioner::Request::SetParentConfigure { serial } => pos.p_parent_configure = serial,
         xdg_positioner::Request::Destroy => (),
     };
 
@@ -376,7 +401,7 @@ impl ShellSurface {
         // This has just been assigned role of toplevel
         if self.ss_xs.xs_make_new_window {
             // Tell vkcomp to create a new window
-            log!(LogLevel::debug, "Setting surface {:?} to toplevel", surf.s_id);
+            log::debug!("Setting surface {:?} to toplevel", surf.s_id);
             let is_toplevel = match self.ss_xdg_toplevel {
                 Some(_) => true,
                 None => false,
@@ -388,15 +413,17 @@ impl ShellSurface {
         }
 
         if self.ss_xs.xs_moving {
-            log!(LogLevel::debug, "Moving surface {:?}", surf.s_id);
+            log::debug!("Moving surface {:?}", surf.s_id);
             atmos.set_grabbed(Some(surf.s_id));
             self.ss_xs.xs_moving = false;
         }
 
         // find the toplevel state for the last config event acked
         // ack the toplevel configuration
-        if let Some((i, tlc)) = self.ss_tlconfigs
-            .iter().enumerate()
+        if let Some((i, tlc)) = self
+            .ss_tlconfigs
+            .iter()
+            .enumerate()
             // Find the config which matches this serial
             .find(|&(_, tlc)| {
                 if tlc.tlc_serial == self.ss_last_acked {
@@ -407,8 +434,7 @@ impl ShellSurface {
         {
             // TODO: handle min/max/fullscreen/activated
 
-            log!(LogLevel::debug,
-                 "xdg_surface.commit: (ev {}) vvv", tlc.tlc_serial);
+            log::debug!("xdg_surface.commit: (ev {}) vvv", tlc.tlc_serial);
 
             // use the size from the latest acked config event
             let mut size = (tlc.tlc_size.0 as f32, tlc.tlc_size.1 as f32);
@@ -437,13 +463,13 @@ impl ShellSurface {
     /// This is called from other subsystems (input), which means we need to
     /// pass the surface as an argument since its refcell will already be
     /// borrowed.
-    pub fn configure(&mut self,
-                     atmos: &mut Atmosphere,
-                     surf: &Surface,
-                     resize_diff: Option<(f32,f32)>)
-    {
-        log!(LogLevel::debug, "xdg_surface: generating configure event {}",
-             self.ss_serial);
+    pub fn configure(
+        &mut self,
+        atmos: &mut Atmosphere,
+        surf: &Surface,
+        resize_diff: Option<(f32, f32)>,
+    ) {
+        log::debug!("xdg_surface: generating configure event {}", self.ss_serial);
         // send configuration requests to the client
         if let Some(toplevel) = &self.ss_xdg_toplevel {
             // Get the current window position
@@ -477,34 +503,33 @@ impl ShellSurface {
             if self.ss_cur_tlstate.tl_fullscreen {
                 states.push(xdg_toplevel::State::Fullscreen as u8);
             }
-            log!(LogLevel::debug, "xdg_surface: sending states {:?}",
-                 states);
+            log::debug!("xdg_surface: sending states {:?}", states);
 
             // insert a tlconfig representing this configure event.
             // commit will find the latest acked tlconfig we add
             // to this list and use its info
             let tlc_size = self.ss_tlconfigs.len();
-            if tlc_size > 0
-                && *self.ss_tlconfigs[tlc_size - 1]
-                .tlc_state == self.ss_cur_tlstate
-            {
+            if tlc_size > 0 && *self.ss_tlconfigs[tlc_size - 1].tlc_state == self.ss_cur_tlstate {
                 // If nothing has changed, clone the previous rc
                 // instead of allocating
                 self.ss_tlconfigs.push(TLConfig::new(
                     self.ss_serial,
-                    size.0, size.1, // width, height
-                    self.ss_tlconfigs[tlc_size - 1]
-                        .tlc_state.clone(),
+                    size.0,
+                    size.1, // width, height
+                    self.ss_tlconfigs[tlc_size - 1].tlc_state.clone(),
                 ));
             } else {
                 self.ss_tlconfigs.push(TLConfig::new(
                     self.ss_serial,
-                    size.0, size.1, // width, height
+                    size.0,
+                    size.1, // width, height
                     Rc::new(self.ss_cur_tlstate),
                 ));
             }
-            log!(LogLevel::debug, "xdg_surface: pushing config {:?}",
-                 self.ss_tlconfigs[self.ss_tlconfigs.len() - 1]);
+            log::debug!(
+                "xdg_surface: pushing config {:?}",
+                self.ss_tlconfigs[self.ss_tlconfigs.len() - 1]
+            );
 
             // send them to the client
             toplevel.configure(size.0 as i32, size.1 as i32, states);
@@ -550,9 +575,7 @@ impl ShellSurface {
         // Go ahead and generate a configure event.
         // If this is called by the client, we need to trigger an event
         // manually TODO?
-        self.configure(&mut atmos,
-                       &mut surf,
-                       None);
+        self.configure(&mut atmos, &mut surf, None);
     }
 
     /// Get a toplevel surface
@@ -561,13 +584,13 @@ impl ShellSurface {
     /// represents displaying one wl_surface in the desktop shell.
     /// `userdata` is a Rc ref of ourselves which should
     /// be added to toplevel.
-    fn get_toplevel(&mut self,
-                    toplevel: Main<xdg_toplevel::XdgToplevel>,
-                    userdata: Rc<RefCell<ShellSurface>>)
-    {
+    fn get_toplevel(
+        &mut self,
+        toplevel: Main<xdg_toplevel::XdgToplevel>,
+        userdata: Rc<RefCell<ShellSurface>>,
+    ) {
         // Mark our surface as being a window handled by xdg_shell
-        self.ss_surface.borrow_mut().s_role =
-            Some(Role::xdg_shell_toplevel(userdata.clone()));
+        self.ss_surface.borrow_mut().s_role = Some(Role::xdg_shell_toplevel(userdata.clone()));
 
         // Record our state
         self.ss_xs.xs_make_new_window = true;
@@ -575,7 +598,8 @@ impl ShellSurface {
         // send configuration requests to the client
         // width and height 0 means client picks a size
         toplevel.configure(
-            0, 0,
+            0,
+            0,
             Vec::new(), // TODO: specify our requirements?
         );
         self.ss_xdg_surface.configure(self.ss_serial);
@@ -584,7 +608,7 @@ impl ShellSurface {
         // Now add ourselves to the xdg_toplevel
         // TODO: implement toplevel
         self.ss_xdg_toplevel = Some(toplevel.clone());
-        toplevel.quick_assign(move |t,r,_| {
+        toplevel.quick_assign(move |t, r, _| {
             userdata.borrow_mut().handle_toplevel_request(t, r);
         });
     }
@@ -593,10 +617,11 @@ impl ShellSurface {
     ///
     /// This should load our xdg state with any changes that the client
     /// has made, and they will be applied during the next commit.
-    fn handle_toplevel_request(&mut self,
-                               _toplevel: Main<xdg_toplevel::XdgToplevel>,
-                               req: xdg_toplevel::Request)
-    {
+    fn handle_toplevel_request(
+        &mut self,
+        _toplevel: Main<xdg_toplevel::XdgToplevel>,
+        req: xdg_toplevel::Request,
+    ) {
         let xs = &mut self.ss_xs;
 
         // TODO: implement the remaining handlers
@@ -604,36 +629,37 @@ impl ShellSurface {
         match req {
             xdg_toplevel::Request::Destroy => (),
             xdg_toplevel::Request::SetParent { parent } => (),
-            xdg_toplevel::Request::SetTitle { title } =>
-                xs.xs_title = Some(title),
-            xdg_toplevel::Request::SetAppId { app_id } =>
-                xs.xs_app_id = Some(app_id),
+            xdg_toplevel::Request::SetTitle { title } => xs.xs_title = Some(title),
+            xdg_toplevel::Request::SetAppId { app_id } => xs.xs_app_id = Some(app_id),
             xdg_toplevel::Request::ShowWindowMenu { seat, serial, x, y } => (),
             xdg_toplevel::Request::Move { seat, serial } => {
                 // Moving is NOT double buffered so just grab it now
                 let id = self.ss_surface.borrow().s_id;
                 self.ss_atmos.borrow_mut().set_grabbed(Some(id));
-            },
-            xdg_toplevel::Request::Resize { seat, serial, edges } => {
+            }
+            xdg_toplevel::Request::Resize {
+                seat,
+                serial,
+                edges,
+            } => {
                 // Moving is NOT double buffered so just grab it now
                 let id = self.ss_surface.borrow().s_id;
                 self.ss_atmos.borrow_mut().set_resizing(Some(id));
                 self.ss_cur_tlstate.tl_resizing = true;
-            },
-            xdg_toplevel::Request::SetMaxSize { width ,height } =>
-                xs.xs_max_size = Some((width, height)),
-            xdg_toplevel::Request::SetMinSize { width, height } =>
-                xs.xs_min_size = Some((width, height)),
-            xdg_toplevel::Request::SetMaximized =>
-                self.ss_cur_tlstate.tl_maximized = true,
-            xdg_toplevel::Request::UnsetMaximized =>
-                self.ss_cur_tlstate.tl_maximized = false,
-            xdg_toplevel::Request::SetFullscreen { output } =>
-                self.ss_cur_tlstate.tl_fullscreen = true,
-            xdg_toplevel::Request::UnsetFullscreen =>
-                self.ss_cur_tlstate.tl_fullscreen = false,
-            xdg_toplevel::Request::SetMinimized =>
-                self.ss_cur_tlstate.tl_minimized = true,
+            }
+            xdg_toplevel::Request::SetMaxSize { width, height } => {
+                xs.xs_max_size = Some((width, height))
+            }
+            xdg_toplevel::Request::SetMinSize { width, height } => {
+                xs.xs_min_size = Some((width, height))
+            }
+            xdg_toplevel::Request::SetMaximized => self.ss_cur_tlstate.tl_maximized = true,
+            xdg_toplevel::Request::UnsetMaximized => self.ss_cur_tlstate.tl_maximized = false,
+            xdg_toplevel::Request::SetFullscreen { output } => {
+                self.ss_cur_tlstate.tl_fullscreen = true
+            }
+            xdg_toplevel::Request::UnsetFullscreen => self.ss_cur_tlstate.tl_fullscreen = false,
+            xdg_toplevel::Request::SetMinimized => self.ss_cur_tlstate.tl_minimized = true,
         }
     }
 
@@ -642,15 +668,15 @@ impl ShellSurface {
     /// A popup surface is for dropdowns and alerts, and is the consumer
     /// of the positioner code. It is assigned a position over a parent
     /// toplevel surface and may exclusively grab input for that app.
-    fn get_popup(&mut self,
-                 popup: Main<xdg_popup::XdgPopup>,
-                 parent: Option<xdg_surface::XdgSurface>,
-                 positioner: xdg_positioner::XdgPositioner,
-                 userdata: Rc<RefCell<ShellSurface>>)
-    {
+    fn get_popup(
+        &mut self,
+        popup: Main<xdg_popup::XdgPopup>,
+        parent: Option<xdg_surface::XdgSurface>,
+        positioner: xdg_positioner::XdgPositioner,
+        userdata: Rc<RefCell<ShellSurface>>,
+    ) {
         // assign the popup role
-        self.ss_surface.borrow_mut().s_role =
-            Some(Role::xdg_shell_popup(userdata.clone()));
+        self.ss_surface.borrow_mut().s_role = Some(Role::xdg_shell_popup(userdata.clone()));
 
         // tell vkcomp to generate resources for a new window
         self.ss_xs.xs_make_new_window = true;
@@ -658,13 +684,13 @@ impl ShellSurface {
         // send configuration requests to the client
         // width and height 0 means client picks a size
         // TODO: calculate the position according to the positioner rule
-        let pos = positioner.as_ref()
-            .user_data()
-            .get::<Positioner>()
-            .unwrap();
+        let pos = positioner.as_ref().user_data().get::<Positioner>().unwrap();
         let popup_loc = pos.get_loc();
         popup.configure(
-            popup_loc.0, popup_loc.1, 0, 0, // x, y, width, height
+            popup_loc.0,
+            popup_loc.1,
+            0,
+            0, // x, y, width, height
         );
         self.ss_xdg_surface.configure(self.ss_serial);
         self.ss_serial += 1;
@@ -675,7 +701,7 @@ impl ShellSurface {
             pu_positioner: positioner,
         });
 
-        popup.quick_assign(move |p,r,_| {
+        popup.quick_assign(move |p, r, _| {
             userdata.borrow_mut().handle_popup_request(p, r);
         });
     }
@@ -685,10 +711,7 @@ impl ShellSurface {
     /// This should load our xdg state with any changes that the client
     /// has made, and they will be applied during the next commit.
     /// There is relatively little compared to xdg_toplevel.
-    fn handle_popup_request(&mut self,
-                            _popup: Main<xdg_popup::XdgPopup>,
-                            req: xdg_popup::Request)
-    {
+    fn handle_popup_request(&mut self, _popup: Main<xdg_popup::XdgPopup>, req: xdg_popup::Request) {
         // TODO: implement the remaining handlers
         #[allow(unused_variables)]
         match req {
