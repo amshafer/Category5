@@ -38,7 +38,7 @@ unsafe extern "system" fn vulkan_debug_callback(
     vk::FALSE
 }
 
-/// Behold a vulkan rendering context
+/// Common bits of a vulkan renderer
 ///
 /// The fields here are sure to change, as they are pretty
 /// application specific.

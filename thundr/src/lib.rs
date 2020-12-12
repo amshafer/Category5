@@ -1,19 +1,81 @@
-// The Thundr renderer
-//
+//! # The Thundr rendering toolkit.
+//!
+//! Thundr is a Vulkan composition library for use in ui toolkits and
+//! wayland compositors. You use it to create a set of images from
+//! textures or window contents, attach those images to surfaces, and pass
+//! a list of surfaces to thundr for rendering.
+//!
+//! Thundr also supports multiple methods of drawing:
+//! * `compute` - Uses compute shaders to perform compositing.
+//! * `geometric` - This is a more "traditional" manner of drawing ui elements:
+//! surfaces are drawn as textured quads in 3D space.
+//!
+//! The compute pipeline is more optimized, and is the default. The
+//! geometric pipeline serves as a backup for situations in which the
+//! compute pipeline does not perform well or is not supported.
+//!
+//! ## Drawing API
+//!
+//! The general flow of a thundr client is as follows:
+//! * Create an Image (`create_image_from*`)
+//!   * Use a MemImage to load a texture from raw bits.
+//!   * Use a dmabuf to load a image contents from a gpu buffer.
+//! * Create a Surface (`create_surface`)
+//!   * Assign it a location and a size
+//! * Bind the image to the surface (`bind_image`)
+//! * Create a surface list (`SurfaceList::new()`)
+//!   * Push the surfaces you'd like rendered into the list from front to
+//!   back (`SurfaceList.push`)
+//! * Tell Thundr to launch the work on the gpu (`draw_frame`)
+//! * Present the rendering results on screen (`present`)
+//!
+//! ```
+//! use thundr as th;
+//!
+//! let thund: th::Thundr = Thundr::new();
+//!
+//! // First load our texture into memory
+//! let img = image::open("images/cursor.png").unwrap().to_rgba();
+//! let pixels: Vec<u8> = img.into_vec();
+//! let mimg = MemImage::new(
+//!     pixels.as_slice().as_ptr() as *mut u8,
+//!     4,  // width of a pixel
+//!     64, // width of texture
+//!     64  // height of texture
+//! );
+//!
+//! // Create an image from our MemImage
+//! let image = thund.create_image_from_bits(&mimg, None).unwrap();
+//! // Now create a 16x16 surface at position (0, 0)
+//! let mut surf = thund.create_surface(0.0, 0.0, 16.0, 16.0);
+//! // Assign our image to our surface
+//! thund.bind_image(&mut surf, image);
+//! ```
+//! ## Requirements
+//!
+//! Thundr requires a system with vulkan 1.2+ installed. The following
+//! extensions are used:
+//! * VK_KHR_surface
+//! * VK_KHR_display
+//! * VK_EXT_maintenance2
+//! * VK_KHR_debug_report
+//! * VK_KHR_descriptor_indexing
+//! * VK_KHR_external_memory
+
 // Austin Shafer - 2020
 
+mod damage;
 mod descpool;
 mod display;
-mod renderer;
-mod damage;
-mod list;
 mod image;
-mod surface;
+mod list;
 mod pipelines;
+mod renderer;
+mod surface;
 
+pub use image::Image;
 pub use list::SurfaceList;
 pub use renderer::Renderer;
-pub use image::Image;
 pub use surface::Surface;
 
 use renderer::RendererCreateInfo;
@@ -21,7 +83,7 @@ use renderer::RendererCreateInfo;
 #[macro_use]
 extern crate memoffset;
 extern crate utils;
-use crate::utils::{MemImage,Dmabuf};
+use crate::utils::{Dmabuf, MemImage};
 use pipelines::*;
 
 pub struct Thundr {
@@ -34,13 +96,12 @@ pub struct Thundr {
 
 // This is the public facing thundr api. Don't change it
 impl Thundr {
-
     // TODO: make get_available_params and add customization
     pub fn new() -> Thundr {
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
         let info = RendererCreateInfo {
-            enabled_pipelines: vec! { PipelineType::GEOMETRIC },
+            enabled_pipelines: vec![PipelineType::GEOMETRIC],
         };
         let mut rend = Renderer::new(&info);
         let pipe = Box::new(GeomPipeline::new(&mut rend));
@@ -52,55 +113,53 @@ impl Thundr {
     }
 
     pub fn get_resolution(&self) -> (u32, u32) {
-        (self.th_rend.resolution.width,
-         self.th_rend.resolution.height)
+        (
+            self.th_rend.resolution.width,
+            self.th_rend.resolution.height,
+        )
     }
 
     // create_image_from_bits
-    pub fn create_image_from_bits(&mut self,
-                                  img: &MemImage,
-                                  release_info: Option<Box<dyn Drop>>)
-                                  -> Option<Image>
-    {
-        self.th_rend.create_image_from_bits(
-            &img, release_info,
-        )
+    pub fn create_image_from_bits(
+        &mut self,
+        img: &MemImage,
+        release_info: Option<Box<dyn Drop>>,
+    ) -> Option<Image> {
+        self.th_rend.create_image_from_bits(&img, release_info)
     }
 
     // create_image_from_dmabuf
-    pub fn create_image_from_dmabuf(&mut self,
-                                    dmabuf: &Dmabuf,
-                                    release_info: Option<Box<dyn Drop>>)
-                                    -> Option<Image>
-    {
-        self.th_rend.create_image_from_dmabuf(
-            dmabuf, release_info,
-        )
+    pub fn create_image_from_dmabuf(
+        &mut self,
+        dmabuf: &Dmabuf,
+        release_info: Option<Box<dyn Drop>>,
+    ) -> Option<Image> {
+        self.th_rend.create_image_from_dmabuf(dmabuf, release_info)
     }
 
     pub fn destroy_image(&mut self, image: Image) {
         self.th_rend.destroy_image(&image);
     }
 
-    pub fn update_image_from_bits(&mut self,
-                                  image: &mut Image,
-                                  memimg: &MemImage,
-                                  release_info: Option<Box<dyn Drop>>)
-    {
-        self.th_rend.update_image_from_bits(
-            image, memimg, release_info,
-        )
+    pub fn update_image_from_bits(
+        &mut self,
+        image: &mut Image,
+        memimg: &MemImage,
+        release_info: Option<Box<dyn Drop>>,
+    ) {
+        self.th_rend
+            .update_image_from_bits(image, memimg, release_info)
     }
 
     // create_image_from_dmabuf
-    pub fn update_image_from_dmabuf(&mut self,
-                                    image: &mut Image,
-                                    dmabuf: &Dmabuf,
-                                    release_info: Option<Box<dyn Drop>>)
-    {
-        self.th_rend.update_image_from_dmabuf(
-            image, dmabuf, release_info,
-        )
+    pub fn update_image_from_dmabuf(
+        &mut self,
+        image: &mut Image,
+        dmabuf: &Dmabuf,
+        release_info: Option<Box<dyn Drop>>,
+    ) {
+        self.th_rend
+            .update_image_from_dmabuf(image, dmabuf, release_info)
     }
 
     /// Creates a new surface.
@@ -108,13 +167,7 @@ impl Thundr {
     /// A surface represents a geometric region that will be
     /// drawn. It needs to have an image attached. The same
     /// image can be bound to multiple surfaces.
-    pub fn create_surface(&mut self,
-                          x: f32,
-                          y: f32,
-                          width: f32,
-                          height: f32)
-                          -> Surface
-    {
+    pub fn create_surface(&mut self, x: f32, y: f32, width: f32, height: f32) -> Surface {
         Surface::create_surface(x, y, width, height)
     }
 

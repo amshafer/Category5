@@ -1,17 +1,34 @@
-// Pipeline trait implementations.
-//
-// Austin Shafer - 2020
-use ash::{vk,Instance};
+//!# Thundr Render Pipelines
+//!
+//!Thundr supports drawing surfaces in multiple ways which have different
+//!performance characteristics.
+//!
+//!* `CompPipeline` - a compute pipeline that performs composition and
+//!  blending in compute shaders.
+//!* `GeomPipeline` - renders surfaces using a traditional graphics
+//!  pipeline. Surfaces are drawn as textured quads.
+//!
+//!The compute pipeline sees the majority of development, and the
+//!geometry pipeline is a fallback. The geometry pipeline may perform
+//!better in certain situations, such as with software renderers.
+//!
+//!The `Pipeline` trait outlines how the main Thundr instance interacts
+//!with the pipeline code. All pipeline resources must be isolated from
+//!Thundr, but Thundr resources may be modified by the pipeline implementation.
+//!
 
-pub mod geometric;
+// Austin Shafer - 2020
+use ash::{vk, Instance};
+
 pub mod compute;
+pub mod geometric;
 
 pub use compute::CompPipeline;
 pub use geometric::GeomPipeline;
 
-use crate::renderer::{Renderer,RecordParams};
-use crate::SurfaceList;
 use crate::display::Display;
+use crate::renderer::{RecordParams, Renderer};
+use crate::SurfaceList;
 
 // The pipeline trait is essentially a mini-backend for the
 // renderer. It determines what draw calls we generate for the
@@ -30,10 +47,7 @@ pub trait Pipeline {
     /// a frame. `params` tells us which cbufs/image we are
     /// recording for. We need to generate draw calls to update
     /// changes that have happened in `surfaces`.
-    fn draw(&mut self,
-            rend: &Renderer,
-            params: &RecordParams,
-            surfaces: &SurfaceList);
+    fn draw(&mut self, rend: &Renderer, params: &RecordParams, surfaces: &SurfaceList);
 
     fn destroy(&mut self, rend: &mut Renderer);
 }
@@ -44,12 +58,12 @@ pub enum PipelineType {
 }
 
 impl PipelineType {
-    pub fn get_queue_family(&self,
-                            inst: &Instance,
-                            display: &Display,
-                            pdev: vk::PhysicalDevice)
-                            -> Option<u32>
-    {
+    pub fn get_queue_family(
+        &self,
+        inst: &Instance,
+        display: &Display,
+        pdev: vk::PhysicalDevice,
+    ) -> Option<u32> {
         match self {
             Self::COMPUTE => CompPipeline::get_queue_family(inst, display, pdev),
             Self::GEOMETRIC => None,
