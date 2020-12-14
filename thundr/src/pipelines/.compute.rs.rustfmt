@@ -86,7 +86,7 @@ impl CompPipeline {
         let write_info = [
             vk::WriteDescriptorSet::builder()
                 .dst_set(descs)
-                .dst_binding(0)
+                .dst_binding(1)
                 // descriptors can be arrays, so we need to specify an offset
                 // into that array if applicable
                 .dst_array_element(0)
@@ -156,7 +156,9 @@ impl CompPipeline {
     /// Creates descriptor sets for our compute resources.
     /// For now this just includes a swapchain image to render things
     /// to, and a storage buffer.
-    pub fn create_descriptor_layout(rend: &Renderer) -> vk::DescriptorSetLayout {
+    pub fn create_descriptor_layout(rend: &Renderer)
+                                    -> vk::DescriptorSetLayout
+    {
         let bindings = [
             // Our first descriptor will be the buffer containing
             // the pos/size of the windows
@@ -179,13 +181,10 @@ impl CompPipeline {
         let mut info = vk::DescriptorSetLayoutCreateInfo::builder()
             .bindings(&bindings);
 
-        // We need to attach some binding flags stating that we intend
-        // to use the storage image as an unsized array
-        // TODO: request update_after_bind
         let usage_info = vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT::builder()
             .binding_flags(&[
-                           vk::DescriptorBindingFlags::empty(), // the storage buffer
-                           vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT, // the storage image array
+                           vk::DescriptorBindingFlags::empty(),
+                           vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT,
             ])
             .build();
         info.p_next = &usage_info
@@ -295,19 +294,19 @@ impl Pipeline for CompPipeline {
                 vk::WriteDescriptorSet::builder()
                     .dst_set(self.cp_descs)
                     .dst_binding(0)
-                    .dst_array_element(0)
-                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                    .buffer_info(&[binfo])
-                    .build(),
-                vk::WriteDescriptorSet::builder()
-                    .dst_set(self.cp_descs)
-                    .dst_binding(1)
                     // descriptors can be arrays, so we need to specify an offset
                     // into that array if applicable
                     .dst_array_element(0)
                     .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                     .image_info(&[info])
                     .build(),
+                vk::WriteDescriptorSet::builder()
+                    .dst_set(self.cp_descs)
+                    .dst_binding(1)
+                    .dst_array_element(0)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .buffer_info(&[binfo])
+                    .build()
             ];
             rend.dev.update_descriptor_sets(
                 &write_info, // descriptor writes

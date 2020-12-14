@@ -314,6 +314,10 @@ impl Renderer {
             // for now it somehow happens to work
             vk::ExtImageDrmFormatModifierFn::name().as_ptr(),
             vk::KhrMaintenance2Fn::name().as_ptr(),
+            // The following are needed for descriptor indexing
+            vk::KhrMaintenance3Fn::name().as_ptr(),
+            vk::KhrGetPhysicalDeviceProperties2Fn::name().as_ptr(),
+            vk::ExtDescriptorIndexingFn::name().as_ptr(),
         ];
 
         let features = vk::PhysicalDeviceFeatures {
@@ -333,11 +337,19 @@ impl Renderer {
             );
         }
 
-        let dev_create_info = vk::DeviceCreateInfo::builder()
+        let mut dev_create_info = vk::DeviceCreateInfo::builder()
             .queue_create_infos(queue_infos.as_ref())
             .enabled_extension_names(&dev_extension_names)
             .enabled_features(&features)
             .build();
+
+        let indexing_info = vk::PhysicalDeviceDescriptorIndexingFeaturesEXT::builder()
+            .shader_sampled_image_array_non_uniform_indexing(true)
+            .runtime_descriptor_array(true)
+            .descriptor_binding_variable_descriptor_count(true)
+            .build();
+
+        dev_create_info.p_next = &indexing_info as *const _ as *mut std::ffi::c_void;
 
         // return a newly created device
         inst.create_device(pdev, &dev_create_info, None).unwrap()
@@ -391,7 +403,7 @@ impl Renderer {
 
         // we need to check if the surface format supports the
         // storage image type
-        let extra_usage = match surface_caps
+        let _extra_usage = match surface_caps
             .supported_usage_flags
             .contains(vk::ImageUsageFlags::STORAGE)
         {
