@@ -39,6 +39,11 @@ pub struct CompPipeline {
     cp_data: vk::Buffer,
     cp_data_mem: vk::DeviceMemory,
 
+    /// We keep a list of image views from the surface list's images
+    /// to be passed as our unsized image array in our shader. This needs
+    /// to be regenerated any time a change to the surfacelist is made
+    cp_views: Vec<vk::ImageView>,
+
     /// The compute queue
     cp_queue: vk::Queue,
     /// Queue family index for `cp_queue`
@@ -148,6 +153,7 @@ impl CompPipeline {
             cp_descs: descs,
             cp_data: storage,
             cp_data_mem: storage_mem,
+            cp_views: Vec::new(),
             cp_queue: queue,
             cp_queue_family: family,
         }
