@@ -10,7 +10,6 @@ use ash::vk;
 use ash::extensions::khr;
 use ash::extensions::ext::DebugReport;
 
-use std::ffi::{CStr};
 // A display represents a physical screen
 //
 // This is mostly the same as vulkan's concept of a display,

@@ -44,6 +44,12 @@ pub(crate) struct ImageInternal {
     i_release_info: Option<Box<dyn Drop>>,
 }
 
+impl Image {
+    pub(crate) fn get_view(&self) -> vk::ImageView {
+        self.i_internal.borrow().i_image_view
+    }
+}
+
 #[derive(Clone)]
 pub struct Image {
     pub(crate) i_internal: Rc<RefCell<ImageInternal>>,

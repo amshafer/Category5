@@ -3,7 +3,6 @@
 // Austin Shafer - 2020
 
 use super::surface::Surface;
-use super::damage::Damage;
 use std::iter::DoubleEndedIterator;
 
 pub struct SurfaceList {
@@ -42,5 +41,9 @@ impl SurfaceList {
 
     pub fn clear(&mut self) {
         self.l_vec.clear();
+    }
+
+    pub fn len(&self) -> u32 {
+        self.l_vec.len() as u32
     }
 }

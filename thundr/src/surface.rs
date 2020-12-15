@@ -55,6 +55,10 @@ impl Surface {
         self.s_internal.borrow_mut().s_image = Some(image);
     }
 
+    pub(crate) fn get_image(&self) -> Option<Image> {
+        self.s_internal.borrow().s_image.clone()
+    }
+
     pub fn get_pos(&self) -> (f32, f32) {
         let surf = self.s_internal.borrow();
 

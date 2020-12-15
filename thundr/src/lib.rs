@@ -101,10 +101,10 @@ impl Thundr {
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
         let info = RendererCreateInfo {
-            enabled_pipelines: vec![PipelineType::GEOMETRIC],
+            enabled_pipelines: vec![PipelineType::COMPUTE],
         };
         let mut rend = Renderer::new(&info);
-        let pipe = Box::new(GeomPipeline::new(&mut rend));
+        let pipe = Box::new(CompPipeline::new(&mut rend));
 
         Thundr {
             th_rend: rend,

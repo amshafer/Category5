@@ -4,8 +4,6 @@
 #![allow(dead_code, non_camel_case_types)]
 use serde::{Serialize, Deserialize};
 
-use cgmath::{Vector3,Vector2,Matrix4};
-
 use std::ffi::CString;
 use std::io::Cursor;
 use std::marker::Copy;
@@ -15,7 +13,6 @@ use ash::version::DeviceV1_0;
 use ash::{util,vk,Instance};
 
 use crate::list::SurfaceList;
-use crate::Surface;
 use crate::renderer::{Renderer,RecordParams};
 use super::Pipeline;
 use crate::display::Display;
@@ -36,13 +33,14 @@ pub struct CompPipeline {
     cp_descs: vk::DescriptorSet,
 
     /// Our buffer containing our window locations
-    cp_data: vk::Buffer,
+    cp_data: StorageData,
+    cp_data_buf: vk::Buffer,
     cp_data_mem: vk::DeviceMemory,
 
     /// We keep a list of image views from the surface list's images
     /// to be passed as our unsized image array in our shader. This needs
     /// to be regenerated any time a change to the surfacelist is made
-    cp_views: Vec<vk::ImageView>,
+    cp_image_infos: Vec<vk::DescriptorImageInfo>,
 
     /// The compute queue
     cp_queue: vk::Queue,
@@ -56,6 +54,7 @@ struct StorageData {
     // TODO: implement me
     width: u32,
     height: u32,
+    window_count: u32,
 }
 
 impl CompPipeline {
@@ -70,6 +69,7 @@ impl CompPipeline {
         let data = StorageData {
             width: rend.resolution.width,
             height: rend.resolution.height,
+            window_count: 0,
         };
         let (storage, storage_mem) = unsafe {
             rend.create_buffer(
@@ -151,9 +151,10 @@ impl CompPipeline {
             cp_shader_modules: shader_stage.module,
             cp_desc_pool: pool,
             cp_descs: descs,
-            cp_data: storage,
+            cp_data: data,
+            cp_data_buf: storage,
             cp_data_mem: storage_mem,
-            cp_views: Vec::new(),
+            cp_image_infos: Vec::new(),
             cp_queue: queue,
             cp_queue_family: family,
         }
@@ -181,6 +182,13 @@ impl CompPipeline {
                 .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 .descriptor_count(1)
                 .build(),
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(2)
+                .descriptor_type(
+                    vk::DescriptorType::SAMPLED_IMAGE)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                .descriptor_count(1)
+                .build(),
         ];
         let mut info = vk::DescriptorSetLayoutCreateInfo::builder()
             .bindings(&bindings);
@@ -191,7 +199,8 @@ impl CompPipeline {
         let usage_info = vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT::builder()
             .binding_flags(&[
                            vk::DescriptorBindingFlags::empty(), // the storage buffer
-                           vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT, // the storage image array
+                           vk::DescriptorBindingFlags::empty(), // the storage image
+                           vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT, // the image array
             ])
             .build();
         info.p_next = &usage_info
@@ -215,6 +224,10 @@ impl CompPipeline {
                 .build(),
             vk::DescriptorPoolSize::builder()
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .build(),
+            vk::DescriptorPoolSize::builder()
+                .ty(vk::DescriptorType::SAMPLED_IMAGE)
                 .descriptor_count(1)
                 .build(),
         ];
@@ -286,16 +299,33 @@ impl Pipeline for CompPipeline {
         unsafe {
             // before recording, update our descriptor for our render target
             // get the current swapchain image
+            self.cp_data.window_count = surfaces.len();
+            rend.update_memory(
+                self.cp_data_mem,
+                bincode::serialize(&self.cp_data).unwrap().as_slice());
+            let binfo = vk::DescriptorBufferInfo::builder()
+                .buffer(self.cp_data_buf)
+                .offset(0)
+                .range(mem::size_of::<StorageData>() as u64)
+                .build();
             let info = vk::DescriptorImageInfo::builder()
                 .sampler(rend.image_sampler)
                 .image_view(rend.views[rend.current_image as usize])
                 .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .build();
-            let binfo = vk::DescriptorBufferInfo::builder()
-                .buffer(self.cp_data)
-                .offset(0)
-                .range(mem::size_of::<StorageData>() as u64)
-                .build();
+
+            // Construct a list of image views from the submitted surface list
+            // this will be our unsized texture array that the composite shader will reference
+            self.cp_image_infos.clear();
+            for s in surfaces.iter() {
+                if let Some(image) = s.get_image() {
+                    self.cp_image_infos.push(vk::DescriptorImageInfo::builder()
+                                             .sampler(rend.image_sampler)
+                                             .image_view(image.get_view())
+                                             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                                             .build());
+                }
+            }
 
             let write_info = [
                 vk::WriteDescriptorSet::builder()
@@ -313,6 +343,15 @@ impl Pipeline for CompPipeline {
                     .dst_array_element(0)
                     .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                     .image_info(&[info])
+                    .build(),
+                vk::WriteDescriptorSet::builder()
+                    .dst_set(self.cp_descs)
+                    .dst_binding(2)
+                    // descriptors can be arrays, so we need to specify an offset
+                    // into that array if applicable
+                    .dst_array_element(0)
+                    .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                    .image_info(self.cp_image_infos.as_slice())
                     .build(),
             ];
             rend.dev.update_descriptor_sets(
@@ -367,7 +406,7 @@ impl Pipeline for CompPipeline {
     fn destroy(&mut self, rend: &mut Renderer) {
         unsafe {
             rend.free_memory(self.cp_data_mem);
-            rend.dev.destroy_buffer(self.cp_data, None);
+            rend.dev.destroy_buffer(self.cp_data_buf, None);
 
             rend.dev.destroy_descriptor_set_layout(
                 self.cp_descriptor_layout, None

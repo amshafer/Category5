@@ -316,7 +316,6 @@ impl Renderer {
             vk::KhrMaintenance2Fn::name().as_ptr(),
             // The following are needed for descriptor indexing
             vk::KhrMaintenance3Fn::name().as_ptr(),
-            vk::KhrGetPhysicalDeviceProperties2Fn::name().as_ptr(),
             vk::ExtDescriptorIndexingFn::name().as_ptr(),
         ];
 
@@ -364,7 +363,7 @@ impl Renderer {
     /// it is created for.
     /// The application resolution is set by this method.
     unsafe fn create_swapchain(
-        inst: &Instance,
+        _inst: &Instance,
         swapchain_loader: &khr::Swapchain,
         surface_loader: &khr::Surface,
         pdev: vk::PhysicalDevice,
