@@ -9,11 +9,10 @@
 extern crate nix;
 
 use super::image::Image;
-use super::damage::Damage;
 use utils::region::Rect;
 
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 /// A surface represents a geometric region that will be
 /// drawn. It needs to have an image attached. The same
@@ -25,27 +24,20 @@ pub(crate) struct SurfaceInternal {
     /// The size of the surface
     /// The currently attached image
     pub(crate) s_image: Option<Image>,
-    pub(crate) s_damage: Option<Damage>
 }
 
-#[derive(PartialEq,Clone)]
+#[derive(PartialEq, Clone)]
 pub struct Surface {
     pub(crate) s_internal: Rc<RefCell<SurfaceInternal>>,
 }
 
 impl Surface {
-    pub(crate) fn create_surface(x: f32,
-                                 y: f32,
-                                 width: f32,
-                                 height: f32)
-                                 -> Surface
-    {
+    pub(crate) fn create_surface(x: f32, y: f32, width: f32, height: f32) -> Surface {
         Surface {
             s_internal: Rc::new(RefCell::new(SurfaceInternal {
                 s_rect: Rect::new(x, y, width, height),
                 s_image: None,
-                s_damage: None,
-            }))
+            })),
         }
     }
 

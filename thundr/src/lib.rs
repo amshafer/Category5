@@ -73,6 +73,7 @@ mod pipelines;
 mod renderer;
 mod surface;
 
+pub use damage::Damage;
 pub use image::Image;
 pub use list::SurfaceList;
 pub use renderer::Renderer;

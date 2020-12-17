@@ -21,6 +21,8 @@ use nix::errno::Errno;
 use nix::unistd::dup;
 use nix::Error;
 
+use crate::Damage;
+
 /// A image buffer containing contents to be composited.
 ///
 /// An Image will be created from a data source and attached to
@@ -42,6 +44,7 @@ pub(crate) struct ImageInternal {
     /// Stuff to release when we are no longer using
     /// this gpu buffer (release the wl_buffer)
     i_release_info: Option<Box<dyn Drop>>,
+    pub i_damage: Option<Damage>,
 }
 
 impl Image {
@@ -428,6 +431,7 @@ impl Renderer {
                 i_sampler_descriptors: descriptors,
                 i_priv: private,
                 i_release_info: release,
+                i_damage: None,
             })),
         });
     }

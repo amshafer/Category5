@@ -4,6 +4,7 @@
 #![allow(dead_code, non_camel_case_types)]
 use serde::{Deserialize, Serialize};
 
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::io::Cursor;
 use std::mem;
@@ -17,6 +18,9 @@ use crate::list::SurfaceList;
 use crate::renderer::{RecordParams, Renderer};
 
 use utils::region::Rect;
+
+/// This is the width of a work group. This must match our shaders
+const TILESIZE: u32 = 16;
 
 struct Pass {
     /// A compute pipeline, which we will use to launch our shader
@@ -92,12 +96,37 @@ pub struct CompPipeline {
     cp_queue_family: u32,
 }
 
+/// Tile identifier
+///
+/// A tile is a number referring to a tile in our display.
+/// The tile location is calculated by `get_base`.
+#[derive(Debug, Eq, PartialEq, Hash, Copy, Clone)]
+struct Tile(u32);
+
+impl Tile {
+    /// Convert screen coordinates into a Tile id
+    /// `res_width` - the resolution stride (i.e. the row length)
+    fn from_coord(x: u32, y: u32, res_width: u32) -> Tile {
+        Tile((y / TILESIZE) * res_width + (x / TILESIZE))
+    }
+
+    /// Convert a tile number to an offset into a display
+    /// `rw` - resolution width
+    fn get_base(&self, rw: u32) -> (u32, u32) {
+        let x = self.0 % rw; // get the
+        let y = self.0 / rw; // get the number of rows into
+        (x * TILESIZE, y * TILESIZE)
+    }
+}
+
 /// Our representation of window positions in the storage buffer
-#[derive(Clone, Serialize, Deserialize)]
 struct TileList {
+    /// Resolution width
     width: u32,
+    /// Resolution height
     height: u32,
-    tiles: Vec<u32>,
+    /// A list of tile ids that needs to be updated next frame
+    tiles: HashMap<Tile, bool>,
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
@@ -436,7 +465,7 @@ impl CompPipeline {
         let data = TileList {
             width: rend.resolution.width,
             height: rend.resolution.height,
-            tiles: Vec::with_capacity(tile_count),
+            tiles: HashMap::with_capacity(tile_count),
         };
         let (storage, storage_mem) = unsafe {
             rend.create_buffer_with_size(
@@ -578,6 +607,77 @@ impl CompPipeline {
             ..Default::default()
         }
     }
+
+    /// Clamps a value to the 4x4 tilegrid positions. i.e. `62 -> 60`. This is
+    /// used to get the address of a tile from an arbitrary point in the display.
+    fn clamp_to_grid(x: u32, tilesize: u32) -> u32 {
+        let r = x / tilesize * tilesize;
+        if r > 60 {
+            60
+        } else {
+            r
+        }
+    }
+
+    /// Generate a list of tiles that need to be redrawn.
+    ///
+    /// Our display is grouped into 4x4 tiles of pixels, each
+    /// of which is updated by one workgroup. This method take a list
+    /// of damage regions, and generates a list of the tiles that need to be
+    /// updated. This tilelist is passed to our drawing function.
+    fn gen_tile_list(&mut self, rend: &Renderer, surfaces: &SurfaceList) {
+        for surf_rc in surfaces.iter() {
+            // If the surface does not have damage attached, then don't generate tiles
+            let surf = surf_rc.s_internal.borrow();
+            let image = match surf.s_image.as_ref() {
+                Some(i) => i.i_internal.borrow(),
+                None => continue,
+            };
+
+            let d = match image.i_damage.as_ref() {
+                Some(d) => &d.d_region,
+                None => continue,
+            };
+            let w = &surf.s_rect;
+
+            // get the true offset, since the damage is relative to the window
+            //
+            // Rect stores base and size, so add the size to the base to get the extent
+            let d_end = (d.r_pos.0 + d.r_size.0, d.r_pos.1 + d.r_size.1);
+            // Now offset the damage values from the window base
+            let mut start = (
+                (w.r_pos.0 + d.r_pos.0) as u32,
+                (w.r_pos.1 + d.r_pos.1) as u32,
+            );
+            // do the same for the extent
+            let mut end = ((w.r_pos.0 + d_end.0) as u32, (w.r_pos.1 + d_end.1) as u32);
+
+            // We need to clamp the values to our TILESIZExTILESIZE grid
+            start = (
+                Self::clamp_to_grid(start.0, TILESIZE),
+                Self::clamp_to_grid(start.1, TILESIZE),
+            );
+            end = (
+                Self::clamp_to_grid(end.0, TILESIZE),
+                Self::clamp_to_grid(end.1, TILESIZE),
+            );
+
+            // Now we can go through the tiles this region overlaps with
+            // and add them to the tile list
+            while start.1 <= end.1 {
+                let mut offset = start.0;
+                while offset <= end.0 {
+                    self.cp_tiles.tiles.insert(
+                        Tile::from_coord(offset, start.1, rend.resolution.width),
+                        true,
+                    );
+                    offset += TILESIZE;
+                }
+
+                start.1 += TILESIZE;
+            }
+        }
+    }
 }
 
 impl Pipeline for CompPipeline {
@@ -590,6 +690,8 @@ impl Pipeline for CompPipeline {
             // before recording, update our descriptor for our render target
             // get the current swapchain image
             // TODO: fill in window list
+            self.gen_tile_list(rend, surfaces);
+            let tile_vec: Vec<_> = self.cp_tiles.tiles.keys().map(|k| *k).collect();
 
             // Shader expects struct WindowList { int width; int height; Window windows[] }
             // so we need to write the length first
@@ -603,7 +705,7 @@ impl Pipeline for CompPipeline {
                 // We need to offset by the size of two ints, which is
                 // the first field in the struct expected by the shader
                 mem::size_of::<u32>() as isize * 2,
-                self.cp_tiles.tiles.as_slice(),
+                tile_vec.as_slice(),
             );
 
             // Shader expects struct WindowList { int count; Window windows[] }
