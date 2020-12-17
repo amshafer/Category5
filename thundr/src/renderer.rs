@@ -1415,7 +1415,12 @@ impl Renderer {
     /// This is a helper method for mapping and updating the value stored
     /// in device memory Memory needs to be host visible and coherent.
     /// This does not flush after writing.
-    pub(crate) unsafe fn update_memory<T: Copy>(&self, memory: vk::DeviceMemory, data: &[T]) {
+    pub(crate) unsafe fn update_memory<T: Copy>(
+        &self,
+        memory: vk::DeviceMemory,
+        offset: isize,
+        data: &[T],
+    ) {
         // Now we copy our data into the buffer
         let data_size = std::mem::size_of_val(data) as u64;
         let ptr = self
@@ -1426,7 +1431,8 @@ impl Renderer {
                 data_size,
                 vk::MemoryMapFlags::empty(),
             )
-            .unwrap();
+            .unwrap()
+            .offset(offset);
 
         // rust doesn't have a raw memcpy, so we need to transform the void
         // ptr to a slice. This is unsafe as the length needs to be correct
@@ -1453,7 +1459,7 @@ impl Renderer {
         let size = std::mem::size_of_val(data) as u64;
         let (buffer, memory) = self.create_buffer_with_size(usage, mode, flags, size);
 
-        self.update_memory(memory, data);
+        self.update_memory(memory, 0, data);
 
         // Until now the buffer has not had any memory assigned
         self.dev.bind_buffer_memory(buffer, memory, 0).unwrap();
