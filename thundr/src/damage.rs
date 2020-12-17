@@ -9,8 +9,6 @@ pub struct Damage {
 
 impl Damage {
     pub fn new() -> Self {
-        Self {
-            d_damaged: true,
-        }
+        Self { d_damaged: true }
     }
 }

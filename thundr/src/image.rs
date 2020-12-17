@@ -495,7 +495,7 @@ impl Renderer {
                     image.i_image_mem = img_mem;
                 } else {
                     // copy the data into the staging buffer
-                    self.update_memory(mp.transfer_mem, memimg.as_slice());
+                    self.update_memory(mp.transfer_mem, 0, memimg.as_slice());
                     // copy the staging buffer into the image
                     self.update_image_contents_from_buf(
                         mp.transfer_buf,

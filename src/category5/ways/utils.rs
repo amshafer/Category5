@@ -5,7 +5,7 @@ pub extern crate wayland_server as ws;
 use ws::{Client, Filter};
 
 use crate::category5::atmosphere::Atmosphere;
-use utils::{log, timing::get_current_millis, ClientId};
+use utils::{log, ClientId};
 
 use std::cell::RefCell;
 use std::rc::Rc;

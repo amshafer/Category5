@@ -12,7 +12,7 @@ it may be better to bump it up on nvidia??
 */
 layout (local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
-layout(binding = 0, rg32ui) uimageBuffer visibility_buffer;
+layout(binding = 0, rg32ui) uniform uimageBuffer visibility_buffer;
 
 /* the position/size/damage of our windows */
 layout(binding = 1) buffer tiles

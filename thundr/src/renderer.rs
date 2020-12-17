@@ -1421,18 +1421,21 @@ impl Renderer {
         offset: isize,
         data: &[T],
     ) {
+        if data.len() == 0 {
+            return;
+        }
+
         // Now we copy our data into the buffer
         let data_size = std::mem::size_of_val(data) as u64;
         let ptr = self
             .dev
             .map_memory(
                 memory,
-                0, // offset
+                offset as u64, // offset
                 data_size,
                 vk::MemoryMapFlags::empty(),
             )
-            .unwrap()
-            .offset(offset);
+            .unwrap();
 
         // rust doesn't have a raw memcpy, so we need to transform the void
         // ptr to a slice. This is unsafe as the length needs to be correct
