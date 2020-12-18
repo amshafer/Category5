@@ -129,12 +129,17 @@ struct TileList {
     tiles: HashMap<Tile, bool>,
 }
 
+/// This must match the definition of the Window struct in the
+/// visibility shader.
+#[repr(C)]
 #[derive(Copy, Clone, Serialize, Deserialize)]
 struct Window {
-    w_dims: Rect<f32>,
-    /// The opaque region. If a region is not attached, this will be
-    /// all -1's. The shader will respect this.
-    w_opaque: Rect<f32>,
+    /// The complete dimensions of the window.
+    w_dims: Rect<i32>,
+    /// Opaque region that tells the shader that we do not need to blend
+    w_opaque: Rect<i32>,
+    /// Should the shader use w_opaque while processing
+    w_has_opaque: bool,
 }
 
 impl CompPipeline {

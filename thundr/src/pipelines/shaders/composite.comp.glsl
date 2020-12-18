@@ -10,7 +10,12 @@
    will be handled by on workgroup. AMD recommends a wg size of 256, but
    it may be better to bump it up on nvidia??
  */
-layout (local_size_x = 16, local_size_y = 16, local_size_z = 1 ) in;
+
+/* The width of a square tile of pixels in the screen */
+#define TILESIZE 16
+/* The number of windows to blend */
+#define BLEND_COUNT 2
+layout (local_size_x = TILESIZE, local_size_y = TILESIZE, local_size_z = 1) in;
 
 /* our render target: the swapchain frame to render into */
 layout(binding = 0, rgba32f) uniform image2D frame;
@@ -22,18 +27,48 @@ layout(binding = 1) buffer tiles
 	int active_tiles[];
 };
 
-layout(binding = 2, rg32ui) uniform uimageBuffer visibility_buffer;
+layout(binding = 2, rg32i) uniform iimageBuffer visibility_buffer;
 
 /* The array of textures that are the window contents */
 layout(binding = 3) uniform sampler2D images[];
 
 void main() {
+	/*
+	  - Get the tile for this wg from the list we initialized.
+	  This tells us the base address that we are working on.
+	*/
+	int tile = active_tiles[gl_WorkGroupID.y * (width/TILESIZE) + gl_WorkGroupID.x];
+
+	/*
+	  - Mod the tile address by our resolution's width to get the
+	  depth into a row of the framebuffer.
+	  - Dividing by the width gives use the number of rows into the
+	  image.
+	  - Multiply them both by the tilesize to take us from the tile-grid
+	  coordinate space to the pixel coordinate space
+	*/
+	ivec2 tile_base = ivec2(mod(tile, float(width)) * TILESIZE, (tile / width) * TILESIZE);
+	/* Now index into the tile based on this invocation */
+	ivec2 uv = ivec2(tile_base.x + gl_LocalInvocationID.x,
+			tile_base.y + gl_LocalInvocationID.y);
+
 	/* if this invocation extends past the resolution, then do nothing */
-	if(gl_GlobalInvocationID.x >= width || gl_GlobalInvocationID.y >= height)
+	if(uv.x >= width || uv.y >= height)
 		return;
 
-	/* TODO */
-	ivec2 uv = ivec2(gl_GlobalInvocationID.xy);
+	int target_windows = imageLoad(visibility_buffer, uv);
+	vec3 result = vec3(0, 0, 0);
+	for(int i = 0; i < BLEND_COUNT; i++) {
+		if (target_windows[i] == -1)
+			break;
 
-	imageStore(frame, uv, vec4(1, 1, 1, 1));
+		/*
+		  For each window in the target_windows list
+		  blend it into the result.
+		*/
+		vec4 sample = imageLoad(images[target_windows[i]], uv);
+		result = sample.rgb * sample.a + result * (1.0 - sample.a);
+	}
+
+	imageStore(frame, uv, vec4(result, 1.0));
 }
