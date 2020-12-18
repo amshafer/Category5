@@ -83,7 +83,8 @@ pub struct CompPipeline {
     cp_vis_store_buf: vk::Buffer,
     cp_vis_uniform_buf: vk::Buffer,
     cp_vis_mem: vk::DeviceMemory,
-    cp_vis_view: vk::BufferView,
+    cp_vis_store_view: vk::BufferView,
+    cp_vis_uni_view: vk::BufferView,
 
     /// We keep a list of image views from the surface list's images
     /// to be passed as our unsized image array in our shader. This needs
@@ -250,18 +251,23 @@ impl CompPipeline {
     fn vis_write_descs(
         &self,
         rend: &Renderer,
-        vis_info: &[vk::DescriptorBufferInfo],
         tile_info: &[vk::DescriptorBufferInfo],
         window_info: &[vk::DescriptorBufferInfo],
     ) {
+        let vis_info = vk::DescriptorBufferInfo::builder()
+            .buffer(self.cp_vis_store_buf)
+            .offset(0)
+            .range(vk::WHOLE_SIZE)
+            .build();
+
         let write_info = [
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.cp_visibility.p_descs)
                 .dst_binding(0)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_TEXEL_BUFFER)
-                .buffer_info(vis_info)
-                .texel_buffer_view(&[self.cp_vis_view])
+                .buffer_info(&[vis_info])
+                .texel_buffer_view(&[self.cp_vis_store_view])
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.cp_visibility.p_descs)
@@ -407,12 +413,13 @@ impl CompPipeline {
         unsafe { rend.dev.create_descriptor_pool(&info, None).unwrap() }
     }
 
-    fn comp_write_descs(
-        &self,
-        rend: &Renderer,
-        vis_info: &[vk::DescriptorBufferInfo],
-        tile_info: &[vk::DescriptorBufferInfo],
-    ) {
+    fn comp_write_descs(&self, rend: &Renderer, tile_info: &[vk::DescriptorBufferInfo]) {
+        let vis_info = vk::DescriptorBufferInfo::builder()
+            .buffer(self.cp_vis_uniform_buf)
+            .offset(0)
+            .range(vk::WHOLE_SIZE)
+            .build();
+
         // Our swapchain image we want to write to
         let fb_info = vk::DescriptorImageInfo::builder()
             .sampler(rend.image_sampler)
@@ -440,8 +447,8 @@ impl CompPipeline {
                 .dst_binding(2)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::UNIFORM_TEXEL_BUFFER)
-                .buffer_info(vis_info)
-                .texel_buffer_view(&[self.cp_vis_view])
+                .buffer_info(&[vis_info])
+                .texel_buffer_view(&[self.cp_vis_uni_view])
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.cp_composite.p_descs)
@@ -501,7 +508,7 @@ impl CompPipeline {
             )
         };
         // Storage Texel buffers require that we have a buffer view
-        let vis_view = unsafe {
+        let vis_store_view = unsafe {
             let info = vk::BufferViewCreateInfo::builder()
                 .buffer(vis_buf)
                 .format(vk::Format::R16G16_SINT)
@@ -519,6 +526,15 @@ impl CompPipeline {
                 .build();
 
             rend.dev.create_buffer(&info, None).unwrap()
+        };
+        let vis_uni_view = unsafe {
+            let info = vk::BufferViewCreateInfo::builder()
+                .buffer(vis_uniform)
+                .format(vk::Format::R16G16_SINT)
+                .offset(0)
+                .range(vk::WHOLE_SIZE)
+                .build();
+            rend.dev.create_buffer_view(&info, None).unwrap()
         };
         // bind our memory to our buffer representations
         unsafe {
@@ -556,7 +572,8 @@ impl CompPipeline {
             cp_vis_uniform_buf: vis_uniform,
             cp_vis_store_buf: vis_buf,
             cp_vis_mem: vis_mem,
-            cp_vis_view: vis_view,
+            cp_vis_store_view: vis_store_view,
+            cp_vis_uni_view: vis_uni_view,
             cp_image_infos: Vec::new(),
             cp_queue: queue,
             cp_queue_family: family,
@@ -732,11 +749,6 @@ impl Pipeline for CompPipeline {
                 .offset(0)
                 .range(vk::WHOLE_SIZE)
                 .build();
-            let vis_write = vk::DescriptorBufferInfo::builder()
-                .buffer(self.cp_vis_store_buf)
-                .offset(0)
-                .range(vk::WHOLE_SIZE)
-                .build();
 
             // Construct a list of image views from the submitted surface list
             // this will be our unsized texture array that the composite shader will reference
@@ -753,8 +765,8 @@ impl Pipeline for CompPipeline {
                 }
             }
 
-            self.vis_write_descs(rend, &[vis_write], &[tiles_write], &[windows_write]);
-            self.comp_write_descs(rend, &[vis_write], &[tiles_write]);
+            self.vis_write_descs(rend, &[tiles_write], &[windows_write]);
+            self.comp_write_descs(rend, &[tiles_write]);
 
             // ------------------------------------------- RECORD
             rend.cbuf_begin_recording(params.cbuf, vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
@@ -846,7 +858,8 @@ impl Pipeline for CompPipeline {
 
             rend.dev.destroy_buffer(self.cp_vis_store_buf, None);
             rend.dev.destroy_buffer(self.cp_vis_uniform_buf, None);
-            rend.dev.destroy_buffer_view(self.cp_vis_view, None);
+            rend.dev.destroy_buffer_view(self.cp_vis_store_view, None);
+            rend.dev.destroy_buffer_view(self.cp_vis_uni_view, None);
             rend.free_memory(self.cp_vis_mem);
 
             self.cp_visibility.destroy(rend);

@@ -1,5 +1,6 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
+#extension GL_EXT_nonuniform_qualifier : enable
 
 /* Compute implementation of a compositor */
 
@@ -56,7 +57,7 @@ void main() {
 	if(uv.x >= width || uv.y >= height)
 		return;
 
-	int target_windows = imageLoad(visibility_buffer, uv);
+	ivec2 target_windows = imageLoad(visibility_buffer, uv.y * width + uv.x).xy;
 	vec3 result = vec3(0, 0, 0);
 	for(int i = 0; i < BLEND_COUNT; i++) {
 		if (target_windows[i] == -1)
@@ -66,8 +67,8 @@ void main() {
 		  For each window in the target_windows list
 		  blend it into the result.
 		*/
-		vec4 sample = imageLoad(images[target_windows[i]], uv);
-		result = sample.rgb * sample.a + result * (1.0 - sample.a);
+		vec4 tex = texture(images[target_windows[i]], uv);
+		result = tex.rgb * tex.a + result * (1.0 - tex.a);
 	}
 
 	imageStore(frame, uv, vec4(result, 1.0));
