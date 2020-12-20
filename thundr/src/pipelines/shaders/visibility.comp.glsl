@@ -109,5 +109,5 @@ void main() {
 	}
 
 	/* Write our window ids to the visibility buffer */
-	imageStore(visibility_buffer, uv.y * width + uv.x, ivec4(result[0], result[1], 0, 0));
+	imageStore(visibility_buffer, uv.y * width + uv.x, ivec4(1, 1, 0, 0));
 }

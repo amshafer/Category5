@@ -7,6 +7,7 @@
 // Austin Shafer - 2020
 #![allow(dead_code)]
 extern crate nix;
+use crate::Damage;
 
 use super::image::Image;
 use utils::region::Rect;
@@ -71,5 +72,53 @@ impl Surface {
         let mut surf = self.s_internal.borrow_mut();
         surf.s_rect.r_size.0 = w;
         surf.s_rect.r_size.1 = h;
+    }
+
+    /// adjusts from image-coords to surface-coords.
+    pub fn get_opaque(&self) -> Option<Rect<i32>> {
+        let surf = self.s_internal.borrow();
+        if let Some(image_rc) = surf.s_image.as_ref() {
+            let image = image_rc.i_internal.borrow();
+            if let Some(opaque) = image.i_opaque.as_ref() {
+                // We need to scale from the image size to the
+                // size of this particular surface
+                let scale = (
+                    image.i_image_resolution.width as f32 / surf.s_rect.r_size.0,
+                    image.i_image_resolution.height as f32 / surf.s_rect.r_size.1,
+                );
+
+                return Some(Rect::new(
+                    (opaque.r_pos.0 as f32 / scale.0) as i32,
+                    (opaque.r_pos.1 as f32 / scale.1) as i32,
+                    (opaque.r_size.0 as f32 / scale.0) as i32,
+                    (opaque.r_size.1 as f32 / scale.1) as i32,
+                ));
+            }
+        }
+        return None;
+    }
+
+    /// adjusts damage from image-coords to surface-coords.
+    pub fn get_damage(&self) -> Option<Damage> {
+        let surf = self.s_internal.borrow();
+        if let Some(image_rc) = surf.s_image.as_ref() {
+            let image = image_rc.i_internal.borrow();
+            if let Some(damage) = image.i_damage.as_ref() {
+                // We need to scale the damage from the image size to the
+                // size of this particular surface
+                let scale = (
+                    image.i_image_resolution.width as f32 / surf.s_rect.r_size.0,
+                    image.i_image_resolution.height as f32 / surf.s_rect.r_size.1,
+                );
+
+                return Some(Damage::new(Rect::new(
+                    (damage.d_region.r_pos.0 as f32 / scale.0) as i32,
+                    (damage.d_region.r_pos.1 as f32 / scale.1) as i32,
+                    (damage.d_region.r_size.0 as f32 / scale.0) as i32,
+                    (damage.d_region.r_size.1 as f32 / scale.1) as i32,
+                )));
+            }
+        }
+        return None;
     }
 }

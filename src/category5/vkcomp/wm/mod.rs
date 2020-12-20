@@ -138,7 +138,8 @@ impl WindowManager {
         let pixels: Vec<u8> = img.into_vec();
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
 
-        let image = rend.create_image_from_bits(&mimg, None).unwrap();
+        let mut image = rend.create_image_from_bits(&mimg, None).unwrap();
+        image.damage(0, 0, 64, 64);
         let mut surf = rend.create_surface(0.0, 0.0, 16.0, 16.0);
         rend.bind_image(&mut surf, image);
 
@@ -181,7 +182,8 @@ impl WindowManager {
             tex_height as usize,
         );
 
-        let image = self.wm_thundr.create_image_from_bits(&mimg, None).unwrap();
+        let mut image = self.wm_thundr.create_image_from_bits(&mimg, None).unwrap();
+        image.damage(0, 0, tex_width as i32, tex_height as i32);
         let res = self.wm_thundr.get_resolution();
         let mut surf = self
             .wm_thundr
