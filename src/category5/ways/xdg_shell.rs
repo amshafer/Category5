@@ -354,6 +354,9 @@ pub struct Popup {
     pu_pop: Main<xdg_popup::XdgPopup>,
     pu_parent: Option<xdg_surface::XdgSurface>,
     pu_positioner: xdg_positioner::XdgPositioner,
+    /// A list of reposition requests. Spec states that if multiple
+    /// are sent only the last one needs to be used.
+    pu_reposition: Option<xdg_positioner::XdgPositioner>,
 }
 
 /// A shell surface
@@ -418,9 +421,12 @@ impl ShellSurface {
             self.ss_xs.xs_moving = false;
         }
 
-        // find the toplevel state for the last config event acked
-        // ack the toplevel configuration
-        if let Some((i, tlc)) = self
+        if let Some(pop) = self.ss_xdg_popup.as_ref() {
+            // If we are a popup, then regenerate our position/size
+            pop.reposition_popup();
+        } else if let Some((i, tlc)) = self
+            // find the toplevel state for the last config event acked
+            // ack the toplevel configuration
             .ss_tlconfigs
             .iter()
             .enumerate()
@@ -606,7 +612,6 @@ impl ShellSurface {
         self.ss_serial += 1;
 
         // Now add ourselves to the xdg_toplevel
-        // TODO: implement toplevel
         self.ss_xdg_toplevel = Some(toplevel.clone());
         toplevel.quick_assign(move |t, r, _| {
             userdata.borrow_mut().handle_toplevel_request(t, r);
@@ -624,7 +629,6 @@ impl ShellSurface {
     ) {
         let xs = &mut self.ss_xs;
 
-        // TODO: implement the remaining handlers
         #[allow(unused_variables)]
         match req {
             xdg_toplevel::Request::Destroy => (),
@@ -663,6 +667,29 @@ impl ShellSurface {
         }
     }
 
+    /// Calculate the position for this popup, and generate configure
+    /// events broadcasting it.
+    /// This will use the repositioned value if it was set.
+    fn reposition_popup(&self) {
+        let pos = self.ss_xdg_popup.as_ref().unwrap();
+
+        if let Some(repo) = pos.pu_reposition.take() {
+            pos.pu_pos = repo;
+        }
+
+        // send configuration requests to the client
+        // width and height 0 means client picks a size
+        let popup_loc = pos.get_loc();
+        popup.configure(
+            popup_loc.0,
+            popup_loc.1,
+            0,
+            0, // x, y, width, height
+        );
+        self.ss_xdg_surface.configure(self.ss_serial);
+        self.ss_serial += 1;
+    }
+
     /// Register a new popup surface.
     ///
     /// A popup surface is for dropdowns and alerts, and is the consumer
@@ -681,25 +708,12 @@ impl ShellSurface {
         // tell vkcomp to generate resources for a new window
         self.ss_xs.xs_make_new_window = true;
 
-        // send configuration requests to the client
-        // width and height 0 means client picks a size
-        // TODO: calculate the position according to the positioner rule
-        let pos = positioner.as_ref().user_data().get::<Positioner>().unwrap();
-        let popup_loc = pos.get_loc();
-        popup.configure(
-            popup_loc.0,
-            popup_loc.1,
-            0,
-            0, // x, y, width, height
-        );
-        self.ss_xdg_surface.configure(self.ss_serial);
-        self.ss_serial += 1;
-
         self.ss_xdg_popup = Some(Popup {
             pu_pop: popup.clone(),
             pu_parent: parent,
             pu_positioner: positioner,
         });
+        self.reposition_popup();
 
         popup.quick_assign(move |p, r, _| {
             userdata.borrow_mut().handle_popup_request(p, r);
@@ -715,9 +729,18 @@ impl ShellSurface {
         // TODO: implement the remaining handlers
         #[allow(unused_variables)]
         match req {
-            xdg_popup::Request::Destroy => (),
-            xdg_popup::Request::Grab { seat, serial } => (),
-            xdg_popup::Request::Reposition { positioner, token } => (),
+            xdg_popup::Request::Destroy => {
+                log::debug!("Popup destroyed. Dismissing it");
+                self.ss_xdg_popup.unwrap().pu_pop.popup_done();
+            }
+            // TODO: implement grab
+            xdg_popup::Request::Grab { seat, serial } => {
+                log::error!("Grabbing a popup is not supported");
+                self.ss_xdg_popup.unwrap().pu_pop.popup_done();
+            }
+            xdg_popup::Request::Reposition { positioner, token } => {
+                self.ss_xdg_popup.pu_reposition = Some(positioner)
+            }
         }
     }
 }
