@@ -81,11 +81,9 @@ pub struct CompPipeline {
     /// to more efficiently load/store the components. Each color channel will be
     /// filled with a window id, if no window is present then -1 is used. All ids
     /// listed in the color channels will be blended.
-    cp_vis_store_buf: vk::Buffer,
-    cp_vis_uniform_buf: vk::Buffer,
+    cp_vis_buf: vk::Buffer,
     cp_vis_mem: vk::DeviceMemory,
-    cp_vis_store_view: vk::BufferView,
-    cp_vis_uni_view: vk::BufferView,
+    cp_vis_view: vk::BufferView,
 
     /// We keep a list of image views from the surface list's images
     /// to be passed as our unsized image array in our shader. This needs
@@ -256,7 +254,7 @@ impl CompPipeline {
         window_info: &[vk::DescriptorBufferInfo],
     ) {
         let vis_info = vk::DescriptorBufferInfo::builder()
-            .buffer(self.cp_vis_store_buf)
+            .buffer(self.cp_vis_buf)
             .offset(0)
             .range(vk::WHOLE_SIZE)
             .build();
@@ -268,7 +266,7 @@ impl CompPipeline {
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_TEXEL_BUFFER)
                 .buffer_info(&[vis_info])
-                .texel_buffer_view(&[self.cp_vis_store_view])
+                .texel_buffer_view(&[self.cp_vis_view])
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.cp_visibility.p_descs)
@@ -416,7 +414,7 @@ impl CompPipeline {
 
     fn comp_write_descs(&self, rend: &Renderer, tile_info: &[vk::DescriptorBufferInfo]) {
         let vis_info = vk::DescriptorBufferInfo::builder()
-            .buffer(self.cp_vis_uniform_buf)
+            .buffer(self.cp_vis_buf)
             .offset(0)
             .range(vk::WHOLE_SIZE)
             .build();
@@ -449,7 +447,7 @@ impl CompPipeline {
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::UNIFORM_TEXEL_BUFFER)
                 .buffer_info(&[vis_info])
-                .texel_buffer_view(&[self.cp_vis_uni_view])
+                .texel_buffer_view(&[self.cp_vis_view])
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.cp_composite.p_descs)
@@ -511,29 +509,9 @@ impl CompPipeline {
                 vis_size,
             )
         };
-        // Storage Texel buffers require that we have a buffer view
-        let vis_store_view = unsafe {
+        let vis_view = unsafe {
             let info = vk::BufferViewCreateInfo::builder()
                 .buffer(vis_buf)
-                .format(vk::Format::R16G16_SINT)
-                .offset(0)
-                .range(vk::WHOLE_SIZE)
-                .build();
-            rend.dev.create_buffer_view(&info, None).unwrap()
-        };
-        // We also need a uniform buffer pointing at the same data
-        let vis_uniform = unsafe {
-            let info = vk::BufferCreateInfo::builder()
-                .usage(vk::BufferUsageFlags::UNIFORM_TEXEL_BUFFER)
-                .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                .size(vis_size)
-                .build();
-
-            rend.dev.create_buffer(&info, None).unwrap()
-        };
-        let vis_uni_view = unsafe {
-            let info = vk::BufferViewCreateInfo::builder()
-                .buffer(vis_uniform)
                 .format(vk::Format::R16G16_SINT)
                 .offset(0)
                 .range(vk::WHOLE_SIZE)
@@ -543,9 +521,6 @@ impl CompPipeline {
         // bind our memory to our buffer representations
         unsafe {
             rend.dev.bind_buffer_memory(vis_buf, vis_mem, 0).unwrap();
-            rend.dev
-                .bind_buffer_memory(vis_uniform, vis_mem, 0)
-                .unwrap();
         }
 
         // create our data and a storage buffer
@@ -573,11 +548,9 @@ impl CompPipeline {
             cp_winlist: winlist,
             cp_winlist_buf: wl_storage,
             cp_winlist_mem: wl_storage_mem,
-            cp_vis_uniform_buf: vis_uniform,
-            cp_vis_store_buf: vis_buf,
-            cp_vis_mem: vis_mem,
-            cp_vis_store_view: vis_store_view,
-            cp_vis_uni_view: vis_uni_view,
+            cp_vis_buf: vis_buf,
+            cp_mem: vis_mem,
+            cp_vis_view: vis_view,
             cp_image_infos: Vec::new(),
             cp_queue: queue,
             cp_queue_family: family,
@@ -826,12 +799,6 @@ impl Pipeline for CompPipeline {
             rend.cbuf_begin_recording(params.cbuf, vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
 
             // ----------- VISIBILITY PASS
-            rend.dev.cmd_bind_pipeline(
-                params.cbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.cp_visibility.p_pipeline,
-            );
-
             rend.dev.cmd_bind_descriptor_sets(
                 params.cbuf,
                 vk::PipelineBindPoint::COMPUTE,
@@ -839,6 +806,12 @@ impl Pipeline for CompPipeline {
                 0, // first set
                 &[self.cp_visibility.p_descs],
                 &[], // dynamic offsets
+            );
+
+            rend.dev.cmd_bind_pipeline(
+                params.cbuf,
+                vk::PipelineBindPoint::COMPUTE,
+                self.cp_visibility.p_pipeline,
             );
 
             rend.dev.cmd_dispatch(
@@ -859,18 +832,14 @@ impl Pipeline for CompPipeline {
                 &[vk::MemoryBarrier::builder()
                     .src_access_mask(vk::AccessFlags::SHADER_WRITE)
                     .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                    .buffer(self.cp_vis_buf)
+                    .size(vk::WHOLE_SIZE)
                     .build()],
                 &[],
                 &[],
             );
 
             // ----------- COMPOSITION PASS
-            rend.dev.cmd_bind_pipeline(
-                params.cbuf,
-                vk::PipelineBindPoint::COMPUTE,
-                self.cp_composite.p_pipeline,
-            );
-
             rend.dev.cmd_bind_descriptor_sets(
                 params.cbuf,
                 vk::PipelineBindPoint::COMPUTE,
@@ -878,6 +847,12 @@ impl Pipeline for CompPipeline {
                 0, // first set
                 &[self.cp_composite.p_descs],
                 &[], // dynamic offsets
+            );
+
+            rend.dev.cmd_bind_pipeline(
+                params.cbuf,
+                vk::PipelineBindPoint::COMPUTE,
+                self.cp_composite.p_pipeline,
             );
 
             rend.dev.cmd_dispatch(
@@ -910,10 +885,8 @@ impl Pipeline for CompPipeline {
             rend.dev.destroy_buffer(self.cp_winlist_buf, None);
             rend.free_memory(self.cp_winlist_mem);
 
-            rend.dev.destroy_buffer(self.cp_vis_store_buf, None);
-            rend.dev.destroy_buffer(self.cp_vis_uniform_buf, None);
-            rend.dev.destroy_buffer_view(self.cp_vis_store_view, None);
-            rend.dev.destroy_buffer_view(self.cp_vis_uni_view, None);
+            rend.dev.destroy_buffer(self.cp_vis_buf, None);
+            rend.dev.destroy_buffer_view(self.cp_vis_view, None);
             rend.free_memory(self.cp_vis_mem);
 
             self.cp_visibility.destroy(rend);
