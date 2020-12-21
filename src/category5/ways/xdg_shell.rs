@@ -264,11 +264,13 @@ fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>, req: xdg_surf
 /// This is used to position popups relative to the toplevel parent
 /// surface. It handles offsets and anchors for hovering the popup
 /// surface.
+///
+/// For a
 #[derive(Copy, Clone)]
 struct Positioner {
-    /// The dimensions of the positioned surface
-    p_x: i32, // from set_offset
-    p_y: i32,
+    /// The offset, as set by `set_offset`
+    p_offset: Option<(i32, i32)>,
+    /// The positioner dimensions, as set by `set_size`
     p_width: i32, // from set_size
     p_height: i32,
     // (x, y, width, height) of the anchor rectangle
@@ -332,8 +334,7 @@ fn xdg_positioner_handle_request(
                 xdg_positioner::ConstraintAdjustment::from_raw(constraint_adjustment).unwrap()
         }
         xdg_positioner::Request::SetOffset { x, y } => {
-            pos.p_x = x;
-            pos.p_y = y;
+            pos.p_offset = Some((x, y));
         }
         xdg_positioner::Request::SetReactive => pos.p_reactive = true,
         xdg_positioner::Request::SetParentSize {
