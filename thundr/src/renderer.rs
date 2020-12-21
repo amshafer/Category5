@@ -184,8 +184,8 @@ impl Renderer {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("VulkanRenderer").unwrap();
 
-        //let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
-        let layer_names = [];
+        let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
+        //let layer_names = [];
 
         let layer_names_raw: Vec<*const i8> = layer_names
             .iter()

@@ -8,6 +8,7 @@ extern crate nix;
 
 use super::renderer::Renderer;
 use utils::log;
+use utils::region::Rect;
 use utils::{Dmabuf, MemImage};
 
 use std::cell::RefCell;
@@ -45,11 +46,21 @@ pub(crate) struct ImageInternal {
     /// this gpu buffer (release the wl_buffer)
     i_release_info: Option<Box<dyn Drop>>,
     pub i_damage: Option<Damage>,
+    pub i_opaque: Option<Rect<i32>>,
 }
 
 impl Image {
     pub(crate) fn get_view(&self) -> vk::ImageView {
         self.i_internal.borrow().i_image_view
+    }
+
+    pub fn set_opaque(&mut self, opaque: Option<Rect<i32>>) {
+        self.i_internal.borrow_mut().i_opaque = opaque;
+    }
+
+    /// Attach damage to this surface. Damage is specified in surface-coordinates.
+    pub fn damage(&mut self, x: i32, y: i32, width: i32, height: i32) {
+        self.i_internal.borrow_mut().i_damage = Some(Damage::new(Rect::new(x, y, width, height)));
     }
 }
 
@@ -432,6 +443,7 @@ impl Renderer {
                 i_priv: private,
                 i_release_info: release,
                 i_damage: None,
+                i_opaque: None,
             })),
         });
     }

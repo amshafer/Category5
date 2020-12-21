@@ -62,6 +62,12 @@ bool contains(int i, ivec2 uv) {
 }
 
 void main() {
+	// TODO: remove
+	imageStore(visibility_buffer, int(0), ivec4(1, 1, 1, 1));
+	imageStore(visibility_buffer, int(1), ivec4(1, 1, 1, 1));
+	imageStore(visibility_buffer, int(2), ivec4(1, 1, 1, 1));
+	return;
+
 	/*
 	  - Get the tile for this wg from the list we initialized.
 	  This tells us the base address that we are working on.
@@ -109,5 +115,5 @@ void main() {
 	}
 
 	/* Write our window ids to the visibility buffer */
-	imageStore(visibility_buffer, uv.y * width + uv.x, ivec4(result[0], result[1], 0, 0));
+	//imageStore(visibility_buffer, uv.y * width + uv.x, ivec4(1, 1, 0, 0));
 }

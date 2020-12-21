@@ -17,6 +17,7 @@ use crate::display::Display;
 use crate::list::SurfaceList;
 use crate::renderer::{RecordParams, Renderer};
 
+use utils::log;
 use utils::region::Rect;
 
 /// This is the width of a work group. This must match our shaders
@@ -501,9 +502,12 @@ impl CompPipeline {
             (mem::size_of::<u32>() as u32 * rend.resolution.width * rend.resolution.height) as u64;
         let (vis_buf, vis_mem) = unsafe {
             rend.create_buffer_with_size(
-                vk::BufferUsageFlags::STORAGE_TEXEL_BUFFER,
+                vk::BufferUsageFlags::STORAGE_TEXEL_BUFFER
+                    | vk::BufferUsageFlags::UNIFORM_TEXEL_BUFFER,
                 vk::SharingMode::EXCLUSIVE,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
                 vis_size,
             )
         };
@@ -632,10 +636,10 @@ impl CompPipeline {
 
     /// Clamps a value to the 4x4 tilegrid positions. i.e. `62 -> 60`. This is
     /// used to get the address of a tile from an arbitrary point in the display.
-    fn clamp_to_grid(x: u32, tilesize: u32) -> u32 {
-        let r = x / tilesize * tilesize;
-        if r > 60 {
-            60
+    fn clamp_to_grid(x: u32, max_width: u32) -> u32 {
+        let r = x / TILESIZE * TILESIZE;
+        if r > max_width {
+            max_width
         } else {
             r
         }
@@ -648,17 +652,28 @@ impl CompPipeline {
     /// of damage regions, and generates a list of the tiles that need to be
     /// updated. This tilelist is passed to our drawing function.
     fn gen_tile_list(&mut self, rend: &Renderer, surfaces: &SurfaceList) {
+        self.cp_tiles.tiles.clear();
         for surf_rc in surfaces.iter() {
             // If the surface does not have damage attached, then don't generate tiles
             let surf = surf_rc.s_internal.borrow();
             let image = match surf.s_image.as_ref() {
                 Some(i) => i.i_internal.borrow(),
-                None => continue,
+                None => {
+                    log::debug!(
+                        "[thundr] warning: surface does not have image attached. Not drawing"
+                    );
+                    continue;
+                }
             };
 
-            let d = match image.i_damage.as_ref() {
-                Some(d) => &d.d_region,
-                None => continue,
+            let d = match surf_rc.get_damage() {
+                Some(d) => d.d_region,
+                None => {
+                    log::debug!(
+                        "[thundr] warning: surface does not have damage attached. Not drawing"
+                    );
+                    continue;
+                }
             };
             let w = &surf.s_rect;
 
@@ -668,20 +683,23 @@ impl CompPipeline {
             let d_end = (d.r_pos.0 + d.r_size.0, d.r_pos.1 + d.r_size.1);
             // Now offset the damage values from the window base
             let mut start = (
-                (w.r_pos.0 + d.r_pos.0) as u32,
-                (w.r_pos.1 + d.r_pos.1) as u32,
+                w.r_pos.0 as u32 + d.r_pos.0 as u32,
+                w.r_pos.1 as u32 + d.r_pos.1 as u32,
             );
             // do the same for the extent
-            let mut end = ((w.r_pos.0 + d_end.0) as u32, (w.r_pos.1 + d_end.1) as u32);
+            let mut end = (
+                w.r_pos.0 as u32 + d_end.0 as u32,
+                w.r_pos.1 as u32 + d_end.1 as u32,
+            );
 
             // We need to clamp the values to our TILESIZExTILESIZE grid
             start = (
-                Self::clamp_to_grid(start.0, TILESIZE),
-                Self::clamp_to_grid(start.1, TILESIZE),
+                Self::clamp_to_grid(start.0, rend.resolution.width),
+                Self::clamp_to_grid(start.1, rend.resolution.width),
             );
             end = (
-                Self::clamp_to_grid(end.0, TILESIZE),
-                Self::clamp_to_grid(end.1, TILESIZE),
+                Self::clamp_to_grid(end.0, rend.resolution.width),
+                Self::clamp_to_grid(end.1, rend.resolution.width),
             );
 
             // Now we can go through the tiles this region overlaps with
@@ -700,6 +718,28 @@ impl CompPipeline {
             }
         }
     }
+
+    fn gen_window_list(&mut self, surfaces: &SurfaceList) {
+        self.cp_winlist.clear();
+        for surf_rc in surfaces.iter() {
+            let surf = surf_rc.s_internal.borrow();
+            let (has_opaque, opaque_reg) = match surf_rc.get_opaque() {
+                Some(r) => (true, r),
+                None => (false, Rect::new(0, 0, 0, 0)),
+            };
+
+            self.cp_winlist.push(Window {
+                w_dims: Rect::new(
+                    surf.s_rect.r_pos.0 as i32,
+                    surf.s_rect.r_pos.1 as i32,
+                    surf.s_rect.r_size.0 as i32,
+                    surf.s_rect.r_size.1 as i32,
+                ),
+                w_opaque: opaque_reg,
+                w_has_opaque: has_opaque,
+            });
+        }
+    }
 }
 
 impl Pipeline for CompPipeline {
@@ -709,9 +749,23 @@ impl Pipeline for CompPipeline {
 
     fn draw(&mut self, rend: &Renderer, params: &RecordParams, surfaces: &SurfaceList) {
         unsafe {
+            let ptr = rend
+                .dev
+                .map_memory(
+                    self.cp_vis_mem,
+                    0,
+                    vk::WHOLE_SIZE,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .unwrap();
+
+            let dst = std::slice::from_raw_parts_mut(ptr as *mut u32, 2048);
+
+            rend.dev.unmap_memory(self.cp_vis_mem);
+
             // before recording, update our descriptor for our render target
             // get the current swapchain image
-            // TODO: fill in window list
+            self.gen_window_list(surfaces);
             self.gen_tile_list(rend, surfaces);
             let tile_vec: Vec<_> = self.cp_tiles.tiles.keys().map(|k| *k).collect();
 

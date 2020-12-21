@@ -7,11 +7,11 @@ use utils::region::Rect;
 #[derive(PartialEq)]
 pub struct Damage {
     pub(crate) d_damaged: bool,
-    pub(crate) d_region: Rect<f32>,
+    pub(crate) d_region: Rect<i32>,
 }
 
 impl Damage {
-    pub fn new(region: Rect<f32>) -> Self {
+    pub fn new(region: Rect<i32>) -> Self {
         Self {
             d_damaged: true,
             d_region: region,
