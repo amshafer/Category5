@@ -502,7 +502,8 @@ impl CompPipeline {
             (mem::size_of::<u32>() as u32 * rend.resolution.width * rend.resolution.height) as u64;
         let (vis_buf, vis_mem) = unsafe {
             rend.create_buffer_with_size(
-                vk::BufferUsageFlags::STORAGE_TEXEL_BUFFER,
+                vk::BufferUsageFlags::STORAGE_TEXEL_BUFFER
+                    | vk::BufferUsageFlags::UNIFORM_TEXEL_BUFFER,
                 vk::SharingMode::EXCLUSIVE,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL
                     | vk::MemoryPropertyFlags::HOST_VISIBLE
@@ -758,7 +759,7 @@ impl Pipeline for CompPipeline {
                 )
                 .unwrap();
 
-            let dst = std::slice::from_raw_parts_mut(ptr as *mut u32, 64);
+            let dst = std::slice::from_raw_parts_mut(ptr as *mut u32, 2048);
 
             rend.dev.unmap_memory(self.cp_vis_mem);
 
