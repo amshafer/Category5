@@ -180,8 +180,7 @@ pub fn xdg_wm_base_handle_request(
         }
         xdg_wm_base::Request::CreatePositioner { id } => {
             let pos = Positioner {
-                p_x: 0,
-                p_y: 0,
+                p_offset: None,
                 p_width: 0,
                 p_height: 0,
                 p_anchor_rect: (0, 0, 0, 0),
@@ -289,11 +288,9 @@ impl Positioner {
     /// Create a surface local position from the positioner.
     /// This should be called to reevaluate the end result of the popup location.
     fn get_loc(&self) -> (i32, i32) {
+        let (x, y) = self.p_offset.unwrap();
         // TODO: add the rest of the positioner elements
-        (
-            self.p_anchor_rect.0 + self.p_x,
-            self.p_anchor_rect.1 + self.p_y,
-        )
+        (self.p_anchor_rect.0 + x, self.p_anchor_rect.1 + y)
     }
 }
 
@@ -355,6 +352,7 @@ pub struct Popup {
     pu_pop: Main<xdg_popup::XdgPopup>,
     pu_parent: Option<xdg_surface::XdgSurface>,
     pu_positioner: xdg_positioner::XdgPositioner,
+    pu_next_positioner: Option<xdg_positioner::XdgPositioner>,
     /// A list of reposition requests. Spec states that if multiple
     /// are sent only the last one needs to be used.
     pu_reposition: Option<xdg_positioner::XdgPositioner>,
@@ -422,9 +420,9 @@ impl ShellSurface {
             self.ss_xs.xs_moving = false;
         }
 
-        if let Some(pop) = self.ss_xdg_popup.as_ref() {
+        if self.ss_xdg_popup.is_some() {
             // If we are a popup, then regenerate our position/size
-            pop.reposition_popup();
+            self.reposition_popup();
         } else if let Some((i, tlc)) = self
             // find the toplevel state for the last config event acked
             // ack the toplevel configuration
@@ -671,17 +669,23 @@ impl ShellSurface {
     /// Calculate the position for this popup, and generate configure
     /// events broadcasting it.
     /// This will use the repositioned value if it was set.
-    fn reposition_popup(&self) {
-        let pos = self.ss_xdg_popup.as_ref().unwrap();
-
-        if let Some(repo) = pos.pu_reposition.take() {
-            pos.pu_pos = repo;
+    fn reposition_popup(&mut self) {
+        let pop = self.ss_xdg_popup.as_mut().unwrap();
+        if let Some(repo) = pop.pu_next_positioner.take() {
+            pop.pu_positioner = repo;
         }
+
+        let pos = pop
+            .pu_positioner
+            .as_ref()
+            .user_data()
+            .get::<Positioner>()
+            .expect("Bug: positioner did not have userdata attached");
 
         // send configuration requests to the client
         // width and height 0 means client picks a size
         let popup_loc = pos.get_loc();
-        popup.configure(
+        pop.pu_pop.configure(
             popup_loc.0,
             popup_loc.1,
             0,
@@ -713,6 +717,8 @@ impl ShellSurface {
             pu_pop: popup.clone(),
             pu_parent: parent,
             pu_positioner: positioner,
+            pu_next_positioner: None,
+            pu_reposition: None,
         });
         self.reposition_popup();
 
@@ -732,15 +738,15 @@ impl ShellSurface {
         match req {
             xdg_popup::Request::Destroy => {
                 log::debug!("Popup destroyed. Dismissing it");
-                self.ss_xdg_popup.unwrap().pu_pop.popup_done();
+                self.ss_xdg_popup.as_ref().unwrap().pu_pop.popup_done();
             }
             // TODO: implement grab
             xdg_popup::Request::Grab { seat, serial } => {
                 log::error!("Grabbing a popup is not supported");
-                self.ss_xdg_popup.unwrap().pu_pop.popup_done();
+                self.ss_xdg_popup.as_ref().unwrap().pu_pop.popup_done();
             }
             xdg_popup::Request::Reposition { positioner, token } => {
-                self.ss_xdg_popup.pu_reposition = Some(positioner)
+                self.ss_xdg_popup.as_mut().unwrap().pu_next_positioner = Some(positioner);
             }
         }
     }
