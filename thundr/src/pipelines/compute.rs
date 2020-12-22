@@ -355,7 +355,7 @@ impl CompPipeline {
                 .build(),
             vk::DescriptorSetLayoutBinding::builder()
                 .binding(2)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                 .descriptor_count(1)
                 .build(),
             vk::DescriptorSetLayoutBinding::builder()
@@ -396,7 +396,7 @@ impl CompPipeline {
                 .descriptor_count(1)
                 .build(),
             vk::DescriptorPoolSize::builder()
-                .ty(vk::DescriptorType::STORAGE_BUFFER)
+                .ty(vk::DescriptorType::UNIFORM_BUFFER)
                 .descriptor_count(1)
                 .build(),
             vk::DescriptorPoolSize::builder()
@@ -445,7 +445,7 @@ impl CompPipeline {
                 .dst_set(self.cp_composite.p_descs)
                 .dst_binding(2)
                 .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                 .buffer_info(&[vis_info])
                 .build(),
             vk::WriteDescriptorSet::builder()
@@ -496,7 +496,8 @@ impl CompPipeline {
 
         // Create the visibility buffer
         let vis_size =
-            (mem::size_of::<u32>() as u32 * rend.resolution.width * rend.resolution.height) as u64;
+            // two ints for the base/blend (see visibility.glsl)
+            (mem::size_of::<u32>() as u32 * 2 * rend.resolution.width * rend.resolution.height) as u64;
         let (vis_buf, vis_mem) = unsafe {
             rend.create_buffer_with_size(
                 vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::UNIFORM_BUFFER,
@@ -734,7 +735,7 @@ impl Pipeline for CompPipeline {
                 )
                 .unwrap();
 
-            let dst = std::slice::from_raw_parts_mut(ptr as *mut u32, 2048);
+            let dst = std::slice::from_raw_parts_mut(ptr as *mut i32, 2048);
             println!("dst[0] = {}", dst[0]);
 
             rend.dev.unmap_memory(self.cp_vis_mem);
@@ -817,13 +818,9 @@ impl Pipeline for CompPipeline {
                 &[], // dynamic offsets
             );
 
-            rend.dev.cmd_dispatch(
-                self.cp_cbuf,
-                // Add an extra wg in to account for not dividing perfectly
-                rend.resolution.width / TILESIZE + 1,
-                rend.resolution.height / TILESIZE + 1,
-                1,
-            );
+            // Launch a wg for each tile
+            rend.dev
+                .cmd_dispatch(self.cp_cbuf, tile_vec.len() as u32, 1, 1);
             // ----------- END VISIBILITY PASS
 
             // We need to wait for the previous compute stage to complete
@@ -865,13 +862,9 @@ impl Pipeline for CompPipeline {
                 &[], // dynamic offsets
             );
 
-            rend.dev.cmd_dispatch(
-                self.cp_cbuf,
-                // Add an extra wg in to account for not dividing perfectly
-                rend.resolution.width / TILESIZE + 1,
-                rend.resolution.height / TILESIZE + 1,
-                1,
-            );
+            // Launch a wg for each tile
+            rend.dev
+                .cmd_dispatch(self.cp_cbuf, tile_vec.len() as u32, 1, 1);
 
             rend.cbuf_end_recording(self.cp_cbuf);
             // -------------------------------------------

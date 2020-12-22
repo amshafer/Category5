@@ -71,18 +71,11 @@ bool contains(int i, ivec2 uv) {
 }
 
 void main() {
-	// TODO: remove
-	vis_buf[0] = IdList(1, 1);
-	vis_buf[1] = IdList(1, 1);
-	vis_buf[2] = IdList(1, 1);
-	height = 69;
-	return;
-
 	/*
 	  - Get the tile for this wg from the list we initialized.
 	  This tells us the base address that we are working on.
 	*/
-	int tile = active_tiles[gl_WorkGroupID.y * (width/TILESIZE) + gl_WorkGroupID.x];
+	int tile = active_tiles[gl_WorkGroupID.x];
 
 	/*
 	  - Mod the tile address by our resolution's width to get the
@@ -96,6 +89,17 @@ void main() {
 	/* Now index into the tile based on this invocation */
 	ivec2 uv = ivec2(tile_base.x + gl_LocalInvocationID.x,
 			tile_base.y + gl_LocalInvocationID.y);
+
+	// TODO: remove
+	//int val = tile;
+	//int loc = 32;
+	//vis_buf[loc - 1] = IdList(64, 64);
+	//vis_buf[loc + 0] = IdList(uv.x, uv.y);
+	//vis_buf[loc + 1] = IdList(tile_base.x, tile_base.y);
+	//vis_buf[loc + 2] = IdList(val, 1);
+	//vis_buf[loc + 3] = IdList(64, 64);
+	//height = 69;
+	//return;
 
 	/* if this invocation extends past the resolution, then do nothing */
 	if(uv.x >= width || uv.y >= height)
@@ -126,4 +130,5 @@ void main() {
 
 	/* Write our window ids to the visibility buffer */
 	//imageStore(visibility_buffer, uv.y * width + uv.x, ivec4(1, 1, 0, 0));
+	vis_buf[uv.y * width + uv.x] = IdList(result.x, result.y);
 }
