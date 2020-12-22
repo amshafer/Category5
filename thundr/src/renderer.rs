@@ -452,7 +452,7 @@ impl Renderer {
     /// Command buffers are allocated from command pools. That's about
     /// all they do. They just manage memory. Command buffers will be allocated
     /// as part of the queue_family specified.
-    unsafe fn create_command_pool(dev: &Device, queue_family: u32) -> vk::CommandPool {
+    pub(crate) unsafe fn create_command_pool(dev: &Device, queue_family: u32) -> vk::CommandPool {
         let pool_create_info = vk::CommandPoolCreateInfo::builder()
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
             .queue_family_index(queue_family);

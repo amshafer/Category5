@@ -91,6 +91,10 @@ pub struct CompPipeline {
     cp_queue: vk::Queue,
     /// Queue family index for `cp_queue`
     cp_queue_family: u32,
+
+    /// Allocated for our compute queue family
+    cp_cbuf_pool: vk::CommandPool,
+    cp_cbuf: vk::CommandBuffer,
 }
 
 /// Tile identifier
@@ -524,6 +528,8 @@ impl CompPipeline {
 
         let family = Self::get_queue_family(&rend.inst, &rend.display, rend.pdev).unwrap();
         let queue = unsafe { rend.dev.get_device_queue(family, 0) };
+        let cpool = unsafe { Renderer::create_command_pool(&rend.dev, family) };
+        let cbuf = unsafe { Renderer::create_command_buffers(&rend.dev, cpool, 1)[0] };
 
         CompPipeline {
             cp_visibility: vis,
@@ -539,6 +545,8 @@ impl CompPipeline {
             cp_image_infos: Vec::new(),
             cp_queue: queue,
             cp_queue_family: family,
+            cp_cbuf_pool: cpool,
+            cp_cbuf: cbuf,
         }
     }
 
@@ -791,17 +799,17 @@ impl Pipeline for CompPipeline {
             self.comp_write_descs(rend, &[tiles_write]);
 
             // ------------------------------------------- RECORD
-            rend.cbuf_begin_recording(params.cbuf, vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
+            rend.cbuf_begin_recording(self.cp_cbuf, vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
 
             // ----------- VISIBILITY PASS
             rend.dev.cmd_bind_pipeline(
-                params.cbuf,
+                self.cp_cbuf,
                 vk::PipelineBindPoint::COMPUTE,
                 self.cp_visibility.p_pipeline,
             );
 
             rend.dev.cmd_bind_descriptor_sets(
-                params.cbuf,
+                self.cp_cbuf,
                 vk::PipelineBindPoint::COMPUTE,
                 self.cp_visibility.p_pipeline_layout,
                 0, // first set
@@ -810,7 +818,7 @@ impl Pipeline for CompPipeline {
             );
 
             rend.dev.cmd_dispatch(
-                params.cbuf,
+                self.cp_cbuf,
                 // Add an extra wg in to account for not dividing perfectly
                 rend.resolution.width / TILESIZE + 1,
                 rend.resolution.height / TILESIZE + 1,
@@ -820,7 +828,7 @@ impl Pipeline for CompPipeline {
 
             // We need to wait for the previous compute stage to complete
             rend.dev.cmd_pipeline_barrier(
-                params.cbuf,
+                self.cp_cbuf,
                 vk::PipelineStageFlags::COMPUTE_SHADER, // src_stage_mask
                 vk::PipelineStageFlags::COMPUTE_SHADER // dst_stage_mask
                 | vk::PipelineStageFlags::HOST,
@@ -843,13 +851,13 @@ impl Pipeline for CompPipeline {
 
             // ----------- COMPOSITION PASS
             rend.dev.cmd_bind_pipeline(
-                params.cbuf,
+                self.cp_cbuf,
                 vk::PipelineBindPoint::COMPUTE,
                 self.cp_composite.p_pipeline,
             );
 
             rend.dev.cmd_bind_descriptor_sets(
-                params.cbuf,
+                self.cp_cbuf,
                 vk::PipelineBindPoint::COMPUTE,
                 self.cp_composite.p_pipeline_layout,
                 0, // first set
@@ -858,19 +866,19 @@ impl Pipeline for CompPipeline {
             );
 
             rend.dev.cmd_dispatch(
-                params.cbuf,
+                self.cp_cbuf,
                 // Add an extra wg in to account for not dividing perfectly
                 rend.resolution.width / TILESIZE + 1,
                 rend.resolution.height / TILESIZE + 1,
                 1,
             );
 
-            rend.cbuf_end_recording(params.cbuf);
+            rend.cbuf_end_recording(self.cp_cbuf);
             // -------------------------------------------
 
             rend.cbuf_submit(
                 // submit the cbuf for the current image
-                rend.cbufs[rend.current_image as usize],
+                self.cp_cbuf,
                 self.cp_queue, // use our compute queue
                 // wait_stages
                 &[vk::PipelineStageFlags::COMPUTE_SHADER | vk::PipelineStageFlags::HOST],
