@@ -17,7 +17,16 @@ it may be better to bump it up on nvidia??
 #define BLEND_COUNT 2
 layout (local_size_x = TILESIZE, local_size_y = TILESIZE, local_size_z = 1) in;
 
-layout(binding = 0, rg32i) uniform iimageBuffer visibility_buffer;
+/* This is composed of window ids */
+struct IdList {
+	int base;
+	int blend;
+};
+
+layout(binding = 0) buffer visibility_buffer
+{
+	IdList vis_buf[];
+};
 
 /* the position/size/damage of our windows */
 layout(binding = 1) buffer tiles
@@ -63,9 +72,10 @@ bool contains(int i, ivec2 uv) {
 
 void main() {
 	// TODO: remove
-	imageStore(visibility_buffer, int(0), ivec4(1, 1, 1, 1));
-	imageStore(visibility_buffer, int(1), ivec4(1, 1, 1, 1));
-	imageStore(visibility_buffer, int(2), ivec4(1, 1, 1, 1));
+	vis_buf[0] = IdList(1, 1);
+	vis_buf[1] = IdList(1, 1);
+	vis_buf[2] = IdList(1, 1);
+	height = 69;
 	return;
 
 	/*

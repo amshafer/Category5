@@ -28,12 +28,29 @@ layout(binding = 1) buffer tiles
 	int active_tiles[];
 };
 
-layout(binding = 2, rg32i) uniform iimageBuffer visibility_buffer;
+/* This is composed of window ids */
+struct IdList {
+	int base;
+	int blend;
+};
+
+layout(binding = 2) buffer visibility_buffer
+{
+	IdList vis_buf[];
+};
 
 /* The array of textures that are the window contents */
 layout(binding = 3) uniform sampler2D images[];
 
 void main() {
+	// TODO: remove
+	vec4 r = vec4(vis_buf[0].base, vis_buf[0].base, 1.0, 1.0);
+	imageStore(frame, ivec2(16, 16), r);
+	imageStore(frame, ivec2(17, 16), r);
+	imageStore(frame, ivec2(18, 16), r);
+	imageStore(frame, ivec2(19, 16), r);
+	width = 420;
+	return;
 	/*
 	  - Get the tile for this wg from the list we initialized.
 	  This tells us the base address that we are working on.
@@ -57,7 +74,7 @@ void main() {
 	if(uv.x >= width || uv.y >= height)
 		return;
 
-	ivec2 target_windows = imageLoad(visibility_buffer, uv.y * width + uv.x).xy;
+	ivec2 target_windows = ivec2(vis_buf[uv.y * width + uv.x].base, vis_buf[uv.y * width + uv.x].blend);
 	vec3 result = vec3(0, 0, 0);
 	for(int i = 0; i < BLEND_COUNT; i++) {
 		if (target_windows[i] == -1)
@@ -71,5 +88,6 @@ void main() {
 		result = tex.rgb * tex.a + result * (1.0 - tex.a);
 	}
 
-	imageStore(frame, uv, vec4(result, 1.0));
+	//imageStore(frame, uv, vec4(result, 1.0));
+	imageStore(frame, uv, vec4(1.0, 1.0, 1.0, 1.0));
 }

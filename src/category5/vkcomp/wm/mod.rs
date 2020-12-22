@@ -499,9 +499,7 @@ impl WindowManager {
     /// The main event loop of the vkcomp thread
     pub fn worker_thread(&mut self) {
         // first set the background
-        let img = image::open("/home/ashafer/git/compositor_playground/images/hurricane.png")
-            .unwrap()
-            .to_rgba();
+        let img = image::open("images/hurricane.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
         self.set_background_from_mem(
             pixels.as_slice(),
