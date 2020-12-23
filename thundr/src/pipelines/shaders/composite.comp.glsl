@@ -39,18 +39,12 @@ layout(binding = 2) buffer visibility_buffer
 	IdList vis_buf[];
 };
 
+// TODO: add window list for adjusting the image coords
+
 /* The array of textures that are the window contents */
 layout(binding = 3) uniform sampler2D images[];
 
 void main() {
-	// TODO: remove
-	//vec4 r = vec4(vis_buf[0].base, vis_buf[0].base, 1.0, 1.0);
-	//imageStore(frame, ivec2(16, 16), r);
-	//imageStore(frame, ivec2(17, 16), r);
-	//imageStore(frame, ivec2(18, 16), r);
-	//imageStore(frame, ivec2(19, 16), r);
-	//width = 420;
-	//return;
 	/*
 	  - Get the tile for this wg from the list we initialized.
 	  This tells us the base address that we are working on.

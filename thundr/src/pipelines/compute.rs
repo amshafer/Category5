@@ -26,7 +26,7 @@ const TILESIZE: u32 = 16;
 /// This is the offset from the base of the winlist buffer to the
 /// window array in the actual ssbo. This needs to match the `offset`
 /// field in the `layout` qualifier in the shaders
-const WINDOW_LIST_GLSL_OFFSET: isize = 32;
+const WINDOW_LIST_GLSL_OFFSET: isize = 16;
 
 struct Pass {
     /// A compute pipeline, which we will use to launch our shader
@@ -106,14 +106,15 @@ pub struct CompPipeline {
 ///
 /// A tile is a number referring to a tile in our display.
 /// The tile location is calculated by `get_base`.
-#[derive(Debug, Eq, PartialEq, Hash, Copy, Clone)]
+use std::cmp::{Ord, PartialOrd};
+#[derive(Debug, Eq, PartialEq, Hash, Copy, Clone, PartialOrd, Ord)]
 struct Tile(u32);
 
 impl Tile {
     /// Convert screen coordinates into a Tile id
     /// `res_width` - the resolution stride (i.e. the row length)
     fn from_coord(x: u32, y: u32, res_width: u32) -> Tile {
-        Tile((y / TILESIZE) * res_width + (x / TILESIZE))
+        Tile((y / TILESIZE) * (res_width / TILESIZE) + (x / TILESIZE))
     }
 
     /// Convert a tile number to an offset into a display
@@ -757,7 +758,8 @@ impl Pipeline for CompPipeline {
             // get the current swapchain image
             self.gen_window_list(surfaces);
             self.gen_tile_list(rend, surfaces);
-            let tile_vec: Vec<_> = self.cp_tiles.tiles.keys().map(|k| *k).collect();
+            let mut tile_vec: Vec<_> = self.cp_tiles.tiles.keys().map(|k| *k).collect();
+            tile_vec.sort();
 
             // Shader expects struct WindowList { int width; int height; Window windows[] }
             // so we need to write the length first

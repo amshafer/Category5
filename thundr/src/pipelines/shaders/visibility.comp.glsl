@@ -50,14 +50,14 @@ struct Window {
 layout(binding = 2, std140) buffer window_list
 {
 	layout(offset = 0) int window_count;
-	layout(offset = 32) Window windows[];
+	layout(offset = 16) Window windows[];
 };
 
 /*
   Does the opaque region of window at index i contain the point (x, y)
 */
 bool opaque_contains(int i, ivec2 uv) {
-	return all(greaterThan(uv, windows[i].dims.start))
+	return all(greaterThanEqual(uv, windows[i].dims.start))
 	&& all(lessThan(uv, windows[i].dims.start + windows[i].dims.size));
 }
 
@@ -65,7 +65,7 @@ bool opaque_contains(int i, ivec2 uv) {
   Does the window at index i contain the point (x, y)
 */
 bool contains(int i, ivec2 uv) {
-	return all(greaterThan(uv, windows[i].dims.start))
+	return all(greaterThanEqual(uv, windows[i].dims.start))
 	&& all(lessThan(uv, windows[i].dims.start + windows[i].dims.size));
 }
 
