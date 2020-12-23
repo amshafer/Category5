@@ -89,17 +89,6 @@ void main() {
 	ivec2 uv = ivec2(tile_base.x + gl_LocalInvocationID.x,
 			tile_base.y + gl_LocalInvocationID.y);
 
-	// TODO: remove
-	//int val = tile;
-	//int loc = 32;
-	//vis_buf[loc - 1] = IdList(64, 64);
-	//vis_buf[loc + 0] = IdList(uv.x, uv.y);
-	//vis_buf[loc + 1] = IdList(tile_base.x, tile_base.y);
-	//vis_buf[loc + 2] = IdList(val, 1);
-	//vis_buf[loc + 3] = IdList(64, 64);
-	//height = 69;
-	//return;
-
 	/* if this invocation extends past the resolution, then do nothing */
 	if(uv.x >= width || uv.y >= height)
 		return;
@@ -128,15 +117,5 @@ void main() {
 	}
 
 	/* Write our window ids to the visibility buffer */
-	//imageStore(visibility_buffer, uv.y * width + uv.x, ivec4(1, 1, 0, 0));
 	vis_buf[uv.y * width + uv.x] = IdList(result.x, result.y);
-	vis_buf[0] = IdList(window_count, 69);
-	vis_buf[1] = IdList(windows[0].dims.start.x, windows[0].dims.start.y);
-	vis_buf[2] = IdList(windows[0].dims.size.x, windows[0].dims.size.y);
-	vis_buf[3] = IdList(windows[0].opaque.start.x, windows[0].opaque.start.y);
-	vis_buf[4] = IdList(windows[0].opaque.size.x, windows[0].opaque.size.y);
-	vis_buf[5] = IdList(windows[1].dims.start.x, windows[1].dims.start.y);
-	vis_buf[6] = IdList(windows[1].dims.size.x, windows[1].dims.size.y);
-	vis_buf[7] = IdList(windows[1].opaque.start.x, windows[1].opaque.start.y);
-	vis_buf[8] = IdList(windows[1].opaque.size.x, windows[1].opaque.size.y);
 }
