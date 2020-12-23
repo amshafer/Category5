@@ -44,14 +44,13 @@ struct Rect {
 struct Window {
 	Rect dims;
 	Rect opaque;
-	bool has_opaque;
 };
 
 /* the position/size/damage of our windows */
-layout(binding = 2) buffer window_list
+layout(binding = 2, std140) buffer window_list
 {
-	int window_count;
-	Window windows[];
+	layout(offset = 0) int window_count;
+	layout(offset = 32) Window windows[];
 };
 
 /*
@@ -110,7 +109,7 @@ void main() {
 	int idx = 0;
 	for(int i = 0; i < window_count; i++) {
 		/* TODO: test for intersection */
-		if (windows[i].has_opaque && opaque_contains(i, uv)) {
+		if (windows[i].opaque.start.x != -1 && opaque_contains(i, uv)) {
 			/* we found a non-blending matching pixel, so exit */
 			result[idx] = i;
 			break;
@@ -131,4 +130,13 @@ void main() {
 	/* Write our window ids to the visibility buffer */
 	//imageStore(visibility_buffer, uv.y * width + uv.x, ivec4(1, 1, 0, 0));
 	vis_buf[uv.y * width + uv.x] = IdList(result.x, result.y);
+	vis_buf[0] = IdList(window_count, 69);
+	vis_buf[1] = IdList(windows[0].dims.start.x, windows[0].dims.start.y);
+	vis_buf[2] = IdList(windows[0].dims.size.x, windows[0].dims.size.y);
+	vis_buf[3] = IdList(windows[0].opaque.start.x, windows[0].opaque.start.y);
+	vis_buf[4] = IdList(windows[0].opaque.size.x, windows[0].opaque.size.y);
+	vis_buf[5] = IdList(windows[1].dims.start.x, windows[1].dims.start.y);
+	vis_buf[6] = IdList(windows[1].dims.size.x, windows[1].dims.size.y);
+	vis_buf[7] = IdList(windows[1].opaque.start.x, windows[1].opaque.start.y);
+	vis_buf[8] = IdList(windows[1].opaque.size.x, windows[1].opaque.size.y);
 }

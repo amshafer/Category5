@@ -23,6 +23,11 @@ use utils::region::Rect;
 /// This is the width of a work group. This must match our shaders
 const TILESIZE: u32 = 16;
 
+/// This is the offset from the base of the winlist buffer to the
+/// window array in the actual ssbo. This needs to match the `offset`
+/// field in the `layout` qualifier in the shaders
+const WINDOW_LIST_GLSL_OFFSET: isize = 32;
+
 struct Pass {
     /// A compute pipeline, which we will use to launch our shader
     p_pipeline: vk::Pipeline,
@@ -132,15 +137,17 @@ struct TileList {
 
 /// This must match the definition of the Window struct in the
 /// visibility shader.
+///
+/// This *MUST* be a power of two, as the layout of the shader ssbo
+/// is dependent on offsetting using the size of this.
 #[repr(C)]
 #[derive(Copy, Clone, Serialize, Deserialize)]
 struct Window {
     /// The complete dimensions of the window.
     w_dims: Rect<i32>,
-    /// Opaque region that tells the shader that we do not need to blend
+    /// Opaque region that tells the shader that we do not need to blend.
+    /// This will have a r_pos.0 of -1 if no opaque data was attached.
     w_opaque: Rect<i32>,
-    /// Should the shader use w_opaque while processing
-    w_has_opaque: bool,
 }
 
 impl CompPipeline {
@@ -517,15 +524,20 @@ impl CompPipeline {
         // create our data and a storage buffer
         let winlist: Vec<Window> = Vec::with_capacity(64);
         let (wl_storage, wl_storage_mem) = unsafe {
-            rend.create_buffer(
+            rend.create_buffer_with_size(
                 vk::BufferUsageFlags::STORAGE_BUFFER,
                 vk::SharingMode::EXCLUSIVE,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL
                     | vk::MemoryPropertyFlags::HOST_VISIBLE
                     | vk::MemoryPropertyFlags::HOST_COHERENT,
-                bincode::serialize(&winlist).unwrap().as_slice(),
+                (std::mem::size_of::<Window>() * 64) as u64,
             )
         };
+        unsafe {
+            rend.dev
+                .bind_buffer_memory(wl_storage, wl_storage_mem, 0)
+                .unwrap();
+        }
 
         let family = Self::get_queue_family(&rend.inst, &rend.display, rend.pdev).unwrap();
         let queue = unsafe { rend.dev.get_device_queue(family, 0) };
@@ -692,9 +704,11 @@ impl CompPipeline {
         self.cp_winlist.clear();
         for surf_rc in surfaces.iter() {
             let surf = surf_rc.s_internal.borrow();
-            let (has_opaque, opaque_reg) = match surf_rc.get_opaque() {
-                Some(r) => (true, r),
-                None => (false, Rect::new(0, 0, 0, 0)),
+            let opaque_reg = match surf_rc.get_opaque() {
+                Some(r) => r,
+                // If no opaque data was attached, place a -1 in the start.x component
+                // to tell the shader to ignore this
+                None => Rect::new(-1, 0, -1, 0),
             };
 
             self.cp_winlist.push(Window {
@@ -705,7 +719,6 @@ impl CompPipeline {
                     surf.s_rect.r_size.1 as i32,
                 ),
                 w_opaque: opaque_reg,
-                w_has_opaque: has_opaque,
             });
         }
     }
@@ -735,8 +748,8 @@ impl Pipeline for CompPipeline {
                 )
                 .unwrap();
 
-            let dst = std::slice::from_raw_parts_mut(ptr as *mut i32, 2048);
-            println!("dst[0] = {}", dst[0]);
+            let dst = std::slice::from_raw_parts_mut(ptr as *mut i32, 256);
+            println!("dst[] = {:?}", dst);
 
             rend.dev.unmap_memory(self.cp_vis_mem);
 
@@ -765,7 +778,7 @@ impl Pipeline for CompPipeline {
             rend.update_memory(self.cp_winlist_mem, 0, &[self.cp_winlist.len()]);
             rend.update_memory(
                 self.cp_winlist_mem,
-                (mem::size_of::<Window>() * self.cp_winlist.len()) as isize,
+                WINDOW_LIST_GLSL_OFFSET,
                 self.cp_winlist.as_slice(),
             );
 
