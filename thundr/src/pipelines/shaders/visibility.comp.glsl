@@ -77,17 +77,22 @@ void main() {
 	int tile = active_tiles[gl_WorkGroupID.x];
 
 	/*
-	  - Mod the tile address by our resolution's width to get the
+	  - Mod the tile address by our resolution's width (in tiles) to get the
 	  depth into a row of the framebuffer.
 	  - Dividing by the width gives use the number of rows into the
 	  image.
 	  - Multiply them both by the tilesize to take us from the tile-grid
 	  coordinate space to the pixel coordinate space
 	*/
-	ivec2 tile_base = ivec2(mod(tile, float(width)) * TILESIZE, (tile / width) * TILESIZE);
+	int tiles_width = width / TILESIZE;
+	ivec2 tile_base = ivec2(mod(tile, tiles_width) * TILESIZE, (tile / tiles_width) * TILESIZE);
 	/* Now index into the tile based on this invocation */
 	ivec2 uv = ivec2(tile_base.x + gl_LocalInvocationID.x,
 			tile_base.y + gl_LocalInvocationID.y);
+	
+	//vis_buf[gl_GlobalInvocationID.y * width + gl_GlobalInvocationID.x] = IdList(tile_base.x, tile_base.y);
+	//vis_buf[uv.y * width + uv.x] = IdList(tile_base.x, tile_base.y);
+	//return;
 
 	/* if this invocation extends past the resolution, then do nothing */
 	if(uv.x >= width || uv.y >= height)

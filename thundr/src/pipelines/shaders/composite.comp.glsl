@@ -28,15 +28,9 @@ layout(binding = 1) buffer tiles
 	int active_tiles[];
 };
 
-/* This is composed of window ids */
-struct IdList {
-	int base;
-	int blend;
-};
-
 layout(binding = 2) buffer visibility_buffer
 {
-	IdList vis_buf[];
+	ivec2 vis_buf[];
 };
 
 // TODO: add window list for adjusting the image coords
@@ -59,7 +53,8 @@ void main() {
 	  - Multiply them both by the tilesize to take us from the tile-grid
 	  coordinate space to the pixel coordinate space
 	*/
-	ivec2 tile_base = ivec2(mod(tile, float(width)) * TILESIZE, (tile / width) * TILESIZE);
+	int tiles_width = width / TILESIZE;
+	ivec2 tile_base = ivec2(mod(tile, tiles_width) * TILESIZE, (tile / tiles_width) * TILESIZE);
 	/* Now index into the tile based on this invocation */
 	ivec2 uv = ivec2(tile_base.x + gl_LocalInvocationID.x,
 			tile_base.y + gl_LocalInvocationID.y);
@@ -68,7 +63,7 @@ void main() {
 	if(uv.x >= width || uv.y >= height)
 		return;
 
-	ivec2 target_windows = ivec2(vis_buf[uv.y * width + uv.x].base, vis_buf[uv.y * width + uv.x].blend);
+	ivec2 target_windows = vis_buf[uv.y * width + uv.x];
 	vec3 result = vec3(0, 0, 0);
 	for(int i = 0; i < BLEND_COUNT; i++) {
 		if (target_windows[i] == -1)
@@ -83,5 +78,6 @@ void main() {
 	}
 
 	//imageStore(frame, uv, vec4(result, 1.0));
-	imageStore(frame, uv, vec4(1.0, 1.0, 1.0, 1.0));
+	// TODO: fix indexing?
+	imageStore(frame, uv, vec4(float(uv.x) * 0.01, float(uv.y) * 0.01, 1.0, 1.0));
 }

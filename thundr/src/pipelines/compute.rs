@@ -743,13 +743,13 @@ impl Pipeline for CompPipeline {
                 .dev
                 .map_memory(
                     self.cp_vis_mem,
-                    0,
+                    48 * 1366 * 2 * 4 - 128,
                     vk::WHOLE_SIZE,
                     vk::MemoryMapFlags::empty(),
                 )
                 .unwrap();
 
-            let dst = std::slice::from_raw_parts_mut(ptr as *mut i32, 256);
+            let dst = std::slice::from_raw_parts_mut(ptr as *mut i32, 512);
             println!("dst[] = {:?}", dst);
 
             rend.dev.unmap_memory(self.cp_vis_mem);
