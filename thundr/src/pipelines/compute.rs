@@ -114,7 +114,8 @@ impl Tile {
     /// Convert screen coordinates into a Tile id
     /// `res_width` - the resolution stride (i.e. the row length)
     fn from_coord(x: u32, y: u32, res_width: u32) -> Tile {
-        Tile((y / TILESIZE) * (res_width / TILESIZE) + (x / TILESIZE))
+        let width_in_tiles = (res_width / TILESIZE) + 1;
+        Tile((y / TILESIZE) * width_in_tiles + (x / TILESIZE))
     }
 
     /// Convert a tile number to an offset into a display
@@ -689,10 +690,9 @@ impl CompPipeline {
             while start.1 <= end.1 {
                 let mut offset = start.0;
                 while offset <= end.0 {
-                    self.cp_tiles.tiles.insert(
-                        Tile::from_coord(offset, start.1, rend.resolution.width),
-                        true,
-                    );
+                    let tile = Tile::from_coord(offset, start.1, rend.resolution.width);
+                    log::debug!("adding {} for point ({}, {})", tile.0, offset, start.1);
+                    self.cp_tiles.tiles.insert(tile, true);
                     offset += TILESIZE;
                 }
 
