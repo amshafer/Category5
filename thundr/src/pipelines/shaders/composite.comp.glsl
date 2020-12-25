@@ -33,10 +33,25 @@ layout(binding = 2) buffer visibility_buffer
 	ivec2 vis_buf[];
 };
 
-// TODO: add window list for adjusting the image coords
+struct Rect {
+	ivec2 start;
+	ivec2 size;
+};
+
+struct Window {
+	Rect dims;
+	Rect opaque;
+};
+
+/* the position/size/damage of our windows */
+layout(binding = 3, std140) buffer window_list
+{
+	layout(offset = 0) int window_count;
+	layout(offset = 16) Window windows[];
+};
 
 /* The array of textures that are the window contents */
-layout(binding = 3) uniform sampler2D images[];
+layout(binding = 4) uniform sampler2D images[];
 
 void main() {
 	/*
@@ -77,7 +92,5 @@ void main() {
 		result = tex.rgb * tex.a + result * (1.0 - tex.a);
 	}
 
-	//imageStore(frame, uv, vec4(result, 1.0));
-	// TODO: fix indexing?
-	imageStore(frame, uv, vec4(1.0, 1.0, 1.0, 1.0));
+	imageStore(frame, uv, vec4(result, 1.0));
 }

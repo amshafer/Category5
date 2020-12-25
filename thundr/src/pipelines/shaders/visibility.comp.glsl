@@ -84,7 +84,7 @@ void main() {
 	  - Multiply them both by the tilesize to take us from the tile-grid
 	  coordinate space to the pixel coordinate space
 	*/
-	int tiles_width = width / TILESIZE;
+	int tiles_width = (width / TILESIZE) + 1;
 	ivec2 tile_base = ivec2(mod(tile, tiles_width) * TILESIZE, (tile / tiles_width) * TILESIZE);
 	/* Now index into the tile based on this invocation */
 	ivec2 uv = ivec2(tile_base.x + gl_LocalInvocationID.x,
