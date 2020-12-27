@@ -5,10 +5,10 @@
 #![allow(dead_code, non_camel_case_types)]
 extern crate ash;
 
+use ash::extensions::ext::DebugReport;
+use ash::extensions::khr;
 use ash::version::{EntryV1_0, InstanceV1_0};
 use ash::vk;
-use ash::extensions::khr;
-use ash::extensions::ext::DebugReport;
 
 // A display represents a physical screen
 //
@@ -38,18 +38,16 @@ impl Display {
     // This will grab the function pointer loaders for the
     // surface and display extensions and then create a
     // surface to be rendered to.
-    pub unsafe fn new<E: EntryV1_0, I: InstanceV1_0>
-        (entry: &E,
-         inst: &I,
-         pdev: vk::PhysicalDevice)
-        -> Display
-    {
+    pub unsafe fn new<E: EntryV1_0, I: InstanceV1_0>(
+        entry: &E,
+        inst: &I,
+        pdev: vk::PhysicalDevice,
+    ) -> Display {
         let d_loader = khr::Display::new(entry, inst);
         let s_loader = khr::Surface::new(entry, inst);
 
         let (display, surface, mode, resolution) =
-            Display::create_surface(entry, inst, &d_loader, pdev)
-            .unwrap();
+            Display::create_surface(entry, inst, &d_loader, pdev).unwrap();
 
         Display {
             surface_loader: s_loader,
@@ -66,10 +64,10 @@ impl Display {
     // We saved the resolution of the display surface when we created
     // it. If the surface capabilities doe not specify a requested
     // extent, then we will return the screen's resolution.
-    pub unsafe fn select_resolution(&self,
-                                surface_caps: &vk::SurfaceCapabilitiesKHR)
-                                -> vk::Extent2D
-    {
+    pub unsafe fn select_resolution(
+        &self,
+        surface_caps: &vk::SurfaceCapabilitiesKHR,
+    ) -> vk::Extent2D {
         match surface_caps.current_extent.width {
             std::u32::MAX => self.resolution,
             _ => surface_caps.current_extent,
@@ -80,14 +78,14 @@ impl Display {
     //
     // This selects the color space and layout for a surface. This should
     // be called by the Renderer after creating a Display.
-    pub unsafe fn select_surface_format(&self, pdev: vk::PhysicalDevice)
-                                        -> vk::SurfaceFormatKHR
-    {
-        let formats = self.surface_loader
+    pub unsafe fn select_surface_format(&self, pdev: vk::PhysicalDevice) -> vk::SurfaceFormatKHR {
+        let formats = self
+            .surface_loader
             .get_physical_device_surface_formats(pdev, self.surface)
             .unwrap();
 
-        formats.iter()
+        formats
+            .iter()
             .map(|fmt| match fmt.format {
                 // if the surface does not specify a desired format
                 // then we can choose our own
@@ -103,7 +101,6 @@ impl Display {
             .expect("Could not find a surface format")
     }
 
-
     // Get a physical display surface.
     //
     // This returns the surfaceKHR to create a swapchain with, the
@@ -113,36 +110,36 @@ impl Display {
     //
     // Yea this has a gross amount of return values...
     #[cfg(unix)]
-    unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>
-        (_entry: &E, // entry and inst aren't used but still need
-         _inst: &I, // to be passed for compatibility
-         loader: &khr::Display,
-         pdev: vk::PhysicalDevice)
-         -> Result<(vk::DisplayKHR,
-                    vk::SurfaceKHR,
-                    vk::DisplayModeKHR,
-                    vk::Extent2D),
-                   vk::Result>
-    {
+    unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>(
+        _entry: &E, // entry and inst aren't used but still need
+        _inst: &I,  // to be passed for compatibility
+        loader: &khr::Display,
+        pdev: vk::PhysicalDevice,
+    ) -> Result<
+        (
+            vk::DisplayKHR,
+            vk::SurfaceKHR,
+            vk::DisplayModeKHR,
+            vk::Extent2D,
+        ),
+        vk::Result,
+    > {
         // This is essentially a list of the available displays.
         // Despite having a display_name member, the names are very
         // unhelpful. (e.x. "monitor").
-        let disp_props = loader
-            .get_physical_device_display_properties(pdev)
-            .unwrap();
+        let disp_props = loader.get_physical_device_display_properties(pdev).unwrap();
 
-        for (i,p) in disp_props.iter().enumerate() {
+        for (i, p) in disp_props.iter().enumerate() {
             println!("{} display: {:#?}", i, p);
         }
 
         // The available modes for the display. This holds
         // the resolution.
         let mode_props = loader
-            .get_display_mode_properties(pdev,
-                                         disp_props[0].display)
+            .get_display_mode_properties(pdev, disp_props[0].display)
             .unwrap();
 
-        for (i,m) in mode_props.iter().enumerate() {
+        for (i, m) in mode_props.iter().enumerate() {
             println!("display 0 - {} mode: {:#?}", i, m);
         }
 
@@ -153,15 +150,14 @@ impl Display {
             .get_physical_device_display_plane_properties(pdev)
             .unwrap();
 
-        for (i,p) in plane_props.iter().enumerate() {
+        for (i, p) in plane_props.iter().enumerate() {
             println!("display 0 - plane: {} props = {:#?}", i, p);
 
             let supported = loader
-                .get_display_plane_supported_displays(pdev,
-                                                      0) // plane index
+                .get_display_plane_supported_displays(pdev, 0) // plane index
                 .unwrap();
 
-            for (i,d) in disp_props.iter().enumerate() {
+            for (i, d) in disp_props.iter().enumerate() {
                 if supported.contains(&d.display) {
                     println!("  supports display {}", i);
                 }
@@ -169,28 +165,22 @@ impl Display {
         }
 
         // create a display mode from the parameters we got earlier
-        let mode_info = vk::DisplayModeCreateInfoKHR::builder()
-            .parameters(mode_props[0].parameters);
+        let mode_info =
+            vk::DisplayModeCreateInfoKHR::builder().parameters(mode_props[0].parameters);
         let mode = loader
-            .create_display_mode(pdev,
-                                 disp_props[0].display,
-                                 &mode_info,
-                                 None)
+            .create_display_mode(pdev, disp_props[0].display, &mode_info, None)
             .unwrap();
 
         // Print out the plane capabilities
-        for (i,_) in plane_props.iter().enumerate() {
-            let caps = loader.get_display_plane_capabilities(
-                pdev,
-                mode,
-                i as u32,
-            ).unwrap();
-            println!("Plane {}: supports alpha {:?}",
-                     i, caps.supported_alpha);
+        for (i, _) in plane_props.iter().enumerate() {
+            let caps = loader
+                .get_display_plane_capabilities(pdev, mode, i as u32)
+                .unwrap();
+            println!("Plane {}: supports alpha {:?}", i, caps.supported_alpha);
         }
 
         // Finally we can create our surface to render to. From this
-        // point on everything is normal 
+        // point on everything is normal
         let surf_info = vk::DisplaySurfaceCreateInfoKHR::builder()
             .display_mode(mode)
             // TODO: Don't just chose the first plane
@@ -207,7 +197,7 @@ impl Display {
                 disp_props[0].display,
                 surf,
                 mode,
-                mode_props[0].parameters.visible_region
+                mode_props[0].parameters.visible_region,
             )),
             Err(e) => Err(e),
         }
@@ -225,13 +215,10 @@ impl Display {
         ]
     }
 
-    pub fn destroy (&mut self) {
+    pub fn destroy(&mut self) {
         println!("Destroying display");
         unsafe {
-            self.surface_loader.destroy_surface(
-                self.surface,
-                None
-            );
+            self.surface_loader.destroy_surface(self.surface, None);
         }
         // It seems that the display resources (mode) are cleaned up
         // when the surface is destroyed. There are not separate
@@ -240,4 +227,3 @@ impl Display {
         // The validation layers do warn about them however (bug?)
     }
 }
-

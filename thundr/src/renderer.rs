@@ -34,7 +34,8 @@ unsafe extern "system" fn vulkan_debug_callback(
     p_message: *const c_char,
     _: *mut c_void,
 ) -> u32 {
-    log::profiling!("[RENDERER] {:?}", CStr::from_ptr(p_message));
+    log::debug!("[RENDERER] {:?}", CStr::from_ptr(p_message));
+    println!();
     vk::FALSE
 }
 
@@ -310,8 +311,10 @@ impl Renderer {
         let dev_extension_names = [
             khr::Swapchain::name().as_ptr(),
             khr::ExternalMemoryFd::name().as_ptr(),
+            vk::KhrSwapchainMutableFormatFn::name().as_ptr(),
             // We need to wait for this to be supported in mesa
             // for now it somehow happens to work
+            vk::KhrImageFormatListFn::name().as_ptr(),
             vk::ExtImageDrmFormatModifierFn::name().as_ptr(),
             vk::KhrMaintenance2Fn::name().as_ptr(),
             // The following are needed for descriptor indexing
@@ -969,6 +972,9 @@ impl Renderer {
                     families.push(family);
                 }
             }
+            // Remove duplicate entries to keep validation from complaining
+            families.dedup();
+
             let dev = Renderer::create_device(&inst, pdev, families.as_slice());
 
             // Each window is going to have a sampler descriptor for every

@@ -811,7 +811,7 @@ impl Pipeline for CompPipeline {
                         vk::DescriptorImageInfo::builder()
                             .sampler(rend.image_sampler)
                             .image_view(image.get_view())
-                            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                             .build(),
                     );
                 }
@@ -895,7 +895,7 @@ impl Pipeline for CompPipeline {
                 self.cp_cbuf,
                 self.cp_queue, // use our compute queue
                 // wait_stages
-                &[vk::PipelineStageFlags::COMPUTE_SHADER | vk::PipelineStageFlags::HOST],
+                &[vk::PipelineStageFlags::COMPUTE_SHADER],
                 &[rend.present_sema], // wait_semas
                 &[rend.render_sema],  // signal_semas
             );

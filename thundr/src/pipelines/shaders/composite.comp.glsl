@@ -85,11 +85,19 @@ void main() {
 			break;
 
 		/*
+		  We can't use the uv coordinates because they are the index
+		  into the frame. We need to subtract the offset of the
+		  windows current position to find window-coordinates
+		*/
+		ivec2 wx = uv - windows[i].dims.start;
+
+		/*
 		  For each window in the target_windows list
 		  blend it into the result.
 		*/
-		vec4 tex = texture(images[target_windows[i]], uv);
-		result = tex.rgb * tex.a + result * (1.0 - tex.a);
+		vec4 tex = texture(images[target_windows[i]], wx);
+		//result = tex.rgb * tex.a + result * (1.0 - tex.a);
+		result = tex.rgb;
 	}
 
 	imageStore(frame, uv, vec4(result, 1.0));
