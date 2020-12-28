@@ -214,13 +214,13 @@ impl CompPipeline {
                 .build(),
             vk::DescriptorSetLayoutBinding::builder()
                 .binding(1)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 .descriptor_count(1)
                 .build(),
             vk::DescriptorSetLayoutBinding::builder()
                 .binding(2)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 .descriptor_count(1)
                 .build(),
@@ -235,16 +235,10 @@ impl CompPipeline {
     /// Create a descriptor pool to allocate from.
     /// The sizes in this must match `create_descriptor_layout`
     pub fn vis_create_descriptor_pool(rend: &Renderer) -> vk::DescriptorPool {
-        let size = [
-            vk::DescriptorPoolSize::builder()
-                .ty(vk::DescriptorType::STORAGE_BUFFER)
-                .descriptor_count(1)
-                .build(),
-            vk::DescriptorPoolSize::builder()
-                .ty(vk::DescriptorType::UNIFORM_BUFFER)
-                .descriptor_count(2)
-                .build(),
-        ];
+        let size = [vk::DescriptorPoolSize::builder()
+            .ty(vk::DescriptorType::STORAGE_BUFFER)
+            .descriptor_count(3)
+            .build()];
 
         let info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&size)
@@ -272,14 +266,14 @@ impl CompPipeline {
                 .dst_set(self.cp_visibility.p_descs)
                 .dst_binding(1)
                 .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(tile_info)
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.cp_visibility.p_descs)
                 .dst_binding(2)
                 .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(window_info)
                 .build(),
         ];
@@ -350,17 +344,20 @@ impl CompPipeline {
                 .build(),
             vk::DescriptorSetLayoutBinding::builder()
                 .binding(1)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 .descriptor_count(1)
                 .build(),
             vk::DescriptorSetLayoutBinding::builder()
                 .binding(2)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 .descriptor_count(1)
                 .build(),
             vk::DescriptorSetLayoutBinding::builder()
                 .binding(3)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 .descriptor_count(1)
                 .build(),
             vk::DescriptorSetLayoutBinding::builder()
@@ -398,7 +395,7 @@ impl CompPipeline {
                 .descriptor_count(1)
                 .build(),
             vk::DescriptorPoolSize::builder()
-                .ty(vk::DescriptorType::UNIFORM_BUFFER)
+                .ty(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(3)
                 .build(),
             vk::DescriptorPoolSize::builder()
@@ -440,21 +437,21 @@ impl CompPipeline {
                 .dst_set(self.cp_composite.p_descs)
                 .dst_binding(1)
                 .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(tile_info)
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.cp_composite.p_descs)
                 .dst_binding(2)
                 .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(vis_info)
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.cp_composite.p_descs)
                 .dst_binding(3)
                 .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(win_info)
                 .build(),
             vk::WriteDescriptorSet::builder()
@@ -489,7 +486,7 @@ impl CompPipeline {
         };
         let (storage, storage_mem) = unsafe {
             rend.create_buffer_with_size(
-                vk::BufferUsageFlags::UNIFORM_BUFFER,
+                vk::BufferUsageFlags::STORAGE_BUFFER,
                 vk::SharingMode::EXCLUSIVE,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL
                     | vk::MemoryPropertyFlags::HOST_VISIBLE
@@ -510,7 +507,7 @@ impl CompPipeline {
             (mem::size_of::<u32>() as u32 * 2 * rend.resolution.width * rend.resolution.height) as u64;
         let (vis_buf, vis_mem) = unsafe {
             rend.create_buffer_with_size(
-                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::UNIFORM_BUFFER,
+                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::STORAGE_BUFFER,
                 vk::SharingMode::EXCLUSIVE,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL
                     | vk::MemoryPropertyFlags::HOST_VISIBLE
@@ -528,7 +525,7 @@ impl CompPipeline {
         let winlist: Vec<Window> = Vec::with_capacity(64);
         let (wl_storage, wl_storage_mem) = unsafe {
             rend.create_buffer_with_size(
-                vk::BufferUsageFlags::UNIFORM_BUFFER,
+                vk::BufferUsageFlags::STORAGE_BUFFER,
                 vk::SharingMode::EXCLUSIVE,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL
                     | vk::MemoryPropertyFlags::HOST_VISIBLE
@@ -733,13 +730,6 @@ impl Pipeline for CompPipeline {
 
     fn draw(&mut self, rend: &Renderer, params: &RecordParams, surfaces: &SurfaceList) {
         unsafe {
-            rend.dev
-                .wait_for_fences(
-                    &[rend.submit_fence],
-                    true,          // wait for all
-                    std::u64::MAX, //timeout
-                )
-                .unwrap();
             let ptr = rend
                 .dev
                 .map_memory(

@@ -409,8 +409,8 @@ impl Renderer {
             .supported_usage_flags
             .contains(vk::ImageUsageFlags::STORAGE)
         {
-            false => vk::ImageUsageFlags::STORAGE,
-            true => vk::ImageUsageFlags::empty(),
+            true => vk::ImageUsageFlags::STORAGE,
+            false => vk::ImageUsageFlags::empty(),
         };
 
         // see this for how to get storage swapchain on intel:
@@ -424,6 +424,12 @@ impl Renderer {
             .image_format(surface_format.format)
             .image_extent(*resolution)
             // the color attachment is guaranteed to be available
+            //
+            // WEIRD: validation layers throw an issue with this on intel since it doesn't
+            // support storage for the swapchain format.
+            // You can ignore this: https://www.reddit.com/r/vulkan/comments/ahtw8x/shouldnt_validation_layers_catch_the_wrong_format/
+            //
+            // Leave the STORAGE flag to be explicit that we need it
             .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(transform)
@@ -835,24 +841,15 @@ impl Renderer {
         width: u32,
         height: u32,
     ) {
-        // If a previous copy is still happening, wait for it
-        match self.dev.get_fence_status(self.copy_cbuf_fence) {
-            // true means vk::Result::SUCCESS
-            Ok(true) => {}
-            // false means vk::Result::NOT_READY
-            Ok(false) => {
-                self.dev
-                    .wait_for_fences(
-                        &[self.copy_cbuf_fence],
-                        true,          // wait for all
-                        std::u64::MAX, //timeout
-                    )
-                    .unwrap();
-                // unsignal it, may be extraneous
-                self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
-            }
-            Err(_) => panic!("Failed to get fence status"),
-        };
+        self.dev
+            .wait_for_fences(
+                &[self.copy_cbuf_fence],
+                true,          // wait for all
+                std::u64::MAX, //timeout
+            )
+            .unwrap();
+        // unsignal it, may be extraneous
+        self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
 
         // now perform the copy
         self.cbuf_begin_recording(self.copy_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
@@ -1158,7 +1155,7 @@ impl Renderer {
 
             // we need to reset the fence since it has been signaled
             // copy fence will be handled elsewhere
-            self.dev.reset_fences(&[self.submit_fence]).unwrap();
+            self.dev.reset_fences(fences.as_slice()).unwrap();
 
             self.cbuf_submit_async(
                 cbuf,
