@@ -28,7 +28,7 @@ layout(binding = 1) buffer tiles
 	int active_tiles[];
 };
 
-layout(binding = 2) uniform visibility_buffer
+layout(binding = 2) buffer visibility_buffer
 {
 	ivec2 vis_buf[];
 };

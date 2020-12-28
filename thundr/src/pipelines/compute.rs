@@ -422,7 +422,7 @@ impl CompPipeline {
         let fb_info = vk::DescriptorImageInfo::builder()
             .sampler(rend.image_sampler)
             .image_view(rend.views[rend.current_image as usize])
-            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .image_layout(vk::ImageLayout::GENERAL)
             .build();
 
         let write_info = [
@@ -813,6 +813,35 @@ impl Pipeline for CompPipeline {
             // ------------------------------------------- RECORD
             rend.cbuf_begin_recording(self.cp_cbuf, vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
 
+            // First we need to transition our swapchain image to the GENERAL format
+            // This is required by the spec for us to write to it from a compute shader
+            let image_barrier = vk::ImageMemoryBarrier::builder()
+                .image(rend.images[rend.current_image as usize])
+                .src_access_mask(vk::AccessFlags::empty())
+                .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
+                // go from an undefined layout to general
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::GENERAL)
+                .src_queue_family_index(self.cp_queue_family)
+                .dst_queue_family_index(self.cp_queue_family)
+                .subresource_range(
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .layer_count(1)
+                        .level_count(1)
+                        .build(),
+                )
+                .build();
+            rend.dev.cmd_pipeline_barrier(
+                self.cp_cbuf,
+                vk::PipelineStageFlags::TOP_OF_PIPE,    // src
+                vk::PipelineStageFlags::COMPUTE_SHADER, // dst
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[image_barrier],
+            );
+
             // ----------- VISIBILITY PASS
             rend.dev.cmd_bind_pipeline(
                 self.cp_cbuf,
@@ -876,6 +905,34 @@ impl Pipeline for CompPipeline {
             // Launch a wg for each tile
             rend.dev
                 .cmd_dispatch(self.cp_cbuf, tile_vec.len() as u32, 1, 1);
+
+            // The final thing to do is transform the swapchain image back into
+            // the presentable layout so it can be drawn to the screen.
+            let image_barrier = vk::ImageMemoryBarrier::builder()
+                .image(rend.images[rend.current_image as usize])
+                .src_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
+                .dst_access_mask(vk::AccessFlags::empty())
+                .old_layout(vk::ImageLayout::GENERAL)
+                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .src_queue_family_index(self.cp_queue_family)
+                .dst_queue_family_index(self.cp_queue_family)
+                .subresource_range(
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .layer_count(1)
+                        .level_count(1)
+                        .build(),
+                )
+                .build();
+            rend.dev.cmd_pipeline_barrier(
+                self.cp_cbuf,
+                vk::PipelineStageFlags::COMPUTE_SHADER, // src
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE, // dst
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[image_barrier],
+            );
 
             rend.cbuf_end_recording(self.cp_cbuf);
             // -------------------------------------------
