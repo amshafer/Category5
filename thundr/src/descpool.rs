@@ -27,7 +27,6 @@ pub struct DescPool {
 }
 
 impl DescPool {
-
     /// Create an image sampler layout
     ///
     /// Descriptor layouts specify the number and characteristics
@@ -39,30 +38,24 @@ impl DescPool {
         //
         // This descriptor needs to be second in the pipeline list
         // so the shader can reference it as set 1
-        let bindings=[vk::DescriptorSetLayoutBinding::builder()
-                      .binding(1)
-                      .descriptor_type(
-                          vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                      .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-                      .descriptor_count(1)
-                      .build()
-        ];
-        let info = vk::DescriptorSetLayoutCreateInfo::builder()
-            .bindings(&bindings);
+        let bindings = [vk::DescriptorSetLayoutBinding::builder()
+            .binding(1)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+            .descriptor_count(1)
+            .build()];
+        let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
 
-        unsafe {
-            dev.create_descriptor_set_layout(&info, None)
-                .unwrap()
-        }
+        unsafe { dev.create_descriptor_set_layout(&info, None).unwrap() }
     }
 
     /// Returns the index of the new pool
     pub fn add_pool(&mut self, dev: &Device) -> usize {
         println!("Adding another descriptor pool");
         let sizes = [vk::DescriptorPoolSize::builder()
-                    .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .descriptor_count(POOL_SIZE)
-                    .build()];
+            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(POOL_SIZE)
+            .build()];
 
         let info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&sizes)
@@ -70,12 +63,8 @@ impl DescPool {
             .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
             .max_sets(POOL_SIZE);
 
-        self.pools.push(
-            unsafe {
-                dev.create_descriptor_pool(&info, None)
-                    .unwrap()
-            }
-        );
+        self.pools
+            .push(unsafe { dev.create_descriptor_pool(&info, None).unwrap() });
         // Add an entry to record that there have not been
         // any allocations with this pool
         self.capacities.push(0);
@@ -116,9 +105,11 @@ impl DescPool {
     /// be referenced by the graphics pipeline. Think of a descriptor
     /// as the hardware's handle to a resource. The set of descriptors
     /// allocated in each set is specified in the layout.
-    pub fn allocate_samplers(&mut self, dev: &Device, count: usize)
-                            -> (usize, Vec<vk::DescriptorSet>)
-    {
+    pub fn allocate_samplers(
+        &mut self,
+        dev: &Device,
+        count: usize,
+    ) -> (usize, Vec<vk::DescriptorSet>) {
         // Find a pool to allocate from
         let pool_handle = self.get_ideal_pool(dev, count);
 
@@ -141,23 +132,22 @@ impl DescPool {
             return (
                 pool_handle,
                 // Allocates a set for each layout specified
-                dev.allocate_descriptor_sets(&info).unwrap()
-            )
+                dev.allocate_descriptor_sets(&info).unwrap(),
+            );
         }
     }
 
-    pub fn destroy_samplers(&mut self,
-                            dev: &Device,
-                            pool_handle: usize,
-                            samplers: &[vk::DescriptorSet])
-    {
+    pub fn destroy_samplers(
+        &mut self,
+        dev: &Device,
+        pool_handle: usize,
+        samplers: &[vk::DescriptorSet],
+    ) {
         assert!(pool_handle < self.pools.len());
 
         unsafe {
             for s in samplers {
-                dev.free_descriptor_sets(
-                    self.pools[pool_handle], &[*s]
-                );
+                dev.free_descriptor_sets(self.pools[pool_handle], &[*s]);
             }
         }
     }
@@ -168,9 +158,7 @@ impl DescPool {
             for p in self.pools.iter() {
                 dev.destroy_descriptor_pool(*p, None);
             }
-            dev.destroy_descriptor_set_layout(
-                self.layout, None
-            );
+            dev.destroy_descriptor_set_layout(self.layout, None);
         }
     }
 }

@@ -96,7 +96,7 @@ void main() {
 		  blend it into the result.
 		*/
 		vec4 tex = texture(images[target_windows[i]], wx);
-		//result = tex.rgb * tex.a + result * (1.0 - tex.a);
+		result = tex.rgb * tex.a + result * (1.0 - tex.a);
 		result = tex.rgb;
 	}
 

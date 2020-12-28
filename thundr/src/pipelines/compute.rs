@@ -362,7 +362,7 @@ impl CompPipeline {
                 .build(),
             vk::DescriptorSetLayoutBinding::builder()
                 .binding(4)
-                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 .descriptor_count(1)
                 .build(),
@@ -399,7 +399,7 @@ impl CompPipeline {
                 .descriptor_count(3)
                 .build(),
             vk::DescriptorPoolSize::builder()
-                .ty(vk::DescriptorType::SAMPLED_IMAGE)
+                .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .descriptor_count(1)
                 .build(),
         ];
@@ -458,7 +458,7 @@ impl CompPipeline {
                 .dst_set(self.cp_composite.p_descs)
                 .dst_binding(4)
                 .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .image_info(self.cp_image_infos.as_slice())
                 .build(),
         ];
