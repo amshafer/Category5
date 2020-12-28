@@ -364,7 +364,10 @@ impl CompPipeline {
                 .binding(4)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                .descriptor_count(1)
+                // This is the upper bound on the amount of descriptors that
+                // can be attached. The amount actually attached will be
+                // determined by the amount allocated using this layout.
+                .descriptor_count(8)
                 .build(),
         ];
         let mut info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
@@ -400,7 +403,8 @@ impl CompPipeline {
                 .build(),
             vk::DescriptorPoolSize::builder()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(1)
+                // TODO: make this get enlarged when more windows are added
+                .descriptor_count(8)
                 .build(),
         ];
 
