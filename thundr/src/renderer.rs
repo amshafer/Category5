@@ -939,15 +939,15 @@ impl Renderer {
             let graphics_queue_family = Renderer::select_queue_family(
                 &inst,
                 pdev,
-                &display.surface_loader,
-                display.surface,
+                &display.d_surface_loader,
+                display.d_surface,
                 vk::QueueFlags::GRAPHICS,
             );
             let transfer_queue_family = Renderer::select_queue_family(
                 &inst,
                 pdev,
-                &display.surface_loader,
-                display.surface,
+                &display.d_surface_loader,
+                display.d_surface,
                 vk::QueueFlags::TRANSFER,
             );
             let mem_props = Renderer::get_pdev_mem_properties(&inst, pdev);
@@ -956,8 +956,8 @@ impl Renderer {
             let surface_format = display.select_surface_format(pdev);
 
             let surface_caps = display
-                .surface_loader
-                .get_physical_device_surface_capabilities(pdev, display.surface)
+                .d_surface_loader
+                .get_physical_device_surface_capabilities(pdev, display.d_surface)
                 .unwrap();
             let surface_resolution = display.select_resolution(&surface_caps);
             log::profiling!("Rendering with resolution {:?}", surface_resolution);
@@ -988,9 +988,9 @@ impl Renderer {
             let swapchain = Renderer::create_swapchain(
                 &inst,
                 &swapchain_loader,
-                &display.surface_loader,
+                &display.d_surface_loader,
                 pdev,
-                display.surface,
+                display.d_surface,
                 &surface_caps,
                 surface_format,
                 &surface_resolution,

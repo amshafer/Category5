@@ -21,44 +21,47 @@ use ash::vk;
 // The swapchain is generated (and regenerated) from this stuff.
 pub struct Display {
     // the actual surface (KHR extension)
-    pub surface: vk::SurfaceKHR,
-    // the display itself
-    pub display: vk::DisplayKHR,
-    // The mode the display was created with
-    pub display_mode: vk::DisplayModeKHR,
+    pub d_surface: vk::SurfaceKHR,
     // function pointer loaders
-    pub surface_loader: khr::Surface,
-    pub display_loader: khr::Display,
-    pub resolution: vk::Extent2D,
+    pub d_surface_loader: khr::Surface,
+    pub d_resolution: vk::Extent2D,
+    d_back: Backend,
+}
+
+enum Backend {
+    PhysicalDisplay(PhysicalDisplay),
+}
+
+enum BackendType {
+    PhysicalDisplay,
 }
 
 impl Display {
-    // Create an on-screen surface.
-    //
-    // This will grab the function pointer loaders for the
-    // surface and display extensions and then create a
-    // surface to be rendered to.
+    fn choose_display_backend() -> BackendType {
+        // TODO: add others
+        BackendType::PhysicalDisplay
+    }
+
     pub unsafe fn new<E: EntryV1_0, I: InstanceV1_0>(
         entry: &E,
         inst: &I,
         pdev: vk::PhysicalDevice,
     ) -> Display {
-        let d_loader = khr::Display::new(entry, inst);
         let s_loader = khr::Surface::new(entry, inst);
+        let (back, surf, res) = match Self::choose_display_backend() {
+            BackendType::PhysicalDisplay => {
+                let n = PhysicalDisplay::new(entry, inst, pdev);
+                (Backend::PhysicalDisplay(n.0), n.1, n.2)
+            }
+        };
 
-        let (display, surface, mode, resolution) =
-            Display::create_surface(entry, inst, &d_loader, pdev).unwrap();
-
-        Display {
-            surface_loader: s_loader,
-            display_loader: d_loader,
-            display_mode: mode,
-            display: display,
-            surface: surface,
-            resolution: resolution,
+        Self {
+            d_surface_loader: s_loader,
+            d_back: back,
+            d_surface: surf,
+            d_resolution: res,
         }
     }
-
     // Selects a resolution for the renderer
     //
     // We saved the resolution of the display surface when we created
@@ -69,19 +72,85 @@ impl Display {
         surface_caps: &vk::SurfaceCapabilitiesKHR,
     ) -> vk::Extent2D {
         match surface_caps.current_extent.width {
-            std::u32::MAX => self.resolution,
+            std::u32::MAX => self.d_resolution,
             _ => surface_caps.current_extent,
         }
+    }
+
+    pub unsafe fn select_surface_format(&self, pdev: vk::PhysicalDevice) -> vk::SurfaceFormatKHR {
+        match &self.d_back {
+            Backend::PhysicalDisplay(pd) => {
+                pd.select_surface_format(&self.d_surface_loader, self.d_surface, pdev)
+            }
+        }
+    }
+
+    pub fn extension_names() -> Vec<*const i8> {
+        match Self::choose_display_backend() {
+            BackendType::PhysicalDisplay => PhysicalDisplay::extension_names(),
+        }
+    }
+
+    pub fn destroy(&mut self) {
+        println!("Destroying display");
+        unsafe {
+            self.d_surface_loader.destroy_surface(self.d_surface, None);
+        }
+        // It seems that the display resources (mode) are cleaned up
+        // when the surface is destroyed. There are not separate
+        // deconstructors for them
+        //
+        // The validation layers do warn about them however (bug?)
+    }
+}
+
+/// This Display backend represents a physical monitor sitting
+/// on the user's desk. It corresponds to the VK_KHR_display extension.
+struct PhysicalDisplay {
+    // the display itself
+    pub display: vk::DisplayKHR,
+    // The mode the display was created with
+    pub display_mode: vk::DisplayModeKHR,
+    pub display_loader: khr::Display,
+}
+
+impl PhysicalDisplay {
+    // Create an on-screen surface.
+    //
+    // This will grab the function pointer loaders for the
+    // surface and display extensions and then create a
+    // surface to be rendered to.
+    unsafe fn new<E: EntryV1_0, I: InstanceV1_0>(
+        entry: &E,
+        inst: &I,
+        pdev: vk::PhysicalDevice,
+    ) -> (Self, vk::SurfaceKHR, vk::Extent2D) {
+        let d_loader = khr::Display::new(entry, inst);
+
+        let (display, surface, mode, resolution) =
+            PhysicalDisplay::create_surface(entry, inst, &d_loader, pdev).unwrap();
+
+        let ret = PhysicalDisplay {
+            display_loader: d_loader,
+            display_mode: mode,
+            display: display,
+        };
+
+        (ret, surface, resolution)
     }
 
     // choose a vkSurfaceFormatKHR for the vkSurfaceKHR
     //
     // This selects the color space and layout for a surface. This should
     // be called by the Renderer after creating a Display.
-    pub unsafe fn select_surface_format(&self, pdev: vk::PhysicalDevice) -> vk::SurfaceFormatKHR {
-        let formats = self
-            .surface_loader
-            .get_physical_device_surface_formats(pdev, self.surface)
+    unsafe fn select_surface_format(
+        &self,
+        surface_loader: &khr::Surface,
+        surface: vk::SurfaceKHR,
+        pdev: vk::PhysicalDevice,
+    ) -> vk::SurfaceFormatKHR {
+        let formats = surface_loader
+            .get_physical_device_surface_formats(pdev, surface)
             .unwrap();
 
         formats
@@ -207,23 +276,11 @@ impl Display {
     //
     // The two most important extensions are Surface and Display.
     // Without them we cannot render anything.
-    pub fn extension_names() -> Vec<*const i8> {
+    fn extension_names() -> Vec<*const i8> {
         vec![
             khr::Surface::name().as_ptr(),
             khr::Display::name().as_ptr(),
             DebugReport::name().as_ptr(),
         ]
-    }
-
-    pub fn destroy(&mut self) {
-        println!("Destroying display");
-        unsafe {
-            self.surface_loader.destroy_surface(self.surface, None);
-        }
-        // It seems that the display resources (mode) are cleaned up
-        // when the surface is destroyed. There are not separate
-        // deconstructors for them
-        //
-        // The validation layers do warn about them however (bug?)
     }
 }

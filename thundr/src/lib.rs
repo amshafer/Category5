@@ -79,12 +79,16 @@ pub use list::SurfaceList;
 pub use renderer::Renderer;
 pub use surface::Surface;
 
+// Re-export some things from utils so clients
+// can use them
+extern crate utils;
+pub use crate::utils::region::Rect;
+pub use crate::utils::{Dmabuf, MemImage};
+
 use renderer::RendererCreateInfo;
 
 #[macro_use]
 extern crate memoffset;
-extern crate utils;
-use crate::utils::{Dmabuf, MemImage};
 use pipelines::*;
 
 pub struct Thundr {

@@ -579,8 +579,8 @@ impl CompPipeline {
             Renderer::select_queue_family(
                 inst,
                 pdev,
-                &display.surface_loader,
-                display.surface,
+                &display.d_surface_loader,
+                display.d_surface,
                 vk::QueueFlags::COMPUTE,
             )
         })
