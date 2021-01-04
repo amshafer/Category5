@@ -20,6 +20,7 @@ use crate::list::SurfaceList;
 use crate::pipelines::PipelineType;
 
 extern crate utils as cat5_utils;
+use crate::ThundrCreateInfo;
 use cat5_utils::log;
 
 // this happy little debug callback is from the ash examples
@@ -128,16 +129,6 @@ pub struct Renderer {
     pub(crate) copy_cbuf_fence: vk::Fence,
     /// This is an allocator for the dynamic sets (samplers)
     pub(crate) desc_pool: DescPool,
-}
-
-/// Parameters for Renderer creation.
-///
-/// These will be set by Thundr based on the Pipelines that will
-/// be enabled. See `Pipeline` for methods that drive the data
-/// contained here.
-pub struct RendererCreateInfo {
-    /// A list of queue family indexes to create the device with
-    pub enabled_pipelines: Vec<PipelineType>,
 }
 
 /// Recording parameters
@@ -924,7 +915,7 @@ impl Renderer {
     /// All methods called after this only need to take a mutable reference to
     /// self, avoiding any nasty argument lists like the functions above.
     /// The goal is to have this make dealing with the api less wordy.
-    pub fn new(info: &RendererCreateInfo) -> Renderer {
+    pub fn new(info: &ThundrCreateInfo) -> Renderer {
         unsafe {
             let (entry, inst) = Renderer::create_instance();
 
@@ -964,7 +955,15 @@ impl Renderer {
 
             // create the graphics,transfer, and pipeline specific queues
             let mut families = vec![graphics_queue_family, transfer_queue_family];
-            for t in info.enabled_pipelines.iter() {
+
+            let mut enabled_pipelines = Vec::new();
+            if info.enable_compute_composition {
+                enabled_pipelines.push(PipelineType::COMPUTE);
+            } else if info.enable_traditional_composition {
+                enabled_pipelines.push(PipelineType::GEOMETRIC);
+            }
+
+            for t in enabled_pipelines.iter() {
                 if let Some(family) = t.get_queue_family(&inst, &display, pdev) {
                     families.push(family);
                 }

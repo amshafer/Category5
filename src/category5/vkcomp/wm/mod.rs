@@ -152,7 +152,8 @@ impl WindowManager {
     /// the compositor. The WindowManager will create and own
     /// the Thundr, thereby readying the display to draw.
     pub fn new(tx: Sender<Box<Hemisphere>>, rx: Receiver<Box<Hemisphere>>) -> WindowManager {
-        let mut rend = th::Thundr::new();
+        let info = th::ThundrCreateInfo::builder().build();
+        let mut rend = th::Thundr::new(&info).unwrap();
 
         let mut wm = WindowManager {
             wm_atmos: Atmosphere::new(tx, rx),

@@ -85,8 +85,6 @@ extern crate utils;
 pub use crate::utils::region::Rect;
 pub use crate::utils::{Dmabuf, MemImage};
 
-use renderer::RendererCreateInfo;
-
 #[macro_use]
 extern crate memoffset;
 use pipelines::*;
@@ -99,22 +97,80 @@ pub struct Thundr {
     pub(crate) th_pipe: Box<dyn Pipeline>,
 }
 
+pub enum ThundrSurfaceType {
+    Display,
+    X11,
+}
+
+/// Parameters for Renderer creation.
+///
+/// These will be set by Thundr based on the Pipelines that will
+/// be enabled. See `Pipeline` for methods that drive the data
+/// contained here.
+pub struct ThundrCreateInfo {
+    /// A list of queue family indexes to create the device with
+    pub enable_compute_composition: bool,
+    pub enable_traditional_composition: bool,
+    pub surface_type: ThundrSurfaceType,
+}
+
+impl ThundrCreateInfo {
+    pub fn builder() -> ThundrCreateInfoBuilder {
+        ThundrCreateInfoBuilder {
+            ci: ThundrCreateInfo {
+                enable_compute_composition: true,
+                enable_traditional_composition: false,
+                surface_type: ThundrSurfaceType::Display,
+            },
+        }
+    }
+}
+
+/// Implements the builder pattern for easier thundr creation
+pub struct ThundrCreateInfoBuilder {
+    ci: ThundrCreateInfo,
+}
+impl ThundrCreateInfoBuilder {
+    pub fn enable_compute_composition<'a>(&'a mut self) -> &'a mut Self {
+        self.ci.enable_compute_composition = true;
+        self
+    }
+
+    pub fn enable_traditional_composition<'a>(&'a mut self) -> &'a mut Self {
+        self.ci.enable_traditional_composition = true;
+        self
+    }
+    pub fn surface_type<'a>(&'a mut self, ty: ThundrSurfaceType) -> &'a mut Self {
+        self.ci.surface_type = ty;
+        self
+    }
+
+    pub fn build(mut self) -> ThundrCreateInfo {
+        self.ci
+    }
+}
+
 // This is the public facing thundr api. Don't change it
 impl Thundr {
     // TODO: make get_available_params and add customization
-    pub fn new() -> Thundr {
+    pub fn new(info: &ThundrCreateInfo) -> Result<Thundr, &'static str> {
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
-        let info = RendererCreateInfo {
-            enabled_pipelines: vec![PipelineType::COMPUTE],
-        };
         let mut rend = Renderer::new(&info);
-        let pipe = Box::new(CompPipeline::new(&mut rend));
 
-        Thundr {
+        // Create the pipeline(s) requested
+        let pipe: Box<dyn Pipeline> = if info.enable_compute_composition {
+            Box::new(CompPipeline::new(&mut rend))
+        } else if info.enable_traditional_composition {
+            Box::new(GeomPipeline::new(&mut rend))
+        } else {
+            return Err("Please select a composition type in ThundrCreateInfo");
+        };
+
+        Ok(Thundr {
             th_rend: rend,
             th_pipe: pipe,
-        }
+        })
     }
 
     pub fn get_resolution(&self) -> (u32, u32) {
