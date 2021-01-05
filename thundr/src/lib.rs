@@ -100,6 +100,7 @@ pub struct Thundr {
 #[cfg(feature = "xlib")]
 extern crate winit;
 
+#[derive(Clone)]
 pub enum SurfaceType {
     Display,
     #[cfg(feature = "xlib")]
@@ -111,6 +112,7 @@ pub enum SurfaceType {
 /// These will be set by Thundr based on the Pipelines that will
 /// be enabled. See `Pipeline` for methods that drive the data
 /// contained here.
+#[derive(Clone)]
 pub struct CreateInfo {
     /// A list of queue family indexes to create the device with
     pub enable_compute_composition: bool,
@@ -149,8 +151,8 @@ impl CreateInfoBuilder {
         self
     }
 
-    pub fn build(self) -> CreateInfo {
-        self.ci
+    pub fn build(&self) -> CreateInfo {
+        self.ci.clone()
     }
 }
 
@@ -163,10 +165,10 @@ impl Thundr {
         let mut rend = Renderer::new(&info);
 
         // Create the pipeline(s) requested
-        let pipe: Box<dyn Pipeline> = if info.enable_compute_composition {
-            Box::new(CompPipeline::new(&mut rend))
-        } else if info.enable_traditional_composition {
+        let pipe: Box<dyn Pipeline> = if info.enable_traditional_composition {
             Box::new(GeomPipeline::new(&mut rend))
+        } else if info.enable_compute_composition {
+            Box::new(CompPipeline::new(&mut rend))
         } else {
             return Err("Please select a composition type in the thundr CreateInfo");
         };

@@ -176,8 +176,13 @@ impl Renderer {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("VulkanRenderer").unwrap();
 
-        let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
-        //let layer_names = [];
+        let layer_names = if !info.enable_traditional_composition {
+            // For some reason the validation layers segfault in renderpass on the geometric
+            // one, so only use validation on compute
+            vec![CString::new("VK_LAYER_KHRONOS_validation").unwrap()]
+        } else {
+            Vec::new()
+        };
 
         let layer_names_raw: Vec<*const i8> = layer_names
             .iter()
@@ -1154,7 +1159,7 @@ impl Renderer {
 
             // we need to reset the fence since it has been signaled
             // copy fence will be handled elsewhere
-            self.dev.reset_fences(fences.as_slice()).unwrap();
+            self.dev.reset_fences(&[self.submit_fence]).unwrap();
 
             self.cbuf_submit_async(
                 cbuf,
