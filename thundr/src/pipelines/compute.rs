@@ -639,7 +639,7 @@ impl CompPipeline {
         for surf_rc in surfaces.iter() {
             // If the surface does not have damage attached, then don't generate tiles
             let surf = surf_rc.s_internal.borrow();
-            let image = match surf.s_image.as_ref() {
+            let _image = match surf.s_image.as_ref() {
                 Some(i) => i.i_internal.borrow(),
                 None => {
                     log::debug!(
@@ -732,7 +732,7 @@ impl Pipeline for CompPipeline {
         true
     }
 
-    fn draw(&mut self, rend: &Renderer, params: &RecordParams, surfaces: &SurfaceList) {
+    fn draw(&mut self, rend: &Renderer, _params: &RecordParams, surfaces: &SurfaceList) {
         unsafe {
             let ptr = rend
                 .dev

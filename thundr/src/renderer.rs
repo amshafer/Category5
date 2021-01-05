@@ -20,7 +20,7 @@ use crate::list::SurfaceList;
 use crate::pipelines::PipelineType;
 
 extern crate utils as cat5_utils;
-use crate::ThundrCreateInfo;
+use crate::CreateInfo;
 use cat5_utils::log;
 
 // this happy little debug callback is from the ash examples
@@ -172,7 +172,7 @@ impl Renderer {
     /// Most of the create info entries are straightforward, with
     /// some basic extensions being enabled. All of the work is
     /// done in subfunctions.
-    unsafe fn create_instance() -> (Entry, Instance) {
+    unsafe fn create_instance(info: &CreateInfo) -> (Entry, Instance) {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("VulkanRenderer").unwrap();
 
@@ -184,7 +184,7 @@ impl Renderer {
             .map(|raw_name: &CString| raw_name.as_ptr())
             .collect();
 
-        let extension_names_raw = Display::extension_names();
+        let extension_names_raw = Display::extension_names(info);
 
         let appinfo = vk::ApplicationInfo::builder()
             .application_name(&app_name)
@@ -915,9 +915,9 @@ impl Renderer {
     /// All methods called after this only need to take a mutable reference to
     /// self, avoiding any nasty argument lists like the functions above.
     /// The goal is to have this make dealing with the api less wordy.
-    pub fn new(info: &ThundrCreateInfo) -> Renderer {
+    pub fn new(info: &CreateInfo) -> Renderer {
         unsafe {
-            let (entry, inst) = Renderer::create_instance();
+            let (entry, inst) = Renderer::create_instance(info);
 
             let (dr_loader, d_callback) = Renderer::setup_debug(&entry, &inst);
 
@@ -925,7 +925,7 @@ impl Renderer {
 
             // Our display is in charge of choosing a medium to draw on,
             // and will create a surface on that medium
-            let display = Display::new(&entry, &inst, pdev);
+            let display = Display::new(info, &entry, &inst, pdev);
 
             let graphics_queue_family = Renderer::select_queue_family(
                 &inst,

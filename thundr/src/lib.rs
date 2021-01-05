@@ -97,9 +97,13 @@ pub struct Thundr {
     pub(crate) th_pipe: Box<dyn Pipeline>,
 }
 
-pub enum ThundrSurfaceType {
+#[cfg(feature = "xlib")]
+extern crate winit;
+
+pub enum SurfaceType {
     Display,
-    X11,
+    #[cfg(feature = "xlib")]
+    Xlib(winit::window::Window),
 }
 
 /// Parameters for Renderer creation.
@@ -107,30 +111,30 @@ pub enum ThundrSurfaceType {
 /// These will be set by Thundr based on the Pipelines that will
 /// be enabled. See `Pipeline` for methods that drive the data
 /// contained here.
-pub struct ThundrCreateInfo {
+pub struct CreateInfo {
     /// A list of queue family indexes to create the device with
     pub enable_compute_composition: bool,
     pub enable_traditional_composition: bool,
-    pub surface_type: ThundrSurfaceType,
+    pub surface_type: SurfaceType,
 }
 
-impl ThundrCreateInfo {
-    pub fn builder() -> ThundrCreateInfoBuilder {
-        ThundrCreateInfoBuilder {
-            ci: ThundrCreateInfo {
+impl CreateInfo {
+    pub fn builder() -> CreateInfoBuilder {
+        CreateInfoBuilder {
+            ci: CreateInfo {
                 enable_compute_composition: true,
                 enable_traditional_composition: false,
-                surface_type: ThundrSurfaceType::Display,
+                surface_type: SurfaceType::Display,
             },
         }
     }
 }
 
 /// Implements the builder pattern for easier thundr creation
-pub struct ThundrCreateInfoBuilder {
-    ci: ThundrCreateInfo,
+pub struct CreateInfoBuilder {
+    ci: CreateInfo,
 }
-impl ThundrCreateInfoBuilder {
+impl CreateInfoBuilder {
     pub fn enable_compute_composition<'a>(&'a mut self) -> &'a mut Self {
         self.ci.enable_compute_composition = true;
         self
@@ -140,12 +144,12 @@ impl ThundrCreateInfoBuilder {
         self.ci.enable_traditional_composition = true;
         self
     }
-    pub fn surface_type<'a>(&'a mut self, ty: ThundrSurfaceType) -> &'a mut Self {
+    pub fn surface_type<'a>(&'a mut self, ty: SurfaceType) -> &'a mut Self {
         self.ci.surface_type = ty;
         self
     }
 
-    pub fn build(mut self) -> ThundrCreateInfo {
+    pub fn build(self) -> CreateInfo {
         self.ci
     }
 }
@@ -153,7 +157,7 @@ impl ThundrCreateInfoBuilder {
 // This is the public facing thundr api. Don't change it
 impl Thundr {
     // TODO: make get_available_params and add customization
-    pub fn new(info: &ThundrCreateInfo) -> Result<Thundr, &'static str> {
+    pub fn new(info: &CreateInfo) -> Result<Thundr, &'static str> {
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
         let mut rend = Renderer::new(&info);
@@ -164,7 +168,7 @@ impl Thundr {
         } else if info.enable_traditional_composition {
             Box::new(GeomPipeline::new(&mut rend))
         } else {
-            return Err("Please select a composition type in ThundrCreateInfo");
+            return Err("Please select a composition type in the thundr CreateInfo");
         };
 
         Ok(Thundr {
