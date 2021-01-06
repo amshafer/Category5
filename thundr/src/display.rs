@@ -527,7 +527,7 @@ impl MacOSDisplay {
     fn extension_names() -> Vec<*const i8> {
         vec![
             khr::Surface::name().as_ptr(),
-            khr::XlibSurface::name().as_ptr(),
+            MacOSSurface::name().as_ptr(),
             DebugReport::name().as_ptr(),
         ]
     }

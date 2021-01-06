@@ -18,6 +18,7 @@ use crate::descpool::DescPool;
 use crate::display::Display;
 use crate::list::SurfaceList;
 use crate::pipelines::PipelineType;
+use crate::platform::VKDeviceFeatures;
 
 extern crate utils as cat5_utils;
 use crate::CreateInfo;
@@ -174,7 +175,7 @@ impl Renderer {
     /// done in subfunctions.
     unsafe fn create_instance(info: &CreateInfo) -> (Entry, Instance) {
         let entry = Entry::new().unwrap();
-        let app_name = CString::new("VulkanRenderer").unwrap();
+        let app_name = CString::new("Thundr").unwrap();
 
         let layer_names = if !info.enable_traditional_composition {
             // For some reason the validation layers segfault in renderpass on the geometric
@@ -303,20 +304,13 @@ impl Renderer {
     ///
     /// A queue is created in the specified queue family in the
     /// present_queue argument.
-    unsafe fn create_device(inst: &Instance, pdev: vk::PhysicalDevice, queues: &[u32]) -> Device {
-        let dev_extension_names = [
-            khr::Swapchain::name().as_ptr(),
-            khr::ExternalMemoryFd::name().as_ptr(),
-            vk::KhrSwapchainMutableFormatFn::name().as_ptr(),
-            // We need to wait for this to be supported in mesa
-            // for now it somehow happens to work
-            vk::KhrImageFormatListFn::name().as_ptr(),
-            vk::ExtImageDrmFormatModifierFn::name().as_ptr(),
-            vk::KhrMaintenance2Fn::name().as_ptr(),
-            // The following are needed for descriptor indexing
-            vk::KhrMaintenance3Fn::name().as_ptr(),
-            vk::ExtDescriptorIndexingFn::name().as_ptr(),
-        ];
+    unsafe fn create_device(
+        dev_features: &VKDeviceFeatures,
+        inst: &Instance,
+        pdev: vk::PhysicalDevice,
+        queues: &[u32],
+    ) -> Device {
+        let dev_extension_names = dev_features.get_device_extensions();
 
         let features = vk::PhysicalDeviceFeatures {
             shader_clip_distance: 1,
@@ -337,17 +331,19 @@ impl Renderer {
 
         let mut dev_create_info = vk::DeviceCreateInfo::builder()
             .queue_create_infos(queue_infos.as_ref())
-            .enabled_extension_names(&dev_extension_names)
+            .enabled_extension_names(dev_extension_names.as_slice())
             .enabled_features(&features)
             .build();
 
-        let indexing_info = vk::PhysicalDeviceDescriptorIndexingFeaturesEXT::builder()
-            .shader_sampled_image_array_non_uniform_indexing(true)
-            .runtime_descriptor_array(true)
-            .descriptor_binding_variable_descriptor_count(true)
-            .build();
+        if dev_features.vkc_supports_desc_indexing {
+            let indexing_info = vk::PhysicalDeviceDescriptorIndexingFeaturesEXT::builder()
+                .shader_sampled_image_array_non_uniform_indexing(true)
+                .runtime_descriptor_array(true)
+                .descriptor_binding_variable_descriptor_count(true)
+                .build();
 
-        dev_create_info.p_next = &indexing_info as *const _ as *mut std::ffi::c_void;
+            dev_create_info.p_next = &indexing_info as *const _ as *mut std::ffi::c_void;
+        }
 
         // return a newly created device
         inst.create_device(pdev, &dev_create_info, None).unwrap()
@@ -976,7 +972,8 @@ impl Renderer {
             // Remove duplicate entries to keep validation from complaining
             families.dedup();
 
-            let dev = Renderer::create_device(&inst, pdev, families.as_slice());
+            let dev_features = VKDeviceFeatures::new(&info, &inst, pdev);
+            let dev = Renderer::create_device(&dev_features, &inst, pdev, families.as_slice());
 
             // Each window is going to have a sampler descriptor for every
             // framebuffer image. Unfortunately this means the descriptor

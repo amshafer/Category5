@@ -70,6 +70,7 @@ mod display;
 mod image;
 mod list;
 mod pipelines;
+mod platform;
 mod renderer;
 mod surface;
 
@@ -100,12 +101,12 @@ pub struct Thundr {
 #[cfg(feature = "xlib")]
 extern crate winit;
 
-pub enum SurfaceType {
+pub enum SurfaceType<'a> {
     Display,
     #[cfg(feature = "xlib")]
-    Xlib(winit::window::Window),
+    Xlib(&'a winit::window::Window),
     #[cfg(feature = "macos")]
-    MacOS(winit::window::Window),
+    MacOS(&'a winit::window::Window),
 }
 
 /// Parameters for Renderer creation.
@@ -113,15 +114,15 @@ pub enum SurfaceType {
 /// These will be set by Thundr based on the Pipelines that will
 /// be enabled. See `Pipeline` for methods that drive the data
 /// contained here.
-pub struct CreateInfo {
+pub struct CreateInfo<'a> {
     /// A list of queue family indexes to create the device with
     pub enable_compute_composition: bool,
     pub enable_traditional_composition: bool,
-    pub surface_type: SurfaceType,
+    pub surface_type: SurfaceType<'a>,
 }
 
-impl CreateInfo {
-    pub fn builder() -> CreateInfoBuilder {
+impl<'a> CreateInfo<'a> {
+    pub fn builder() -> CreateInfoBuilder<'a> {
         CreateInfoBuilder {
             ci: CreateInfo {
                 enable_compute_composition: true,
@@ -133,10 +134,10 @@ impl CreateInfo {
 }
 
 /// Implements the builder pattern for easier thundr creation
-pub struct CreateInfoBuilder {
-    ci: CreateInfo,
+pub struct CreateInfoBuilder<'a> {
+    ci: CreateInfo<'a>,
 }
-impl CreateInfoBuilder {
+impl<'a> CreateInfoBuilder<'a> {
     pub fn enable_compute_composition(mut self) -> Self {
         self.ci.enable_compute_composition = true;
         self
@@ -146,12 +147,12 @@ impl CreateInfoBuilder {
         self.ci.enable_traditional_composition = true;
         self
     }
-    pub fn surface_type(mut self, ty: SurfaceType) -> Self {
+    pub fn surface_type(mut self, ty: SurfaceType<'a>) -> Self {
         self.ci.surface_type = ty;
         self
     }
 
-    pub fn build(self) -> CreateInfo {
+    pub fn build(self) -> CreateInfo<'a> {
         self.ci
     }
 }
