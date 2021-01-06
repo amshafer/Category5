@@ -58,7 +58,7 @@ fn contains_extensions(exts: &[vk::ExtensionProperties], req: &[*const i8]) -> b
 }
 
 impl VKDeviceFeatures {
-    pub fn new(info: &CreateInfo, inst: &Instance, pdev: vk::PhysicalDevice) -> Self {
+    pub fn new(_info: &CreateInfo, inst: &Instance, pdev: vk::PhysicalDevice) -> Self {
         let mut ret = Self {
             vkc_supports_ext_mem: false,
             vkc_supports_dmabuf: false,

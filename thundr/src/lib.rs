@@ -63,6 +63,7 @@
 //! * VK_KHR_external_memory
 
 // Austin Shafer - 2020
+use std::marker::PhantomData;
 
 mod damage;
 mod descpool;
@@ -102,7 +103,10 @@ pub struct Thundr {
 extern crate winit;
 
 pub enum SurfaceType<'a> {
-    Display,
+    /// it exists to make the lifetime parameter play nice with rust.
+    /// Since the Display variant doesn't have a lifetime, we need one that
+    /// does incase xlib/macos aren't enabled.
+    Display(PhantomData<&'a usize>),
     #[cfg(feature = "xlib")]
     Xlib(&'a winit::window::Window),
     #[cfg(feature = "macos")]
@@ -127,7 +131,7 @@ impl<'a> CreateInfo<'a> {
             ci: CreateInfo {
                 enable_compute_composition: true,
                 enable_traditional_composition: false,
-                surface_type: SurfaceType::Display,
+                surface_type: SurfaceType::Display(PhantomData),
             },
         }
     }

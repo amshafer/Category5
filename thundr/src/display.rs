@@ -55,7 +55,7 @@ enum BackendType {
 impl Display {
     fn choose_display_backend(info: &CreateInfo) -> BackendType {
         match info.surface_type {
-            SurfaceType::Display => BackendType::PhysicalDisplay,
+            SurfaceType::Display(_) => BackendType::PhysicalDisplay,
             #[cfg(feature = "xlib")]
             SurfaceType::Xlib(_) => BackendType::XlibDisplay,
             #[cfg(feature = "macos")]
@@ -71,7 +71,7 @@ impl Display {
     ) -> Display {
         let s_loader = khr::Surface::new(entry, inst);
         let (back, surf, res) = match &info.surface_type {
-            SurfaceType::Display => {
+            SurfaceType::Display(_) => {
                 let n = PhysicalDisplay::new(entry, inst, pdev);
                 (Backend::PhysicalDisplay(n.0), n.1, n.2)
             }
