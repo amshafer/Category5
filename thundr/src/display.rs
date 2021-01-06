@@ -8,7 +8,7 @@ extern crate ash;
 #[cfg(feature = "macos")]
 use ash::extensions::mvk::MacOSSurface;
 
-#[cfg(any(feature = "xlib", feature = "macos"))]
+#[cfg(any(feature = "xcb", feature = "macos"))]
 extern crate winit;
 
 use ash::extensions::ext::DebugReport;
@@ -38,16 +38,16 @@ pub struct Display {
 
 enum Backend {
     PhysicalDisplay(PhysicalDisplay),
-    #[cfg(feature = "xlib")]
-    XlibDisplay(XlibDisplay),
+    #[cfg(feature = "xcb")]
+    XcbDisplay(XcbDisplay),
     #[cfg(feature = "macos")]
     MacOSDisplay(MacOSDisplay),
 }
 
 enum BackendType {
     PhysicalDisplay,
-    #[cfg(feature = "xlib")]
-    XlibDisplay,
+    #[cfg(feature = "xcb")]
+    XcbDisplay,
     #[cfg(feature = "macos")]
     MacOSDisplay,
 }
@@ -56,8 +56,8 @@ impl Display {
     fn choose_display_backend(info: &CreateInfo) -> BackendType {
         match info.surface_type {
             SurfaceType::Display(_) => BackendType::PhysicalDisplay,
-            #[cfg(feature = "xlib")]
-            SurfaceType::Xlib(_) => BackendType::XlibDisplay,
+            #[cfg(feature = "xcb")]
+            SurfaceType::Xcb(_) => BackendType::XcbDisplay,
             #[cfg(feature = "macos")]
             SurfaceType::MacOS(_) => BackendType::MacOSDisplay,
         }
@@ -75,13 +75,13 @@ impl Display {
                 let n = PhysicalDisplay::new(entry, inst, pdev);
                 (Backend::PhysicalDisplay(n.0), n.1, n.2)
             }
-            #[cfg(feature = "xlib")]
-            SurfaceType::Xlib(win) => {
-                let (xd, surf) = XlibDisplay::new(entry, inst, pdev, &win);
+            #[cfg(feature = "xcb")]
+            SurfaceType::Xcb(win) => {
+                let (xd, surf) = XcbDisplay::new(entry, inst, pdev, &win);
                 let caps = s_loader
                     .get_physical_device_surface_capabilities(pdev, surf)
                     .unwrap();
-                (Backend::XlibDisplay(xd), surf, caps.current_extent)
+                (Backend::XcbDisplay(xd), surf, caps.current_extent)
             }
             #[cfg(feature = "macos")]
             SurfaceType::MacOS(win) => {
@@ -121,8 +121,8 @@ impl Display {
             Backend::PhysicalDisplay(pd) => {
                 pd.select_surface_format(&self.d_surface_loader, self.d_surface, pdev)
             }
-            #[cfg(feature = "xlib")]
-            Backend::XlibDisplay(xd) => {
+            #[cfg(feature = "xcb")]
+            Backend::XcbDisplay(xd) => {
                 xd.select_surface_format(&self.d_surface_loader, self.d_surface, pdev)
             }
             #[cfg(feature = "macos")]
@@ -135,8 +135,8 @@ impl Display {
     pub fn extension_names(info: &CreateInfo) -> Vec<*const i8> {
         match Self::choose_display_backend(info) {
             BackendType::PhysicalDisplay => PhysicalDisplay::extension_names(),
-            #[cfg(feature = "xlib")]
-            BackendType::XlibDisplay => XlibDisplay::extension_names(),
+            #[cfg(feature = "xcb")]
+            BackendType::XcbDisplay => XcbDisplay::extension_names(),
             #[cfg(feature = "macos")]
             BackendType::MacOSDisplay => MacOSDisplay::extension_names(),
         }
@@ -336,14 +336,14 @@ impl PhysicalDisplay {
     }
 }
 
-#[cfg(feature = "xlib")]
-struct XlibDisplay {
+#[cfg(feature = "xcb")]
+struct XcbDisplay {
     // the display itself
-    pub xlib_loader: khr::XlibSurface,
+    pub xcb_loader: khr::XcbSurface,
 }
 
-#[cfg(feature = "xlib")]
-impl XlibDisplay {
+#[cfg(feature = "xcb")]
+impl XcbDisplay {
     /// Create an on-screen surface.
     ///
     /// This will grab the function pointer loaders for the
@@ -355,12 +355,12 @@ impl XlibDisplay {
         pdev: vk::PhysicalDevice,
         win: &winit::window::Window,
     ) -> (Self, vk::SurfaceKHR) {
-        let x_loader = khr::XlibSurface::new(entry, inst);
+        let x_loader = khr::XcbSurface::new(entry, inst);
 
         let surface = Self::create_surface(entry, inst, &x_loader, pdev, win).unwrap();
 
         let ret = Self {
-            xlib_loader: x_loader,
+            xcb_loader: x_loader,
         };
 
         (ret, surface)
@@ -398,26 +398,27 @@ impl XlibDisplay {
     unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>(
         entry: &E, // entry and inst aren't used but still need
         inst: &I,  // to be passed for compatibility
-        loader: &khr::XlibSurface,
+        loader: &khr::XcbSurface,
         pdev: vk::PhysicalDevice,
         win: &winit::window::Window,
     ) -> Result<vk::SurfaceKHR, vk::Result> {
         use winit::platform::unix::WindowExtUnix;
-        let x11_display = win.xlib_display().unwrap();
+        let x11_conn = win.xcb_connection().unwrap();
         let x11_window = win.xlib_window().unwrap();
-        let x11_create_info = vk::XlibSurfaceCreateInfoKHR::builder()
-            .window(x11_window)
-            .dpy(x11_display as *mut vk::Display);
+        let x11_create_info = vk::XcbSurfaceCreateInfoKHR::builder()
+            .window(x11_window as u32)
+            .connection(x11_conn)
+            .build();
 
-        let xlib_surface_loader = khr::XlibSurface::new(entry, inst);
-        loader.create_xlib_surface(&x11_create_info, None)
+        let xcb_surface_loader = khr::XcbSurface::new(entry, inst);
+        loader.create_xcb_surface(&x11_create_info, None)
     }
 
-    /// The two most important extensions are Surface and Xlib.
+    /// The two most important extensions are Surface and Xcb.
     fn extension_names() -> Vec<*const i8> {
         vec![
             khr::Surface::name().as_ptr(),
-            khr::XlibSurface::name().as_ptr(),
+            khr::XcbSurface::name().as_ptr(),
             DebugReport::name().as_ptr(),
         ]
     }
@@ -523,7 +524,7 @@ impl MacOSDisplay {
         macos_surface_loader.create_mac_os_surface_mvk(&create_info, None)
     }
 
-    /// The two most important extensions are Surface and Xlib.
+    /// The two most important extensions are Surface and Xcb.
     fn extension_names() -> Vec<*const i8> {
         vec![
             khr::Surface::name().as_ptr(),

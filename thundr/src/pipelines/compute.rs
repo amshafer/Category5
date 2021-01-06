@@ -513,9 +513,7 @@ impl CompPipeline {
             rend.create_buffer_with_size(
                 vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::STORAGE_BUFFER,
                 vk::SharingMode::EXCLUSIVE,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL
-                    | vk::MemoryPropertyFlags::HOST_VISIBLE
-                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
                 vis_size,
             )
         };
@@ -734,21 +732,6 @@ impl Pipeline for CompPipeline {
 
     fn draw(&mut self, rend: &Renderer, _params: &RecordParams, surfaces: &SurfaceList) {
         unsafe {
-            let ptr = rend
-                .dev
-                .map_memory(
-                    self.cp_vis_mem,
-                    767 * 1366 * 2 * 4 - 128,
-                    vk::WHOLE_SIZE,
-                    vk::MemoryMapFlags::empty(),
-                )
-                .unwrap();
-
-            let dst = std::slice::from_raw_parts_mut(ptr as *mut i32, 512);
-            println!("dst[] = {:?}", dst);
-
-            rend.dev.unmap_memory(self.cp_vis_mem);
-
             // before recording, update our descriptor for our render target
             // get the current swapchain image
             self.gen_window_list(surfaces);

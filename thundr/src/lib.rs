@@ -99,16 +99,16 @@ pub struct Thundr {
     pub(crate) th_pipe: Box<dyn Pipeline>,
 }
 
-#[cfg(feature = "xlib")]
+#[cfg(feature = "xcb")]
 extern crate winit;
 
 pub enum SurfaceType<'a> {
     /// it exists to make the lifetime parameter play nice with rust.
     /// Since the Display variant doesn't have a lifetime, we need one that
-    /// does incase xlib/macos aren't enabled.
+    /// does incase xcb/macos aren't enabled.
     Display(PhantomData<&'a usize>),
-    #[cfg(feature = "xlib")]
-    Xlib(&'a winit::window::Window),
+    #[cfg(feature = "xcb")]
+    Xcb(&'a winit::window::Window),
     #[cfg(feature = "macos")]
     MacOS(&'a winit::window::Window),
 }

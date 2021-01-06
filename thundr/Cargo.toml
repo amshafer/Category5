@@ -24,5 +24,5 @@ cocoa={version = "", optional = true }
 
 
 [features]
-xlib = ["winit"]
+xcb = ["winit"]
 macos = ["winit", "cocoa", "metal", "objc"]
