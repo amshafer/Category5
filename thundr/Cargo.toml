@@ -18,6 +18,11 @@ nix="0.17"
 
 # The following are only for the window system features
 winit={version = "0.24", optional = true }
+metal={version = "", optional = true }
+objc={version = "", optional = true }
+cocoa={version = "", optional = true }
+
 
 [features]
 xlib = ["winit"]
+macos = ["winit", "cocoa", "metal", "objc"]

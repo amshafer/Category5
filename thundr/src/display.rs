@@ -5,7 +5,10 @@
 #![allow(dead_code, non_camel_case_types)]
 extern crate ash;
 
-#[cfg(feature = "xlib")]
+#[cfg(feature = "macos")]
+use ash::extensions::mvk::MacOSSurface;
+
+#[cfg(any(feature = "xlib", feature = "macos"))]
 extern crate winit;
 
 use ash::extensions::ext::DebugReport;
@@ -37,12 +40,16 @@ enum Backend {
     PhysicalDisplay(PhysicalDisplay),
     #[cfg(feature = "xlib")]
     XlibDisplay(XlibDisplay),
+    #[cfg(feature = "macos")]
+    MacOSDisplay(MacOSDisplay),
 }
 
 enum BackendType {
     PhysicalDisplay,
     #[cfg(feature = "xlib")]
     XlibDisplay,
+    #[cfg(feature = "macos")]
+    MacOSDisplay,
 }
 
 impl Display {
@@ -51,6 +58,8 @@ impl Display {
             SurfaceType::Display => BackendType::PhysicalDisplay,
             #[cfg(feature = "xlib")]
             SurfaceType::Xlib(_) => BackendType::XlibDisplay,
+            #[cfg(feature = "macos")]
+            SurfaceType::MacOS(_) => BackendType::MacOSDisplay,
         }
     }
 
@@ -61,7 +70,7 @@ impl Display {
         pdev: vk::PhysicalDevice,
     ) -> Display {
         let s_loader = khr::Surface::new(entry, inst);
-        let (back, surf, res) = match info.surface_type {
+        let (back, surf, res) = match &info.surface_type {
             SurfaceType::Display => {
                 let n = PhysicalDisplay::new(entry, inst, pdev);
                 (Backend::PhysicalDisplay(n.0), n.1, n.2)
@@ -73,6 +82,14 @@ impl Display {
                     .get_physical_device_surface_capabilities(pdev, surf)
                     .unwrap();
                 (Backend::XlibDisplay(xd), surf, caps.current_extent)
+            }
+            #[cfg(feature = "macos")]
+            SurfaceType::MacOS(win) => {
+                let (xd, surf) = MacOSDisplay::new(entry, inst, pdev, &win);
+                let caps = s_loader
+                    .get_physical_device_surface_capabilities(pdev, surf)
+                    .unwrap();
+                (Backend::MacOSDisplay(xd), surf, caps.current_extent)
             }
         };
 
@@ -104,6 +121,14 @@ impl Display {
             Backend::PhysicalDisplay(pd) => {
                 pd.select_surface_format(&self.d_surface_loader, self.d_surface, pdev)
             }
+            #[cfg(feature = "xlib")]
+            Backend::XlibDisplay(xd) => {
+                xd.select_surface_format(&self.d_surface_loader, self.d_surface, pdev)
+            }
+            #[cfg(feature = "macos")]
+            Backend::MacOSDisplay(md) => {
+                md.select_surface_format(&self.d_surface_loader, self.d_surface, pdev)
+            }
         }
     }
 
@@ -112,6 +137,8 @@ impl Display {
             BackendType::PhysicalDisplay => PhysicalDisplay::extension_names(),
             #[cfg(feature = "xlib")]
             BackendType::XlibDisplay => XlibDisplay::extension_names(),
+            #[cfg(feature = "macos")]
+            BackendType::MacOSDisplay => MacOSDisplay::extension_names(),
         }
     }
 
@@ -368,7 +395,6 @@ impl XlibDisplay {
     }
 
     /// Get an x11 display surface.
-    #[cfg(unix)]
     unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>(
         entry: &E, // entry and inst aren't used but still need
         inst: &I,  // to be passed for compatibility
@@ -385,6 +411,116 @@ impl XlibDisplay {
 
         let xlib_surface_loader = khr::XlibSurface::new(entry, inst);
         loader.create_xlib_surface(&x11_create_info, None)
+    }
+
+    /// The two most important extensions are Surface and Xlib.
+    fn extension_names() -> Vec<*const i8> {
+        vec![
+            khr::Surface::name().as_ptr(),
+            khr::XlibSurface::name().as_ptr(),
+            DebugReport::name().as_ptr(),
+        ]
+    }
+}
+
+#[cfg(feature = "macos")]
+struct MacOSDisplay {
+    // the display itself
+    pub mac_loader: MacOSSurface,
+}
+
+#[cfg(feature = "macos")]
+impl MacOSDisplay {
+    /// Create an on-screen surface.
+    ///
+    /// This will grab the function pointer loaders for the
+    /// surface and display extensions and then create a
+    /// surface to be rendered to.
+    unsafe fn new<E: EntryV1_0, I: InstanceV1_0>(
+        entry: &E,
+        inst: &I,
+        pdev: vk::PhysicalDevice,
+        win: &winit::window::Window,
+    ) -> (Self, vk::SurfaceKHR) {
+        let x_loader = MacOSSurface::new(entry, inst);
+
+        let surface = Self::create_surface(entry, inst, &x_loader, pdev, win).unwrap();
+
+        let ret = Self {
+            mac_loader: x_loader,
+        };
+
+        (ret, surface)
+    }
+
+    /// choose a vkSurfaceFormatKHR for the vkSurfaceKHR
+    unsafe fn select_surface_format(
+        &self,
+        surface_loader: &khr::Surface,
+        surface: vk::SurfaceKHR,
+        pdev: vk::PhysicalDevice,
+    ) -> vk::SurfaceFormatKHR {
+        let formats = surface_loader
+            .get_physical_device_surface_formats(pdev, surface)
+            .unwrap();
+
+        formats
+            .iter()
+            .map(|fmt| match fmt.format {
+                // if the surface does not specify a desired format
+                // then we can choose our own
+                vk::Format::UNDEFINED => vk::SurfaceFormatKHR {
+                    format: vk::Format::R8G8B8A8_UNORM,
+                    color_space: fmt.color_space,
+                },
+                // if the surface has a desired format we will just
+                // use that
+                _ => *fmt,
+            })
+            .nth(0)
+            .expect("Could not find a surface format")
+    }
+
+    unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>(
+        entry: &E, // entry and inst aren't used but still need
+        inst: &I,  // to be passed for compatibility
+        loader: &MacOSSurface,
+        pdev: vk::PhysicalDevice,
+        window: &winit::window::Window,
+    ) -> Result<vk::SurfaceKHR, vk::Result> {
+        use std::{ffi::c_void, mem, ptr};
+        use winit::platform::macos::WindowExtMacOS;
+        extern crate cocoa;
+        extern crate metal;
+        extern crate objc;
+        use cocoa::appkit::{NSView, NSWindow};
+        use cocoa::base::id as cocoa_id;
+        use metal::CoreAnimationLayer;
+        use objc::runtime::YES;
+
+        let wnd: cocoa_id = mem::transmute(window.ns_window());
+
+        let layer = CoreAnimationLayer::new();
+
+        layer.set_edge_antialiasing_mask(0);
+        layer.set_presents_with_transaction(false);
+        layer.remove_all_animations();
+
+        let view = wnd.contentView();
+
+        layer.set_contents_scale(view.backingScaleFactor());
+        view.setLayer(mem::transmute(layer.as_ref()));
+        view.setWantsLayer(YES);
+
+        let create_info = vk::MacOSSurfaceCreateInfoMVK {
+            s_type: vk::StructureType::MACOS_SURFACE_CREATE_INFO_M,
+            p_next: ptr::null(),
+            flags: Default::default(),
+            p_view: window.ns_view() as *const c_void,
+        };
+
+        let macos_surface_loader = MacOSSurface::new(entry, inst);
+        macos_surface_loader.create_mac_os_surface_mvk(&create_info, None)
     }
 
     /// The two most important extensions are Surface and Xlib.

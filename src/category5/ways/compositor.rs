@@ -10,8 +10,8 @@ pub extern crate wayland_server as ws;
 use ws::{Filter, Main, Resource};
 
 use ws::protocol::{
-    wl_compositor as wlci, wl_output, wl_seat, wl_shell, wl_shm, wl_subcompositor as wlsc,
-    wl_surface as wlsi,
+    wl_compositor as wlci, wl_data_device_manager as wlddm, wl_output, wl_seat, wl_shell, wl_shm,
+    wl_subcompositor as wlsc, wl_surface as wlsi,
 };
 
 extern crate utils as cat5_utils;
@@ -33,50 +33,50 @@ use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
-// A wayland compositor wrapper
-//
-// This is the singleton of the wayland subsystem. It holds
-// all of the high level state and is passed and reference
-// counted to all of the protocol state objects. These objects
-// will perform their operations and update this state if needed.
-//
-// Obviously anything that can be kept in protocol objects should,
-// for sake of parallelism.
+/// A wayland compositor wrapper
+///
+/// This is the singleton of the wayland subsystem. It holds
+/// all of the high level state and is passed and reference
+/// counted to all of the protocol state objects. These objects
+/// will perform their operations and update this state if needed.
+///
+/// Obviously anything that can be kept in protocol objects should,
+/// for sake of parallelism.
 #[allow(dead_code)]
 pub struct Compositor {
     c_atmos: Rc<RefCell<Atmosphere>>,
 }
 
-// The event manager
-//
-// This class the launching point of the wayland stack. It
-// is used by category5 to dispatch handling and listen
-// on the wayland fds. It also owns the wayland-rs top
-// level object in em_display
+/// The event manager
+///
+/// This class the launching point of the wayland stack. It
+/// is used by category5 to dispatch handling and listen
+/// on the wayland fds. It also owns the wayland-rs top
+/// level object in em_display
 #[allow(dead_code)]
 pub struct EventManager {
     em_atmos: Rc<RefCell<Atmosphere>>,
-    // The wayland display object, this is the core
-    // global singleton for libwayland
+    /// The wayland display object, this is the core
+    /// global singleton for libwayland
     em_display: ws::Display,
-    // The input subsystem
-    //
-    // This is not in its own thread since it generates a
-    // huge amount of updates, which performs poorly with
-    // channel-based message passing.
+    /// The input subsystem
+    ///
+    /// This is not in its own thread since it generates a
+    /// huge amount of updates, which performs poorly with
+    /// channel-based message passing.
     em_input: Rc<RefCell<Input>>,
-    // How much the mouse has moved in this frame
-    // aggregates input pointer events
+    /// How much the mouse has moved in this frame
+    /// aggregates input pointer events
     em_pointer_dx: f64,
     em_pointer_dy: f64,
 }
 
 impl Compositor {
-    // wl_compositor interface create surface
-    //
-    // This request creates a new wl_surface and
-    // hooks up our surface handler. See the surface
-    // module
+    /// wl_compositor interface create surface
+    ///
+    /// This request creates a new wl_surface and
+    /// hooks up our surface handler. See the surface
+    /// module
     pub fn create_surface(&mut self, surf: Main<wlsi::WlSurface>) {
         let client = utils::get_id_from_client(
             self.c_atmos.clone(),
@@ -127,15 +127,15 @@ impl Compositor {
 }
 
 impl EventManager {
-    // Returns a new struct in charge of running the main event loop
-    //
-    // This creates a new wayland compositor, setting up all
-    // the needed resources for the struct. It will create a
-    // wl_display, initialize a new socket, create the client/surface
-    //  lists, and create a compositor global resource.
-    //
-    // This kicks off the global callback chain, starting with
-    //    Compositor::bind_compositor_callback
+    /// Returns a new struct in charge of running the main event loop
+    ///
+    /// This creates a new wayland compositor, setting up all
+    /// the needed resources for the struct. It will create a
+    /// wl_display, initialize a new socket, create the client/surface
+    ///  lists, and create a compositor global resource.
+    ///
+    /// This kicks off the global callback chain, starting with
+    ///    Compositor::bind_compositor_callback
     pub fn new(tx: Sender<Box<Hemisphere>>, rx: Receiver<Box<Hemisphere>>) -> Box<EventManager> {
         let mut display = ws::Display::new();
         display
@@ -168,15 +168,16 @@ impl EventManager {
         evman.create_wl_seat_global();
         evman.create_wl_output_global();
         evman.create_wl_subcompositor_global();
+        evman.create_wl_data_device_manager_global();
 
         return evman;
     }
 
-    // Create a new global object advertising the wl_surface interface
-    //
-    // In wayland we create global objects which tell the client
-    // what protocols we implement. Each of these methods initializes
-    // one such global
+    /// Create a new global object advertising the wl_surface interface
+    ///
+    /// In wayland we create global objects which tell the client
+    /// what protocols we implement. Each of these methods initializes
+    /// one such global
     fn create_compositor_global(&mut self, comp_cell: Rc<RefCell<Compositor>>) {
         // create interface for our compositor
         // this global is independent of any one client, and
@@ -205,11 +206,11 @@ impl EventManager {
         );
     }
 
-    // Create the shared memory globals
-    //
-    // This creates the wl_shm interface. It seems that
-    // wayland-rs does not handle this interface for us
-    // like the system library does, so we create it here
+    /// Create the shared memory globals
+    ///
+    /// This creates the wl_shm interface. It seems that
+    /// wayland-rs does not handle this interface for us
+    /// like the system library does, so we create it here
     fn create_shm_global(&mut self) {
         self.em_display.create_global::<wl_shm::WlShm, _>(
             1, // version
@@ -228,10 +229,10 @@ impl EventManager {
         );
     }
 
-    // Initialize the wl_shell interface
-    //
-    // the wl_shell interface handles the desktop window
-    // lifecycle. It handles the type of window and its position
+    /// Initialize the wl_shell interface
+    ///
+    /// the wl_shell interface handles the desktop window
+    /// lifecycle. It handles the type of window and its position
     fn create_wl_shell_global(&mut self) {
         self.em_display.create_global::<wl_shell::WlShell, _>(
             1, // version
@@ -246,10 +247,10 @@ impl EventManager {
         );
     }
 
-    // Initialize the wl_shell interface
-    //
-    // the wl_shell interface handles the desktop window
-    // lifecycle. It handles the type of window and its position
+    /// Initialize the wl_shell interface
+    ///
+    /// the wl_shell interface handles the desktop window
+    /// lifecycle. It handles the type of window and its position
     fn create_xdg_shell_global(&mut self) {
         self.em_display.create_global::<xdg_wm_base::XdgWmBase, _>(
             1, // version
@@ -264,10 +265,10 @@ impl EventManager {
         );
     }
 
-    // Initialize the linux_dmabuf interface
-    //
-    // This interface provides a way to import GPU buffers from
-    // clients, avoiding lots of copies. It passes dmabuf fds.
+    /// Initialize the linux_dmabuf interface
+    ///
+    /// This interface provides a way to import GPU buffers from
+    /// clients, avoiding lots of copies. It passes dmabuf fds.
     fn create_linux_dmabuf_global(&mut self) {
         self.em_display.create_global::<zldv1::ZwpLinuxDmabufV1, _>(
             3, // version
@@ -286,10 +287,10 @@ impl EventManager {
         );
     }
 
-    // Initialize the wl_seat interface
-    //
-    // A wl_seat represents a group of input devices that a human
-    // is sitting in front of. This provisions the input interfaces
+    /// Initialize the wl_seat interface
+    ///
+    /// A wl_seat represents a group of input devices that a human
+    /// is sitting in front of. This provisions the input interfaces
     fn create_wl_seat_global(&mut self) {
         // for some reason we need to do two clones to make the lifetime
         // inference happy with the closures below
@@ -315,10 +316,10 @@ impl EventManager {
         );
     }
 
-    // Initialize the wl_output interface
-    //
-    // This doesn't do much of anything except advertise what displays
-    // are available for the clients
+    /// Initialize the wl_output interface
+    ///
+    /// This doesn't do much of anything except advertise what displays
+    /// are available for the clients
     fn create_wl_output_global(&mut self) {
         // for some reason we need to do two clones to make the lifetime
         // inference happy with the closures below
@@ -334,11 +335,11 @@ impl EventManager {
         );
     }
 
-    // Initialize the wl_subcompositor interface
-    //
-    // In certain scenarios it is desired to let the compositor do the compositing
-    // for the application. This interface allows the app to arbitrarily nest
-    // subsurfaces
+    /// Initialize the wl_subcompositor interface
+    ///
+    /// In certain scenarios it is desired to let the compositor do the compositing
+    /// for the application. This interface allows the app to arbitrarily nest
+    /// subsurfaces
     fn create_wl_subcompositor_global(&mut self) {
         self.em_display.create_global::<wlsc::WlSubcompositor, _>(
             1, // version
@@ -352,8 +353,25 @@ impl EventManager {
         );
     }
 
-    // Each subsystem has a function that implements its main
-    // loop. This is that function
+    /// This is a manager for creating cut/pase & drag/drop objects.
+    ///
+    /// All apps that use such functionality will bind this and mint the objects they need
+    fn create_wl_data_device_manager_global(&mut self) {
+        self.em_display
+            .create_global::<wlddm::WlDataDeviceManager, _>(
+                1, // version
+                Filter::new(
+                    move |(res, _): (ws::Main<wlddm::WlDataDeviceManager>, u32), _, _| {
+                        res.quick_assign(move |s, r, _| {
+                            // TODO:
+                        });
+                    },
+                ),
+            );
+    }
+
+    /// Each subsystem has a function that implements its main
+    /// loop. This is that function
     pub fn worker_thread(&mut self) {
         // We want to track every 15ms. This is a little less than
         // once per 60fps frame. It doesn't have to be exact, but

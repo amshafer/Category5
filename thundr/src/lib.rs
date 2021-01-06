@@ -100,11 +100,12 @@ pub struct Thundr {
 #[cfg(feature = "xlib")]
 extern crate winit;
 
-#[derive(Clone)]
 pub enum SurfaceType {
     Display,
     #[cfg(feature = "xlib")]
     Xlib(winit::window::Window),
+    #[cfg(feature = "macos")]
+    MacOS(winit::window::Window),
 }
 
 /// Parameters for Renderer creation.
@@ -112,7 +113,6 @@ pub enum SurfaceType {
 /// These will be set by Thundr based on the Pipelines that will
 /// be enabled. See `Pipeline` for methods that drive the data
 /// contained here.
-#[derive(Clone)]
 pub struct CreateInfo {
     /// A list of queue family indexes to create the device with
     pub enable_compute_composition: bool,
@@ -137,22 +137,22 @@ pub struct CreateInfoBuilder {
     ci: CreateInfo,
 }
 impl CreateInfoBuilder {
-    pub fn enable_compute_composition<'a>(&'a mut self) -> &'a mut Self {
+    pub fn enable_compute_composition(mut self) -> Self {
         self.ci.enable_compute_composition = true;
         self
     }
 
-    pub fn enable_traditional_composition<'a>(&'a mut self) -> &'a mut Self {
+    pub fn enable_traditional_composition(mut self) -> Self {
         self.ci.enable_traditional_composition = true;
         self
     }
-    pub fn surface_type<'a>(&'a mut self, ty: SurfaceType) -> &'a mut Self {
+    pub fn surface_type(mut self, ty: SurfaceType) -> Self {
         self.ci.surface_type = ty;
         self
     }
 
-    pub fn build(&self) -> CreateInfo {
-        self.ci.clone()
+    pub fn build(self) -> CreateInfo {
+        self.ci
     }
 }
 
