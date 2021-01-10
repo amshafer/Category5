@@ -177,13 +177,14 @@ impl Renderer {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("Thundr").unwrap();
 
-        let layer_names = if info.enable_traditional_composition {
-            // For some reason the validation layers segfault in renderpass on the geometric
-            // one, so only use validation on compute
-            vec![CString::new("VK_LAYER_KHRONOS_validation").unwrap()]
-        } else {
-            Vec::new()
-        };
+        let layer_names =
+            if !info.enable_traditional_composition && !info.enable_compute_composition {
+                // For some reason the validation layers segfault in renderpass on the geometric
+                // one, so only use validation on compute
+                vec![CString::new("VK_LAYER_KHRONOS_validation").unwrap()]
+            } else {
+                Vec::new()
+            };
 
         let layer_names_raw: Vec<*const i8> = layer_names
             .iter()
