@@ -28,6 +28,8 @@ const TILESIZE: u32 = 16;
 /// field in the `layout` qualifier in the shaders
 const WINDOW_LIST_GLSL_OFFSET: isize = 16;
 
+const MAX_IMAGE_LIMIT: u32 = 2;
+
 struct Pass {
     /// A compute pipeline, which we will use to launch our shader
     p_pipeline: vk::Pipeline,
@@ -285,10 +287,31 @@ impl CompPipeline {
         }
     }
 
+    unsafe fn allocate_variable_descs(
+        rend: &mut Renderer,
+        pool: vk::DescriptorPool,
+        layouts: &[vk::DescriptorSetLayout],
+    ) -> vk::DescriptorSet {
+        let mut info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(pool)
+            .set_layouts(layouts)
+            .build();
+        let variable_info = vk::DescriptorSetVariableDescriptorCountAllocateInfo::builder()
+            // This list specifies the number of allocations for the variable
+            // descriptor entry in each layout. We only have one layout.
+            // TODO: reallocate and choose correct count
+            .descriptor_counts(&[2])
+            .build();
+
+        info.p_next = &variable_info as *const _ as *mut std::ffi::c_void;
+
+        rend.dev.allocate_descriptor_sets(&info).unwrap()[0]
+    }
+
     fn comp_create_pass(rend: &mut Renderer) -> Pass {
         let layout = Self::comp_create_descriptor_layout(rend);
         let pool = Self::comp_create_descriptor_pool(rend);
-        let descs = unsafe { rend.allocate_descriptor_sets(pool, &[layout])[0] };
+        let descs = unsafe { Self::allocate_variable_descs(rend, pool, &[layout]) };
 
         // This is a really annoying issue with CString ptrs
         let program_entrypoint_name = CString::new("main").unwrap();
@@ -367,7 +390,7 @@ impl CompPipeline {
                 // This is the upper bound on the amount of descriptors that
                 // can be attached. The amount actually attached will be
                 // determined by the amount allocated using this layout.
-                .descriptor_count(2)
+                .descriptor_count(MAX_IMAGE_LIMIT)
                 .build(),
         ];
         let mut info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
@@ -403,8 +426,7 @@ impl CompPipeline {
                 .build(),
             vk::DescriptorPoolSize::builder()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                // TODO: make this get enlarged when more windows are added
-                .descriptor_count(2)
+                .descriptor_count(MAX_IMAGE_LIMIT)
                 .build(),
         ];
 
