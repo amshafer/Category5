@@ -513,10 +513,13 @@ impl Renderer {
                     // see `create_swapchain` for why we don't use surface_format
                     .format(vk::Format::R8G8B8A8_UNORM)
                     // select the normal RGBA type
+                    // swap the R and B channels because we are mapping this
+                    // to B8G8R8_SRGB using a mutable swapchain
+                    // TODO: make mutable swapchain optional
                     .components(vk::ComponentMapping {
-                        r: vk::ComponentSwizzle::R,
+                        r: vk::ComponentSwizzle::B,
                         g: vk::ComponentSwizzle::G,
-                        b: vk::ComponentSwizzle::B,
+                        b: vk::ComponentSwizzle::R,
                         a: vk::ComponentSwizzle::A,
                     })
                     // this view pertains to the entire image
