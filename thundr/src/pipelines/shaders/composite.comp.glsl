@@ -19,7 +19,7 @@
 layout (local_size_x = TILESIZE, local_size_y = TILESIZE, local_size_z = 1) in;
 
 /* our render target: the swapchain frame to render into */
-layout(binding = 0, rgba32f) uniform image2D frame;
+layout(binding = 0, rgba8) uniform image2D frame;
 
 layout(binding = 1) buffer tiles
 {
@@ -47,7 +47,7 @@ struct Window {
 layout(binding = 3, std140) buffer window_list
 {
 	layout(offset = 0) int window_count;
-	layout(offset = 16) Window windows[];
+	layout(offset = 32) Window windows[];
 };
 
 /* The array of textures that are the window contents */
@@ -89,16 +89,46 @@ void main() {
 		  into the frame. We need to subtract the offset of the
 		  windows current position to find window-coordinates
 		*/
-		ivec2 wx = uv - windows[i].dims.start;
+		ivec2 ws_raw = ivec2(0, 0);
+
+		/* bound the base offset to be within the screen size */
+		if (windows[i].dims.start.x >= 0 && windows[i].dims.start.y >= 0)
+			ws_raw = uv - windows[i].dims.start;
+		if (ws_raw.x > width)
+			ws_raw.x = width;
+		if (ws_raw.y > height)
+			ws_raw.y = height;
+
+		/*
+		  Now we need to adjust the image dimensions based on the
+		  image size. We need to transfer from screen coords to image coords.
+		*/
+		vec2 win_ratios = vec2(
+			float(ws_raw.x) / float(windows[i].dims.size.x),
+			float(ws_raw.y) / float(windows[i].dims.size.y)
+		);
+
+		/* we have the ratio into the window dims, adjust for image size instead */
+		ivec2 isize = textureSize(images[target_windows[i]], 0);
+		ivec2 win_uv = ivec2(
+			int(win_ratios.x * float(isize.x)),
+			int(win_ratios.y * float(isize.y))
+		);
 
 		/*
 		  For each window in the target_windows list
 		  blend it into the result.
 		*/
-		vec4 tex = texture(images[target_windows[i]], wx);
+		vec4 tex = texture(images[nonuniformEXT(target_windows[i])], win_uv);
 		result = tex.rgb * tex.a + result * (1.0 - tex.a);
 		result = tex.rgb;
 	}
+
+	int i = 0;
+	ivec2 isize = textureSize(images[i], 0);
+	if (uv.x >= windows[i].dims.size.x || uv.y >= windows[i].dims.size.y)
+		return;
+	result = texture(images[i], uv).rgb;
 
 	imageStore(frame, uv, vec4(result, 1.0));
 }

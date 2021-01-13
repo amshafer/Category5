@@ -26,7 +26,7 @@ const TILESIZE: u32 = 16;
 /// This is the offset from the base of the winlist buffer to the
 /// window array in the actual ssbo. This needs to match the `offset`
 /// field in the `layout` qualifier in the shaders
-const WINDOW_LIST_GLSL_OFFSET: isize = 16;
+const WINDOW_LIST_GLSL_OFFSET: isize = 32;
 
 const MAX_IMAGE_LIMIT: u32 = 2;
 
