@@ -100,7 +100,7 @@ void main() {
 
 	ivec2 result = ivec2(-1, -1);
 	/* This is the current index into result we are calculating */
-	int idx = 0;
+	int idx = 1;
 	for(int i = 0; i < window_count; i++) {
 		/* TODO: test for intersection */
 		if (windows[i].opaque.start.x != -1 && opaque_contains(i, uv)) {
@@ -117,7 +117,7 @@ void main() {
 			result[idx] = i;
 			if (idx > BLEND_COUNT)
 				break;
-			idx++;
+			idx--;
 		}
 	}
 
