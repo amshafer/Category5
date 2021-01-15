@@ -323,11 +323,13 @@ impl CompPipeline {
 
     fn realloc_image_list(&mut self, rend: &mut Renderer, desc_count: u32) {
         unsafe {
-            // free the previous descriptor sets and pool
+            // free the previous descriptor sets
             rend.dev
-                .destroy_descriptor_pool(self.cp_composite.p_desc_pool, None);
-            // Resize the pool
-            self.cp_composite.p_desc_pool = Self::comp_create_descriptor_pool(rend, desc_count);
+                .reset_descriptor_pool(
+                    self.cp_composite.p_desc_pool,
+                    vk::DescriptorPoolResetFlags::empty(),
+                )
+                .unwrap();
             // Allocate a new list
             Self::allocate_variable_descs(
                 rend,
@@ -340,10 +342,10 @@ impl CompPipeline {
 
     fn comp_create_pass(rend: &mut Renderer) -> Pass {
         let layout = Self::comp_create_descriptor_layout(rend);
-        let desc_count = 2;
-        let pool = Self::comp_create_descriptor_pool(rend, desc_count);
+        let pool = Self::comp_create_descriptor_pool(rend);
         // two is the starting default, this will be changed to match the number
         // of allocated images for the thundr context
+        let desc_count = 2;
         let descs = unsafe { Self::allocate_variable_descs(rend, pool, &[layout], desc_count) };
 
         // This is a really annoying issue with CString ptrs
@@ -454,7 +456,7 @@ impl CompPipeline {
 
     /// Create a descriptor pool to allocate from.
     /// The sizes in this must match `create_descriptor_layout`
-    pub fn comp_create_descriptor_pool(rend: &Renderer, desc_count: u32) -> vk::DescriptorPool {
+    pub fn comp_create_descriptor_pool(rend: &Renderer) -> vk::DescriptorPool {
         let size = [
             vk::DescriptorPoolSize::builder()
                 .ty(vk::DescriptorType::STORAGE_IMAGE)
@@ -466,7 +468,8 @@ impl CompPipeline {
                 .build(),
             vk::DescriptorPoolSize::builder()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(desc_count)
+                // Okay it looks like this must match the layout
+                .descriptor_count(MAX_IMAGE_LIMIT)
                 .build(),
         ];
 
