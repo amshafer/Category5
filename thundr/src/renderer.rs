@@ -177,14 +177,13 @@ impl Renderer {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("Thundr").unwrap();
 
-        let layer_names =
-            if !info.enable_traditional_composition && !info.enable_compute_composition {
-                // For some reason the validation layers segfault in renderpass on the geometric
-                // one, so only use validation on compute
-                vec![CString::new("VK_LAYER_KHRONOS_validation").unwrap()]
-            } else {
-                Vec::new()
-            };
+        let layer_names = if !info.enable_traditional_composition {
+            // For some reason the validation layers segfault in renderpass on the geometric
+            // one, so only use validation on compute
+            vec![CString::new("VK_LAYER_KHRONOS_validation").unwrap()]
+        } else {
+            Vec::new()
+        };
 
         let layer_names_raw: Vec<*const i8> = layer_names
             .iter()
@@ -341,6 +340,10 @@ impl Renderer {
                 .shader_sampled_image_array_non_uniform_indexing(true)
                 .runtime_descriptor_array(true)
                 .descriptor_binding_variable_descriptor_count(true)
+                .descriptor_binding_partially_bound(true)
+                .descriptor_binding_sampled_image_update_after_bind(true)
+                .descriptor_binding_storage_buffer_update_after_bind(true)
+                .descriptor_binding_update_unused_while_pending(true)
                 .build();
 
             dev_create_info.p_next = &indexing_info as *const _ as *mut std::ffi::c_void;
@@ -517,9 +520,9 @@ impl Renderer {
                     // to B8G8R8_SRGB using a mutable swapchain
                     // TODO: make mutable swapchain optional
                     .components(vk::ComponentMapping {
-                        r: vk::ComponentSwizzle::B,
+                        r: vk::ComponentSwizzle::R,
                         g: vk::ComponentSwizzle::G,
-                        b: vk::ComponentSwizzle::R,
+                        b: vk::ComponentSwizzle::B,
                         a: vk::ComponentSwizzle::A,
                     })
                     // this view pertains to the entire image

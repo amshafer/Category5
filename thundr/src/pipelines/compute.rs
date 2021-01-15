@@ -4,7 +4,6 @@
 #![allow(dead_code, non_camel_case_types)]
 use serde::{Deserialize, Serialize};
 
-use std::collections::HashMap;
 use std::ffi::CString;
 use std::io::Cursor;
 use std::mem;
@@ -28,7 +27,7 @@ const TILESIZE: u32 = 16;
 /// field in the `layout` qualifier in the shaders
 const WINDOW_LIST_GLSL_OFFSET: isize = 16;
 
-const MAX_IMAGE_LIMIT: u32 = 2;
+const MAX_IMAGE_LIMIT: u32 = 1024;
 
 struct Pass {
     /// A compute pipeline, which we will use to launch our shader
@@ -136,7 +135,10 @@ struct TileList {
     /// Resolution height
     height: u32,
     /// A list of tile ids that needs to be updated next frame
-    tiles: HashMap<Tile, bool>,
+    tiles: Vec<Tile>,
+    /// This is the list of tiles that have been added to `tiles`.
+    /// If tile 4 has been added to `tiles`, `enabled_tiles[4]` will be set to true.
+    enabled_tiles: Vec<bool>,
 }
 
 /// This must match the definition of the Window struct in the
@@ -393,7 +395,9 @@ impl CompPipeline {
                 .descriptor_count(MAX_IMAGE_LIMIT)
                 .build(),
         ];
-        let mut info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
+        let mut info = vk::DescriptorSetLayoutCreateInfo::builder()
+            .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
+            .bindings(&bindings);
 
         // We need to attach some binding flags stating that we intend
         // to use the storage image as an unsized array
@@ -404,7 +408,13 @@ impl CompPipeline {
                 vk::DescriptorBindingFlags::empty(), // the storage buffer
                 vk::DescriptorBindingFlags::empty(), // the winlist
                 vk::DescriptorBindingFlags::empty(), // the visibility buffer
-                vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT, // the image array
+                // The unbounded array of images
+                // we need to say that it is a variably sized array, and that it is partially
+                // bound (aka we aren't populating the full MAX_IMAGE_LIMIT)
+                vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
+                    | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
+                    | vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING
+                    | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             ])
             .build();
         info.p_next = &usage_info as *const _ as *mut std::ffi::c_void;
@@ -431,6 +441,7 @@ impl CompPipeline {
         ];
 
         let info = vk::DescriptorPoolCreateInfo::builder()
+            .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
             .pool_sizes(&size)
             .max_sets(1);
 
@@ -508,7 +519,8 @@ impl CompPipeline {
         let data = TileList {
             width: rend.resolution.width,
             height: rend.resolution.height,
-            tiles: HashMap::with_capacity(tile_count),
+            tiles: Vec::with_capacity(tile_count),
+            enabled_tiles: std::iter::repeat(false).take(tile_count).collect(),
         };
         let (storage, storage_mem) = unsafe {
             rend.create_buffer_with_size(
@@ -655,7 +667,14 @@ impl CompPipeline {
     /// of damage regions, and generates a list of the tiles that need to be
     /// updated. This tilelist is passed to our drawing function.
     fn gen_tile_list(&mut self, rend: &Renderer, surfaces: &SurfaceList) {
+        // reset our current tile lists
+        // by only clearing the tiles in the `tiles` list, we should prevent ourselves from
+        // clearing the entire array when only 4 or 5 tiles are set
+        for i in self.cp_tiles.tiles.iter_mut() {
+            self.cp_tiles.enabled_tiles[i.0 as usize] = false;
+        }
         self.cp_tiles.tiles.clear();
+
         for surf_rc in surfaces.iter() {
             // If the surface does not have damage attached, then don't generate tiles
             let surf = surf_rc.s_internal.borrow();
@@ -714,7 +733,11 @@ impl CompPipeline {
                 while offset <= end.0 {
                     let tile = Tile::from_coord(offset, start.1, rend.resolution.width);
                     //log::debug!("adding {} for point ({}, {})", tile.0, offset, start.1);
-                    self.cp_tiles.tiles.insert(tile, true);
+                    // if this tile was not previously added, then add it now
+                    if !self.cp_tiles.enabled_tiles[tile.0 as usize] {
+                        self.cp_tiles.enabled_tiles[tile.0 as usize] = true;
+                        self.cp_tiles.tiles.push(tile);
+                    }
                     offset += TILESIZE;
                 }
 
@@ -758,8 +781,6 @@ impl Pipeline for CompPipeline {
             // get the current swapchain image
             self.gen_window_list(surfaces);
             self.gen_tile_list(rend, surfaces);
-            let mut tile_vec: Vec<_> = self.cp_tiles.tiles.keys().map(|k| *k).collect();
-            tile_vec.sort();
 
             // Shader expects struct WindowList { int width; int height; Window windows[] }
             // so we need to write the length first
@@ -773,7 +794,7 @@ impl Pipeline for CompPipeline {
                 // We need to offset by the size of two ints, which is
                 // the first field in the struct expected by the shader
                 mem::size_of::<u32>() as isize * 2,
-                tile_vec.as_slice(),
+                self.cp_tiles.tiles.as_slice(),
             );
 
             // Shader expects struct WindowList { int count; Window windows[] }
@@ -869,7 +890,7 @@ impl Pipeline for CompPipeline {
 
             // Launch a wg for each tile
             rend.dev
-                .cmd_dispatch(self.cp_cbuf, tile_vec.len() as u32, 1, 1);
+                .cmd_dispatch(self.cp_cbuf, self.cp_tiles.tiles.len() as u32, 1, 1);
             // ----------- END VISIBILITY PASS
 
             // We need to wait for the previous compute stage to complete
@@ -913,7 +934,7 @@ impl Pipeline for CompPipeline {
 
             // Launch a wg for each tile
             rend.dev
-                .cmd_dispatch(self.cp_cbuf, tile_vec.len() as u32, 1, 1);
+                .cmd_dispatch(self.cp_cbuf, self.cp_tiles.tiles.len() as u32, 1, 1);
 
             // The final thing to do is transform the swapchain image back into
             // the presentable layout so it can be drawn to the screen.
