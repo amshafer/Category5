@@ -17,7 +17,7 @@ use utils::log;
 /// lists of extensions to enable. The extension lists will be constructed
 /// from the flags to avoid keeping them in memory forever.
 pub struct VKDeviceFeatures {
-    /// Does this device allow import/export using drm modifiers
+    /// Does this device allow import/export from opaque fds
     pub vkc_supports_ext_mem: bool,
     /// Does this device allow import/export using dmabuf handles. Might not
     /// necessarily need drm.
@@ -26,12 +26,15 @@ pub struct VKDeviceFeatures {
     pub vkc_supports_mut_swapchain: bool,
     /// Does the device support massive indexing of descriptors. Mandatory for CompPipeline.
     pub vkc_supports_desc_indexing: bool,
+    /// Does this device allow import/export using drm modifiers
+    pub vkc_supports_drm_modifiers: bool,
 
     // The following are the lists of extensions that map to the above features
     vkc_ext_mem_exts: [*const i8; 1],
     vkc_dmabuf_exts: [*const i8; 1],
     vkc_mut_swapchain_exts: [*const i8; 3],
     vkc_desc_indexing_exts: [*const i8; 2],
+    vkc_drm_modifiers_exts: [*const i8; 1],
 }
 
 fn contains_extensions(exts: &[vk::ExtensionProperties], req: &[*const i8]) -> bool {
@@ -64,6 +67,7 @@ impl VKDeviceFeatures {
             vkc_supports_dmabuf: false,
             vkc_supports_mut_swapchain: false,
             vkc_supports_desc_indexing: false,
+            vkc_supports_drm_modifiers: false,
             vkc_ext_mem_exts: [khr::ExternalMemoryFd::name().as_ptr()],
             vkc_dmabuf_exts: [khr::ExternalMemoryFd::name().as_ptr()],
             vkc_mut_swapchain_exts: [
@@ -75,6 +79,7 @@ impl VKDeviceFeatures {
                 vk::KhrMaintenance3Fn::name().as_ptr(),
                 vk::ExtDescriptorIndexingFn::name().as_ptr(),
             ],
+            vkc_drm_modifiers_exts: [vk::ExtImageDrmFormatModifierFn::name().as_ptr()],
         };
 
         unsafe {
@@ -97,6 +102,12 @@ impl VKDeviceFeatures {
             match contains_extensions(exts.as_slice(), &ret.vkc_desc_indexing_exts) {
                 true => ret.vkc_supports_desc_indexing = true,
                 false => log::error!("This vulkan device does not support descriptor indexing"),
+            }
+            match contains_extensions(exts.as_slice(), &ret.vkc_drm_modifiers_exts) {
+                true => ret.vkc_supports_drm_modifiers = true,
+                false => {
+                    log::error!("This vulkan device does not support importing with drm modifiers")
+                }
             }
         }
 
@@ -123,6 +134,11 @@ impl VKDeviceFeatures {
         }
         if self.vkc_supports_desc_indexing {
             for e in self.vkc_desc_indexing_exts.iter() {
+                ret.push(*e)
+            }
+        }
+        if self.vkc_supports_drm_modifiers {
+            for e in self.vkc_drm_modifiers_exts.iter() {
                 ret.push(*e)
             }
         }
