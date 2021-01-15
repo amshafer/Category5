@@ -54,13 +54,20 @@ impl Image {
         self.i_internal.borrow().i_image_view
     }
 
+    /// Sets an opaque region for the image to help the internal compositor
+    /// optimize when possible.
     pub fn set_opaque(&mut self, opaque: Option<Rect<i32>>) {
         self.i_internal.borrow_mut().i_opaque = opaque;
     }
 
     /// Attach damage to this surface. Damage is specified in surface-coordinates.
-    pub fn damage(&mut self, x: i32, y: i32, width: i32, height: i32) {
+    pub fn set_damage(&mut self, x: i32, y: i32, width: i32, height: i32) {
         self.i_internal.borrow_mut().i_damage = Some(Damage::new(Rect::new(x, y, width, height)));
+    }
+
+    /// Removes any damage from this image.
+    pub fn clear_damage(&mut self) {
+        self.i_internal.borrow_mut().i_damage = None;
     }
 }
 

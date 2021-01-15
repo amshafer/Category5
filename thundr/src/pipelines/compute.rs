@@ -13,8 +13,8 @@ use ash::{util, vk, Instance};
 
 use super::Pipeline;
 use crate::display::Display;
-use crate::list::SurfaceList;
 use crate::renderer::{RecordParams, Renderer};
+use crate::{Image, SurfaceList};
 
 use utils::log;
 use utils::region::Rect;
@@ -251,34 +251,45 @@ impl CompPipeline {
         unsafe { rend.dev.create_descriptor_pool(&info, None).unwrap() }
     }
 
-    fn vis_write_descs(
-        &self,
-        rend: &Renderer,
-        tile_info: &[vk::DescriptorBufferInfo],
-        vis_info: &[vk::DescriptorBufferInfo],
-        window_info: &[vk::DescriptorBufferInfo],
-    ) {
+    fn vis_write_descs(&self, rend: &Renderer) {
+        // Now update the actual descriptors
+        let tile_info = vk::DescriptorBufferInfo::builder()
+            .buffer(self.cp_tiles_buf)
+            .offset(0)
+            .range(vk::WHOLE_SIZE)
+            .build();
+        let window_info = vk::DescriptorBufferInfo::builder()
+            .buffer(self.cp_winlist_buf)
+            .offset(0)
+            .range(vk::WHOLE_SIZE)
+            .build();
+        let vis_info = vk::DescriptorBufferInfo::builder()
+            .buffer(self.cp_vis_buf)
+            .offset(0)
+            .range(vk::WHOLE_SIZE)
+            .build();
+
         let write_info = [
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.cp_visibility.p_descs)
                 .dst_binding(0)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(vis_info)
+                .buffer_info(&[vis_info])
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.cp_visibility.p_descs)
                 .dst_binding(1)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(tile_info)
+                .buffer_info(&[tile_info])
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.cp_visibility.p_descs)
                 .dst_binding(2)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(window_info)
+                .buffer_info(&[window_info])
                 .build(),
         ];
         unsafe {
@@ -293,6 +304,7 @@ impl CompPipeline {
         rend: &mut Renderer,
         pool: vk::DescriptorPool,
         layouts: &[vk::DescriptorSetLayout],
+        desc_count: u32,
     ) -> vk::DescriptorSet {
         let mut info = vk::DescriptorSetAllocateInfo::builder()
             .descriptor_pool(pool)
@@ -301,8 +313,7 @@ impl CompPipeline {
         let variable_info = vk::DescriptorSetVariableDescriptorCountAllocateInfo::builder()
             // This list specifies the number of allocations for the variable
             // descriptor entry in each layout. We only have one layout.
-            // TODO: reallocate and choose correct count
-            .descriptor_counts(&[2])
+            .descriptor_counts(&[desc_count])
             .build();
 
         info.p_next = &variable_info as *const _ as *mut std::ffi::c_void;
@@ -310,10 +321,30 @@ impl CompPipeline {
         rend.dev.allocate_descriptor_sets(&info).unwrap()[0]
     }
 
+    fn realloc_image_list(&mut self, rend: &mut Renderer, desc_count: u32) {
+        unsafe {
+            // free the previous descriptor sets and pool
+            rend.dev
+                .destroy_descriptor_pool(self.cp_composite.p_desc_pool, None);
+            // Resize the pool
+            self.cp_composite.p_desc_pool = Self::comp_create_descriptor_pool(rend, desc_count);
+            // Allocate a new list
+            Self::allocate_variable_descs(
+                rend,
+                self.cp_composite.p_desc_pool,
+                &[self.cp_composite.p_descriptor_layout],
+                desc_count,
+            );
+        }
+    }
+
     fn comp_create_pass(rend: &mut Renderer) -> Pass {
         let layout = Self::comp_create_descriptor_layout(rend);
-        let pool = Self::comp_create_descriptor_pool(rend);
-        let descs = unsafe { Self::allocate_variable_descs(rend, pool, &[layout]) };
+        let desc_count = 2;
+        let pool = Self::comp_create_descriptor_pool(rend, desc_count);
+        // two is the starting default, this will be changed to match the number
+        // of allocated images for the thundr context
+        let descs = unsafe { Self::allocate_variable_descs(rend, pool, &[layout], desc_count) };
 
         // This is a really annoying issue with CString ptrs
         let program_entrypoint_name = CString::new("main").unwrap();
@@ -401,7 +432,6 @@ impl CompPipeline {
 
         // We need to attach some binding flags stating that we intend
         // to use the storage image as an unsized array
-        // TODO: request update_after_bind
         let usage_info = vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT::builder()
             .binding_flags(&[
                 vk::DescriptorBindingFlags::empty(), // the storage image
@@ -424,7 +454,7 @@ impl CompPipeline {
 
     /// Create a descriptor pool to allocate from.
     /// The sizes in this must match `create_descriptor_layout`
-    pub fn comp_create_descriptor_pool(rend: &Renderer) -> vk::DescriptorPool {
+    pub fn comp_create_descriptor_pool(rend: &Renderer, desc_count: u32) -> vk::DescriptorPool {
         let size = [
             vk::DescriptorPoolSize::builder()
                 .ty(vk::DescriptorType::STORAGE_IMAGE)
@@ -436,7 +466,7 @@ impl CompPipeline {
                 .build(),
             vk::DescriptorPoolSize::builder()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(MAX_IMAGE_LIMIT)
+                .descriptor_count(desc_count)
                 .build(),
         ];
 
@@ -448,13 +478,24 @@ impl CompPipeline {
         unsafe { rend.dev.create_descriptor_pool(&info, None).unwrap() }
     }
 
-    fn comp_write_descs(
-        &self,
-        rend: &Renderer,
-        tile_info: &[vk::DescriptorBufferInfo],
-        vis_info: &[vk::DescriptorBufferInfo],
-        win_info: &[vk::DescriptorBufferInfo],
-    ) {
+    fn comp_write_descs(&self, rend: &Renderer) {
+        // Now update the actual descriptors
+        let tile_info = vk::DescriptorBufferInfo::builder()
+            .buffer(self.cp_tiles_buf)
+            .offset(0)
+            .range(vk::WHOLE_SIZE)
+            .build();
+        let window_info = vk::DescriptorBufferInfo::builder()
+            .buffer(self.cp_winlist_buf)
+            .offset(0)
+            .range(vk::WHOLE_SIZE)
+            .build();
+        let vis_info = vk::DescriptorBufferInfo::builder()
+            .buffer(self.cp_vis_buf)
+            .offset(0)
+            .range(vk::WHOLE_SIZE)
+            .build();
+
         // Our swapchain image we want to write to
         let fb_info = vk::DescriptorImageInfo::builder()
             .sampler(rend.image_sampler)
@@ -475,21 +516,21 @@ impl CompPipeline {
                 .dst_binding(1)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(tile_info)
+                .buffer_info(&[tile_info])
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.cp_composite.p_descs)
                 .dst_binding(2)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(vis_info)
+                .buffer_info(&[vis_info])
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.cp_composite.p_descs)
                 .dst_binding(3)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(win_info)
+                .buffer_info(&[window_info])
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.cp_composite.p_descs)
@@ -580,7 +621,7 @@ impl CompPipeline {
         let cpool = unsafe { Renderer::create_command_pool(&rend.dev, family) };
         let cbuf = unsafe { Renderer::create_command_buffers(&rend.dev, cpool, 1)[0] };
 
-        CompPipeline {
+        let cp = CompPipeline {
             cp_visibility: vis,
             cp_composite: comp,
             cp_tiles: data,
@@ -596,7 +637,11 @@ impl CompPipeline {
             cp_queue_family: family,
             cp_cbuf_pool: cpool,
             cp_cbuf: cbuf,
-        }
+        };
+
+        cp.vis_write_descs(rend);
+        cp.comp_write_descs(rend);
+        return cp;
     }
 
     /// Get a queue family that this pipeline needs to support.
@@ -775,12 +820,20 @@ impl Pipeline for CompPipeline {
         true
     }
 
-    fn draw(&mut self, rend: &Renderer, _params: &RecordParams, surfaces: &SurfaceList) {
+    fn draw(
+        &mut self,
+        rend: &mut Renderer,
+        _params: &RecordParams,
+        images: &[Image],
+        surfaces: &mut SurfaceList,
+    ) {
         unsafe {
-            // before recording, update our descriptor for our render target
-            // get the current swapchain image
-            self.gen_window_list(surfaces);
             self.gen_tile_list(rend, surfaces);
+            // If no tiles were damaged, then we have nothing to render
+            if self.cp_tiles.tiles.len() == 0 {
+                log::profiling!("No tiles damaged, not drawing anything");
+                return;
+            }
 
             // Shader expects struct WindowList { int width; int height; Window windows[] }
             // so we need to write the length first
@@ -797,36 +850,29 @@ impl Pipeline for CompPipeline {
                 self.cp_tiles.tiles.as_slice(),
             );
 
-            // Shader expects struct WindowList { int count; Window windows[] }
-            rend.update_memory(self.cp_winlist_mem, 0, &[self.cp_winlist.len()]);
-            rend.update_memory(
-                self.cp_winlist_mem,
-                WINDOW_LIST_GLSL_OFFSET,
-                self.cp_winlist.as_slice(),
-            );
-
-            // Now update the actual descriptors
-            let tiles_write = vk::DescriptorBufferInfo::builder()
-                .buffer(self.cp_tiles_buf)
-                .offset(0)
-                .range(vk::WHOLE_SIZE)
-                .build();
-            let windows_write = vk::DescriptorBufferInfo::builder()
-                .buffer(self.cp_winlist_buf)
-                .offset(0)
-                .range(vk::WHOLE_SIZE)
-                .build();
-            let vis_info = vk::DescriptorBufferInfo::builder()
-                .buffer(self.cp_vis_buf)
-                .offset(0)
-                .range(vk::WHOLE_SIZE)
-                .build();
+            // Only do this if the surface list has changed and the shader needs a new
+            // window ordering
+            if surfaces.l_changed {
+                self.gen_window_list(surfaces);
+                // Shader expects struct WindowList { int count; Window windows[] }
+                rend.update_memory(self.cp_winlist_mem, 0, &[self.cp_winlist.len()]);
+                rend.update_memory(
+                    self.cp_winlist_mem,
+                    WINDOW_LIST_GLSL_OFFSET,
+                    self.cp_winlist.as_slice(),
+                );
+            }
 
             // Construct a list of image views from the submitted surface list
             // this will be our unsized texture array that the composite shader will reference
-            self.cp_image_infos.clear();
-            for s in surfaces.iter() {
-                if let Some(image) = s.get_image() {
+            if self.cp_image_infos.len() != images.len() {
+                // if thundr has allocated a different number of images than we were expecting,
+                // we need to realloc the variable descriptor memory
+                self.realloc_image_list(rend, images.len() as u32);
+                self.comp_write_descs(rend);
+
+                self.cp_image_infos.clear();
+                for image in images.iter() {
                     self.cp_image_infos.push(
                         vk::DescriptorImageInfo::builder()
                             .sampler(rend.image_sampler)
@@ -836,9 +882,6 @@ impl Pipeline for CompPipeline {
                     );
                 }
             }
-
-            self.vis_write_descs(rend, &[tiles_write], &[vis_info], &[windows_write]);
-            self.comp_write_descs(rend, &[tiles_write], &[vis_info], &[windows_write]);
 
             // ------------------------------------------- RECORD
             rend.cbuf_begin_recording(self.cp_cbuf, vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);

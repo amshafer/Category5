@@ -139,7 +139,7 @@ impl WindowManager {
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
 
         let mut image = rend.create_image_from_bits(&mimg, None).unwrap();
-        image.damage(0, 0, 64, 64);
+        image.set_damage(0, 0, 64, 64);
         let mut surf = rend.create_surface(0.0, 0.0, 16.0, 16.0);
         rend.bind_image(&mut surf, image);
 
@@ -184,7 +184,7 @@ impl WindowManager {
         );
 
         let mut image = self.wm_thundr.create_image_from_bits(&mimg, None).unwrap();
-        image.damage(0, 0, tex_width as i32, tex_height as i32);
+        image.set_damage(0, 0, tex_width as i32, tex_height as i32);
         let res = self.wm_thundr.get_resolution();
         let mut surf = self
             .wm_thundr
@@ -456,7 +456,7 @@ impl WindowManager {
     /// WindowManager::end_frame is called.
     fn begin_frame(&mut self) {
         self.record_draw();
-        self.wm_thundr.draw_frame(&self.wm_surfaces);
+        self.wm_thundr.draw_frame(&mut self.wm_surfaces);
     }
 
     /// End a frame
@@ -544,7 +544,7 @@ impl WindowManager {
             draw_stop.end();
             log::debug!("_____________________________ FRAME END");
 
-            log::profiling!(
+            log::debug!(
                 "spent {} ms drawing this frame",
                 draw_stop.get_duration().as_millis()
             );

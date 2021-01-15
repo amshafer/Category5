@@ -28,7 +28,7 @@ pub use geometric::GeomPipeline;
 
 use crate::display::Display;
 use crate::renderer::{RecordParams, Renderer};
-use crate::SurfaceList;
+use crate::{Image, SurfaceList};
 
 // The pipeline trait is essentially a mini-backend for the
 // renderer. It determines what draw calls we generate for the
@@ -47,7 +47,13 @@ pub trait Pipeline {
     /// a frame. `params` tells us which cbufs/image we are
     /// recording for. We need to generate draw calls to update
     /// changes that have happened in `surfaces`.
-    fn draw(&mut self, rend: &Renderer, params: &RecordParams, surfaces: &SurfaceList);
+    fn draw(
+        &mut self,
+        rend: &mut Renderer,
+        params: &RecordParams,
+        images: &[Image],
+        surfaces: &mut SurfaceList,
+    );
 
     fn destroy(&mut self, rend: &mut Renderer);
 }

@@ -94,6 +94,10 @@ use pipelines::*;
 pub struct Thundr {
     th_rend: Renderer,
 
+    /// We keep a list of all the images allocated by this context
+    /// so that Pipeline::draw doesn't have to dedup the surfacelist's images
+    th_image_list: Vec<Image>,
+
     /// Application specific stuff that will be set up after
     /// the original initialization
     pub(crate) th_pipe: Box<dyn Pipeline>,
@@ -180,6 +184,7 @@ impl Thundr {
 
         Ok(Thundr {
             th_rend: rend,
+            th_image_list: Vec::new(),
             th_pipe: pipe,
         })
     }
@@ -197,7 +202,11 @@ impl Thundr {
         img: &MemImage,
         release_info: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
-        self.th_rend.create_image_from_bits(&img, release_info)
+        let ret = self.th_rend.create_image_from_bits(&img, release_info);
+        if let Some(i) = ret.as_ref() {
+            self.th_image_list.push(i.clone());
+        }
+        return ret;
     }
 
     // create_image_from_dmabuf
@@ -206,11 +215,23 @@ impl Thundr {
         dmabuf: &Dmabuf,
         release_info: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
-        self.th_rend.create_image_from_dmabuf(dmabuf, release_info)
+        let ret = self.th_rend.create_image_from_dmabuf(dmabuf, release_info);
+        if let Some(i) = ret.as_ref() {
+            self.th_image_list.push(i.clone());
+        }
+        return ret;
     }
 
     pub fn destroy_image(&mut self, image: Image) {
+        let i = match self.th_image_list.iter().position(|v| *v == image) {
+            Some(v) => v,
+            // Error: This shouldn't happen, for some reason the image wasn't in
+            // our image list
+            None => return,
+        };
+
         self.th_rend.destroy_image(&image);
+        self.th_image_list.remove(i);
     }
 
     pub fn update_image_from_bits(
@@ -255,10 +276,17 @@ impl Thundr {
     }
 
     // draw_frame
-    pub fn draw_frame(&mut self, surfaces: &SurfaceList) {
+    pub fn draw_frame(&mut self, surfaces: &mut SurfaceList) {
         // record rendering commands
         let params = self.th_rend.begin_recording_one_frame(surfaces);
-        self.th_pipe.draw(&self.th_rend, &params, surfaces);
+        self.th_pipe.draw(
+            &mut self.th_rend,
+            &params,
+            self.th_image_list.as_slice(),
+            surfaces,
+        );
+        // Now that we have processed this surfacelist, unmark it as changed
+        surfaces.l_changed = false;
     }
 
     // present

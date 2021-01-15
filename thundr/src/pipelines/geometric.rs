@@ -16,9 +16,8 @@ use ash::version::DeviceV1_0;
 use ash::{util, vk};
 
 use super::Pipeline;
-use crate::list::SurfaceList;
 use crate::renderer::{RecordParams, Renderer};
-use crate::Surface;
+use crate::{Image, Surface, SurfaceList};
 
 // This is the reference data for a normal quad
 // that will be used to draw client windows.
@@ -136,7 +135,13 @@ impl Pipeline for GeomPipeline {
     }
 
     /// Our implementation of drawing one frame using geometry
-    fn draw(&mut self, rend: &Renderer, params: &RecordParams, surfaces: &SurfaceList) {
+    fn draw(
+        &mut self,
+        rend: &mut Renderer,
+        params: &RecordParams,
+        _images: &[Image],
+        surfaces: &mut SurfaceList,
+    ) {
         self.begin_recording(rend, params);
 
         for (i, surf) in surfaces.iter().rev().enumerate() {
