@@ -196,15 +196,37 @@ impl Thundr {
         )
     }
 
+    /// Helper for inserting a new image and updating its id
+    fn push_image(&mut self, image: &mut Image) {
+        self.th_image_list.push(image.clone());
+        image.set_id((self.th_image_list.len() - 1) as i32);
+    }
+
+    fn remove_image(&mut self, image: &Image) {
+        let i = match self.th_image_list.iter().position(|v| *v == *image) {
+            Some(v) => v,
+            // Error: This shouldn't happen, for some reason the image wasn't in
+            // our image list
+            None => return,
+        };
+        self.th_image_list.remove(i);
+
+        // now that we have removed the image, we need to update all of the
+        // ids, since some of them will have been shifted
+        for (idx, i) in self.th_image_list.iter_mut().enumerate() {
+            i.set_id(idx as i32);
+        }
+    }
+
     // create_image_from_bits
     pub fn create_image_from_bits(
         &mut self,
         img: &MemImage,
         release_info: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
-        let ret = self.th_rend.create_image_from_bits(&img, release_info);
-        if let Some(i) = ret.as_ref() {
-            self.th_image_list.push(i.clone());
+        let mut ret = self.th_rend.create_image_from_bits(&img, release_info);
+        if let Some(i) = ret.as_mut() {
+            self.push_image(i);
         }
         return ret;
     }
@@ -223,15 +245,8 @@ impl Thundr {
     }
 
     pub fn destroy_image(&mut self, image: Image) {
-        let i = match self.th_image_list.iter().position(|v| *v == image) {
-            Some(v) => v,
-            // Error: This shouldn't happen, for some reason the image wasn't in
-            // our image list
-            None => return,
-        };
-
         self.th_rend.destroy_image(&image);
-        self.th_image_list.remove(i);
+        self.remove_image(&image);
     }
 
     pub fn update_image_from_bits(

@@ -42,6 +42,8 @@ struct Rect {
 };
 
 struct Window {
+	/* id.0 is the id. It is an ivec2 for alignment purposes */
+	ivec2 id;
 	Rect dims;
 	Rect opaque;
 };
@@ -105,7 +107,7 @@ void main() {
 		/* TODO: test for intersection */
 		if (windows[i].opaque.start.x != -1 && opaque_contains(i, uv)) {
 			/* we found a non-blending matching pixel, so exit */
-			result[idx] = i;
+			result[idx] = windows[i].id.x;
 			break;
 
 		} else if (contains(i, uv)) {
@@ -114,7 +116,7 @@ void main() {
 			  window containing this pixel, so keep going to
 			  collect the list of other windows to blend with
 			*/
-			result[idx] = i;
+			result[idx] = windows[i].id.x;
 			if (idx > BLEND_COUNT)
 				break;
 			idx--;

@@ -33,7 +33,9 @@ use crate::Damage;
 /// Images must be created from the global thundr instance. All
 /// images must be destroyed before the instance can be.
 pub(crate) struct ImageInternal {
-    /// image containing the contents of the window
+    /// This id is the index of this image in Thundr's image list (th_image_list).
+    pub i_id: i32,
+    /// image containing the contents of the window.
     pub i_image: vk::Image,
     pub i_image_view: vk::ImageView,
     pub i_image_mem: vk::DeviceMemory,
@@ -63,6 +65,17 @@ impl Image {
     /// Attach damage to this surface. Damage is specified in surface-coordinates.
     pub fn set_damage(&mut self, x: i32, y: i32, width: i32, height: i32) {
         self.i_internal.borrow_mut().i_damage = Some(Damage::new(Rect::new(x, y, width, height)));
+    }
+
+    /// set the id. This should only be done by Thundr
+    pub(crate) fn set_id(&mut self, id: i32) {
+        self.i_internal.borrow_mut().i_id = id;
+    }
+
+    /// Get the id. This is consumed by the pipelines that need to contruct the descriptor
+    /// indexing array.
+    pub(crate) fn get_id(&self) -> i32 {
+        self.i_internal.borrow().i_id
     }
 
     /// Removes any damage from this image.
@@ -441,6 +454,8 @@ impl Renderer {
 
         return Some(Image {
             i_internal: Rc::new(RefCell::new(ImageInternal {
+                // The id will be filled in by thundr in lib.rs
+                i_id: 0,
                 i_image: image,
                 i_image_view: view,
                 i_image_mem: image_mem,

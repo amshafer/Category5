@@ -39,6 +39,8 @@ struct Rect {
 };
 
 struct Window {
+	/* id.0 is the id. It is an ivec2 for alignment purposes */
+	ivec2 id;
 	Rect dims;
 	Rect opaque;
 };
@@ -117,15 +119,6 @@ void main() {
 		vec4 tex = texture(images[nonuniformEXT(target_windows[i])], win_uv);
 		result = tex.rgb * tex.a + result * (1.0 - tex.a);
 	}
-
-	//int i = 1;
-	//if (uv.x >= windows[i].dims.size.x || uv.y >= windows[i].dims.size.y)
-	//	return;
-	//vec2 win_uv = vec2(
-	//		float(uv.x) / float(windows[i].dims.size.x),
-	//		float(uv.y) / float(windows[i].dims.size.y)
-	//		);
-	//result = texture(images[i], win_uv).rgb;
 
 	imageStore(frame, uv, vec4(result, 1.0));
 }

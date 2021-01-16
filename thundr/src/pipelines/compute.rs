@@ -149,6 +149,8 @@ struct TileList {
 #[repr(C)]
 #[derive(Copy, Clone, Serialize, Deserialize)]
 struct Window {
+    /// The id of the image. This is the offset into the unbounded sampler array.
+    w_id: (i32, i32),
     /// The complete dimensions of the window.
     w_dims: Rect<i32>,
     /// Opaque region that tells the shader that we do not need to blend.
@@ -624,7 +626,7 @@ impl CompPipeline {
         let cpool = unsafe { Renderer::create_command_pool(&rend.dev, family) };
         let cbuf = unsafe { Renderer::create_command_buffers(&rend.dev, cpool, 1)[0] };
 
-        let cp = CompPipeline {
+        CompPipeline {
             cp_visibility: vis,
             cp_composite: comp,
             cp_tiles: data,
@@ -640,11 +642,7 @@ impl CompPipeline {
             cp_queue_family: family,
             cp_cbuf_pool: cpool,
             cp_cbuf: cbuf,
-        };
-
-        cp.vis_write_descs(rend);
-        cp.comp_write_descs(rend);
-        return cp;
+        }
     }
 
     /// Get a queue family that this pipeline needs to support.
@@ -804,8 +802,18 @@ impl CompPipeline {
                 // to tell the shader to ignore this
                 None => Rect::new(-1, 0, -1, 0),
             };
+            let image = match surf.s_image.as_ref() {
+                Some(i) => i,
+                None => {
+                    log::debug!(
+                        "[thundr] warning: surface does not have image attached. Not drawing"
+                    );
+                    continue;
+                }
+            };
 
             self.cp_winlist.push(Window {
+                w_id: (image.get_id(), 0),
                 w_dims: Rect::new(
                     surf.s_rect.r_pos.0 as i32,
                     surf.s_rect.r_pos.1 as i32,
@@ -868,11 +876,11 @@ impl Pipeline for CompPipeline {
 
             // Construct a list of image views from the submitted surface list
             // this will be our unsized texture array that the composite shader will reference
+            // TODO: make this a changed flag
             if self.cp_image_infos.len() != images.len() {
                 // if thundr has allocated a different number of images than we were expecting,
                 // we need to realloc the variable descriptor memory
                 self.realloc_image_list(rend, images.len() as u32);
-                self.comp_write_descs(rend);
 
                 self.cp_image_infos.clear();
                 for image in images.iter() {
@@ -884,6 +892,9 @@ impl Pipeline for CompPipeline {
                             .build(),
                     );
                 }
+
+                // We need to do this afterwards, since it depends on cp_image_infos
+                self.comp_write_descs(rend);
             }
 
             // ------------------------------------------- RECORD
