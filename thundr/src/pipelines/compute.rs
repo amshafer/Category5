@@ -16,8 +16,8 @@ use crate::display::Display;
 use crate::renderer::{RecordParams, Renderer};
 use crate::{Image, SurfaceList};
 
-use utils::log;
 use utils::region::Rect;
+use utils::{log, timing::StopWatch};
 
 /// This is the width of a work group. This must match our shaders
 const TILESIZE: u32 = 16;
@@ -842,7 +842,14 @@ impl Pipeline for CompPipeline {
         surfaces: &mut SurfaceList,
     ) {
         unsafe {
+            let mut stop = StopWatch::new();
+            stop.start();
             self.gen_tile_list(rend, surfaces);
+            stop.end();
+            log::debug!(
+                "Took {} ms to generate the tile list",
+                stop.get_duration().as_millis()
+            );
             // If no tiles were damaged, then we have nothing to render
             if self.cp_tiles.tiles.len() == 0 {
                 log::profiling!("No tiles damaged, not drawing anything");
@@ -867,6 +874,7 @@ impl Pipeline for CompPipeline {
             // Only do this if the surface list has changed and the shader needs a new
             // window ordering
             if surfaces.l_changed {
+                stop.start();
                 self.gen_window_list(surfaces);
                 // Shader expects struct WindowList { int count; Window windows[] }
                 rend.update_memory(self.cp_winlist_mem, 0, &[self.cp_winlist.len()]);
@@ -875,12 +883,18 @@ impl Pipeline for CompPipeline {
                     WINDOW_LIST_GLSL_OFFSET,
                     self.cp_winlist.as_slice(),
                 );
+                stop.end();
+                log::debug!(
+                    "Took {} ms to generate the window list",
+                    stop.get_duration().as_millis()
+                );
             }
 
             // Construct a list of image views from the submitted surface list
             // this will be our unsized texture array that the composite shader will reference
             // TODO: make this a changed flag
             if self.cp_image_infos.len() != images.len() {
+                stop.start();
                 // if thundr has allocated a different number of images than we were expecting,
                 // we need to realloc the variable descriptor memory
                 self.realloc_image_list(rend, images.len() as u32);
@@ -895,12 +909,18 @@ impl Pipeline for CompPipeline {
                             .build(),
                     );
                 }
+                stop.end();
+                log::debug!(
+                    "Took {} ms to generate the image info list",
+                    stop.get_duration().as_millis()
+                );
             }
 
             // We need to do this afterwards, since it depends on cp_image_infos
             // This always needs to be done, since we are binding the latest swapchain image
             self.comp_write_descs(rend);
             // ------------------------------------------- RECORD
+            stop.start();
             rend.cbuf_begin_recording(self.cp_cbuf, vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
 
             // First we need to transition our swapchain image to the GENERAL format
@@ -1025,6 +1045,11 @@ impl Pipeline for CompPipeline {
             );
 
             rend.cbuf_end_recording(self.cp_cbuf);
+            stop.end();
+            log::debug!(
+                "Took {} ms to record the cbuf for this frame",
+                stop.get_duration().as_millis()
+            );
             // -------------------------------------------
 
             rend.cbuf_submit(

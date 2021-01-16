@@ -123,12 +123,14 @@ impl WindowManager {
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
 
         // TODO: make a way to change titlebar colors
-        let bar = rend.create_image_from_bits(&mimg, None).unwrap();
+        let mut bar = rend.create_image_from_bits(&mimg, None).unwrap();
+        bar.set_damage(0, 0, 64, 64);
 
         let img = image::open("images/dot.png").unwrap().to_rgba();
         let pixels: Vec<u8> = img.into_vec();
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
-        let dot = rend.create_image_from_bits(&mimg, None).unwrap();
+        let mut dot = rend.create_image_from_bits(&mimg, None).unwrap();
+        dot.set_damage(0, 0, 64, 64);
 
         Titlebar { bar: bar, dot: dot }
     }
@@ -253,6 +255,8 @@ impl WindowManager {
                     dr_wl_buffer: info.ufd_wl_buffer.clone(),
                 })),
             );
+            // TODO: get actual size of dmabuf
+            app.a_image.as_mut().map(|i| i.set_damage(0, 0, 500, 500));
         }
         self.wm_thundr
             .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
@@ -282,6 +286,9 @@ impl WindowManager {
             // first time contents were attached to it. Go ahead
             // and make one now
             app.a_image = self.wm_thundr.create_image_from_bits(&info.pixels, None);
+            app.a_image
+                .as_mut()
+                .map(|i| i.set_damage(0, 0, info.width as i32, info.height as i32));
         }
         self.wm_thundr
             .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
@@ -534,20 +541,28 @@ impl WindowManager {
 
             // start recording how much time we spent doing graphics
             log::debug!("_____________________________ FRAME BEGIN");
-            draw_stop.start();
-
             // Create a frame out of the hemisphere we got from ways
+            draw_stop.start();
             self.begin_frame();
-            self.reap_dead_windows();
-            // present our frame
-            self.end_frame();
             draw_stop.end();
-            log::debug!("_____________________________ FRAME END");
-
             log::debug!(
                 "spent {} ms drawing this frame",
                 draw_stop.get_duration().as_millis()
             );
+
+            self.reap_dead_windows();
+
+            // present our frame
+            draw_stop.start();
+            self.end_frame();
+            draw_stop.end();
+
+            log::debug!(
+                "spent {} ms presenting this frame",
+                draw_stop.get_duration().as_millis()
+            );
+
+            log::debug!("_____________________________ FRAME END");
         }
     }
 }
