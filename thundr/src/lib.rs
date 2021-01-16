@@ -237,9 +237,9 @@ impl Thundr {
         dmabuf: &Dmabuf,
         release_info: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
-        let ret = self.th_rend.create_image_from_dmabuf(dmabuf, release_info);
-        if let Some(i) = ret.as_ref() {
-            self.th_image_list.push(i.clone());
+        let mut ret = self.th_rend.create_image_from_dmabuf(dmabuf, release_info);
+        if let Some(i) = ret.as_mut() {
+            self.push_image(i)
         }
         return ret;
     }
