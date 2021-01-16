@@ -116,7 +116,7 @@ void main() {
 		  For each window in the target_windows list
 		  blend it into the result.
 		*/
-		vec4 tex = texture(images[nonuniformEXT(target_windows[i])], win_uv);
+		vec4 tex = texture(images[nonuniformEXT(windows[target_windows[i]].id.x)], win_uv);
 		result = tex.rgb * tex.a + result * (1.0 - tex.a);
 	}
 

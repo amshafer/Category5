@@ -895,11 +895,11 @@ impl Pipeline for CompPipeline {
                             .build(),
                     );
                 }
-
-                // We need to do this afterwards, since it depends on cp_image_infos
-                self.comp_write_descs(rend);
             }
 
+            // We need to do this afterwards, since it depends on cp_image_infos
+            // This always needs to be done, since we are binding the latest swapchain image
+            self.comp_write_descs(rend);
             // ------------------------------------------- RECORD
             rend.cbuf_begin_recording(self.cp_cbuf, vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
 

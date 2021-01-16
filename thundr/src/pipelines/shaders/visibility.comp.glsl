@@ -107,7 +107,7 @@ void main() {
 		/* TODO: test for intersection */
 		if (windows[i].opaque.start.x != -1 && opaque_contains(i, uv)) {
 			/* we found a non-blending matching pixel, so exit */
-			result[idx] = windows[i].id.x;
+			result[idx] = i;
 			break;
 
 		} else if (contains(i, uv)) {
@@ -116,7 +116,7 @@ void main() {
 			  window containing this pixel, so keep going to
 			  collect the list of other windows to blend with
 			*/
-			result[idx] = windows[i].id.x;
+			result[idx] = i;
 			if (idx > BLEND_COUNT)
 				break;
 			idx--;
