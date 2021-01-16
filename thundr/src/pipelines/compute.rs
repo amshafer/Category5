@@ -150,7 +150,7 @@ struct TileList {
 #[derive(Copy, Clone, Serialize, Deserialize)]
 struct Window {
     /// The id of the image. This is the offset into the unbounded sampler array.
-    w_id: (i32, i32),
+    w_id: (i32, i32, i32, i32),
     /// The complete dimensions of the window.
     w_dims: Rect<i32>,
     /// Opaque region that tells the shader that we do not need to blend.
@@ -333,7 +333,7 @@ impl CompPipeline {
                 )
                 .unwrap();
             // Allocate a new list
-            Self::allocate_variable_descs(
+            self.cp_composite.p_descs = Self::allocate_variable_descs(
                 rend,
                 self.cp_composite.p_desc_pool,
                 &[self.cp_composite.p_descriptor_layout],
@@ -347,7 +347,7 @@ impl CompPipeline {
         let pool = Self::comp_create_descriptor_pool(rend);
         // two is the starting default, this will be changed to match the number
         // of allocated images for the thundr context
-        let desc_count = 2;
+        let desc_count = 0;
         let descs = unsafe { Self::allocate_variable_descs(rend, pool, &[layout], desc_count) };
 
         // This is a really annoying issue with CString ptrs
@@ -626,7 +626,7 @@ impl CompPipeline {
         let cpool = unsafe { Renderer::create_command_pool(&rend.dev, family) };
         let cbuf = unsafe { Renderer::create_command_buffers(&rend.dev, cpool, 1)[0] };
 
-        CompPipeline {
+        let cp = CompPipeline {
             cp_visibility: vis,
             cp_composite: comp,
             cp_tiles: data,
@@ -642,7 +642,10 @@ impl CompPipeline {
             cp_queue_family: family,
             cp_cbuf_pool: cpool,
             cp_cbuf: cbuf,
-        }
+        };
+
+        cp.vis_write_descs(rend);
+        return cp;
     }
 
     /// Get a queue family that this pipeline needs to support.
@@ -813,7 +816,7 @@ impl CompPipeline {
             };
 
             self.cp_winlist.push(Window {
-                w_id: (image.get_id(), 0),
+                w_id: (image.get_id(), 0, 0, 0),
                 w_dims: Rect::new(
                     surf.s_rect.r_pos.0 as i32,
                     surf.s_rect.r_pos.1 as i32,

@@ -42,8 +42,8 @@ struct Rect {
 };
 
 struct Window {
-	/* id.0 is the id. It is an ivec2 for alignment purposes */
-	ivec2 id;
+	/* id.0 is the id. It is an ivec4 for alignment purposes */
+	ivec4 id;
 	Rect dims;
 	Rect opaque;
 };
