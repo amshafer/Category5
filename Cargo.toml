@@ -1,3 +1,5 @@
+cargo-features=["named-profiles"]
+
 [package]
 name = "category5"
 version = "0.1.0"
@@ -21,4 +23,8 @@ atmos_gen={path="atmos_gen"}
 utils={path="utils"}
 
 [build-dependencies]
-wayland-scanner="0.26.4"
+wayland-scanner="0.26.4" 
+
+[profile.dtrace]
+inherits="release"
+debug=true
