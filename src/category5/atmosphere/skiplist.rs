@@ -130,6 +130,18 @@ impl Atmosphere {
 
         // TODO: recalculate skip
     }
+
+    pub fn add_new_top_subsurf(&mut self, parent: WindowId, win: WindowId) {
+        log::debug!("Adding subsurface {:?} to {:?}", win, parent);
+        self.set_parent_window(win, Some(parent));
+        // Add ourselves to the top of the skiplist
+        let old_top = self.get_top_child(parent);
+        if let Some(top) = old_top {
+            self.skiplist_place_above(win, top);
+        }
+
+        self.set_top_child(parent, Some(win));
+    }
 }
 
 // (see PropertyMapIterator for lifetime comments

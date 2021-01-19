@@ -299,7 +299,10 @@ impl WindowManager {
         let a = match self.wm_apps.iter_mut().find(|a| a.a_id == id) {
             Some(a) => a,
             // app must have been closed
-            None => return,
+            None => {
+                log::debug!("Could not find id {:?} to record for drawing", id);
+                return;
+            }
         };
         // If this window has been closed or if it is not ready for
         // rendering, ignore it
@@ -371,6 +374,16 @@ impl WindowManager {
         }
     }
 
+    /// Recursively get the list of surface and subsurface ids
+    fn get_ids_to_record(&self, ids: &mut Vec<WindowId>, id: WindowId) {
+        // Render any subsurfaces first. The surface list for thundr
+        // is from front to back, so we push these before the main surface
+        for sub in self.wm_atmos.visible_subsurfaces(id) {
+            self.get_ids_to_record(ids, sub);
+        }
+        ids.push(id);
+    }
+
     /// Record all the drawing operations for the current scene
     ///
     /// Vulkan requires that we record a list of operations into a command
@@ -399,11 +412,7 @@ impl WindowManager {
         // ----------------------------------------------------------------
         let mut ids = Vec::new();
         for id in self.wm_atmos.visible_windows() {
-            // Render any subsurfaces first
-            for sub in self.wm_atmos.visible_subsurfaces(id) {
-                ids.push(sub);
-            }
-            ids.push(id);
+            self.get_ids_to_record(&mut ids, id);
         }
         // do the draw call separately due to the borrow checker
         // throwing a fit if it is in the loop above
