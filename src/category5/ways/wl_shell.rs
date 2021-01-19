@@ -4,28 +4,30 @@
 // Austin Shafer - 2020
 extern crate wayland_server as ws;
 
+use ws::protocol::{wl_shell, wl_shell_surface, wl_surface};
 use ws::Main;
-use ws::protocol::{wl_shell,wl_shell_surface, wl_surface};
 
-use super::utils;
-use super::surface::*;
 use super::role::Role;
+use super::surface::*;
+use super::utils;
 
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 // Handle requests to a wl_shell interface
 //
 // The wl_shell interface implements functionality regarding
 // the lifecycle of the window. Essentially it just creates
 // a wl_shell_surface.
-pub fn wl_shell_handle_request(req: wl_shell::Request,
-                               _shell: Main<wl_shell::WlShell>)
-{
+pub fn wl_shell_handle_request(req: wl_shell::Request, _shell: Main<wl_shell::WlShell>) {
     match req {
-        wl_shell::Request::GetShellSurface { id: shell_surface, surface } => {
+        wl_shell::Request::GetShellSurface {
+            id: shell_surface,
+            surface,
+        } => {
             // get category5's surface from the userdata
-            let surf = surface.as_ref()
+            let surf = surface
+                .as_ref()
                 .user_data()
                 .get::<Rc<RefCell<Surface>>>()
                 .unwrap();
@@ -41,7 +43,7 @@ pub fn wl_shell_handle_request(req: wl_shell::Request,
             });
             // Pass ourselves as user data
             shell_surface.as_ref().user_data().set(move || shsurf);
-        },
+        }
         _ => unimplemented!(),
     };
 }
@@ -53,19 +55,20 @@ pub fn wl_shell_handle_request(req: wl_shell::Request,
 // highly recommended to read wayland.xml for all
 // the gory details.
 #[allow(unused_variables)]
-fn wl_shell_surface_handle_request(surf: Main<wl_shell_surface::WlShellSurface>,
-                                   req: wl_shell_surface::Request)
-{
-    let mut shsurf = surf.as_ref()
+fn wl_shell_surface_handle_request(
+    surf: Main<wl_shell_surface::WlShellSurface>,
+    req: wl_shell_surface::Request,
+) {
+    let mut shsurf = surf
+        .as_ref()
         .user_data()
         .get::<Rc<RefCell<ShellSurface>>>()
         .unwrap()
         .borrow_mut();
 
     match req {
-        wl_shell_surface::Request::SetToplevel =>
-            shsurf.set_toplevel(),
-        wl_shell_surface::Request::SetTitle { title } => {},
+        wl_shell_surface::Request::SetToplevel => shsurf.set_toplevel(),
+        wl_shell_surface::Request::SetTitle { title } => {}
         _ => unimplemented!(),
     };
 }
@@ -92,9 +95,8 @@ impl ShellSurface {
         // Tell vkcomp to create a new window
         let mut surf = self.ss_surface.borrow_mut();
         println!("Setting surface {:?} to toplevel", surf.s_id);
-        let client = self.ss_surface_proxy.as_ref().client().unwrap();
-        let owner = utils::try_get_id_from_client(client).unwrap();
-        surf.s_atmos.borrow_mut().create_new_window(surf.s_id, owner, true);
+        surf.s_atmos.borrow_mut().set_toplevel(surf.s_id, true);
+        // TODO: insert into skiplist and focus on
 
         // Mark our surface as being a window handled by wl_shell
         surf.s_role = Some(Role::wl_shell_toplevel);

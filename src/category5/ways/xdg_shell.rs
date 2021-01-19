@@ -410,7 +410,7 @@ impl ShellSurface {
             };
             let client = self.ss_xdg_surface.as_ref().client().unwrap();
             let owner = utils::try_get_id_from_client(client).unwrap();
-            atmos.create_new_window(surf.s_id, owner, is_toplevel);
+            atmos.set_toplevel(surf.s_id, true);
             self.ss_xs.xs_make_new_window = false;
         }
 

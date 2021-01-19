@@ -1,6 +1,6 @@
 // Austin Shafer - 2020
 
-use super::property::{PropertyId,Property};
+use super::property::{Property, PropertyId};
 
 /// This is a map that handles keeping track of offsets into an
 /// array for a set of WindowIds
@@ -53,7 +53,7 @@ impl<T: Clone + Property> PropertyMap<T> {
         }
 
         assert!(self.pm_map[id as usize].is_none());
-        let mut v = Vec::new();
+        let mut v = Vec::with_capacity(self.pm_variants as usize);
         v.resize(self.pm_variants as usize, None);
         self.pm_map[id as usize] = Some(v);
     }
@@ -64,9 +64,7 @@ impl<T: Clone + Property> PropertyMap<T> {
     }
 
     fn ensure_active(&mut self, id: u32) {
-        if id as usize >= self.pm_map.len()
-            || self.pm_map[id as usize].is_none()
-        {
+        if id as usize >= self.pm_map.len() || self.pm_map[id as usize].is_none() {
             self.activate(id);
         }
     }
@@ -77,9 +75,7 @@ impl<T: Clone + Property> PropertyMap<T> {
     /// we want to retrieve.
     pub fn get(&self, id: u32, prop_id: PropertyId) -> Option<&T> {
         // make sure this id exists
-        if id as usize >= self.pm_map.len()
-            || self.pm_map[id as usize].is_none()
-        {
+        if id as usize >= self.pm_map.len() || self.pm_map[id as usize].is_none() {
             return None;
         }
 
@@ -138,7 +134,7 @@ pub struct PropertyMapIterator<'a, T: Clone + Property> {
 // See the YARIT iterator tutorials webpage for more
 //
 // This ties into active_id_iter, which is where we specify
-// the lifetimes as we instantiate this. 
+// the lifetimes as we instantiate this.
 impl<'a, T: Clone + Property> IntoIterator for &'a PropertyMap<T> {
     type Item = u32;
     type IntoIter = PropertyMapIterator<'a, T>;

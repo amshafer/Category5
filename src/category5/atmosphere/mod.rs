@@ -561,21 +561,8 @@ impl Atmosphere {
     ///
     /// This wraps a couple actions into one helper
     /// since there are multiple
-    pub fn create_new_window(&mut self, id: WindowId, owner: ClientId, is_toplevel: bool) {
+    pub fn create_new_window(&mut self, id: WindowId, owner: ClientId) {
         self.add_wm_task(wm::task::Task::create_window(id));
-
-        let barsize = self.get_barsize();
-
-        self.set_owner(id, owner);
-        self.set_window_in_use(id, true);
-        self.set_toplevel(id, is_toplevel);
-        self.set_surface_pos(id, 0.0, 0.0 + barsize);
-        self.set_window_pos(id, 0.0, 0.0 + barsize);
-        self.set_surface_size(id, 640.0, 480.0);
-        self.set_window_size(id, 640.0, 480.0);
-
-        // make this the new toplevel window
-        self.focus_on(Some(id));
     }
 
     /// Reserve a new client id
@@ -626,6 +613,12 @@ impl Atmosphere {
         self.a_window_priv
             .set(raw_id, Priv::SURFACE, &Priv::surface(None));
 
+        // We also need to notify the wm proc that we are creating
+        // a window. There might be surface updates before we make it
+        // visibile, and wm needs to track it.
+        self.create_new_window(id, client);
+
+        // TODO: optimize me
         // This is a bit too expensive atm
         let mut windows = self.get_windows_for_client(client);
         windows.push(id);
