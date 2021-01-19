@@ -404,13 +404,10 @@ impl ShellSurface {
         if self.ss_xs.xs_make_new_window {
             // Tell vkcomp to create a new window
             log::debug!("Setting surface {:?} to toplevel", surf.s_id);
-            let is_toplevel = match self.ss_xdg_toplevel {
-                Some(_) => true,
-                None => false,
-            };
-            let client = self.ss_xdg_surface.as_ref().client().unwrap();
-            let owner = utils::try_get_id_from_client(client).unwrap();
             atmos.set_toplevel(surf.s_id, true);
+            // This places the surface at the front of the skiplist, aka
+            // makes it in focus
+            atmos.focus_on(Some(surf.s_id));
             self.ss_xs.xs_make_new_window = false;
         }
 
