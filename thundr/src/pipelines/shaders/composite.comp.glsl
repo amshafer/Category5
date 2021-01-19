@@ -15,7 +15,7 @@
 /* The width of a square tile of pixels in the screen */
 #define TILESIZE 16
 /* The number of windows to blend */
-#define BLEND_COUNT 2
+#define BLEND_COUNT 4
 layout (local_size_x = TILESIZE, local_size_y = TILESIZE, local_size_z = 1) in;
 
 /* our render target: the swapchain frame to render into */
@@ -30,7 +30,7 @@ layout(binding = 1) buffer tiles
 
 layout(binding = 2) buffer visibility_buffer
 {
-	ivec2 vis_buf[];
+	ivec4 vis_buf[];
 };
 
 struct Rect {
@@ -80,7 +80,7 @@ void main() {
 	if(uv.x >= width || uv.y >= height)
 		return;
 
-	ivec2 target_windows = vis_buf[uv.y * width + uv.x];
+	ivec4 target_windows = vis_buf[uv.y * width + uv.x];
 	vec3 result = vec3(0, 0, 0);
 	for(int i = 0; i < BLEND_COUNT; i++) {
 		if (target_windows[i] == -1)

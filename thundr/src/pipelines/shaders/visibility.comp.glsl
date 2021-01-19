@@ -17,15 +17,9 @@ it may be better to bump it up on nvidia??
 #define BLEND_COUNT 2
 layout (local_size_x = TILESIZE, local_size_y = TILESIZE, local_size_z = 1) in;
 
-/* This is composed of window ids */
-struct IdList {
-	int base;
-	int blend;
-};
-
 layout(binding = 0) buffer visibility_buffer
 {
-	IdList vis_buf[];
+	ivec4 vis_buf[];
 };
 
 /* the position/size/damage of our windows */
@@ -92,17 +86,13 @@ void main() {
 	ivec2 uv = ivec2(tile_base.x + gl_LocalInvocationID.x,
 			tile_base.y + gl_LocalInvocationID.y);
 	
-	//vis_buf[gl_GlobalInvocationID.y * width + gl_GlobalInvocationID.x] = IdList(tile_base.x, tile_base.y);
-	//vis_buf[uv.y * width + uv.x] = IdList(tile_base.x, tile_base.y);
-	//return;
-
 	/* if this invocation extends past the resolution, then do nothing */
 	if(uv.x >= width || uv.y >= height)
 		return;
 
-	ivec2 result = ivec2(-1, -1);
+	ivec4 result = ivec4(-1, -1, -1, -1);
 	/* This is the current index into result we are calculating */
-	int idx = 1;
+	int idx = 3;
 	for(int i = 0; i < window_count; i++) {
 		/* TODO: test for intersection */
 		if (windows[i].opaque.start.x != -1 && opaque_contains(i, uv)) {
@@ -117,12 +107,12 @@ void main() {
 			  collect the list of other windows to blend with
 			*/
 			result[idx] = i;
-			if (idx > BLEND_COUNT)
+			if (idx < 0)
 				break;
 			idx--;
 		}
 	}
 
 	/* Write our window ids to the visibility buffer */
-	vis_buf[uv.y * width + uv.x] = IdList(result.x, result.y);
+	vis_buf[uv.y * width + uv.x] = result;
 }

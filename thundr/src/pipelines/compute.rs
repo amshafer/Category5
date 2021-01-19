@@ -587,8 +587,8 @@ impl CompPipeline {
 
         // Create the visibility buffer
         let vis_size =
-            // two ints for the base/blend (see visibility.glsl)
-            (mem::size_of::<u32>() as u32 * 2 * rend.resolution.width * rend.resolution.height) as u64;
+            // 4 ints for the base/blend (see visibility.glsl)
+            (mem::size_of::<u32>() as u32 * 4 * rend.resolution.width * rend.resolution.height) as u64;
         let (vis_buf, vis_mem) = unsafe {
             rend.create_buffer_with_size(
                 vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::STORAGE_BUFFER,
