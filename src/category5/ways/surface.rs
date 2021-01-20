@@ -96,9 +96,14 @@ impl Surface {
     // to the correct handling function.
     #[allow(unused_variables)]
     pub fn handle_request(&mut self, surf: Main<wlsi::WlSurface>, req: wlsi::Request) {
+        // we need to clone the atmosphere to make the borrow checker happy. If we don't,
+        // then self will be borrowed both here and during the method calls below
+        let atmos_cell = self.s_atmos.clone();
+        let mut atmos = atmos_cell.borrow_mut();
+
         match req {
             wlsi::Request::Attach { buffer, x, y } => self.attach(surf, buffer, x, y),
-            wlsi::Request::Commit => self.commit(),
+            wlsi::Request::Commit => self.commit(&mut atmos),
             // TODO: implement damage tracking
             wlsi::Request::Damage {
                 x,
@@ -162,26 +167,33 @@ impl Surface {
         self.s_attached_buffer = buf;
     }
 
-    // Commit the current surface configuration to
-    // be displayed next frame
-    //
-    // The commit request tells the compositor that we have
-    // fully prepared this surface to be presented to the
-    // user. It commits the surface config to vkcomp
-    fn commit(&mut self) {
-        // If there was no surface attached, do nothing
-        if self.s_attached_buffer.is_none() {
-            return; // throw error?
-        }
-        let mut atmos = self.s_atmos.borrow_mut();
-
+    /// Commit the current surface configuration to
+    /// be displayed next frame
+    ///
+    /// The commit request tells the compositor that we have
+    /// fully prepared this surface to be presented to the
+    /// user. It commits the surface config to vkcomp
+    ///
+    /// Atmosphere is passed in since committing one surface
+    /// will recursively call commit on the subsurfaces, and
+    /// we need to avoid a refcell panic.
+    fn commit(&mut self, atmos: &mut Atmosphere) {
         // Before we commit ourselves, we need to
         // commit any subsurfaces available
         self.s_commit_in_progress = true;
-        for id in atmos.visible_subsurfaces(self.s_id) {
-            atmos.get_surface_from_id(id).map(|surf| {
-                surf.borrow_mut().commit();
-            });
+        // we need to collect the ids so that atmos won't be borrowed when
+        // we recursively call commit below
+        let subsurfaces: Vec<_> = atmos.visible_subsurfaces(self.s_id).collect();
+        for id in subsurfaces.iter() {
+            let sid = atmos.get_surface_from_id(*id);
+            if let Some(surf) = sid {
+                surf.borrow_mut().commit(atmos);
+            }
+        }
+
+        // If there was no surface attached, do nothing
+        if self.s_attached_buffer.is_none() {
+            return; // throw error?
         }
 
         // now we can commit the attached state
@@ -233,8 +245,8 @@ impl Surface {
 
         // Commit any role state before we do our thing
         match &self.s_role {
-            Some(Role::xdg_shell_toplevel(xs)) => xs.borrow_mut().commit(&self, &mut atmos),
-            Some(Role::xdg_shell_popup(xs)) => xs.borrow_mut().commit(&self, &mut atmos),
+            Some(Role::xdg_shell_toplevel(xs)) => xs.borrow_mut().commit(&self, atmos),
+            Some(Role::xdg_shell_popup(xs)) => xs.borrow_mut().commit(&self, atmos),
             Some(Role::wl_shell_toplevel) => {
                 atmos.set_window_size(self.s_id, surf_size.0, surf_size.1)
             }
