@@ -658,6 +658,31 @@ impl Atmosphere {
             .set(raw_id, Priv::SURFACE, &Priv::surface(None));
     }
 
+    fn find_window_at_point_recurse(
+        &self,
+        win: WindowId,
+        x: f32,
+        y: f32,
+        barsize: f32,
+    ) -> Option<WindowId> {
+        // First recursively check all subsurfaces
+        for sub in self.visible_subsurfaces(win) {
+            match self.find_window_at_point_recurse(sub, x, y, barsize) {
+                Some(s) => return Some(s),
+                None => {}
+            };
+        }
+
+        let (wx, wy) = self.get_surface_pos(win);
+        let (ww, wh) = self.get_surface_size(win);
+
+        // If this window contains (x, y) then return it
+        if x > wx && y > (wy - barsize) && x < (wx + ww) && y < (wy + wh) {
+            return Some(win);
+        }
+        return None;
+    }
+
     /// Find if there is a toplevel window under (x,y)
     ///
     /// This is used first to find if the cursor intersects
@@ -667,13 +692,10 @@ impl Atmosphere {
         let barsize = self.get_barsize();
 
         for win in self.visible_windows() {
-            let (wx, wy) = self.get_surface_pos(win);
-            let (ww, wh) = self.get_surface_size(win);
-
-            // If this window contains (x, y) then return it
-            if x > wx && y > (wy - barsize) && x < (wx + ww) && y < (wy + wh) {
-                return Some(win);
-            }
+            match self.find_window_at_point_recurse(win, x, y, barsize) {
+                Some(r) => return Some(r),
+                None => {}
+            };
         }
         return None;
     }
