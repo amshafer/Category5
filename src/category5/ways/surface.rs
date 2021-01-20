@@ -103,7 +103,7 @@ impl Surface {
 
         match req {
             wlsi::Request::Attach { buffer, x, y } => self.attach(surf, buffer, x, y),
-            wlsi::Request::Commit => self.commit(&mut atmos),
+            wlsi::Request::Commit => self.commit(&mut atmos, false),
             // TODO: implement damage tracking
             wlsi::Request::Damage {
                 x,
@@ -177,7 +177,7 @@ impl Surface {
     /// Atmosphere is passed in since committing one surface
     /// will recursively call commit on the subsurfaces, and
     /// we need to avoid a refcell panic.
-    fn commit(&mut self, atmos: &mut Atmosphere) {
+    fn commit(&mut self, atmos: &mut Atmosphere, commit_in_progress: bool) {
         // Before we commit ourselves, we need to
         // commit any subsurfaces available
         self.s_commit_in_progress = true;
@@ -187,7 +187,7 @@ impl Surface {
         for id in subsurfaces.iter() {
             let sid = atmos.get_surface_from_id(*id);
             if let Some(surf) = sid {
-                surf.borrow_mut().commit(atmos);
+                surf.borrow_mut().commit(atmos, true);
             }
         }
 
@@ -255,7 +255,7 @@ impl Surface {
             Some(Role::wl_shell_toplevel) => {
                 atmos.set_window_size(self.s_id, surf_size.0, surf_size.1)
             }
-            Some(Role::subsurface(ss)) => ss.borrow_mut().commit(),
+            Some(Role::subsurface(ss)) => ss.borrow_mut().commit(&self, atmos, commit_in_progress),
             // if we don't have an assigned role, avoid doing
             // any real work
             None => {

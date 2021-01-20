@@ -6,6 +6,7 @@ use ws::protocol::wl_subcompositor as wlsc;
 use ws::protocol::wl_subsurface as wlss;
 use ws::Main;
 
+use super::role::Role;
 use super::surface::Surface;
 use crate::category5::atmosphere::Atmosphere;
 use utils::WindowId;
@@ -36,7 +37,12 @@ pub fn wl_subcompositor_handle_request(req: wlsc::Request, _: Main<wlsc::WlSubco
 
             // TODO: throw error if surface has another role
 
-            let ss = Rc::new(RefCell::new(SubSurface::new(id.clone(), surf, parent)));
+            let ss = Rc::new(RefCell::new(SubSurface::new(
+                id.clone(),
+                surf.clone(),
+                parent,
+            )));
+            surf.borrow_mut().s_role = Some(Role::subsurface(ss.clone()));
             id.quick_assign(move |_, r, _| {
                 let mut ssurf = ss.borrow_mut();
                 ssurf.handle_request(r);
@@ -125,16 +131,18 @@ impl SubSurface {
         // TODO: implement desync?
     }
 
-    // Apply all of our state
-    pub fn commit(&mut self) {
+    /// Apply all of our state
+    ///
+    /// This is called in an extremely recursive fashion from Surface::commit, so
+    /// the surface, atmosphere, and in progress flags are all arguments.
+    pub fn commit(&mut self, surf: &Surface, atmos: &mut Atmosphere, commit_in_progress: bool) {
         // If commit is called but we are in sync mode and the parent
         // is not committing, then do nothing
-        if self.ss_sync && self.ss_parent.borrow().s_commit_in_progress {
+        if self.ss_sync && commit_in_progress {
             return;
         }
 
-        let mut atmos = self.ss_atmos.borrow_mut();
-        let id = self.ss_surf.borrow_mut().s_id;
+        let id = surf.s_id;
 
         // set_position request
         if let Some((x, y)) = self.ss_position {
