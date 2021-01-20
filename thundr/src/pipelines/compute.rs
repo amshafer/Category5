@@ -700,8 +700,9 @@ impl CompPipeline {
 
     /// Clamps a value to the 4x4 tilegrid positions. i.e. `62 -> 60`. This is
     /// used to get the address of a tile from an arbitrary point in the display.
-    fn clamp_to_grid(x: u32, max_width: u32) -> u32 {
-        let r = x / TILESIZE * TILESIZE;
+    fn clamp_to_grid(x: i32, max_width: i32) -> i32 {
+        let ts = TILESIZE as i32;
+        let r = x / ts * ts;
         if r > max_width {
             max_width
         } else {
@@ -755,24 +756,18 @@ impl CompPipeline {
             // Rect stores base and size, so add the size to the base to get the extent
             let d_end = (d.r_pos.0 + d.r_size.0, d.r_pos.1 + d.r_size.1);
             // Now offset the damage values from the window base
-            let mut start = (
-                w.r_pos.0 as u32 + d.r_pos.0 as u32,
-                w.r_pos.1 as u32 + d.r_pos.1 as u32,
-            );
+            let mut start = (w.r_pos.0 as i32 + d.r_pos.0, w.r_pos.1 as i32 + d.r_pos.1);
             // do the same for the extent
-            let mut end = (
-                w.r_pos.0 as u32 + d_end.0 as u32,
-                w.r_pos.1 as u32 + d_end.1 as u32,
-            );
+            let mut end = (w.r_pos.0 as i32 + d_end.0, w.r_pos.1 as i32 + d_end.1);
 
             // We need to clamp the values to our TILESIZExTILESIZE grid
             start = (
-                Self::clamp_to_grid(start.0, rend.resolution.width),
-                Self::clamp_to_grid(start.1, rend.resolution.width),
+                Self::clamp_to_grid(start.0, rend.resolution.width as i32),
+                Self::clamp_to_grid(start.1, rend.resolution.width as i32),
             );
             end = (
-                Self::clamp_to_grid(end.0, rend.resolution.width),
-                Self::clamp_to_grid(end.1, rend.resolution.width),
+                Self::clamp_to_grid(end.0, rend.resolution.width as i32),
+                Self::clamp_to_grid(end.1, rend.resolution.width as i32),
             );
 
             // Now we can go through the tiles this region overlaps with
@@ -780,17 +775,22 @@ impl CompPipeline {
             while start.1 <= end.1 {
                 let mut offset = start.0;
                 while offset <= end.0 {
-                    let tile = Tile::from_coord(offset, start.1, rend.resolution.width);
-                    //log::debug!("adding {} for point ({}, {})", tile.0, offset, start.1);
-                    // if this tile was not previously added, then add it now
-                    if !self.cp_tiles.enabled_tiles[tile.0 as usize] {
-                        self.cp_tiles.enabled_tiles[tile.0 as usize] = true;
-                        self.cp_tiles.tiles.push(tile);
+                    if offset >= 0 && start.1 >= 0 {
+                        let tile =
+                            Tile::from_coord(offset as u32, start.1 as u32, rend.resolution.width);
+                        //log::debug!("adding {} for point ({}, {})", tile.0, offset, start.1);
+                        // if this tile was not previously added, then add it now
+                        if tile.0 < self.cp_tiles.enabled_tiles.len() as u32
+                            && !self.cp_tiles.enabled_tiles[tile.0 as usize]
+                        {
+                            self.cp_tiles.enabled_tiles[tile.0 as usize] = true;
+                            self.cp_tiles.tiles.push(tile);
+                        }
                     }
-                    offset += TILESIZE;
+                    offset += TILESIZE as i32;
                 }
 
-                start.1 += TILESIZE;
+                start.1 += TILESIZE as i32;
             }
         }
     }
