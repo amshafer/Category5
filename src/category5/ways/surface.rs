@@ -191,56 +191,61 @@ impl Surface {
             }
         }
 
-        // If there was no surface attached, do nothing
-        if self.s_attached_buffer.is_none() {
-            return; // throw error?
-        }
+        // We need to update wm if a new buffer was attached. This includes getting
+        // the userdata and sending messages to update window contents.
+        //
+        // Once the attached buffer is committed, the logic unifies again: the surface
+        // size is obtained (either from the new buf or from atmos) and we can start
+        // calling down the chain to xdg/wl_subcompositor/wl_shell
+        let surf_size = if let Some(attached) = self.s_attached_buffer.as_ref() {
+            // now we can commit the attached state
+            self.s_committed_buffer = self.s_attached_buffer.take();
 
-        // now we can commit the attached state
-        self.s_committed_buffer = self.s_attached_buffer.take();
+            // We need to do different things depending on the
+            // type of buffer attached. We detect the type by
+            // trying to extract different types of userdat
+            let userdata = self
+                .s_committed_buffer
+                // this is a bit wonky, we need to get a reference
+                // to committed, but it is behind an option
+                .as_ref()
+                .unwrap()
+                // now we can call as_ref on the &WlBuffer
+                .as_ref()
+                .user_data();
 
-        // We need to do different things depending on the
-        // type of buffer attached. We detect the type by
-        // trying to extract different types of userdat
-        let userdata = self
-            .s_committed_buffer
-            // this is a bit wonky, we need to get a reference
-            // to committed, but it is behind an option
-            .as_ref()
-            .unwrap()
-            // now we can call as_ref on the &WlBuffer
-            .as_ref()
-            .user_data();
+            // Add tasks that tell the compositor to import this buffer
+            // so it is usable in vulkan. Also return the size of the buffer
+            // so we can set the surface size
+            if let Some(dmabuf) = userdata.get::<Dmabuf>() {
+                atmos.add_wm_task(wm::task::Task::update_window_contents_from_dmabuf(
+                    self.s_id, // ID of the new window
+                    *dmabuf,   // fd of the gpu buffer
+                    // pass the WlBuffer so it can be released
+                    self.s_committed_buffer.as_ref().unwrap().clone(),
+                ));
+                (dmabuf.db_width as f32, dmabuf.db_height as f32)
+            } else if let Some(shm_buf) = userdata.get::<ShmBuffer>() {
+                // ShmBuffer holds the base pointer and an offset, so
+                // we need to get the actual pointer, which will be
+                // wrapped in a MemImage
+                let fb = shm_buf.get_mem_image();
 
-        // Add tasks that tell the compositor to import this buffer
-        // so it is usable in vulkan. Also return the size of the buffer
-        // so we can set the surface size
-        let surf_size = if let Some(dmabuf) = userdata.get::<Dmabuf>() {
-            atmos.add_wm_task(wm::task::Task::update_window_contents_from_dmabuf(
-                self.s_id, // ID of the new window
-                *dmabuf,   // fd of the gpu buffer
-                // pass the WlBuffer so it can be released
-                self.s_committed_buffer.as_ref().unwrap().clone(),
-            ));
-            (dmabuf.db_width as f32, dmabuf.db_height as f32)
-        } else if let Some(shm_buf) = userdata.get::<ShmBuffer>() {
-            // ShmBuffer holds the base pointer and an offset, so
-            // we need to get the actual pointer, which will be
-            // wrapped in a MemImage
-            let fb = shm_buf.get_mem_image();
-
-            atmos.add_wm_task(wm::task::Task::update_window_contents_from_mem(
-                self.s_id, // ID of the new window
-                fb,        // memimage of the contents
-                // pass the WlBuffer so it can be released
-                self.s_committed_buffer.as_ref().unwrap().clone(),
-                // window dimensions
-                shm_buf.sb_width as usize,
-                shm_buf.sb_height as usize,
-            ));
-            (shm_buf.sb_width as f32, shm_buf.sb_height as f32)
+                atmos.add_wm_task(wm::task::Task::update_window_contents_from_mem(
+                    self.s_id, // ID of the new window
+                    fb,        // memimage of the contents
+                    // pass the WlBuffer so it can be released
+                    self.s_committed_buffer.as_ref().unwrap().clone(),
+                    // window dimensions
+                    shm_buf.sb_width as usize,
+                    shm_buf.sb_height as usize,
+                ));
+                (shm_buf.sb_width as f32, shm_buf.sb_height as f32)
+            } else {
+                panic!("Could not find dmabuf or shmbuf private data for wl_buffer");
+            }
         } else {
-            panic!("Could not find dmabuf or shmbuf private data for wl_buffer");
+            atmos.get_surface_size(self.s_id)
         };
 
         // Commit any role state before we do our thing
