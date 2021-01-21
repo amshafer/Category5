@@ -82,17 +82,25 @@ impl Atmosphere {
         return None;
     }
 
+    pub fn get_root_win_in_focus(&self) -> Option<WindowId> {
+        if let Some(win) = self.get_win_focus() {
+            return self.get_root_window(win);
+        }
+        return None;
+    }
+
     /// Set the window currently in focus
     pub fn focus_on(&mut self, win: Option<WindowId>) {
         log::debug!("focusing on window {:?}", win);
 
         if let Some(id) = win {
+            let root = self.get_root_window(id);
             // check if a new app was selected
             let prev_win_focus = self.get_win_focus();
             if let Some(prev) = prev_win_focus {
                 let mut update_app = false;
-                if let Some(root) = self.get_root_window(id) {
-                    if root != prev {
+                if let Some(r) = root {
+                    if r != prev {
                         update_app = true;
                     } else {
                         // If this window is already selected, just bail
@@ -106,19 +114,24 @@ impl Atmosphere {
 
                 // if so, update window focus
                 if update_app {
-                    self.set_win_focus(win);
-
-                    self.skiplist_remove_window(id);
                     // point the previous focus at the new focus
                     self.set_skiplist_prev(prev, win);
-                    self.set_skiplist_next(id, prev_focus);
-                    self.set_skiplist_prev(id, None);
 
                     // Send leave event(s) to the old focus
                     Input::keyboard_leave(self, prev);
                 }
             }
 
+            // If no root window is attached, then win is a root window and
+            // we need to update the win focus
+            if root.is_none() {
+                self.skiplist_remove_window(id);
+                self.set_skiplist_next(id, prev_win_focus);
+                self.set_skiplist_prev(id, None);
+                self.set_win_focus(win);
+            }
+            // When focus changes between subsurfaces, we don't change the order. Only
+            // wl_subsurface changes the order
             // set win to the surf focus
             self.set_surf_focus(win);
             // Send enter event(s) to the new focus
@@ -184,7 +197,7 @@ impl<'a> IntoIterator for &'a Atmosphere {
     fn into_iter(self) -> Self::IntoIter {
         VisibleWindowIterator {
             vwi_atmos: &self,
-            vwi_cur: self.get_window_in_focus(),
+            vwi_cur: self.get_win_focus(),
         }
     }
 }

@@ -533,12 +533,14 @@ impl Input {
                 }
             }
         } else if let Some(id) = atmos.find_window_at_point(cursor.0 as f32, cursor.1 as f32) {
-            // If the window is not in focus, make it in focus
-            if let Some(focus) = atmos.get_window_in_focus() {
-                if id != focus && c.c_state == ButtonState::Pressed {
-                    // Tell atmos that this is the one in focus
-                    atmos.focus_on(Some(id));
-                    set_focus = true;
+            // If the surface's root window is not in focus, make it in focus
+            if let Some(focus) = atmos.get_root_win_in_focus() {
+                if let Some(root) = atmos.get_root_window(id) {
+                    if root != focus && c.c_state == ButtonState::Pressed {
+                        // Tell atmos that this is the one in focus
+                        atmos.focus_on(Some(id));
+                        set_focus = true;
+                    }
                 }
             }
 

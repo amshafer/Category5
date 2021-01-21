@@ -9,20 +9,20 @@ extern crate nix;
 use nix::unistd::ftruncate;
 
 extern crate wayland_server as ws;
-use ws::Main;
-use ws::protocol::{wl_seat,wl_keyboard,wl_pointer};
 use ws::protocol::wl_seat::Capability;
+use ws::protocol::{wl_keyboard, wl_pointer, wl_seat};
+use ws::Main;
 
-use utils::ClientId;
-use crate::category5::input::Input;
 use super::keyboard::wl_keyboard_handle_request;
 use super::pointer::wl_pointer_handle_request;
+use crate::category5::input::Input;
+use utils::ClientId;
 
+use std::cell::RefCell;
+use std::fs::File;
 use std::io::Write;
 use std::os::unix::io::FromRawFd;
-use std::fs::File;
 use std::rc::Rc;
-use std::cell::RefCell;
 
 /// A collection of protocol objects available to a user
 ///
@@ -50,9 +50,7 @@ impl Seat {
     ///
     /// Also send the capabilities event to let the client know
     /// what input methods are ready
-    pub fn new(input: Rc<RefCell<Input>>, id: ClientId, seat: Main<wl_seat::WlSeat>)
-               -> Seat
-    {
+    pub fn new(input: Rc<RefCell<Input>>, id: ClientId, seat: Main<wl_seat::WlSeat>) -> Seat {
         // broadcast the types of input we have available
         // TODO: don't just default to keyboard + mouse
         seat.capabilities(Capability::Keyboard | Capability::Pointer);
@@ -70,8 +68,7 @@ impl Seat {
     /// Add a keyboard to this seat
     ///
     /// This also sends the modifier event
-    fn get_keyboard(&mut self,
-                    keyboard: Main<wl_keyboard::WlKeyboard>) {
+    fn get_keyboard(&mut self, keyboard: Main<wl_keyboard::WlKeyboard>) {
         // register our request handler
         keyboard.quick_assign(move |k, r, _| {
             wl_keyboard_handle_request(r, k);
@@ -80,9 +77,11 @@ impl Seat {
         let input = self.s_input.borrow();
         // Make a temp fd to share with the client
         let fd = unsafe {
-            libc::shm_open(libc::SHM_ANON,
-                           libc::O_CREAT|libc::O_RDWR|libc::O_EXCL|libc::O_CLOEXEC,
-                           0o600)
+            libc::shm_open(
+                libc::SHM_ANON,
+                libc::O_CREAT | libc::O_RDWR | libc::O_EXCL | libc::O_CLOEXEC,
+                0o600,
+            )
         };
         assert!(fd > 0);
         let mut file = unsafe { File::from_raw_fd(fd) };
@@ -95,9 +94,10 @@ impl Seat {
             .expect("Could not write to the temp xkb keymap file");
         file.flush().unwrap();
         // Broadcast our keymap map
-        keyboard.keymap(wl_keyboard::KeymapFormat::XkbV1,
-                        fd,
-                        input.i_xkb_keymap_name.as_bytes().len() as u32
+        keyboard.keymap(
+            wl_keyboard::KeymapFormat::XkbV1,
+            fd,
+            input.i_xkb_keymap_name.as_bytes().len() as u32,
         );
 
         // add the keyboard to this seat
@@ -108,7 +108,7 @@ impl Seat {
         let atmos = input.i_atmos.borrow();
         if let Some(focus) = atmos.get_client_in_focus() {
             if self.s_id == focus {
-                if let Some(sid) = atmos.get_window_in_focus() {
+                if let Some(sid) = atmos.get_win_focus() {
                     if let Some(surf) = atmos.get_wl_surface_from_id(sid) {
                         // TODO: use Input::keyboard_enter and fix the refcell order
                         keyboard.enter(
@@ -123,8 +123,7 @@ impl Seat {
     }
 
     /// Register a wl_pointer to this seat
-    fn get_pointer(&mut self,
-                   pointer: Main<wl_pointer::WlPointer>) {
+    fn get_pointer(&mut self, pointer: Main<wl_pointer::WlPointer>) {
         self.s_pointer = Some(pointer.clone());
         pointer.quick_assign(move |p, r, _| {
             wl_pointer_handle_request(r, p);
@@ -145,18 +144,14 @@ impl Seat {
     ///
     /// This basically just creates and registers the different
     /// input-related protocols, such as wl_keyboard
-    pub fn handle_request(&mut self,
-                          req: wl_seat::Request,
-                          _seat: Main<wl_seat::WlSeat>)
-    {
-
+    pub fn handle_request(&mut self, req: wl_seat::Request, _seat: Main<wl_seat::WlSeat>) {
         match req {
             wl_seat::Request::GetKeyboard { id } => {
                 self.get_keyboard(id);
-            },
+            }
             wl_seat::Request::GetPointer { id } => {
                 self.get_pointer(id);
-            },
+            }
             _ => unimplemented!("Did not recognize the request"),
         }
     }
