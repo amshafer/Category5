@@ -313,15 +313,17 @@ impl Input {
             if let Some(cell) = atmos.get_seat_from_window_id(id) {
                 let seat = cell.borrow();
                 // Get the pointer
-                if let Some(pointer) = &seat.s_pointer {
-                    let time = get_current_millis();
-                    // deliver the axis events, one for each direction
-                    if a.a_hori_val > 0.0 {
-                        pointer.axis(time, wl_pointer::Axis::HorizontalScroll, a.a_hori_val);
-                    }
+                for si in seat.s_proxies.borrow().iter() {
+                    if let Some(pointer) = &si.si_pointer {
+                        let time = get_current_millis();
+                        // deliver the axis events, one for each direction
+                        if a.a_hori_val > 0.0 {
+                            pointer.axis(time, wl_pointer::Axis::HorizontalScroll, a.a_hori_val);
+                        }
 
-                    if a.a_vert_val > 0.0 {
-                        pointer.axis(time, wl_pointer::Axis::VerticalScroll, a.a_vert_val);
+                        if a.a_vert_val > 0.0 {
+                            pointer.axis(time, wl_pointer::Axis::VerticalScroll, a.a_vert_val);
+                        }
                     }
                 }
             }
@@ -360,13 +362,18 @@ impl Input {
     pub fn keyboard_enter(atmos: &Atmosphere, id: WindowId) {
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
             let seat = cell.borrow_mut();
-            if let Some(keyboard) = &seat.s_keyboard {
-                if let Some(surf) = atmos.get_wl_surface_from_id(id) {
-                    keyboard.enter(
-                        seat.s_serial,
-                        &surf,
-                        Vec::new(), // TODO: update modifiers if needed
-                    );
+            // TODO: verify
+            // The client may have allocated multiple seats, and we should
+            // deliver events to all of them
+            for si in seat.s_proxies.borrow().iter() {
+                if let Some(keyboard) = &si.si_keyboard {
+                    if let Some(surf) = atmos.get_wl_surface_from_id(id) {
+                        keyboard.enter(
+                            seat.s_serial,
+                            &surf,
+                            Vec::new(), // TODO: update modifiers if needed
+                        );
+                    }
                 }
             }
         }
@@ -380,9 +387,14 @@ impl Input {
     pub fn keyboard_leave(atmos: &Atmosphere, id: WindowId) {
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
             let seat = cell.borrow_mut();
-            if let Some(keyboard) = &seat.s_keyboard {
-                if let Some(surf) = atmos.get_wl_surface_from_id(id) {
-                    keyboard.leave(seat.s_serial, &surf);
+            // TODO: verify
+            // The client may have allocated multiple seats, and we should
+            // deliver events to all of them
+            for si in seat.s_proxies.borrow().iter() {
+                if let Some(keyboard) = &si.si_keyboard {
+                    if let Some(surf) = atmos.get_wl_surface_from_id(id) {
+                        keyboard.leave(seat.s_serial, &surf);
+                    }
                 }
             }
         }
@@ -396,16 +408,21 @@ impl Input {
     pub fn pointer_enter(atmos: &Atmosphere, id: WindowId) {
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
             let seat = cell.borrow_mut();
-            if let Some(pointer) = &seat.s_pointer {
-                if let Some(surf) = atmos.get_wl_surface_from_id(id) {
-                    let (cx, cy) = atmos.get_cursor_pos();
-                    if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
-                        pointer.enter(
-                            seat.s_serial,
-                            &surf,
-                            sx as f64,
-                            sy, // surface local coordinates
-                        );
+            // TODO: verify
+            // The client may have allocated multiple seats, and we should
+            // deliver events to all of them
+            for si in seat.s_proxies.borrow().iter() {
+                if let Some(pointer) = &si.si_pointer {
+                    if let Some(surf) = atmos.get_wl_surface_from_id(id) {
+                        let (cx, cy) = atmos.get_cursor_pos();
+                        if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
+                            pointer.enter(
+                                seat.s_serial,
+                                &surf,
+                                sx as f64,
+                                sy, // surface local coordinates
+                            );
+                        }
                     }
                 }
             }
@@ -420,9 +437,14 @@ impl Input {
     pub fn pointer_leave(atmos: &Atmosphere, id: WindowId) {
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
             let seat = cell.borrow_mut();
-            if let Some(pointer) = &seat.s_pointer {
-                if let Some(surf) = atmos.get_wl_surface_from_id(id) {
-                    pointer.leave(seat.s_serial, &surf);
+            // TODO: verify
+            // The client may have allocated multiple seats, and we should
+            // deliver events to all of them
+            for si in seat.s_proxies.borrow().iter() {
+                if let Some(pointer) = &si.si_pointer {
+                    if let Some(surf) = atmos.get_wl_surface_from_id(id) {
+                        pointer.leave(seat.s_serial, &surf);
+                    }
                 }
             }
         }
@@ -467,11 +489,13 @@ impl Input {
                 // get the seat for this client
                 let seat = cell.borrow();
                 // Get the pointer
-                if let Some(pointer) = &seat.s_pointer {
-                    // If the pointer is over this surface
-                    if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
-                        // deliver the motion event
-                        pointer.motion(get_current_millis(), sx, sy);
+                for si in seat.s_proxies.borrow().iter() {
+                    if let Some(pointer) = &si.si_pointer {
+                        // If the pointer is over this surface
+                        if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
+                            // deliver the motion event
+                            pointer.motion(get_current_millis(), sx, sy);
+                        }
                     }
                 }
             }
@@ -588,17 +612,19 @@ impl Input {
                 // get the seat for this client
                 if let Some(cell) = atmos.get_seat_from_window_id(id) {
                     let seat = cell.borrow_mut();
-                    if let Some(pointer) = &seat.s_pointer {
-                        // Trigger a button event
-                        pointer.button(
-                            seat.s_serial,
-                            get_current_millis(),
-                            c.c_code,
-                            match c.c_state {
-                                ButtonState::Pressed => wl_pointer::ButtonState::Pressed,
-                                ButtonState::Released => wl_pointer::ButtonState::Released,
-                            },
-                        );
+                    for si in seat.s_proxies.borrow().iter() {
+                        if let Some(pointer) = &si.si_pointer {
+                            // Trigger a button event
+                            pointer.button(
+                                seat.s_serial,
+                                get_current_millis(),
+                                c.c_code,
+                                match c.c_state {
+                                    ButtonState::Pressed => wl_pointer::ButtonState::Pressed,
+                                    ButtonState::Released => wl_pointer::ButtonState::Released,
+                                },
+                            );
+                        }
                     }
                 }
             }
@@ -616,58 +642,62 @@ impl Input {
             // get the seat for this client
             if let Some(cell) = atmos.get_seat_from_client_id(id) {
                 let mut seat = cell.borrow_mut();
-                if let Some(keyboard) = &seat.s_keyboard {
-                    // let xkb keep track of the keyboard state
-                    let changed = self.i_xkb_state.update_key(
-                        // add 8 to account for differences between evdev and x11
-                        key.k_code + 8,
-                        match key.k_state {
-                            KeyState::Pressed => xkb::KeyDirection::Down,
-                            KeyState::Released => xkb::KeyDirection::Up,
-                        },
-                    );
-                    // if any modifiers were touched we should send their event
-                    if changed != 0 {
-                        // First we need to update our own tracking of what keys are held down
-                        self.i_mod_ctrl = self
-                            .i_xkb_state
-                            .mod_name_is_active(&xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
-                        self.i_mod_alt = self
-                            .i_xkb_state
-                            .mod_name_is_active(&xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
-                        self.i_mod_shift = self
-                            .i_xkb_state
-                            .mod_name_is_active(&xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
-                        self.i_mod_caps = self
-                            .i_xkb_state
-                            .mod_name_is_active(&xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
-                        self.i_mod_meta = self
-                            .i_xkb_state
-                            .mod_name_is_active(&xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
-                        self.i_mod_num = self
-                            .i_xkb_state
-                            .mod_name_is_active(&xkb::MOD_NAME_NUM, xkb::STATE_MODS_EFFECTIVE);
+                for si in seat.s_proxies.borrow().iter() {
+                    if let Some(keyboard) = &si.si_keyboard {
+                        // let xkb keep track of the keyboard state
+                        let changed = self.i_xkb_state.update_key(
+                            // add 8 to account for differences between evdev and x11
+                            key.k_code + 8,
+                            match key.k_state {
+                                KeyState::Pressed => xkb::KeyDirection::Down,
+                                KeyState::Released => xkb::KeyDirection::Up,
+                            },
+                        );
+                        // if any modifiers were touched we should send their event
+                        if changed != 0 {
+                            // First we need to update our own tracking of what keys are held down
+                            self.i_mod_ctrl = self
+                                .i_xkb_state
+                                .mod_name_is_active(&xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
+                            self.i_mod_alt = self
+                                .i_xkb_state
+                                .mod_name_is_active(&xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
+                            self.i_mod_shift = self.i_xkb_state.mod_name_is_active(
+                                &xkb::MOD_NAME_SHIFT,
+                                xkb::STATE_MODS_EFFECTIVE,
+                            );
+                            self.i_mod_caps = self
+                                .i_xkb_state
+                                .mod_name_is_active(&xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
+                            self.i_mod_meta = self
+                                .i_xkb_state
+                                .mod_name_is_active(&xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
+                            self.i_mod_num = self
+                                .i_xkb_state
+                                .mod_name_is_active(&xkb::MOD_NAME_NUM, xkb::STATE_MODS_EFFECTIVE);
 
-                        // Now we can serialize the modifiers into a format suitable
-                        // for sending to the client
-                        let depressed = self.i_xkb_state.serialize_mods(xkb::STATE_MODS_DEPRESSED);
-                        let latched = self.i_xkb_state.serialize_mods(xkb::STATE_MODS_LATCHED);
-                        let locked = self.i_xkb_state.serialize_mods(xkb::STATE_MODS_LOCKED);
-                        let layout = self.i_xkb_state.serialize_layout(xkb::STATE_LAYOUT_LOCKED);
+                            // Now we can serialize the modifiers into a format suitable
+                            // for sending to the client
+                            let depressed =
+                                self.i_xkb_state.serialize_mods(xkb::STATE_MODS_DEPRESSED);
+                            let latched = self.i_xkb_state.serialize_mods(xkb::STATE_MODS_LATCHED);
+                            let locked = self.i_xkb_state.serialize_mods(xkb::STATE_MODS_LOCKED);
+                            let layout =
+                                self.i_xkb_state.serialize_layout(xkb::STATE_LAYOUT_LOCKED);
 
-                        // Finally fire the wayland event
-                        log::debug!("Sending modifiers to window {:?}", id);
-                        keyboard.modifiers(seat.s_serial, depressed, latched, locked, layout);
+                            // Finally fire the wayland event
+                            log::debug!("Sending modifiers to window {:?}", id);
+                            keyboard.modifiers(seat.s_serial, depressed, latched, locked, layout);
+                        }
+                        // give the keycode to the client
+                        let time = get_current_millis();
+                        let state = map_key_state(key.k_state);
+                        log::debug!("Sending {} key to window {:?}", key.k_code, id);
+                        keyboard.key(seat.s_serial, time, key.k_code, state);
                     }
-                    // give the keycode to the client
-                    let time = get_current_millis();
-                    let state = map_key_state(key.k_state);
-                    log::debug!("Sending {} key to window {:?}", key.k_code, id);
-                    keyboard.key(seat.s_serial, time, key.k_code, state);
-
-                    // increment the serial for next time
-                    seat.s_serial += 1;
                 }
+                // increment the serial for next time
+                seat.s_serial += 1;
             }
         }
         // otherwise the click is over the background, so

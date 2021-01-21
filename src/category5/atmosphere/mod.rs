@@ -577,7 +577,7 @@ impl Atmosphere {
     ///
     /// This wraps a couple actions into one helper
     /// since there are multiple
-    pub fn create_new_window(&mut self, id: WindowId, owner: ClientId) {
+    pub fn create_new_window(&mut self, id: WindowId, _owner: ClientId) {
         self.add_wm_task(wm::task::Task::create_window(id));
     }
 

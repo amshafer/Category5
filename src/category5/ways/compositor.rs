@@ -294,7 +294,7 @@ impl EventManager {
     fn create_wl_seat_global(&mut self) {
         // for some reason we need to do two clones to make the lifetime
         // inference happy with the closures below
-        let atmos = self.em_atmos.clone();
+        let atmos_rc = self.em_atmos.clone();
         let input_sys = self.em_input.clone();
 
         self.em_display.create_global::<wl_seat::WlSeat, _>(
@@ -303,11 +303,23 @@ impl EventManager {
                 // as_ref turns the Main into a Resource
                 let client = res.as_ref().client().unwrap();
                 // get the id representing this client in the atmos
-                let id = utils::get_id_from_client(atmos.clone(), client);
+                let id = utils::get_id_from_client(atmos_rc.clone(), client);
 
+                // check if a seat exists and add this to it
                 // add a new seat to this client
-                let seat = Rc::new(RefCell::new(Seat::new(input_sys.clone(), id, res.clone())));
-                atmos.borrow_mut().add_seat(id, seat.clone());
+                let mut atmos = atmos_rc.borrow_mut();
+                let seat = match atmos.get_seat_from_client_id(id) {
+                    Some(seat) => {
+                        // TODO: add wl_seat to this Seat
+                        seat
+                    }
+                    None => {
+                        let seat =
+                            Rc::new(RefCell::new(Seat::new(input_sys.clone(), id, res.clone())));
+                        atmos.add_seat(id, seat.clone());
+                        seat
+                    }
+                };
                 // now we can handle the event
                 res.quick_assign(move |s, r, _| {
                     seat.borrow_mut().handle_request(r, s);
@@ -362,7 +374,7 @@ impl EventManager {
                 1, // version
                 Filter::new(
                     move |(res, _): (ws::Main<wlddm::WlDataDeviceManager>, u32), _, _| {
-                        res.quick_assign(move |s, r, _| {
+                        res.quick_assign(move |_, _, _| {
                             // TODO:
                         });
                     },

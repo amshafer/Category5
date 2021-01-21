@@ -10,7 +10,6 @@ use ws::Main;
 pub use super::protocol::xdg_shell::*;
 use super::role::Role;
 use super::surface::*;
-use super::utils;
 
 extern crate utils as cat5_utils;
 use crate::category5::atmosphere::Atmosphere;

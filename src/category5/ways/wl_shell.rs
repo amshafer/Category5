@@ -9,7 +9,6 @@ use ws::Main;
 
 use super::role::Role;
 use super::surface::*;
-use super::utils;
 
 use std::cell::RefCell;
 use std::rc::Rc;

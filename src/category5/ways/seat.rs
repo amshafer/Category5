@@ -24,57 +24,36 @@ use std::io::Write;
 use std::os::unix::io::FromRawFd;
 use std::rc::Rc;
 
-/// A collection of protocol objects available to a user
-///
-/// This does not represent a physical seat made of real input
-/// devices, but rather a set of wayland objects which we use
-/// to send events to the user
-#[allow(dead_code)]
-pub struct Seat {
-    // The handle to the input subsystem
-    pub s_input: Rc<RefCell<Input>>,
-    // The id of the client this seat belongs to
-    pub s_id: ClientId,
+/// See the create_global call in `compositor.rs` for the code
+/// that adds a seat instance to a `Seat`.
+pub struct SeatInstance {
     // the seat object itself
-    pub s_seat: Main<wl_seat::WlSeat>,
+    pub si_seat: Main<wl_seat::WlSeat>,
     // wl_keyboard handle
-    pub s_keyboard: Option<Main<wl_keyboard::WlKeyboard>>,
+    pub si_keyboard: Option<Main<wl_keyboard::WlKeyboard>>,
     // wl_pointer handle
-    pub s_pointer: Option<Main<wl_pointer::WlPointer>>,
-    // the serial number for this set of input events
-    pub s_serial: u32,
+    pub si_pointer: Option<Main<wl_pointer::WlPointer>>,
 }
 
-impl Seat {
-    /// creates an empty seat
-    ///
-    /// Also send the capabilities event to let the client know
-    /// what input methods are ready
-    pub fn new(input: Rc<RefCell<Input>>, id: ClientId, seat: Main<wl_seat::WlSeat>) -> Seat {
-        // broadcast the types of input we have available
-        // TODO: don't just default to keyboard + mouse
-        seat.capabilities(Capability::Keyboard | Capability::Pointer);
-
-        Seat {
-            s_input: input,
-            s_id: id,
-            s_seat: seat,
-            s_keyboard: None,
-            s_pointer: None,
-            s_serial: 0,
+impl SeatInstance {
+    pub fn new(seat: Main<wl_seat::WlSeat>) -> Self {
+        Self {
+            si_seat: seat,
+            si_keyboard: None,
+            si_pointer: None,
         }
     }
 
     /// Add a keyboard to this seat
     ///
     /// This also sends the modifier event
-    fn get_keyboard(&mut self, keyboard: Main<wl_keyboard::WlKeyboard>) {
+    fn get_keyboard(&mut self, parent: &mut Seat, keyboard: Main<wl_keyboard::WlKeyboard>) {
         // register our request handler
         keyboard.quick_assign(move |k, r, _| {
             wl_keyboard_handle_request(r, k);
         });
 
-        let input = self.s_input.borrow();
+        let input = parent.s_input.borrow();
         // Make a temp fd to share with the client
         let fd = unsafe {
             libc::shm_open(
@@ -101,18 +80,18 @@ impl Seat {
         );
 
         // add the keyboard to this seat
-        self.s_keyboard = Some(keyboard.clone());
+        self.si_keyboard = Some(keyboard.clone());
 
         // If we are in focus, then we should go ahead and generate
         // the enter event
         let atmos = input.i_atmos.borrow();
         if let Some(focus) = atmos.get_client_in_focus() {
-            if self.s_id == focus {
+            if parent.s_id == focus {
                 if let Some(sid) = atmos.get_win_focus() {
                     if let Some(surf) = atmos.get_wl_surface_from_id(sid) {
                         // TODO: use Input::keyboard_enter and fix the refcell order
                         keyboard.enter(
-                            self.s_serial,
+                            parent.s_serial,
                             &surf,
                             Vec::new(), // TODO: update modifiers if needed
                         );
@@ -123,8 +102,8 @@ impl Seat {
     }
 
     /// Register a wl_pointer to this seat
-    fn get_pointer(&mut self, pointer: Main<wl_pointer::WlPointer>) {
-        self.s_pointer = Some(pointer.clone());
+    fn get_pointer(&mut self, _parent: &mut Seat, pointer: Main<wl_pointer::WlPointer>) {
+        self.si_pointer = Some(pointer.clone());
         pointer.quick_assign(move |p, r, _| {
             wl_pointer_handle_request(r, p);
         });
@@ -139,18 +118,66 @@ impl Seat {
         //     }
         // }
     }
+}
+
+/// A collection of protocol objects available to a user
+///
+/// This does not represent a physical seat made of real input
+/// devices, but rather a set of wayland objects which we use
+/// to send events to the user
+///
+/// One of these will exist for each client. Because clients (like firefox)
+/// may instantiate multiple registries and wl_seats, this has a list
+/// of all the seats created by this client.
+#[allow(dead_code)]
+pub struct Seat {
+    // The handle to the input subsystem
+    pub s_input: Rc<RefCell<Input>>,
+    // The id of the client this seat belongs to
+    pub s_id: ClientId,
+    // List of all wl_seats and their respective device proxies
+    pub s_proxies: Rc<RefCell<Vec<SeatInstance>>>,
+    // the serial number for this set of input events
+    pub s_serial: u32,
+}
+
+impl Seat {
+    /// creates an empty seat
+    ///
+    /// Also send the capabilities event to let the client know
+    /// what input methods are ready
+    pub fn new(input: Rc<RefCell<Input>>, id: ClientId, seat: Main<wl_seat::WlSeat>) -> Seat {
+        // broadcast the types of input we have available
+        // TODO: don't just default to keyboard + mouse
+        seat.capabilities(Capability::Keyboard | Capability::Pointer);
+
+        Seat {
+            s_input: input,
+            s_id: id,
+            s_proxies: Rc::new(RefCell::new(vec![SeatInstance::new(seat)])),
+            s_serial: 0,
+        }
+    }
 
     /// Handle client requests
     ///
     /// This basically just creates and registers the different
     /// input-related protocols, such as wl_keyboard
-    pub fn handle_request(&mut self, req: wl_seat::Request, _seat: Main<wl_seat::WlSeat>) {
+    pub fn handle_request(&mut self, req: wl_seat::Request, seat: Main<wl_seat::WlSeat>) {
+        // we need to borrow proxies seperately so we don't borrow self
+        let proxies_rc = self.s_proxies.clone();
+        let mut proxies = proxies_rc.borrow_mut();
+        let si = proxies
+            .iter_mut()
+            .find(|s| s.si_seat == seat)
+            .expect("wl_seat is not known by this Seat");
+
         match req {
             wl_seat::Request::GetKeyboard { id } => {
-                self.get_keyboard(id);
+                si.get_keyboard(self, id);
             }
             wl_seat::Request::GetPointer { id } => {
-                self.get_pointer(id);
+                si.get_pointer(self, id);
             }
             _ => unimplemented!("Did not recognize the request"),
         }
