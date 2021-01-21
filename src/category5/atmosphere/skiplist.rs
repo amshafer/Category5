@@ -82,9 +82,17 @@ impl Atmosphere {
         return None;
     }
 
+    /// Get the root window in focus.
+    ///
+    /// A root window is the base of a subsurface tree. i.e. the toplevel surf
+    /// that all subsurfaces are attached to.
     pub fn get_root_win_in_focus(&self) -> Option<WindowId> {
         if let Some(win) = self.get_win_focus() {
-            return self.get_root_window(win);
+            return match self.get_root_window(win) {
+                Some(root) => Some(root),
+                // If win doesn't have a root window, it is the root window
+                None => Some(win),
+            };
         }
         return None;
     }
@@ -148,7 +156,16 @@ impl Atmosphere {
 
     pub fn add_new_top_subsurf(&mut self, parent: WindowId, win: WindowId) {
         log::debug!("Adding subsurface {:?} to {:?}", win, parent);
+        // Add the immediate parent
         self.set_parent_window(win, Some(parent));
+
+        // add the root window for this subsurface tree
+        // If the parent's root is None, then the parent is the root
+        match self.get_root_window(parent) {
+            Some(root) => self.set_root_window(win, Some(root)),
+            None => self.set_root_window(win, Some(parent)),
+        };
+
         // Add ourselves to the top of the skiplist
         let old_top = self.get_top_child(parent);
         if let Some(top) = old_top {
