@@ -119,9 +119,11 @@ impl Compositor {
 
         // We have to manually assign a destructor, or else
         // Destroy request doesn't seem to proc
+        let destroy_atmos = self.c_atmos.clone();
         surf.assign_destructor(Filter::new(move |_: Resource<wlsi::WlSurface>, _, _| {
             let mut nsurf = ns_clone.borrow_mut();
-            nsurf.destroy();
+            let mut atmos = destroy_atmos.borrow_mut();
+            nsurf.destroy(&mut atmos);
         }));
     }
 }

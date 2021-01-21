@@ -135,7 +135,7 @@ impl Surface {
             }
             wlsi::Request::Frame { callback } => self.frame(callback),
             // wayland-rs makes us register a destructor
-            wlsi::Request::Destroy => self.destroy(),
+            wlsi::Request::Destroy => self.destroy(&mut atmos),
             // TODO: support variable buffer scaling
             wlsi::Request::SetBufferScale { scale } => {
                 if scale != 1 {
@@ -297,15 +297,15 @@ impl Surface {
     //
     // This must be registered explicitly as the destructor
     // for wayland-rs to call it
-    pub fn destroy(&mut self) {
-        self.s_atmos
-            .borrow_mut()
-            .add_wm_task(wm::task::Task::close_window(self.s_id));
+    pub fn destroy(&mut self, atmos: &mut Atmosphere) {
+        atmos.add_wm_task(wm::task::Task::close_window(self.s_id));
     }
 }
 
 impl Drop for Surface {
     fn drop(&mut self) {
-        self.destroy();
+        let atmos_rc = self.s_atmos.clone();
+        let mut atmos = atmos_rc.borrow_mut();
+        self.destroy(&mut atmos);
     }
 }
