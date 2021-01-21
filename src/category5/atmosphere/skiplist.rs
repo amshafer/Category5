@@ -30,15 +30,6 @@ impl Atmosphere {
         if let Some(n) = next {
             self.set_skiplist_prev(n, prev);
         }
-
-        // If this was the window in focus, set the focus
-        // to the next window in the order
-        let focus = self.get_window_in_focus();
-        if let Some(f) = focus {
-            if f == id {
-                self.set_global_prop(&GlobalProperty::focus(next));
-            }
-        }
     }
 
     /// Add a window above another
@@ -79,21 +70,12 @@ impl Atmosphere {
         self.set_skiplist_next(id, next);
     }
 
-    /// Get the window currently in use
-    pub fn get_window_in_focus(&self) -> Option<WindowId> {
-        match self.get_global_prop(GlobalProperty::FOCUS) {
-            Some(GlobalProperty::focus(w)) => *w,
-            None => None,
-            _ => panic!("property not found"),
-        }
-    }
-
     /// Get the client in focus.
     /// This is better for subsystems like input which need to
     /// find the seat of the client currently in use.
     pub fn get_client_in_focus(&self) -> Option<ClientId> {
         // get the surface in focus
-        if let Some(win) = self.get_window_in_focus() {
+        if let Some(win) = self.get_win_focus() {
             // now get the client for that surface
             return Some(self.get_owner(win));
         }
@@ -103,30 +85,50 @@ impl Atmosphere {
     /// Set the window currently in focus
     pub fn focus_on(&mut self, win: Option<WindowId>) {
         log::debug!("focusing on window {:?}", win);
+
         if let Some(id) = win {
-            let prev_focus = self.get_window_in_focus();
-            // If they clicked on the focused window, don't
-            // do anything
-            if let Some(prev) = prev_focus {
-                if prev == id {
-                    return;
+            // check if a new app was selected
+            let prev_win_focus = self.get_win_focus();
+            if let Some(prev) = prev_win_focus {
+                let mut update_app = false;
+                if let Some(root) = self.get_root_window(id) {
+                    if root != prev {
+                        update_app = true;
+                    } else {
+                        // If this window is already selected, just bail
+                        return;
+                    }
+                } else if prev != id {
+                    // If the root window was None, then win *is* a root
+                    // window, and we still need to check it
+                    update_app = true;
                 }
 
-                // Send leave event(s) to the old focus
-                Input::keyboard_leave(self, prev);
+                // if so, update window focus
+                if update_app {
+                    self.set_win_focus(win);
 
-                // point the previous focus at the new focus
-                self.set_skiplist_prev(prev, win);
+                    self.skiplist_remove_window(id);
+                    // point the previous focus at the new focus
+                    self.set_skiplist_prev(prev, win);
+                    self.set_skiplist_next(id, prev_focus);
+                    self.set_skiplist_prev(id, None);
+
+                    // Send leave event(s) to the old focus
+                    Input::keyboard_leave(self, prev);
+                }
             }
+
+            // set win to the surf focus
+            self.set_surf_focus(win);
             // Send enter event(s) to the new focus
             // spec says this MUST be done after the leave events are sent
             Input::keyboard_enter(self, id);
-
-            self.skiplist_remove_window(id);
-            self.set_skiplist_next(id, prev_focus);
-            self.set_skiplist_prev(id, None);
+        } else {
+            // Otherwise we have unselected any surfaces, so clear both focus types
+            self.set_win_focus(None);
+            self.set_surf_focus(None);
         }
-        self.set_global_prop(&GlobalProperty::focus(win));
 
         // TODO: recalculate skip
     }

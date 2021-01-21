@@ -133,19 +133,30 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::vec::Vec;
 
-// Global data not tied to a client or window
-//
-// See `Property` for implementation comments
+/// Global data not tied to a client or window
+///
+/// See `Property` for implementation comments
 #[derive(Copy, Clone, Debug, AtmosECSGetSet)]
 enum GlobalProperty {
-    // !! IF YOU CHANGE THIS UPDATE property_count BELOW!!
+    /// !! IF YOU CHANGE THIS UPDATE property_count BELOW!!
     cursor_pos(f64, f64),
     resolution(u32, u32),
     grabbed(Option<WindowId>),
     resizing(Option<WindowId>),
-    // the window the user is currently interacting with
-    // This tells us which one to start looking at for the skiplist
-    focus(Option<WindowId>),
+    /// the window the user is currently interacting with
+    /// This tells us which one to start looking at for the skiplist
+    ///
+    /// Not to be confused with `surf_focus`, this refers to the *application*
+    /// that is currently in focus. It is used to track the "root" window that
+    /// was created by xdg/wl_shell.
+    win_focus(Option<WindowId>),
+    /// This is the current surface that is in focus, not respective of application.
+    /// It is possible that this is the same as `win_focus`.
+    ///
+    /// This is the wl_surface that the user has entered, and it is highly likely
+    /// that this is a subsurface. Therefore `win_focus` will be the "root" application
+    /// toplevel window, and `surf_focus` may be a subsurface of that window tree.
+    surf_focus(Option<WindowId>),
 }
 
 // These are indexed by ClientId
@@ -197,6 +208,10 @@ enum WindowProperty {
     // If this is a subsurface of another window
     // aka not a toplevel
     parent_window(Option<WindowId>),
+    // This is the root of the window tree that this window
+    // is a part of. When this surface is in focus, this will
+    // be the value of the `win_focus` global prop.
+    root_window(Option<WindowId>),
 }
 
 // per-surface private data
@@ -345,7 +360,8 @@ impl Atmosphere {
         // resolution is set by wm
         atmos.set_grabbed(None);
         atmos.set_resizing(None);
-        atmos.set_focus(None);
+        atmos.set_win_focus(None);
+        atmos.set_surf_focus(None);
 
         return atmos;
     }
@@ -602,6 +618,7 @@ impl Atmosphere {
         self.set_skiplist_skip(id, None);
         self.set_top_child(id, None);
         self.set_parent_window(id, None);
+        self.set_root_window(id, None);
 
         let WindowId(raw_id) = id;
         // Add a new priv entry

@@ -127,8 +127,6 @@ impl SubSurface {
             wlss::Request::SetDesync => self.ss_sync = false,
             _ => (),
         };
-
-        // TODO: implement desync?
     }
 
     /// Apply all of our state
