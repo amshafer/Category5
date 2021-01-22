@@ -154,6 +154,7 @@ impl Atmosphere {
             self.set_win_focus(None);
             self.set_surf_focus(None);
         }
+        self.print_surface_tree();
 
         // TODO: recalculate skip
     }
@@ -180,27 +181,54 @@ impl Atmosphere {
     }
 
     /// The recursive portion of `map_on_surfs`
-    fn find_window_at_point_recurse(&self, win: WindowId, func: FnMut(WindowId)) {
+    fn map_on_surf_tree_recurse<F>(&self, win: WindowId, func: &F) -> bool
+    where
+        F: Fn(WindowId) -> bool,
+    {
         // First recursively check all subsurfaces
         for sub in self.visible_subsurfaces(win) {
-            self.find_window_at_point_recurse(sub, func);
-            func(sub);
+            if !self.map_on_surf_tree_recurse(sub, func) {
+                return false;
+            }
+            if !func(sub) {
+                return false;
+            }
         }
+        return true;
     }
 
     /// Helper for walking the surface tree recursively.
     /// `func` will be called on every window
-    pub fn map_on_surfs(&self, func: FnMut(WindowId)) {
+    ///
+    /// `func` returns a boolean specifying if the traversal should
+    /// continue or exit.
+    pub fn map_on_surfs<F>(&self, func: F)
+    where
+        F: Fn(WindowId) -> bool,
+    {
         for win in self.visible_windows() {
-            self.map_on_surf_tree_recurse(win, func);
-            func(win);
+            if !self.map_on_surf_tree_recurse(win, &func) {
+                return;
+            }
+            if !func(win) {
+                return;
+            }
         }
     }
 
     pub fn print_surface_tree(&self) {
         log::debug!("Dumping surface tree (front to back):");
         self.map_on_surfs(|win| {
-            log::debug!("{:?}", win);
+            log::debug!(
+                " - {:?}   windims at {:?} size {:?} surfdims at {:?} size {:?}",
+                win,
+                self.get_window_pos(win),
+                self.get_surface_pos(win),
+                self.get_window_size(win),
+                self.get_surface_size(win),
+            );
+            // Return true to tell map_on_surfs to continue
+            return true;
         });
     }
 }
