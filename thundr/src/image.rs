@@ -490,6 +490,7 @@ impl Renderer {
                     image.i_image_resolution
                 );
                 // resize the transfer mem if needed
+                // TODO: only do this when the staging buffer is too small
                 if memimg.width != image.i_image_resolution.width as usize
                     || memimg.height != image.i_image_resolution.height as usize
                 {

@@ -658,6 +658,9 @@ impl Atmosphere {
 
     /// Mark the id as available
     pub fn free_window_id(&mut self, client: ClientId, id: WindowId) {
+        // we also need to remove this surface from focus
+        self.skiplist_remove_win_focus(id);
+        self.skiplist_remove_surf_focus(id);
         // remove this id from the heirarchy
         self.skiplist_remove_window(id);
 

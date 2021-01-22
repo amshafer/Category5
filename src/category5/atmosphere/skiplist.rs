@@ -32,6 +32,52 @@ impl Atmosphere {
         }
     }
 
+    /// Remove id from the `win_focus` visibility skiplist
+    pub fn skiplist_remove_win_focus(&mut self, id: WindowId) {
+        if let Some(focus) = self.get_win_focus() {
+            // verify that we are actually removing the focused win
+            if id == focus {
+                // get the next node in the skiplist
+                let next = self.get_skiplist_next(id);
+                // clear its prev pointer (since it should be id)
+                if let Some(n) = next {
+                    self.set_skiplist_prev(n, None);
+                }
+                // actually update the focus
+                self.set_win_focus(next);
+                // clear id's pointers
+                self.set_skiplist_next(id, None);
+                self.set_skiplist_prev(id, None);
+            }
+        }
+    }
+
+    /// Remove id from the `surf_focus` property.
+    /// This assumes that the `win_focus` has been set properly. i.e.
+    /// call `skiplist_remove_win_focus` first.
+    pub fn skiplist_remove_surf_focus(&mut self, id: WindowId) {
+        if let Some(focus) = self.get_surf_focus() {
+            // verify that we are actually removing the focused surf
+            if id == focus {
+                let root = self.get_root_window(id);
+                let next_root = self.get_win_focus();
+                if root.is_some() {
+                    let next = match next_root {
+                        Some(nr) => self.get_top_child(nr),
+                        None => None,
+                    };
+                    self.set_surf_focus(next);
+                } else {
+                    // If the root is none, then we are removing a root
+                    // window from focus. This means we should set the focus
+                    // to whatever the win focus is, since it has been updated
+                    // with the next root window
+                    self.set_surf_focus(next_root);
+                }
+            }
+        }
+    }
+
     /// Add a window above another
     ///
     /// This is used for the subsurface ordering requests
