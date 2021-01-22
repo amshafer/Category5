@@ -146,6 +146,10 @@ impl Atmosphere {
             // spec says this MUST be done after the leave events are sent
             Input::keyboard_enter(self, id);
         } else {
+            // Clear the previous window focus from the skiplist
+            if let Some(prev) = self.get_win_focus() {
+                self.skiplist_remove_window(prev);
+            }
             // Otherwise we have unselected any surfaces, so clear both focus types
             self.set_win_focus(None);
             self.set_surf_focus(None);
@@ -173,6 +177,31 @@ impl Atmosphere {
         }
 
         self.set_top_child(parent, Some(win));
+    }
+
+    /// The recursive portion of `map_on_surfs`
+    fn find_window_at_point_recurse(&self, win: WindowId, func: FnMut(WindowId)) {
+        // First recursively check all subsurfaces
+        for sub in self.visible_subsurfaces(win) {
+            self.find_window_at_point_recurse(sub, func);
+            func(sub);
+        }
+    }
+
+    /// Helper for walking the surface tree recursively.
+    /// `func` will be called on every window
+    pub fn map_on_surfs(&self, func: FnMut(WindowId)) {
+        for win in self.visible_windows() {
+            self.map_on_surf_tree_recurse(win, func);
+            func(win);
+        }
+    }
+
+    pub fn print_surface_tree(&self) {
+        log::debug!("Dumping surface tree (front to back):");
+        self.map_on_surfs(|win| {
+            log::debug!("{:?}", win);
+        });
     }
 }
 
