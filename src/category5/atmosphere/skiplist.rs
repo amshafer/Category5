@@ -227,33 +227,39 @@ impl Atmosphere {
     }
 
     /// The recursive portion of `map_on_surfs`
-    fn map_on_surf_tree_recurse<F>(&self, win: WindowId, func: &F) -> bool
+    fn map_on_surf_tree_recurse<F>(&self, inorder: bool, win: WindowId, func: &F) -> bool
     where
         F: Fn(WindowId) -> bool,
     {
         // First recursively check all subsurfaces
         for sub in self.visible_subsurfaces(win) {
-            if !self.map_on_surf_tree_recurse(sub, func) {
+            // If we are going out of order, the only difference is we call
+            // func beforehand
+            if !inorder {
+                if !func(sub) {
+                    return false;
+                }
+            }
+            if !self.map_on_surf_tree_recurse(inorder, sub, func) {
                 return false;
             }
-            if !func(sub) {
-                return false;
+            if inorder {
+                if !func(sub) {
+                    return false;
+                }
             }
         }
         return true;
     }
 
-    /// Helper for walking the surface tree recursively.
-    /// `func` will be called on every window
-    ///
-    /// `func` returns a boolean specifying if the traversal should
-    /// continue or exit.
-    pub fn map_on_surfs<F>(&self, func: F)
+    /// This is the generic map implementation, entrypoint to the recursive
+    /// surface evaluation.
+    fn map_on_surfs<F>(&self, inorder: bool, func: F)
     where
         F: Fn(WindowId) -> bool,
     {
         for win in self.visible_windows() {
-            if !self.map_on_surf_tree_recurse(win, &func) {
+            if !self.map_on_surf_tree_recurse(inorder, win, &func) {
                 return;
             }
             if !func(win) {
@@ -262,9 +268,41 @@ impl Atmosphere {
         }
     }
 
+    /// Helper for walking the surface tree recursively from front to
+    /// back.
+    /// `func` will be called on every window
+    ///
+    /// `func` returns a boolean specifying if the traversal should
+    /// continue or exit.
+    pub fn map_inorder_on_surfs<F>(&self, func: F)
+    where
+        F: Fn(WindowId) -> bool,
+    {
+        self.map_on_surfs(true, func)
+    }
+
+    /// Map out of order on windows and subsurfaces.
+    /// Helper for walking the surface tree recursively in the order
+    /// of root windows, then subsurfaces in order.
+    ///
+    /// Basically this will call the root window, followed by its subsurfaces.
+    /// This is extremely useful in calculations depending on the parent (i.e.)
+    /// calculating the positions of subsurfaces.
+    ///
+    /// `func` will be called on every window
+    ///
+    /// `func` returns a boolean specifying if the traversal should
+    /// continue or exit.
+    pub fn map_ooo_on_surfs<F>(&self, func: F)
+    where
+        F: Fn(WindowId) -> bool,
+    {
+        self.map_on_surfs(false, func)
+    }
+
     pub fn print_surface_tree(&self) {
         log::debug!("Dumping surface tree (front to back):");
-        self.map_on_surfs(|win| {
+        self.map_inorder_on_surfs(|win| {
             log::debug!(
                 " - {:?}   windims at {:?} size {:?} surfdims at {:?} size {:?}",
                 win,
