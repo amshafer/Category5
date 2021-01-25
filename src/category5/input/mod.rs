@@ -637,6 +637,53 @@ impl Input {
     pub fn handle_keyboard(&mut self, key: &Key) {
         // find the client in use
         let atmos = self.i_atmos.borrow_mut();
+
+        // Do the xkbcommon keyboard update first, since it needs to happen
+        // even if there isn't a window in focus
+        // let xkb keep track of the keyboard state
+        let changed = self.i_xkb_state.update_key(
+            // add 8 to account for differences between evdev and x11
+            key.k_code + 8,
+            match key.k_state {
+                KeyState::Pressed => xkb::KeyDirection::Down,
+                KeyState::Released => xkb::KeyDirection::Up,
+            },
+        );
+
+        // if any modifiers were touched we should send their event
+        let mods = if changed != 0 {
+            // First we need to update our own tracking of what keys are held down
+            self.i_mod_ctrl = self
+                .i_xkb_state
+                .mod_name_is_active(&xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
+            self.i_mod_alt = self
+                .i_xkb_state
+                .mod_name_is_active(&xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
+            self.i_mod_shift = self
+                .i_xkb_state
+                .mod_name_is_active(&xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
+            self.i_mod_caps = self
+                .i_xkb_state
+                .mod_name_is_active(&xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
+            self.i_mod_meta = self
+                .i_xkb_state
+                .mod_name_is_active(&xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
+            self.i_mod_num = self
+                .i_xkb_state
+                .mod_name_is_active(&xkb::MOD_NAME_NUM, xkb::STATE_MODS_EFFECTIVE);
+
+            // Now we can serialize the modifiers into a format suitable
+            // for sending to the client
+            let depressed = self.i_xkb_state.serialize_mods(xkb::STATE_MODS_DEPRESSED);
+            let latched = self.i_xkb_state.serialize_mods(xkb::STATE_MODS_LATCHED);
+            let locked = self.i_xkb_state.serialize_mods(xkb::STATE_MODS_LOCKED);
+            let layout = self.i_xkb_state.serialize_layout(xkb::STATE_LAYOUT_LOCKED);
+
+            Some((depressed, latched, locked, layout))
+        } else {
+            None
+        };
+
         // if there is a window in focus
         if let Some(id) = atmos.get_client_in_focus() {
             // get the seat for this client
@@ -644,55 +691,16 @@ impl Input {
                 let mut seat = cell.borrow_mut();
                 for si in seat.s_proxies.borrow().iter() {
                     if let Some(keyboard) = &si.si_keyboard {
-                        // let xkb keep track of the keyboard state
-                        let changed = self.i_xkb_state.update_key(
-                            // add 8 to account for differences between evdev and x11
-                            key.k_code + 8,
-                            match key.k_state {
-                                KeyState::Pressed => xkb::KeyDirection::Down,
-                                KeyState::Released => xkb::KeyDirection::Up,
-                            },
-                        );
-                        // if any modifiers were touched we should send their event
-                        if changed != 0 {
-                            // First we need to update our own tracking of what keys are held down
-                            self.i_mod_ctrl = self
-                                .i_xkb_state
-                                .mod_name_is_active(&xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
-                            self.i_mod_alt = self
-                                .i_xkb_state
-                                .mod_name_is_active(&xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
-                            self.i_mod_shift = self.i_xkb_state.mod_name_is_active(
-                                &xkb::MOD_NAME_SHIFT,
-                                xkb::STATE_MODS_EFFECTIVE,
-                            );
-                            self.i_mod_caps = self
-                                .i_xkb_state
-                                .mod_name_is_active(&xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
-                            self.i_mod_meta = self
-                                .i_xkb_state
-                                .mod_name_is_active(&xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
-                            self.i_mod_num = self
-                                .i_xkb_state
-                                .mod_name_is_active(&xkb::MOD_NAME_NUM, xkb::STATE_MODS_EFFECTIVE);
-
-                            // Now we can serialize the modifiers into a format suitable
-                            // for sending to the client
-                            let depressed =
-                                self.i_xkb_state.serialize_mods(xkb::STATE_MODS_DEPRESSED);
-                            let latched = self.i_xkb_state.serialize_mods(xkb::STATE_MODS_LATCHED);
-                            let locked = self.i_xkb_state.serialize_mods(xkb::STATE_MODS_LOCKED);
-                            let layout =
-                                self.i_xkb_state.serialize_layout(xkb::STATE_LAYOUT_LOCKED);
-
+                        if let Some((depressed, latched, locked, layout)) = mods {
                             // Finally fire the wayland event
                             log::debug!("Sending modifiers to window {:?}", id);
                             keyboard.modifiers(seat.s_serial, depressed, latched, locked, layout);
                         }
+
                         // give the keycode to the client
                         let time = get_current_millis();
                         let state = map_key_state(key.k_state);
-                        log::debug!("Sending {} key to window {:?}", key.k_code, id);
+                        log::debug!("Sending key {} to window {:?}", key.k_code, id);
                         keyboard.key(seat.s_serial, time, key.k_code, state);
                     }
                 }
