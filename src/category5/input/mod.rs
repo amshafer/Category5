@@ -327,6 +327,7 @@ impl Input {
                         if a.a_vert_val > 0.0 {
                             pointer.axis(time, wl_pointer::Axis::VerticalScroll, a.a_vert_val);
                         }
+                        pointer.frame();
                     }
                 }
             }
@@ -415,21 +416,22 @@ impl Input {
     /// so atmos' rc may be held.
     pub fn pointer_enter(atmos: &Atmosphere, id: WindowId) {
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
-            let seat = cell.borrow_mut();
-            // TODO: verify
-            // The client may have allocated multiple seats, and we should
-            // deliver events to all of them
-            for si in seat.s_proxies.borrow().iter() {
-                if let Some(pointer) = &si.si_pointer {
-                    if let Some(surf) = atmos.get_wl_surface_from_id(id) {
-                        let (cx, cy) = atmos.get_cursor_pos();
-                        if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
+            if let Some(surf) = atmos.get_wl_surface_from_id(id) {
+                let (cx, cy) = atmos.get_cursor_pos();
+                if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
+                    let seat = cell.borrow_mut();
+                    // TODO: verify
+                    // The client may have allocated multiple seats, and we should
+                    // deliver events to all of them
+                    for si in seat.s_proxies.borrow().iter() {
+                        if let Some(pointer) = &si.si_pointer {
                             pointer.enter(
                                 seat.s_serial,
                                 &surf,
                                 sx as f64,
                                 sy, // surface local coordinates
                             );
+                            pointer.frame();
                         }
                     }
                 }
@@ -452,6 +454,7 @@ impl Input {
                 if let Some(pointer) = &si.si_pointer {
                     if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                         pointer.leave(seat.s_serial, &surf);
+                        pointer.frame();
                     }
                 }
             }
@@ -503,6 +506,7 @@ impl Input {
                         if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
                             // deliver the motion event
                             pointer.motion(get_current_millis(), sx, sy);
+                            pointer.frame();
                         }
                     }
                 }
@@ -632,6 +636,7 @@ impl Input {
                                     ButtonState::Released => wl_pointer::ButtonState::Released,
                                 },
                             );
+                            pointer.frame();
                         }
                     }
                 }
