@@ -424,7 +424,7 @@ impl EventManager {
                 //
                 // The input subsystem has batched the changes to the window
                 // due to resizing, we need to send those changes now
-                self.em_input.borrow_mut().update_shell();
+                self.em_input.borrow_mut().update_from_eventloop();
 
                 if needs_frame {
                     needs_frame = false;

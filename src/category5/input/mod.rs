@@ -66,11 +66,11 @@ use std::rc::Rc;
 
 use std::mem::drop;
 
-// This is sort of like a private userdata struct which
-// is used as an interface to the systems devices
-//
-// i.e. this could call consolekit to avoid having to
-// be a root user to get raw input.
+/// This is sort of like a private userdata struct which
+/// is used as an interface to the systems devices
+///
+/// i.e. this could call consolekit to avoid having to
+/// be a root user to get raw input.
 struct Inkit {
     // For now we don't have anything special to do,
     // so we are just putting a phantom int here since
@@ -78,12 +78,12 @@ struct Inkit {
     _inner: u32,
 }
 
-// This is the interface that libinput uses to abstract away
-// consolekit and friends.
-//
-// In our case we just pass the arguments through to `open`.
-// We need to use the unix open extensions so that we can pass
-// custom flags.
+/// This is the interface that libinput uses to abstract away
+/// consolekit and friends.
+///
+/// In our case we just pass the arguments through to `open`.
+/// We need to use the unix open extensions so that we can pass
+/// custom flags.
 impl LibinputInterface for Inkit {
     // open a device
     fn open_restricted(&mut self, path: &Path, flags: i32) -> Result<RawFd, i32> {
@@ -123,31 +123,31 @@ impl LibinputInterface for Inkit {
     }
 }
 
-// This represents an input system
-//
-// Input is grabbed from the udev interface, but
-// any method should be applicable. It just feeds
-// the ways and wm subsystems input events
-//
-// We will also stash our xkb resources here, and
-// will consult this before sending out keymaps/syms
+/// This represents an input system
+///
+/// Input is grabbed from the udev interface, but
+/// any method should be applicable. It just feeds
+/// the ways and wm subsystems input events
+///
+/// We will also stash our xkb resources here, and
+/// will consult this before sending out keymaps/syms
 pub struct Input {
     pub i_atmos: Rc<RefCell<Atmosphere>>,
-    // The udev context
+    /// The udev context
     uctx: Context,
-    // libinput context
+    /// libinput context
     libin: Libinput,
-    // xkb goodies
+    /// xkb goodies
     i_xkb_ctx: xkb::Context,
     i_xkb_keymap: xkb::Keymap,
-    // this is referenced by Seat, which needs to map and
-    // share it with the clients
+    /// this is referenced by Seat, which needs to map and
+    /// share it with the clients
     pub i_xkb_keymap_name: String,
-    // xkb state machine
+    /// xkb state machine
     i_xkb_state: xkb::State,
 
-    // Tracking info for the modifier keys
-    // These keys are sent separately in the modifiers event
+    /// Tracking info for the modifier keys
+    /// These keys are sent separately in the modifiers event
     pub i_mod_ctrl: bool,
     pub i_mod_alt: bool,
     pub i_mod_shift: bool,
@@ -155,20 +155,22 @@ pub struct Input {
     pub i_mod_meta: bool,
     pub i_mod_num: bool,
 
-    // Resize tracking
-    // When we resize a window we want to batch together the
-    // changes and send one configure message per frame
-    // The window currently being resized
-    // The currently grabbed resizing window is in the atmosphere
-    // changes to the window surface to be sent this frame
+    /// Resize tracking
+    /// When we resize a window we want to batch together the
+    /// changes and send one configure message per frame
+    /// The window currently being resized
+    /// The currently grabbed resizing window is in the atmosphere
+    /// changes to the window surface to be sent this frame
     pub i_resize_diff: (f64, f64),
-    // The surface that the pointer is currently over
-    // note that this may be different than the application focus
+    /// The surface that the pointer is currently over
+    /// note that this may be different than the application focus
     pub i_pointer_focus: Option<WindowId>,
 }
 
 impl Input {
-    // Setup the libinput library from a udev context
+    /// Create an input subsystem.
+    ///
+    /// Setup the libinput library from a udev context
     pub fn new(atmos: Rc<RefCell<Atmosphere>>) -> Input {
         // Make a new context for ourselves
         let uctx = Context::new().unwrap();
@@ -228,21 +230,21 @@ impl Input {
         }
     }
 
-    // Get a pollable fd
-    //
-    // This saves power and is monitored by kqueue in
-    // the ways event loop
+    /// Get a pollable fd
+    ///
+    /// This saves power and is monitored by kqueue in
+    /// the ways event loop
     pub fn get_poll_fd(&mut self) -> RawFd {
         self.libin.as_raw_fd()
     }
 
-    // Processs any pending input events
-    //
-    // dispatch will grab the latest available data
-    // from the devices and perform libinputs internal
-    // (time sensitive) operations on them
-    // It will then handle all the available input events
-    // before returning.
+    /// Processs any pending input events
+    ///
+    /// dispatch will grab the latest available data
+    /// from the devices and perform libinputs internal
+    /// (time sensitive) operations on them
+    /// It will then handle all the available input events
+    /// before returning.
     pub fn dispatch(&mut self) {
         self.libin.dispatch().unwrap();
 
@@ -252,10 +254,10 @@ impl Input {
         }
     }
 
-    // Get the next available event from libinput
-    //
-    // Dispatch should be called before this so libinput can
-    // internally read and prepare all events.
+    /// Get the next available event from libinput
+    ///
+    /// Dispatch should be called before this so libinput can
+    /// internally read and prepare all events.
     fn next_available(&mut self) -> Option<InputEvent> {
         // TODO: need to fix this wrapper
         let ev = self.libin.next();
@@ -302,8 +304,9 @@ impl Input {
         return None;
     }
 
-    // Perform a scrolling motion
-    //
+    /// Perform a scrolling motion.
+    ///
+    /// Generates the wl_pointer.axis event.
     fn handle_pointer_axis(&mut self, a: &Axis) {
         let atmos = self.i_atmos.borrow_mut();
 
@@ -330,8 +333,13 @@ impl Input {
         }
     }
 
-    // Apply any batched input changes to the window dimensions
-    pub fn update_shell(&mut self) {
+    /// This is called once per frame by the thread's main even loop. It exists to get
+    /// the input system up to date and allow it to dispatch any cached state it has.
+    ///
+    /// Applies batched input changes to the window dimensions. We keep a `i_resize_diff`
+    /// of the current pointer changes that need to have an xdg configure event for them.
+    /// This method resets the diff and sends the value to xdg.
+    pub fn update_from_eventloop(&mut self) {
         let mut atmos = self.i_atmos.borrow_mut();
         if let Some(id) = atmos.get_resizing() {
             if let Some(cell) = atmos.get_surface_from_id(id) {
@@ -354,11 +362,11 @@ impl Input {
         }
     }
 
-    // Generate the wl_keyboard.enter event for id's seat, if it
-    // has a keyboard.
-    //
-    // Atmos is passed since this is called from `atmos.focus_on`,
-    // so atmos' rc may be held.
+    /// Generate the wl_keyboard.enter event for id's seat, if it
+    /// has a keyboard.
+    ///
+    /// Atmos is passed since this is called from `atmos.focus_on`,
+    /// so atmos' rc may be held.
     pub fn keyboard_enter(atmos: &Atmosphere, id: WindowId) {
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
             let seat = cell.borrow_mut();
@@ -400,11 +408,11 @@ impl Input {
         }
     }
 
-    // Generate the wl_pointer.enter event for id's seat, if it
-    // has a pointer.
-    //
-    // Atmos is passed since this may be called from `atmos.focus_on`,
-    // so atmos' rc may be held.
+    /// Generate the wl_pointer.enter event for id's seat, if it
+    /// has a pointer.
+    ///
+    /// Atmos is passed since this may be called from `atmos.focus_on`,
+    /// so atmos' rc may be held.
     pub fn pointer_enter(atmos: &Atmosphere, id: WindowId) {
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
             let seat = cell.borrow_mut();
@@ -429,11 +437,11 @@ impl Input {
         }
     }
 
-    // Generate the wl_pointer.leave event for id's seat, if it
-    // has a pointer.
-    //
-    // Atmos is passed since this may be called from `atmos.focus_on`,
-    // so atmos' rc may be held.
+    /// Generate the wl_pointer.leave event for id's seat, if it
+    /// has a pointer.
+    ///
+    /// Atmos is passed since this may be called from `atmos.focus_on`,
+    /// so atmos' rc may be held.
     pub fn pointer_leave(atmos: &Atmosphere, id: WindowId) {
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
             let seat = cell.borrow_mut();
@@ -450,10 +458,10 @@ impl Input {
         }
     }
 
-    // Move the pointer
-    //
-    // Also generates wl_pointer.motion events to the surface
-    // in focus if the cursor is on that surface
+    /// Move the pointer
+    ///
+    /// Also generates wl_pointer.motion events to the surface
+    /// in focus if the cursor is on that surface
     fn handle_pointer_move(&mut self, m: &PointerMove) {
         let mut atmos = self.i_atmos.borrow_mut();
         // Update the atmosphere with the new cursor pos
@@ -502,15 +510,15 @@ impl Input {
         }
     }
 
-    // Does what it says
-    //
-    // This is the big ugly state machine for processing an input
-    // token that was the result of clicking the pointer. We need
-    // to find what the cursor is over and perform the appropriate
-    // action.
-    //
-    // If a click is over a background window it is brought into focus
-    // clicking on a background titlebar can also start a grab
+    /// Delivers the wl_pointer.button event to any surface in focus.
+    ///
+    /// This is the big ugly state machine for processing an input
+    /// token that was the result of clicking the pointer. We need
+    /// to find what the cursor is over and perform the appropriate
+    /// action.
+    ///
+    /// If a click is over a background window it is brought into focus
+    /// clicking on a background titlebar can also start a grab
     fn handle_click_on_window(&mut self, c: &Click) {
         let mut atmos = self.i_atmos.borrow_mut();
         let cursor = atmos.get_cursor_pos();
@@ -631,9 +639,9 @@ impl Input {
         }
     }
 
-    // Handle the user typing on the keyboard
-    //
-    //
+    /// Handle the user typing on the keyboard.
+    ///
+    /// Deliver the wl_keyboard.key and modifier events.
     pub fn handle_keyboard(&mut self, key: &Key) {
         // find the client in use
         let atmos = self.i_atmos.borrow_mut();
@@ -712,11 +720,11 @@ impl Input {
         // ignore it
     }
 
-    // Dispatch an arbitrary input event
-    //
-    // Input events are either handled by us or by the wayland client
-    // we need to figure out the appropriate destination and perform
-    // the right action.
+    /// Dispatch an arbitrary input event
+    ///
+    /// Input events are either handled by us or by the wayland client
+    /// we need to figure out the appropriate destination and perform
+    /// the right action.
     pub fn handle_input_event(&mut self, iev: &InputEvent) {
         match iev {
             InputEvent::pointer_move(m) => self.handle_pointer_move(m),
