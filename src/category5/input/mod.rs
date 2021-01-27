@@ -481,7 +481,7 @@ impl Input {
         let (cx, cy) = atmos.get_cursor_pos();
 
         // Get the window the pointer is over
-        let focus = atmos.find_window_at_point(cx as f32, cy as f32);
+        let focus = atmos.find_window_with_input_at_point(cx as f32, cy as f32);
         // If the pointer is over top of a different window, change the
         // pointer focus and send the leave/enter events
         if focus != self.i_pointer_focus {
@@ -568,7 +568,9 @@ impl Input {
                     }
                 }
             }
-        } else if let Some(id) = atmos.find_window_at_point(cursor.0 as f32, cursor.1 as f32) {
+        } else if let Some(id) =
+            atmos.find_window_with_input_at_point(cursor.0 as f32, cursor.1 as f32)
+        {
             // If the surface's root window is not in focus, make it in focus
             if let Some(focus) = atmos.get_root_win_in_focus() {
                 if let Some(root) = atmos.get_root_window(id) {

@@ -678,63 +678,6 @@ impl Atmosphere {
             .set(raw_id, Priv::SURFACE, &Priv::surface(None));
     }
 
-    fn find_window_at_point_recurse(
-        &self,
-        win: WindowId,
-        x: f32,
-        y: f32,
-        barsize: f32,
-    ) -> Option<WindowId> {
-        // First recursively check all subsurfaces
-        for sub in self.visible_subsurfaces(win) {
-            match self.find_window_at_point_recurse(sub, x, y, barsize) {
-                Some(s) => return Some(s),
-                None => {}
-            };
-        }
-
-        let (wx, wy) = self.get_surface_pos(win);
-        let (ww, wh) = self.get_surface_size(win);
-
-        // If this window contains (x, y) then return it
-        if x > wx && y > (wy - barsize) && x < (wx + ww) && y < (wy + wh) {
-            return Some(win);
-        }
-        return None;
-    }
-
-    /// Find if there is a toplevel window under (x,y)
-    ///
-    /// This is used first to find if the cursor intersects
-    /// with a window. If it does, point_is_on_titlebar is
-    /// used to check for a grab or relay input event.
-    pub fn find_window_at_point(&self, x: f32, y: f32) -> Option<WindowId> {
-        let barsize = self.get_barsize();
-
-        for win in self.visible_windows() {
-            match self.find_window_at_point_recurse(win, x, y, barsize) {
-                Some(r) => return Some(r),
-                None => {}
-            };
-        }
-        return None;
-    }
-
-    /// Is the current point over the titlebar of the window
-    ///
-    /// Id should have first been found with find_window_at_point
-    pub fn point_is_on_titlebar(&self, id: WindowId, x: f32, y: f32) -> bool {
-        let barsize = self.get_barsize();
-        let (wx, wy) = self.get_surface_pos(id);
-        let (ww, _wh) = self.get_surface_size(id);
-
-        // If this window contains (x, y) then return it
-        if x > wx && y > (wy - barsize) && x < (wx + ww) && y < wy {
-            return true;
-        }
-        return false;
-    }
-
     /// convert a global location to a surface local coordinates.
     /// Returns None if the location given is not over the surface
     pub fn global_coords_to_surf(&self, id: WindowId, x: f64, y: f64) -> Option<(f64, f64)> {
@@ -751,48 +694,6 @@ impl Atmosphere {
             return None;
         }
         return Some((sx, sy));
-    }
-
-    /// calculates if a position is over the part of a window that
-    /// procs a resize
-    pub fn point_is_on_window_edge(&self, id: WindowId, x: f32, y: f32) -> ResizeEdge {
-        let barsize = self.get_barsize();
-        // TODO: how should this be done with xdg-decoration?
-        let (wx, wy) = self.get_surface_pos(id);
-        let (ww, wh) = self.get_surface_size(id);
-        let prox = 3.0; // TODO find a better val for this??
-
-        // is (x,y) inside each dimension of the window
-        let x_contained = x > wx && x < wx + ww;
-        let y_contained = y > wy && y < wy + barsize + wh;
-
-        // closures for helping us with overlap calculations
-        // v is val to check, a is axis location
-        let near_edge = |p, a| p > (a - prox) && p < (a + prox);
-        // same thing but for corners
-        // v is the point and c is the corner
-        let near_corner = |vx, vy, cx, cy| near_edge(vx, cx) && near_edge(vy, cy);
-
-        // first check if we are over a corner
-        if near_corner(x, y, wx, wy) {
-            ResizeEdge::TopLeft
-        } else if near_corner(x, y, wx + ww, wy) {
-            ResizeEdge::TopRight
-        } else if near_corner(x, y, wx, wy + wh) {
-            ResizeEdge::BottomLeft
-        } else if near_corner(x, y, wx + ww, wy + wh) {
-            ResizeEdge::BottomRight
-        } else if near_edge(x, wx) && y_contained {
-            ResizeEdge::Left
-        } else if near_edge(x, wx + ww) && y_contained {
-            ResizeEdge::Right
-        } else if near_edge(y, wy) && x_contained {
-            ResizeEdge::Top
-        } else if near_edge(y, wy + wh) && x_contained {
-            ResizeEdge::Bottom
-        } else {
-            ResizeEdge::None
-        }
     }
 
     /// Adds a one-time task to the queue

@@ -197,7 +197,7 @@ impl Surface {
         // Once the attached buffer is committed, the logic unifies again: the surface
         // size is obtained (either from the new buf or from atmos) and we can start
         // calling down the chain to xdg/wl_subcompositor/wl_shell
-        let surf_size = if let Some(attached) = self.s_attached_buffer.as_ref() {
+        let surf_size = if let Some(_) = self.s_attached_buffer.as_ref() {
             // now we can commit the attached state
             self.s_committed_buffer = self.s_attached_buffer.take();
 

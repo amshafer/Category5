@@ -205,6 +205,7 @@ impl Atmosphere {
         // TODO: recalculate skip
     }
 
+    /// Adds the surface `win` as the top subsurface of `parent`.
     pub fn add_new_top_subsurf(&mut self, parent: WindowId, win: WindowId) {
         log::debug!("Adding subsurface {:?} to {:?}", win, parent);
         // Add the immediate parent
@@ -226,10 +227,143 @@ impl Atmosphere {
         self.set_top_child(parent, Some(win));
     }
 
+    /// Checks if the point (x, y) overlaps with the window surface.
+    ///
+    /// This does not accound for any regions, just the surface size.
+    pub fn surface_is_at_point(&self, win: WindowId, barsize: f32, x: f32, y: f32) -> bool {
+        let (wx, wy) = self.get_surface_pos(win);
+        let (ww, wh) = self.get_surface_size(win);
+
+        // Ugly:
+        // For the barsize to be included in our calculations,
+        // we need to be sure that win is a root window, since only
+        // root windows will have server-side decorations.
+        let bs = match self.get_root_window(win) {
+            Some(_) => 0.0, // Don't use a barsize offset
+            None => barsize,
+        };
+
+        // If this window contains (x, y) then return it
+        x > wx && y > (wy - bs) && x < (wx + ww) && y < (wy + wh)
+    }
+
+    /// Find the window id of the top window whose input region contains (x, y).
+    ///
+    /// In the case of delivering input enter/leave events, we don't just check
+    /// which window contains the point, we need to check if windows with an
+    /// input region contain the point.
+    pub fn find_window_with_input_at_point(&self, x: f32, y: f32) -> Option<WindowId> {
+        let barsize = self.get_barsize();
+        let mut ret = None;
+
+        self.map_inorder_on_surfs(|win| {
+            // We need to get t
+            if let Some(surf_cell) = self.get_surface_from_id(win) {
+                let surf = surf_cell.borrow();
+                if let Some(in_reg) = surf.s_input.as_ref() {
+                    // Check against the input region's area.
+                    if in_reg.borrow().intersects(x as i32, y as i32) {
+                        ret = Some(win);
+                        return false;
+                    }
+                } else {
+                    // TODO: VERIFY
+                    // If the window does not have an attached input region,
+                    // then we need to check against the entire surface area.
+                    if self.surface_is_at_point(win, barsize, x, y) {
+                        ret = Some(win);
+                        return false;
+                    }
+                }
+            }
+            return true;
+        });
+
+        return ret;
+    }
+
+    /// Find if there is a toplevel window under (x,y)
+    ///
+    /// This is used first to find if the cursor intersects
+    /// with a window. If it does, point_is_on_titlebar is
+    /// used to check for a grab or relay input event.
+    pub fn find_window_at_point(&self, x: f32, y: f32) -> Option<WindowId> {
+        let barsize = self.get_barsize();
+
+        let mut ret = None;
+        self.map_inorder_on_surfs(|win| {
+            if self.surface_is_at_point(win, barsize, x, y) {
+                ret = Some(win);
+                return false;
+            }
+            // returning true tells the map function to keep executing
+            return true;
+        });
+
+        return ret;
+    }
+
+    /// Is the current point over the titlebar of the window
+    ///
+    /// Id should have first been found with find_window_at_point
+    pub fn point_is_on_titlebar(&self, id: WindowId, x: f32, y: f32) -> bool {
+        let barsize = self.get_barsize();
+        let (wx, wy) = self.get_surface_pos(id);
+        let (ww, _wh) = self.get_surface_size(id);
+
+        // If this window contains (x, y) then return it
+        if x > wx && y > (wy - barsize) && x < (wx + ww) && y < wy {
+            return true;
+        }
+        return false;
+    }
+
+    /// calculates if a position is over the part of a window that
+    /// procs a resize
+    pub fn point_is_on_window_edge(&self, id: WindowId, x: f32, y: f32) -> ResizeEdge {
+        let barsize = self.get_barsize();
+        // TODO: how should this be done with xdg-decoration?
+        let (wx, wy) = self.get_surface_pos(id);
+        let (ww, wh) = self.get_surface_size(id);
+        let prox = 3.0; // TODO find a better val for this??
+
+        // is (x,y) inside each dimension of the window
+        let x_contained = x > wx && x < wx + ww;
+        let y_contained = y > wy && y < wy + barsize + wh;
+
+        // closures for helping us with overlap calculations
+        // v is val to check, a is axis location
+        let near_edge = |p, a| p > (a - prox) && p < (a + prox);
+        // same thing but for corners
+        // v is the point and c is the corner
+        let near_corner = |vx, vy, cx, cy| near_edge(vx, cx) && near_edge(vy, cy);
+
+        // first check if we are over a corner
+        if near_corner(x, y, wx, wy) {
+            ResizeEdge::TopLeft
+        } else if near_corner(x, y, wx + ww, wy) {
+            ResizeEdge::TopRight
+        } else if near_corner(x, y, wx, wy + wh) {
+            ResizeEdge::BottomLeft
+        } else if near_corner(x, y, wx + ww, wy + wh) {
+            ResizeEdge::BottomRight
+        } else if near_edge(x, wx) && y_contained {
+            ResizeEdge::Left
+        } else if near_edge(x, wx + ww) && y_contained {
+            ResizeEdge::Right
+        } else if near_edge(y, wy) && x_contained {
+            ResizeEdge::Top
+        } else if near_edge(y, wy + wh) && x_contained {
+            ResizeEdge::Bottom
+        } else {
+            ResizeEdge::None
+        }
+    }
+
     /// The recursive portion of `map_on_surfs`
-    fn map_on_surf_tree_recurse<F>(&self, inorder: bool, win: WindowId, func: &F) -> bool
+    fn map_on_surf_tree_recurse<F>(&self, inorder: bool, win: WindowId, func: &mut F) -> bool
     where
-        F: Fn(WindowId) -> bool,
+        F: FnMut(WindowId) -> bool,
     {
         // First recursively check all subsurfaces
         for sub in self.visible_subsurfaces(win) {
@@ -254,12 +388,12 @@ impl Atmosphere {
 
     /// This is the generic map implementation, entrypoint to the recursive
     /// surface evaluation.
-    fn map_on_surfs<F>(&self, inorder: bool, func: F)
+    fn map_on_surfs<F>(&self, inorder: bool, mut func: F)
     where
-        F: Fn(WindowId) -> bool,
+        F: FnMut(WindowId) -> bool,
     {
         for win in self.visible_windows() {
-            if !self.map_on_surf_tree_recurse(inorder, win, &func) {
+            if !self.map_on_surf_tree_recurse(inorder, win, &mut func) {
                 return;
             }
             if !func(win) {
@@ -276,7 +410,7 @@ impl Atmosphere {
     /// continue or exit.
     pub fn map_inorder_on_surfs<F>(&self, func: F)
     where
-        F: Fn(WindowId) -> bool,
+        F: FnMut(WindowId) -> bool,
     {
         self.map_on_surfs(true, func)
     }
@@ -295,7 +429,7 @@ impl Atmosphere {
     /// continue or exit.
     pub fn map_ooo_on_surfs<F>(&self, func: F)
     where
-        F: Fn(WindowId) -> bool,
+        F: FnMut(WindowId) -> bool,
     {
         self.map_on_surfs(false, func)
     }

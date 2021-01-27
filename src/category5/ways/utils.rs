@@ -55,6 +55,7 @@ pub fn get_id_from_client(atmos: Rc<RefCell<Atmosphere>>, client: Client) -> Cli
 
 /// Tries to get the client id from the client, and returns none if
 /// it has not been stored there yet.
+#[allow(dead_code)]
 pub fn try_get_id_from_client(client: Client) -> Option<ClientId> {
     match client.data_map().get::<ClientId>() {
         Some(id) => Some(*id),
