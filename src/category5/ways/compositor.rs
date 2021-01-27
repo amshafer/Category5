@@ -312,16 +312,21 @@ impl EventManager {
                 let mut atmos = atmos_rc.borrow_mut();
                 let seat = match atmos.get_seat_from_client_id(id) {
                     Some(seat) => {
-                        // TODO: add wl_seat to this Seat
+                        // Re-use the existing seat global
                         seat
                     }
                     None => {
-                        let seat =
-                            Rc::new(RefCell::new(Seat::new(input_sys.clone(), id, res.clone())));
+                        // Make a new seat global if one didn't exist
+                        let seat = Rc::new(RefCell::new(Seat::new(input_sys.clone(), id)));
                         atmos.add_seat(id, seat.clone());
                         seat
                     }
                 };
+
+                // make a new seat instance that adds this wl_seat to the Seat
+                // see docs for this func for more
+                seat.borrow_mut().add_seat_instance(res.clone());
+
                 // now we can handle the event
                 res.quick_assign(move |s, r, _| {
                     seat.borrow_mut().handle_request(r, s);

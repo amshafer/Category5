@@ -148,18 +148,30 @@ impl Seat {
     /// creates an empty seat
     ///
     /// Also send the capabilities event to let the client know
-    /// what input methods are ready
-    pub fn new(input: Rc<RefCell<Input>>, id: ClientId, seat: Main<wl_seat::WlSeat>) -> Seat {
+    /// what input methods are ready.
+    ///
+    /// The wl_seat needs to be added with `add_seat_instance`.
+    pub fn new(input: Rc<RefCell<Input>>, id: ClientId) -> Seat {
+        Seat {
+            s_input: input,
+            s_id: id,
+            s_proxies: Rc::new(RefCell::new(Vec::new())),
+            s_serial: 0,
+        }
+    }
+
+    /// Add a wl_seat instance to this Seat.
+    ///
+    /// `Seat` keeps track of all seat objects for a client. A seat
+    /// instance needs to be added for every wl_seat global so that
+    /// we can accurately track all wl_seats for a client that have
+    /// been created.
+    pub fn add_seat_instance(&mut self, seat: Main<wl_seat::WlSeat>) {
         // broadcast the types of input we have available
         // TODO: don't just default to keyboard + mouse
         seat.capabilities(Capability::Keyboard | Capability::Pointer);
 
-        Seat {
-            s_input: input,
-            s_id: id,
-            s_proxies: Rc::new(RefCell::new(vec![SeatInstance::new(seat)])),
-            s_serial: 0,
-        }
+        self.s_proxies.borrow_mut().push(SeatInstance::new(seat));
     }
 
     /// Handle client requests
