@@ -287,9 +287,16 @@ impl Positioner {
     /// Create a surface local position from the positioner.
     /// This should be called to reevaluate the end result of the popup location.
     fn get_loc(&self) -> (i32, i32) {
-        let (x, y) = self.p_offset.unwrap();
+        // The spec states that we MUST have a non-zero anchor rect, and a size
+        let mut ret = (self.p_anchor_rect.0, self.p_anchor_rect.1);
+
+        if let Some((x, y)) = self.p_offset {
+            ret.0 += x;
+            ret.1 += y;
+        }
+
         // TODO: add the rest of the positioner elements
-        (self.p_anchor_rect.0 + x, self.p_anchor_rect.1 + y)
+        return ret;
     }
 }
 
