@@ -257,9 +257,10 @@ impl WindowManager {
                     dr_wl_buffer: info.ufd_wl_buffer.clone(),
                 })),
             );
-            // TODO: get actual size of dmabuf
-            app.a_image.as_mut().map(|i| i.set_damage(0, 0, 500, 500));
         }
+
+        // TODO: use real damage
+        app.a_image.as_mut().map(|i| i.set_damage(0, 0, 500, 500));
         self.wm_thundr
             .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
     }
@@ -288,10 +289,12 @@ impl WindowManager {
             // first time contents were attached to it. Go ahead
             // and make one now
             app.a_image = self.wm_thundr.create_image_from_bits(&info.pixels, None);
-            app.a_image
-                .as_mut()
-                .map(|i| i.set_damage(0, 0, info.width as i32, info.height as i32));
         }
+
+        // TODO: use correct damage
+        app.a_image
+            .as_mut()
+            .map(|i| i.set_damage(0, 0, info.width as i32, info.height as i32));
         self.wm_thundr
             .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
     }

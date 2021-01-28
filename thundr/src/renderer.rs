@@ -1581,9 +1581,9 @@ impl Renderer {
     /// This increments the ages of all buffers, except current_image.
     /// The current image is reset to 0 since it is in use.
     fn update_buffer_ages(&mut self) {
-        for buf in self.swap_ages.iter_mut() {
-            if *buf != self.current_image as usize {
-                *buf += 1;
+        for (i, age) in self.swap_ages.iter_mut().enumerate() {
+            if i != self.current_image as usize {
+                *age += 1;
             }
         }
         self.swap_ages[self.current_image as usize] = 0;

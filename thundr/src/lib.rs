@@ -202,6 +202,17 @@ impl Thundr {
         image.set_id((self.th_image_list.len() - 1) as i32);
     }
 
+    /// Remove all attached damage.
+    ///
+    /// Damage is consumed by Thundr to ease the burden of developing
+    /// apps with it. This internal func clears all the damage after
+    /// a frame is drawn.
+    fn clear_damage_on_all_images(&mut self) {
+        for image in self.th_image_list.iter_mut() {
+            image.clear_damage();
+        }
+    }
+
     fn remove_image(&mut self, image: &Image) {
         let i = match self.th_image_list.iter().position(|v| *v == *image) {
             Some(v) => v,
@@ -302,6 +313,7 @@ impl Thundr {
         );
         // Now that we have processed this surfacelist, unmark it as changed
         surfaces.l_changed = false;
+        self.clear_damage_on_all_images();
     }
 
     // present
