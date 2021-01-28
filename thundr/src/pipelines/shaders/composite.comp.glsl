@@ -1,6 +1,8 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_EXT_nonuniform_qualifier : enable
+#extension GL_GOOGLE_include_directive : enable
+#include "tile_indexing.glsl"
 
 /* Compute implementation of a compositor */
 
@@ -12,21 +14,12 @@
    it may be better to bump it up on nvidia??
  */
 
-/* The width of a square tile of pixels in the screen */
-#define TILESIZE 16
 /* The number of windows to blend */
 #define BLEND_COUNT 4
 layout (local_size_x = TILESIZE, local_size_y = TILESIZE, local_size_z = 1) in;
 
 /* our render target: the swapchain frame to render into */
 layout(binding = 0, rgba8) uniform image2D frame;
-
-layout(binding = 1) buffer tiles
-{
-	int width;
-	int height;
-	int active_tiles[];
-};
 
 layout(binding = 2) buffer visibility_buffer
 {
@@ -56,26 +49,8 @@ layout(binding = 3, std140) buffer window_list
 layout(binding = 4) uniform sampler2D images[];
 
 void main() {
-	/*
-	  - Get the tile for this wg from the list we initialized.
-	  This tells us the base address that we are working on.
-	*/
-	int tile = active_tiles[gl_WorkGroupID.x];
-
-	/*
-	  - Mod the tile address by our resolution's width to get the
-	  depth into a row of the framebuffer.
-	  - Dividing by the width gives use the number of rows into the
-	  image.
-	  - Multiply them both by the tilesize to take us from the tile-grid
-	  coordinate space to the pixel coordinate space
-	*/
-	int tiles_width = (width / TILESIZE) + 1;
-	ivec2 tile_base = ivec2(mod(tile, tiles_width) * TILESIZE, (tile / tiles_width) * TILESIZE);
-	/* Now index into the tile based on this invocation */
-	ivec2 uv = ivec2(tile_base.x + gl_LocalInvocationID.x,
-			tile_base.y + gl_LocalInvocationID.y);
-
+	ivec2 uv = get_location_for_wg();
+	
 	/* if this invocation extends past the resolution, then do nothing */
 	if(uv.x >= width || uv.y >= height)
 		return;
