@@ -672,10 +672,16 @@ impl Atmosphere {
 
         // free window id
         self.set_window_in_use(id, false);
-        // Clear the private wayland rc data
+
         let WindowId(raw_id) = id;
+        // Clear the private wayland rc data
         self.a_window_priv
             .set(raw_id, Priv::SURFACE, &Priv::surface(None));
+        // We keep our own list of what ids are loaned out. Clear
+        // this id in our list.
+        // This needs to be last since calling `set` on a propmap will
+        // activate the id.
+        self.a_window_priv.deactivate(raw_id);
     }
 
     /// convert a global location to a surface local coordinates.

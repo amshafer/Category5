@@ -298,6 +298,8 @@ impl Surface {
     // This must be registered explicitly as the destructor
     // for wayland-rs to call it
     pub fn destroy(&mut self, atmos: &mut Atmosphere) {
+        let client = atmos.get_owner(self.s_id);
+        atmos.free_window_id(client, self.s_id);
         atmos.add_wm_task(wm::task::Task::close_window(self.s_id));
     }
 }
