@@ -106,7 +106,7 @@ pub struct Renderer {
     /// The age of the swapchain image. This is equal to the number
     /// of frames it has been since this image was drawn/presented.
     /// This is indexed by `current_image`.
-    pub(crate) swap_ages: Vec<u32>,
+    pub(crate) swap_ages: Vec<usize>,
     /// The lists of regions to pass to vkPresentRegionsKHR. This
     /// allows us to only present the changed regions. This is calculated
     /// from the damages present in the `SurfaceList`.
@@ -1338,7 +1338,11 @@ impl Renderer {
         // Now combine the first n lists (depending on the current
         // image's age) into one list for vkPresentRegionsKHR (and `gen_tile_list`)
         self.current_damage.clear();
-        for i in 0..(self.swap_ages[self.current_image as usize] + 1) {
+        // Using in lets us always include 0, but never go past the end of the array
+        for i in 0..(std::cmp::min(
+            self.swap_ages[self.current_image as usize] + 1,
+            self.swap_ages.len() - 1,
+        )) {
             self.current_damage.extend(&self.damage_regions[i as usize]);
         }
 
@@ -1578,7 +1582,7 @@ impl Renderer {
     /// The current image is reset to 0 since it is in use.
     fn update_buffer_ages(&mut self) {
         for buf in self.swap_ages.iter_mut() {
-            if *buf != self.current_image {
+            if *buf != self.current_image as usize {
                 *buf += 1;
             }
         }
