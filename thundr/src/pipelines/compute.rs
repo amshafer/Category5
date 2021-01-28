@@ -729,12 +729,18 @@ impl CompPipeline {
         for reg in rend.current_damage.iter() {
             // We need to clamp the values to our TILESIZExTILESIZE grid
             let mut start = (
-                Self::clamp_to_grid(reg.r_pos.0, rend.resolution.width as i32),
-                Self::clamp_to_grid(reg.r_pos.1, rend.resolution.width as i32),
+                Self::clamp_to_grid(reg.offset.x, rend.resolution.width as i32),
+                Self::clamp_to_grid(reg.offset.y, rend.resolution.width as i32),
             );
             let end = (
-                Self::clamp_to_grid(reg.r_pos.0 + reg.r_size.0, rend.resolution.width as i32),
-                Self::clamp_to_grid(reg.r_pos.1 + reg.r_size.1, rend.resolution.width as i32),
+                Self::clamp_to_grid(
+                    reg.offset.x + reg.extent.width as i32,
+                    rend.resolution.width as i32,
+                ),
+                Self::clamp_to_grid(
+                    reg.offset.y + reg.extent.height as i32,
+                    rend.resolution.width as i32,
+                ),
             );
 
             // Now we can go through the tiles this region overlaps with

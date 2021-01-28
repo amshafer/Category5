@@ -28,6 +28,7 @@ pub struct VKDeviceFeatures {
     pub vkc_supports_desc_indexing: bool,
     /// Does this device allow import/export using drm modifiers
     pub vkc_supports_drm_modifiers: bool,
+    pub vkc_supports_incremental_present: bool,
 
     // The following are the lists of extensions that map to the above features
     vkc_ext_mem_exts: [*const i8; 1],
@@ -35,6 +36,7 @@ pub struct VKDeviceFeatures {
     vkc_mut_swapchain_exts: [*const i8; 3],
     vkc_desc_indexing_exts: [*const i8; 2],
     vkc_drm_modifiers_exts: [*const i8; 1],
+    vkc_incremental_present_exts: [*const i8; 1],
 }
 
 fn contains_extensions(exts: &[vk::ExtensionProperties], req: &[*const i8]) -> bool {
@@ -68,6 +70,7 @@ impl VKDeviceFeatures {
             vkc_supports_mut_swapchain: false,
             vkc_supports_desc_indexing: false,
             vkc_supports_drm_modifiers: false,
+            vkc_supports_incremental_present: false,
             vkc_ext_mem_exts: [khr::ExternalMemoryFd::name().as_ptr()],
             vkc_dmabuf_exts: [khr::ExternalMemoryFd::name().as_ptr()],
             vkc_mut_swapchain_exts: [
@@ -80,6 +83,7 @@ impl VKDeviceFeatures {
                 vk::ExtDescriptorIndexingFn::name().as_ptr(),
             ],
             vkc_drm_modifiers_exts: [vk::ExtImageDrmFormatModifierFn::name().as_ptr()],
+            vkc_incremental_present_exts: [vk::KhrIncrementalPresentFn::name().as_ptr()],
         };
 
         unsafe {
@@ -107,6 +111,12 @@ impl VKDeviceFeatures {
                 true => ret.vkc_supports_drm_modifiers = true,
                 false => {
                     log::error!("This vulkan device does not support importing with drm modifiers")
+                }
+            }
+            match contains_extensions(exts.as_slice(), &ret.vkc_incremental_present_exts) {
+                true => ret.vkc_supports_incremental_present = true,
+                false => {
+                    log::error!("This vulkan device does not support incremental presentation")
                 }
             }
         }

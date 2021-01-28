@@ -23,7 +23,7 @@ use crate::platform::VKDeviceFeatures;
 
 extern crate utils as cat5_utils;
 use crate::CreateInfo;
-use cat5_utils::{log, region::Rect};
+use cat5_utils::log;
 
 // this happy little debug callback is from the ash examples
 // all it does is print any errors/warnings thrown.
@@ -68,6 +68,7 @@ pub struct Renderer {
     /// the logical device we are using
     /// maybe I'll test around with multi-gpu
     pub(crate) dev: Device,
+    pub(crate) dev_features: VKDeviceFeatures,
     /// the physical device selected to display to
     pub(crate) pdev: vk::PhysicalDevice,
     pub(crate) mem_props: vk::PhysicalDeviceMemoryProperties,
@@ -109,9 +110,9 @@ pub struct Renderer {
     /// The lists of regions to pass to vkPresentRegionsKHR. This
     /// allows us to only present the changed regions. This is calculated
     /// from the damages present in the `SurfaceList`.
-    pub(crate) damage_regions: VecDeque<Vec<Rect<i32>>>,
+    pub(crate) damage_regions: VecDeque<Vec<vk::RectLayerKHR>>,
     /// This is the final compiled set of damages for this frame.
-    pub(crate) current_damage: Vec<Rect<i32>>,
+    pub(crate) current_damage: Vec<vk::RectLayerKHR>,
 
     // TODO: move cbuf management from Renderer to the pipelines
     /// pools provide the memory allocated to command buffers
@@ -1065,6 +1066,7 @@ impl Renderer {
                 loader: entry,
                 inst: inst,
                 dev: dev,
+                dev_features: dev_features,
                 pdev: pdev,
                 mem_props: mem_props,
                 graphics_family_index: graphics_queue_family,
@@ -1313,10 +1315,22 @@ impl Renderer {
                 // get the true offset, since the damage is relative to the window
                 let w = &surf.s_rect;
                 // Now offset the damage values from the window base
-                let start = (w.r_pos.0 as i32 + d.r_pos.0, w.r_pos.1 as i32 + d.r_pos.1);
-                let size = (d.r_size.0, d.r_size.1);
+                let rect = vk::RectLayerKHR::builder()
+                    .offset(
+                        vk::Offset2D::builder()
+                            .x(w.r_pos.0 as i32 + d.r_pos.0)
+                            .y(w.r_pos.1 as i32 + d.r_pos.1)
+                            .build(),
+                    )
+                    .extent(
+                        vk::Extent2D::builder()
+                            .width(d.r_size.0 as u32)
+                            .height(d.r_size.1 as u32)
+                            .build(),
+                    )
+                    .build();
 
-                regions.push(Rect::new(start.0, start.1, size.0, size.1));
+                regions.push(rect);
             }
         }
         self.damage_regions.push_front(regions);
@@ -1599,10 +1613,19 @@ impl Renderer {
         let wait_semas = [self.render_sema];
         let swapchains = [self.swapchain];
         let indices = [self.current_image];
-        let info = vk::PresentInfoKHR::builder()
+        let mut info = vk::PresentInfoKHR::builder()
             .wait_semaphores(&wait_semas)
             .swapchains(&swapchains)
             .image_indices(&indices);
+
+        if self.dev_features.vkc_supports_incremental_present {
+            let pres_info = vk::PresentRegionsKHR::builder()
+                .regions(&[vk::PresentRegionKHR::builder()
+                    .rectangles(self.current_damage.as_slice())
+                    .build()])
+                .build();
+            info.p_next = &pres_info as *const _ as *const c_void;
+        }
 
         unsafe {
             self.swapchain_loader
