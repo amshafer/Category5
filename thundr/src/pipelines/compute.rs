@@ -716,7 +716,7 @@ impl CompPipeline {
     /// of which is updated by one workgroup. This method take a list
     /// of damage regions, and generates a list of the tiles that need to be
     /// updated. This tilelist is passed to our drawing function.
-    fn gen_tile_list(&mut self, rend: &Renderer, surfaces: &SurfaceList) {
+    fn gen_tile_list(&mut self, rend: &Renderer) {
         // reset our current tile lists
         // by only clearing the tiles in the `tiles` list, we should prevent ourselves from
         // clearing the entire array when only 4 or 5 tiles are set
@@ -725,49 +725,16 @@ impl CompPipeline {
         }
         self.cp_tiles.tiles.clear();
 
-        for surf_rc in surfaces.iter() {
-            // If the surface does not have damage attached, then don't generate tiles
-            let surf = surf_rc.s_internal.borrow();
-            let _image = match surf.s_image.as_ref() {
-                Some(i) => i.i_internal.borrow(),
-                None => {
-                    log::debug!(
-                        "[thundr] warning: surface does not have image attached. Not drawing"
-                    );
-                    continue;
-                }
-            };
-
-            let d = match surf_rc.get_damage() {
-                Some(d) => d.d_region,
-                None => {
-                    log::debug!(
-                        "[thundr] warning: surface does not have damage attached. Not drawing"
-                    );
-                    continue;
-                }
-            };
-            let w = &surf.s_rect;
-
-            // TODO: handle out of range values
-
-            // get the true offset, since the damage is relative to the window
-            //
-            // Rect stores base and size, so add the size to the base to get the extent
-            let d_end = (d.r_pos.0 + d.r_size.0, d.r_pos.1 + d.r_size.1);
-            // Now offset the damage values from the window base
-            let mut start = (w.r_pos.0 as i32 + d.r_pos.0, w.r_pos.1 as i32 + d.r_pos.1);
-            // do the same for the extent
-            let mut end = (w.r_pos.0 as i32 + d_end.0, w.r_pos.1 as i32 + d_end.1);
-
+        // Use the damage regions calculated by Renderer
+        for reg in rend.current_damage.iter() {
             // We need to clamp the values to our TILESIZExTILESIZE grid
-            start = (
-                Self::clamp_to_grid(start.0, rend.resolution.width as i32),
-                Self::clamp_to_grid(start.1, rend.resolution.width as i32),
+            let mut start = (
+                Self::clamp_to_grid(reg.r_pos.0, rend.resolution.width as i32),
+                Self::clamp_to_grid(reg.r_pos.1, rend.resolution.width as i32),
             );
-            end = (
-                Self::clamp_to_grid(end.0, rend.resolution.width as i32),
-                Self::clamp_to_grid(end.1, rend.resolution.width as i32),
+            let end = (
+                Self::clamp_to_grid(reg.r_pos.0 + reg.r_size.0, rend.resolution.width as i32),
+                Self::clamp_to_grid(reg.r_pos.1 + reg.r_size.1, rend.resolution.width as i32),
             );
 
             // Now we can go through the tiles this region overlaps with
@@ -844,7 +811,7 @@ impl Pipeline for CompPipeline {
         unsafe {
             let mut stop = StopWatch::new();
             stop.start();
-            self.gen_tile_list(rend, surfaces);
+            self.gen_tile_list(rend);
             stop.end();
             log::debug!(
                 "Took {} ms to generate the tile list",

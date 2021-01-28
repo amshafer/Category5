@@ -5,6 +5,7 @@
 //
 // Austin Shafer - 2020
 #![allow(dead_code, non_camel_case_types)]
+use std::collections::VecDeque;
 use std::ffi::{CStr, CString};
 use std::marker::Copy;
 use std::os::raw::{c_char, c_void};
@@ -22,7 +23,7 @@ use crate::platform::VKDeviceFeatures;
 
 extern crate utils as cat5_utils;
 use crate::CreateInfo;
-use cat5_utils::log;
+use cat5_utils::{log, region::Rect};
 
 // this happy little debug callback is from the ash examples
 // all it does is print any errors/warnings thrown.
@@ -101,6 +102,16 @@ pub struct Renderer {
     pub(crate) fb_count: usize,
     /// views describing how to access the images
     pub(crate) views: Vec<vk::ImageView>,
+    /// The age of the swapchain image. This is equal to the number
+    /// of frames it has been since this image was drawn/presented.
+    /// This is indexed by `current_image`.
+    pub(crate) swap_ages: Vec<u32>,
+    /// The lists of regions to pass to vkPresentRegionsKHR. This
+    /// allows us to only present the changed regions. This is calculated
+    /// from the damages present in the `SurfaceList`.
+    pub(crate) damage_regions: VecDeque<Vec<Rect<i32>>>,
+    /// This is the final compiled set of damages for this frame.
+    pub(crate) current_damage: Vec<Rect<i32>>,
 
     // TODO: move cbuf management from Renderer to the pipelines
     /// pools provide the memory allocated to command buffers
@@ -1043,6 +1054,8 @@ impl Renderer {
                 )
                 .expect("Could not create fence");
 
+            let damage_regs = std::iter::repeat(Vec::new()).take(images.len()).collect();
+
             // you are now the proud owner of a half complete
             // rendering context
             // p.s. you still need a Pipeline
@@ -1066,6 +1079,9 @@ impl Renderer {
                 swapchain: swapchain,
                 current_image: 0,
                 fb_count: images.len(),
+                swap_ages: std::iter::repeat(0).take(images.len()).collect(),
+                damage_regions: damage_regs,
+                current_damage: Vec::new(),
                 images: images,
                 image_sampler: sampler,
                 views: image_views,
@@ -1274,9 +1290,44 @@ impl Renderer {
     /// The frame is not submitted to be drawn until
     /// `begin_frame` is called. `end_recording_one_frame` must be called
     /// before `begin_frame`
-    pub fn begin_recording_one_frame(&mut self, _surfaces: &SurfaceList) -> RecordParams {
+    pub fn begin_recording_one_frame(&mut self, surfaces: &SurfaceList) -> RecordParams {
         // get the next frame to draw into
         self.get_next_swapchain_image();
+
+        // We need to accumulate a list of damage for the current frame. We are
+        // going to retire the oldest damage list, and create a new one from
+        // the damages passed to surfaces
+        let mut regions = self
+            .damage_regions
+            .pop_back()
+            .expect("Could not get a damage list from the queue");
+        regions.clear();
+
+        for surf_rc in surfaces.iter() {
+            // add the new damage to the list of damages
+            // If the surface does not have damage attached, then don't generate tiles
+            if let Some(damage) = surf_rc.get_damage() {
+                let d = &damage.d_region;
+                let surf = surf_rc.s_internal.borrow();
+
+                // get the true offset, since the damage is relative to the window
+                let w = &surf.s_rect;
+                // Now offset the damage values from the window base
+                let start = (w.r_pos.0 as i32 + d.r_pos.0, w.r_pos.1 as i32 + d.r_pos.1);
+                let size = (d.r_size.0, d.r_size.1);
+
+                regions.push(Rect::new(start.0, start.1, size.0, size.1));
+            }
+        }
+        self.damage_regions.push_front(regions);
+
+        // Now combine the first n lists (depending on the current
+        // image's age) into one list for vkPresentRegionsKHR (and `gen_tile_list`)
+        self.current_damage.clear();
+        for i in 0..(self.swap_ages[self.current_image as usize] + 1) {
+            self.current_damage.extend(&self.damage_regions[i as usize]);
+        }
+
         self.get_recording_parameters()
     }
 
@@ -1487,6 +1538,8 @@ impl Renderer {
     /// Returns if the next image index was successfully obtained
     /// false means try again later, the next image is not ready
     pub fn get_next_swapchain_image(&mut self) -> bool {
+        self.update_buffer_ages();
+
         unsafe {
             match self.swapchain_loader.acquire_next_image(
                 self.swapchain,
@@ -1505,6 +1558,17 @@ impl Renderer {
                 Err(err) => panic!("Could not acquire next image: {:?}", err),
             };
         }
+    }
+
+    /// This increments the ages of all buffers, except current_image.
+    /// The current image is reset to 0 since it is in use.
+    fn update_buffer_ages(&mut self) {
+        for buf in self.swap_ages.iter_mut() {
+            if *buf != self.current_image {
+                *buf += 1;
+            }
+        }
+        self.swap_ages[self.current_image as usize] = 0;
     }
 
     /// Returns true if we are ready to call present
