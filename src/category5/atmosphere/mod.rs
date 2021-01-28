@@ -508,14 +508,17 @@ impl Atmosphere {
     }
 
     /// Must be called after send_hemisphere
-    /// returns true if we were able to get the other hemisphere
-    /// if returns false, this needs to be called again
-    pub fn recv_hemisphere(&mut self) -> bool {
+    /// returns Some if we were able to get the other hemisphere
+    /// if returns None, this needs to be called again
+    pub fn recv_hemisphere(&mut self) -> Option<Box<Hemisphere>> {
         log::info!("trying to recv hemisphere");
-        let mut new_hemi = match self.a_rx.recv() {
-            Ok(h) => h,
-            Err(_) => return false,
-        };
+        match self.a_rx.recv() {
+            Ok(h) => Some(h),
+            Err(_) => None,
+        }
+    }
+
+    fn set_new_hemisphere(&mut self, mut new_hemi: Box<Hemisphere>) {
         log::info!("recieved hemisphere");
 
         // while we have the new one, go ahead and apply the
@@ -530,8 +533,26 @@ impl Atmosphere {
         self.a_global_patches.clear();
         self.a_client_patches.clear();
         self.a_window_patches.clear();
+    }
 
-        return true;
+    /// Try to exchange hemispheres between the two subsystems
+    ///
+    /// same as `flip_hemispheres`, but returns false if failed
+    /// and could not recv.
+    ///
+    /// This is used by ways only
+    pub fn try_flip_hemispheres(&mut self) -> bool {
+        match self.recv_hemisphere() {
+            Some(new_hemi) => {
+                // Now that we got the hemi (from vkcomp), we
+                // can send ours.
+                self.send_hemisphere();
+                self.set_new_hemisphere(new_hemi);
+
+                true
+            }
+            None => false,
+        }
     }
 
     /// Exchange hemispheres between the two subsystems
@@ -541,7 +562,13 @@ impl Atmosphere {
     /// and clears the patches
     pub fn flip_hemispheres(&mut self) {
         self.send_hemisphere();
-        self.recv_hemisphere();
+        // Loop while we retry recving from the
+        loop {
+            if let Some(new_hemi) = self.recv_hemisphere() {
+                self.set_new_hemisphere(new_hemi);
+                break;
+            }
+        }
     }
 
     /// Has the current hemisphere been changed

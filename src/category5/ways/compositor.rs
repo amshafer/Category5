@@ -407,8 +407,6 @@ impl EventManager {
         // now register the fds we added
         fdw.register_events();
 
-        // Do we need to send our hemisphere
-        let mut needs_send = true;
         // do we need to send frame callbacks
         let mut needs_frame = true;
 
@@ -439,29 +437,22 @@ impl EventManager {
                 }
 
                 // Try to flip hemispheres to push our updates to vkcomp
-                // First we need to send our hemisphere, then we can
-                // try to recv it later. If we can't recieve it, then
+                // If we can't recieve it, vkcomp isn't ready, and we should
                 // continue processing wayland updates so the system
                 // doesn't lag
                 if self.em_atmos.borrow_mut().is_changed() {
                     log::profiling!("finished frame");
-                    if needs_send {
-                        needs_send = false;
-                        log::debug!("_____________________________ SENT HEMI");
-                        self.em_atmos.borrow_mut().send_hemisphere();
-                    }
-                    if self.em_atmos.borrow_mut().recv_hemisphere() {
-                        log::debug!("_____________________________ RECV HEMI");
+                    if self.em_atmos.borrow_mut().try_flip_hemispheres() {
+                        log::debug!("[ways]_____________________________ RECV HEMI");
+                        log::debug!("[ways]_____________________________ SENT HEMI");
                         // reset our timer
                         tm.reset();
-                        needs_send = true;
                         needs_frame = true;
                     }
                 } else {
                     // The atmosphere was not changed,
                     tm.reset();
                     needs_frame = true;
-                    needs_send = true;
                 }
             }
 
