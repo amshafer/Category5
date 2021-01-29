@@ -38,3 +38,12 @@ impl<T: PartialOrd + Copy + Add + Add<Output = T>> Rect<T> {
             && y < self.r_pos.1 + self.r_size.1
     }
 }
+
+impl From<Rect<f32>> for Rect<i32> {
+    fn from(src: Rect<f32>) -> Rect<i32> {
+        Rect {
+            r_pos: (src.r_pos.0 as i32, src.r_pos.1 as i32),
+            r_size: (src.r_size.0 as i32, src.r_size.1 as i32),
+        }
+    }
+}

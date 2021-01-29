@@ -20,11 +20,13 @@ use std::rc::Rc;
 /// image can be bound to multiple surfaces.
 #[derive(PartialEq)]
 pub(crate) struct SurfaceInternal {
-    /// The position and size of the surface
+    /// The position and size of the surface.
     pub s_rect: Rect<f32>,
-    /// The size of the surface
-    /// The currently attached image
+    /// The size of the surface.
+    /// The currently attached image.
     pub(crate) s_image: Option<Image>,
+    /// Damage caused by moving or altering the surface itself.
+    s_damage: Option<Damage>,
 }
 
 #[derive(PartialEq, Clone)]
@@ -38,7 +40,23 @@ impl Surface {
             s_internal: Rc::new(RefCell::new(SurfaceInternal {
                 s_rect: Rect::new(x, y, width, height),
                 s_image: None,
+                s_damage: None,
             })),
+        }
+    }
+
+    /// Internally record a damage rectangle for the dimensions
+    /// of this surface.
+    ///
+    /// Methods that alter the surface should be wrapped in two
+    /// calls to this to record their movement.
+    fn record_damage(&mut self) {
+        let mut internal = self.s_internal.borrow_mut();
+        let new_rect = internal.s_rect.into();
+        if let Some(d) = internal.s_damage.as_mut() {
+            d.add(&new_rect);
+        } else {
+            internal.s_damage = Some(Damage::new(vec![new_rect]));
         }
     }
 
@@ -58,9 +76,13 @@ impl Surface {
         (surf.s_rect.r_pos.0, surf.s_rect.r_pos.1)
     }
     pub fn set_pos(&mut self, x: f32, y: f32) {
-        let mut surf = self.s_internal.borrow_mut();
-        surf.s_rect.r_pos.0 = x;
-        surf.s_rect.r_pos.1 = y;
+        self.record_damage();
+        {
+            let mut surf = self.s_internal.borrow_mut();
+            surf.s_rect.r_pos.0 = x;
+            surf.s_rect.r_pos.1 = y;
+        }
+        self.record_damage();
     }
 
     pub fn get_size(&self) -> (f32, f32) {
@@ -68,10 +90,15 @@ impl Surface {
 
         (surf.s_rect.r_size.0, surf.s_rect.r_size.1)
     }
+
     pub fn set_size(&mut self, w: f32, h: f32) {
-        let mut surf = self.s_internal.borrow_mut();
-        surf.s_rect.r_size.0 = w;
-        surf.s_rect.r_size.1 = h;
+        self.record_damage();
+        {
+            let mut surf = self.s_internal.borrow_mut();
+            surf.s_rect.r_size.0 = w;
+            surf.s_rect.r_size.1 = h;
+        }
+        self.record_damage();
     }
 
     /// adjusts from image-coords to surface-coords.
@@ -124,5 +151,9 @@ impl Surface {
             }
         }
         return None;
+    }
+
+    pub fn take_surface_damage(&self) -> Option<Damage> {
+        self.s_internal.borrow_mut().s_damage.take()
     }
 }
