@@ -1296,6 +1296,19 @@ impl Renderer {
         // get the next frame to draw into
         self.get_next_swapchain_image();
 
+        // Now combine the first n lists (depending on the current
+        // image's age) into one list for vkPresentRegionsKHR (and `gen_tile_list`)
+        // We need to do this first since popping an entry off damage_regions
+        // would remove one of the regions we need to process.
+        self.current_damage.clear();
+        // Using in lets us never go past the end of the array
+        for i in 0..(std::cmp::min(
+            self.swap_ages[self.current_image as usize],
+            self.swap_ages.len(),
+        )) {
+            self.current_damage.extend(&self.damage_regions[i as usize]);
+        }
+
         // We need to accumulate a list of damage for the current frame. We are
         // going to retire the oldest damage list, and create a new one from
         // the damages passed to surfaces
@@ -1333,18 +1346,11 @@ impl Renderer {
                 regions.push(rect);
             }
         }
+        self.current_damage.extend(&regions);
         self.damage_regions.push_front(regions);
 
-        // Now combine the first n lists (depending on the current
-        // image's age) into one list for vkPresentRegionsKHR (and `gen_tile_list`)
-        self.current_damage.clear();
-        // Using in lets us always include 0, but never go past the end of the array
-        for i in 0..(std::cmp::min(
-            self.swap_ages[self.current_image as usize] + 1,
-            self.swap_ages.len() - 1,
-        )) {
-            self.current_damage.extend(&self.damage_regions[i as usize]);
-        }
+        // Only update the ages after we have processed them
+        self.update_buffer_ages();
 
         self.get_recording_parameters()
     }
@@ -1556,8 +1562,6 @@ impl Renderer {
     /// Returns if the next image index was successfully obtained
     /// false means try again later, the next image is not ready
     pub fn get_next_swapchain_image(&mut self) -> bool {
-        self.update_buffer_ages();
-
         unsafe {
             match self.swapchain_loader.acquire_next_image(
                 self.swapchain,
@@ -1579,7 +1583,7 @@ impl Renderer {
     }
 
     /// This increments the ages of all buffers, except current_image.
-    /// The current image is reset to 0 since it is in use.
+    /// The current_image is reset to 0 since it is in use.
     fn update_buffer_ages(&mut self) {
         for (i, age) in self.swap_ages.iter_mut().enumerate() {
             if i != self.current_image as usize {
