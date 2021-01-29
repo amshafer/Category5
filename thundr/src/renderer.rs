@@ -1292,6 +1292,9 @@ impl Renderer {
     /// The frame is not submitted to be drawn until
     /// `begin_frame` is called. `end_recording_one_frame` must be called
     /// before `begin_frame`
+    ///
+    /// This adds to the current_damage that has been set by surface moving
+    /// and mapping.
     pub fn begin_recording_one_frame(&mut self, surfaces: &SurfaceList) -> RecordParams {
         // get the next frame to draw into
         self.get_next_swapchain_image();
@@ -1300,7 +1303,6 @@ impl Renderer {
         // image's age) into one list for vkPresentRegionsKHR (and `gen_tile_list`)
         // We need to do this first since popping an entry off damage_regions
         // would remove one of the regions we need to process.
-        self.current_damage.clear();
         // Using in lets us never go past the end of the array
         for i in 0..(std::cmp::min(
             self.swap_ages[self.current_image as usize],
@@ -1322,28 +1324,31 @@ impl Renderer {
             // add the new damage to the list of damages
             // If the surface does not have damage attached, then don't generate tiles
             if let Some(damage) = surf_rc.get_damage() {
-                let d = &damage.d_region;
                 let surf = surf_rc.s_internal.borrow();
 
                 // get the true offset, since the damage is relative to the window
                 let w = &surf.s_rect;
-                // Now offset the damage values from the window base
-                let rect = vk::RectLayerKHR::builder()
-                    .offset(
-                        vk::Offset2D::builder()
-                            .x(w.r_pos.0 as i32 + d.r_pos.0)
-                            .y(w.r_pos.1 as i32 + d.r_pos.1)
-                            .build(),
-                    )
-                    .extent(
-                        vk::Extent2D::builder()
-                            .width(d.r_size.0 as u32)
-                            .height(d.r_size.1 as u32)
-                            .build(),
-                    )
-                    .build();
 
-                regions.push(rect);
+                // Add an entry for each region in this damage
+                for d in damage.regions() {
+                    // Now offset the damage values from the window base
+                    let rect = vk::RectLayerKHR::builder()
+                        .offset(
+                            vk::Offset2D::builder()
+                                .x(w.r_pos.0 as i32 + d.r_pos.0)
+                                .y(w.r_pos.1 as i32 + d.r_pos.1)
+                                .build(),
+                        )
+                        .extent(
+                            vk::Extent2D::builder()
+                                .width(d.r_size.0 as u32)
+                                .height(d.r_size.1 as u32)
+                                .build(),
+                        )
+                        .build();
+
+                    regions.push(rect);
+                }
             }
         }
         self.current_damage.extend(&regions);
@@ -1634,6 +1639,8 @@ impl Renderer {
                 .build();
             info.p_next = &pres_info as *const _ as *const c_void;
         }
+        // Now that this frame's damage has been consumed, clear it
+        self.current_damage.clear();
 
         unsafe {
             self.swapchain_loader

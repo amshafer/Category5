@@ -64,7 +64,15 @@ impl Image {
 
     /// Attach damage to this surface. Damage is specified in surface-coordinates.
     pub fn set_damage(&mut self, x: i32, y: i32, width: i32, height: i32) {
-        self.i_internal.borrow_mut().i_damage = Some(Damage::new(Rect::new(x, y, width, height)));
+        // Check if damage is initialized. If it isn't create a new one.
+        // If it is, add the damage to the existing list
+        let new_rect = Rect::new(x, y, width, height);
+        let mut internal = self.i_internal.borrow_mut();
+        if let Some(d) = internal.i_damage.as_mut() {
+            d.add(&new_rect);
+        } else {
+            internal.i_damage = Some(Damage::new(vec![new_rect]));
+        }
     }
 
     /// set the id. This should only be done by Thundr

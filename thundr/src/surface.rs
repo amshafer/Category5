@@ -104,6 +104,7 @@ impl Surface {
         if let Some(image_rc) = surf.s_image.as_ref() {
             let image = image_rc.i_internal.borrow();
             if let Some(damage) = image.i_damage.as_ref() {
+                let mut ret = Damage::empty();
                 // We need to scale the damage from the image size to the
                 // size of this particular surface
                 let scale = (
@@ -111,12 +112,15 @@ impl Surface {
                     image.i_image_resolution.height as f32 / surf.s_rect.r_size.1,
                 );
 
-                return Some(Damage::new(Rect::new(
-                    (damage.d_region.r_pos.0 as f32 / scale.0) as i32,
-                    (damage.d_region.r_pos.1 as f32 / scale.1) as i32,
-                    (damage.d_region.r_size.0 as f32 / scale.0) as i32,
-                    (damage.d_region.r_size.1 as f32 / scale.1) as i32,
-                )));
+                for r in damage.regions() {
+                    ret.add(&Rect::new(
+                        (r.r_pos.0 as f32 / scale.0) as i32,
+                        (r.r_pos.1 as f32 / scale.1) as i32,
+                        (r.r_size.0 as f32 / scale.0) as i32,
+                        (r.r_size.1 as f32 / scale.1) as i32,
+                    ));
+                }
+                return Some(ret);
             }
         }
         return None;
