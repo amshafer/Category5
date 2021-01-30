@@ -144,7 +144,7 @@ impl Pipeline for GeomPipeline {
     ) {
         self.begin_recording(rend, params);
 
-        for (i, surf) in surfaces.iter().rev().enumerate() {
+        for (i, surf) in surfaces.sl_internal.borrow().iter().rev().enumerate() {
             // TODO: make a limit to the number of windows
             // we have to call rev before enumerate, so we need
             // to correct this by setting the depth of the earliest

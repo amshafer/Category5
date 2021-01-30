@@ -1353,7 +1353,7 @@ impl Renderer {
             .expect("Could not get a damage list from the queue");
         regions.clear();
 
-        for surf_rc in surfaces.iter() {
+        for surf_rc in surfaces.sl_internal.borrow().iter() {
             // add the new damage to the list of damages
             // If the surface does not have damage attached, then don't generate tiles
             if let Some(damage) = surf_rc.get_damage() {

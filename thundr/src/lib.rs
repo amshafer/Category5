@@ -312,7 +312,7 @@ impl Thundr {
             surfaces,
         );
         // Now that we have processed this surfacelist, unmark it as changed
-        surfaces.l_changed = false;
+        surfaces.set_changed(false);
         self.clear_damage_on_all_images();
     }
 

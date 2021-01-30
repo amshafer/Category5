@@ -288,6 +288,11 @@ impl WindowManager {
             // If it does not have a image, then this must be the
             // first time contents were attached to it. Go ahead
             // and make one now
+            //
+            // We don't pass a release info here because we copy the data
+            // and release the wl_buffer during info's drop impl
+            // The spec has some working about this in the release event and
+            // how it is a useful optimization for wl_shm clients
             app.a_image = self.wm_thundr.create_image_from_bits(&info.pixels, None);
         }
 

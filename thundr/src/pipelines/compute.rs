@@ -802,7 +802,7 @@ impl CompPipeline {
 
     fn gen_window_list_from_scratch(&mut self, surfaces: &SurfaceList) {
         self.cp_winlist.clear();
-        for surf_rc in surfaces.iter() {
+        for surf_rc in surfaces.sl_internal.borrow().iter() {
             let surf = surf_rc.s_internal.borrow();
             let opaque_reg = match surf_rc.get_opaque() {
                 Some(r) => r,
@@ -839,7 +839,7 @@ impl CompPipeline {
     fn update_window_list(&mut self, surfaces: &SurfaceList) -> bool {
         let mut ret = false;
 
-        for (i, surf_rc) in surfaces.iter().enumerate() {
+        for (i, surf_rc) in surfaces.sl_internal.borrow().iter().enumerate() {
             let surf = surf_rc.s_internal.borrow();
             // If the surface wasn't updated, then don't bother
             if !surf.s_was_damaged {
@@ -917,7 +917,7 @@ impl Pipeline for CompPipeline {
 
             // Only do this if the surface list has changed and the shader needs a new
             // window ordering
-            let winlist_needs_flush = if surfaces.l_changed {
+            let winlist_needs_flush = if surfaces.is_changed() {
                 stop.start();
                 self.gen_window_list_from_scratch(surfaces);
                 stop.end();
