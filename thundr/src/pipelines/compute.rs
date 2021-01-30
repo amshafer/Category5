@@ -560,8 +560,8 @@ impl CompPipeline {
         // create our data and a storage buffer
         // calculate the total number of tiles based on the wg (16x16) size
         // round up one tile since the shaders and `from_coord` do too.
-        let tile_count =
-            ((rend.resolution.width / 16 + 1) * (rend.resolution.height / 16 + 1)) as usize;
+        let tile_count = ((rend.resolution.width / TILESIZE + 1)
+            * (rend.resolution.height / TILESIZE + 1)) as usize;
         let data = TileList {
             width: rend.resolution.width,
             height: rend.resolution.height,
@@ -626,7 +626,7 @@ impl CompPipeline {
         let cpool = unsafe { Renderer::create_command_pool(&rend.dev, family) };
         let cbuf = unsafe { Renderer::create_command_buffers(&rend.dev, cpool, 1)[0] };
 
-        let cp = CompPipeline {
+        let mut cp = CompPipeline {
             cp_visibility: vis,
             cp_composite: comp,
             cp_tiles: data,
@@ -644,6 +644,8 @@ impl CompPipeline {
             cp_cbuf: cbuf,
         };
 
+        cp.gen_fullscreen_tilelist();
+        unsafe { cp.flush_tile_mem(rend) };
         cp.vis_write_descs(rend);
         return cp;
     }
@@ -710,6 +712,19 @@ impl CompPipeline {
         }
     }
 
+    /// Fill in the tilelist for the entire screen. This is the initial
+    /// value of the list.
+    fn gen_fullscreen_tilelist(&mut self) {
+        self.cp_tiles.tiles.clear();
+
+        for i in 0..self.cp_tiles.tiles.capacity() {
+            // Assigning each entry its own index is just adding
+            // all possible tile ids in order
+            self.cp_tiles.tiles.push(Tile(i as u32));
+            self.cp_tiles.enabled_tiles[i] = true;
+        }
+    }
+
     /// Generate a list of tiles that need to be redrawn.
     ///
     /// Our display is grouped into 4x4 tiles of pixels, each
@@ -766,6 +781,23 @@ impl CompPipeline {
                 start.1 += TILESIZE as i32;
             }
         }
+    }
+
+    unsafe fn flush_tile_mem(&self, rend: &Renderer) {
+        // Shader expects struct WindowList { int width; int height; Window windows[] }
+        // so we need to write the length first
+        rend.update_memory(
+            self.cp_tiles_mem,
+            0,
+            &[rend.resolution.width, rend.resolution.height],
+        );
+        rend.update_memory(
+            self.cp_tiles_mem,
+            // We need to offset by the size of two ints, which is
+            // the first field in the struct expected by the shader
+            mem::size_of::<u32>() as isize * 2,
+            self.cp_tiles.tiles.as_slice(),
+        );
     }
 
     fn gen_window_list_from_scratch(&mut self, surfaces: &SurfaceList) {
@@ -861,33 +893,27 @@ impl Pipeline for CompPipeline {
     ) {
         unsafe {
             let mut stop = StopWatch::new();
-            stop.start();
-            self.gen_tile_list(rend);
-            stop.end();
-            log::debug!(
-                "Took {} ms to generate the tile list",
-                stop.get_duration().as_millis()
-            );
+
+            // Only update the tile list if we are doing incremental presentation
+            // (aka damage). NVIDIA doesn't support this, so in that case we just
+            // redraw the whole screen. The tile list should be constant in that case,
+            // as it was initialized to be the entire screen.
+            if rend.dev_features.vkc_supports_incremental_present {
+                stop.start();
+                self.gen_tile_list(rend);
+                self.flush_tile_mem(rend);
+                stop.end();
+                log::debug!(
+                    "Took {} ms to generate the tile list",
+                    stop.get_duration().as_millis()
+                );
+            }
+
             // If no tiles were damaged, then we have nothing to render
             if self.cp_tiles.tiles.len() == 0 {
                 log::profiling!("No tiles damaged, not drawing anything");
                 return;
             }
-
-            // Shader expects struct WindowList { int width; int height; Window windows[] }
-            // so we need to write the length first
-            rend.update_memory(
-                self.cp_tiles_mem,
-                0,
-                &[rend.resolution.width, rend.resolution.height],
-            );
-            rend.update_memory(
-                self.cp_tiles_mem,
-                // We need to offset by the size of two ints, which is
-                // the first field in the struct expected by the shader
-                mem::size_of::<u32>() as isize * 2,
-                self.cp_tiles.tiles.as_slice(),
-            );
 
             // Only do this if the surface list has changed and the shader needs a new
             // window ordering

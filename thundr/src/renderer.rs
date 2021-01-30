@@ -1661,8 +1661,6 @@ impl Renderer {
             .image_indices(&indices);
 
         if self.dev_features.vkc_supports_incremental_present {
-            log::debug!("Presenting with damage: {:#?}", self.current_damage);
-
             let pres_info = vk::PresentRegionsKHR::builder()
                 .regions(&[vk::PresentRegionKHR::builder()
                     .rectangles(self.current_damage.as_slice())
