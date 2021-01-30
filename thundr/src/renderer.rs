@@ -1361,6 +1361,9 @@ impl Renderer {
             }
 
             // now we have to consider damage caused by moving the surface
+            //
+            // We don't have to correct the position based on the surface pos
+            // since the damage was already recorded for the surface
             if let Some(damage) = surf_rc.take_surface_damage() {
                 for d in damage.regions() {
                     let rect = vk::RectLayerKHR::builder()

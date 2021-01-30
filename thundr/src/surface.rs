@@ -27,6 +27,9 @@ pub(crate) struct SurfaceInternal {
     pub(crate) s_image: Option<Image>,
     /// Damage caused by moving or altering the surface itself.
     s_damage: Option<Damage>,
+    /// Was this surface moved/mapped? This signifies if the pipeline needs
+    /// to update its data
+    pub(crate) s_was_damaged: bool,
 }
 
 #[derive(PartialEq, Clone)]
@@ -41,6 +44,7 @@ impl Surface {
                 s_rect: Rect::new(x, y, width, height),
                 s_image: None,
                 s_damage: None,
+                s_was_damaged: false,
             })),
         }
     }
@@ -52,7 +56,9 @@ impl Surface {
     /// calls to this to record their movement.
     fn record_damage(&mut self) {
         let mut internal = self.s_internal.borrow_mut();
+        internal.s_was_damaged = true;
         let new_rect = internal.s_rect.into();
+
         if let Some(d) = internal.s_damage.as_mut() {
             d.add(&new_rect);
         } else {
