@@ -1362,7 +1362,19 @@ impl Renderer {
 
             // now we have to consider damage caused by moving the surface
             if let Some(damage) = surf_rc.take_surface_damage() {
-                self.aggregate_damage_on_surf(surf_rc, &damage, &mut regions);
+                for d in damage.regions() {
+                    let rect = vk::RectLayerKHR::builder()
+                        .offset(vk::Offset2D::builder().x(d.r_pos.0).y(d.r_pos.1).build())
+                        .extent(
+                            vk::Extent2D::builder()
+                                .width(d.r_size.0 as u32)
+                                .height(d.r_size.1 as u32)
+                                .build(),
+                        )
+                        .build();
+
+                    regions.push(rect);
+                }
             }
         }
         self.current_damage.extend(&regions);
