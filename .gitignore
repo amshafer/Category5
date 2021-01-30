@@ -1,4 +1,5 @@
 target
+thundr-test/target
 **/*.rs.bk
 **/*.dir-locals.el
 **/*.core
