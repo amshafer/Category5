@@ -32,6 +32,11 @@ pub(crate) struct SurfaceInternal {
     pub(crate) s_was_damaged: bool,
 }
 
+/// A surface that describes how an `Image` should be displayed onscreen
+///
+/// Surfaces are placed into `SurfaceLists`, which are proccessed and rendered
+/// by Thundr. A surface should only ever be used with one `SurfaceList`. If you would
+/// like to show the same image on multiple lists, then create multiple surfaces per-list.
 #[derive(PartialEq, Clone)]
 pub struct Surface {
     pub(crate) s_internal: Rc<RefCell<SurfaceInternal>>,
@@ -54,7 +59,7 @@ impl Surface {
     ///
     /// Methods that alter the surface should be wrapped in two
     /// calls to this to record their movement.
-    fn record_damage(&mut self) {
+    pub(crate) fn record_damage(&mut self) {
         let mut internal = self.s_internal.borrow_mut();
         internal.s_was_damaged = true;
         let new_rect = internal.s_rect.into();
@@ -159,7 +164,7 @@ impl Surface {
         return None;
     }
 
-    pub fn take_surface_damage(&self) -> Option<Damage> {
+    pub(crate) fn take_surface_damage(&self) -> Option<Damage> {
         self.s_internal.borrow_mut().s_damage.take()
     }
 }

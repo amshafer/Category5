@@ -1316,6 +1316,23 @@ impl Renderer {
         }
     }
 
+    /// Adds damage to `regions` without modifying the damage
+    fn aggregate_raw_damage(&self, damage: &Damage, regions: &mut Vec<vk::RectLayerKHR>) {
+        for d in damage.regions() {
+            let rect = vk::RectLayerKHR::builder()
+                .offset(vk::Offset2D::builder().x(d.r_pos.0).y(d.r_pos.1).build())
+                .extent(
+                    vk::Extent2D::builder()
+                        .width(d.r_size.0 as u32)
+                        .height(d.r_size.1 as u32)
+                        .build(),
+                )
+                .build();
+
+            regions.push(rect);
+        }
+    }
+
     /// Start recording a cbuf for one frame
     ///
     /// Each framebuffer has a set of resources, including command
@@ -1328,7 +1345,7 @@ impl Renderer {
     ///
     /// This adds to the current_damage that has been set by surface moving
     /// and mapping.
-    pub fn begin_recording_one_frame(&mut self, surfaces: &SurfaceList) -> RecordParams {
+    pub fn begin_recording_one_frame(&mut self, surfaces: &mut SurfaceList) -> RecordParams {
         // get the next frame to draw into
         self.get_next_swapchain_image();
 
@@ -1365,21 +1382,16 @@ impl Renderer {
             // We don't have to correct the position based on the surface pos
             // since the damage was already recorded for the surface
             if let Some(damage) = surf_rc.take_surface_damage() {
-                for d in damage.regions() {
-                    let rect = vk::RectLayerKHR::builder()
-                        .offset(vk::Offset2D::builder().x(d.r_pos.0).y(d.r_pos.1).build())
-                        .extent(
-                            vk::Extent2D::builder()
-                                .width(d.r_size.0 as u32)
-                                .height(d.r_size.1 as u32)
-                                .build(),
-                        )
-                        .build();
-
-                    regions.push(rect);
-                }
+                self.aggregate_raw_damage(&damage, &mut regions);
             }
         }
+
+        // Finally we add any damage that the surfacelist has
+        for damage in surfaces.damage() {
+            self.aggregate_raw_damage(damage, &mut regions);
+        }
+        surfaces.clear_damage();
+
         self.current_damage.extend(&regions);
         self.damage_regions.push_front(regions);
 
