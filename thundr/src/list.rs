@@ -5,6 +5,7 @@
 use super::surface::Surface;
 use crate::Damage;
 use std::iter::DoubleEndedIterator;
+use std::ops::Index;
 
 pub struct SurfaceList {
     /// This will get cleared during Thundr::draw
@@ -78,5 +79,13 @@ impl SurfaceList {
 
     pub fn len(&self) -> u32 {
         self.l_vec.len() as u32
+    }
+}
+
+impl Index<usize> for SurfaceList {
+    type Output = Surface;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.l_vec[index]
     }
 }

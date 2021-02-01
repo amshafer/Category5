@@ -116,10 +116,11 @@
 extern crate wayland_server as ws;
 use ws::protocol::wl_surface;
 
-mod property;
+pub mod property;
 use property::{Property, PropertyId};
-mod property_map;
+pub mod property_map;
 use property_map::PropertyMap;
+pub mod property_list;
 mod skiplist;
 
 use crate::category5::vkcomp::wm;
@@ -368,16 +369,16 @@ impl Atmosphere {
 
     /// Gets the next available id in a vec of bools
     /// generic id getter
-    fn get_next_id(v: &mut Vec<bool>) -> u32 {
+    fn get_next_id(v: &mut Vec<bool>) -> usize {
         for (i, in_use) in v.iter_mut().enumerate() {
             if !*in_use {
                 *in_use = true;
-                return i as u32;
+                return i;
             }
         }
 
         v.push(true);
-        return (v.len() - 1) as u32;
+        return v.len() - 1;
     }
 
     /// Get the next id
@@ -619,7 +620,6 @@ impl Atmosphere {
         // For the priv maps we are activating and deactivating
         // the entries so we can use the iterator trait
         let ClientId(raw_id) = id;
-        self.a_client_priv.activate(raw_id);
         // Add a new priv entry
         // This is kept separately for ways
         self.a_client_priv
@@ -647,13 +647,9 @@ impl Atmosphere {
         self.set_parent_window(id, None);
         self.set_root_window(id, None);
 
-        let WindowId(raw_id) = id;
-        // Add a new priv entry
-        // For the priv maps we are activating and deactivating
-        // the entries so we can use the iterator trait
-        self.a_window_priv.activate(raw_id);
         // Add a new priv entry
         // This is kept separately for ways
+        let WindowId(raw_id) = id;
         self.a_window_priv
             .set(raw_id, Priv::SURFACE, &Priv::surface(None));
 
@@ -827,7 +823,9 @@ impl Atmosphere {
         // get each valid id in the mapping
         for id in self.a_window_priv.active_id_iter() {
             // get the refcell for the surface for this id
-            if let Some(Priv::surface(Some(cell))) = self.a_window_priv.get(id, Priv::SURFACE) {
+            if let Some(Priv::surface(Some(cell))) =
+                self.a_window_priv.get(id as PropertyId, Priv::SURFACE)
+            {
                 let mut surf = cell.borrow_mut();
                 if surf.s_frame_callbacks.len() > 0 {
                     // frame callbacks are signaled in the order that they

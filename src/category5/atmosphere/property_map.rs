@@ -1,6 +1,7 @@
 // Austin Shafer - 2020
 
 use super::property::{Property, PropertyId};
+use super::property_list::PropertyList;
 
 /// This is a map that handles keeping track of offsets into an
 /// array for a set of WindowIds
@@ -21,7 +22,7 @@ pub struct PropertyMap<T: Clone + Property> {
     //
     // The second vec has an entry for each variant in T. This
     // way we can save/restore a value for each property.
-    pm_map: Vec<Option<Vec<Option<T>>>>,
+    pm_map: PropertyList<Vec<Option<T>>>,
 }
 
 impl<T: Clone + Property> PropertyMap<T> {
@@ -29,43 +30,7 @@ impl<T: Clone + Property> PropertyMap<T> {
     pub fn new() -> Self {
         PropertyMap {
             pm_variants: T::variant_len(),
-            pm_map: Vec::new(),
-        }
-    }
-
-    /// Gets the next available id in this map,
-    /// but does not reserve it.
-    pub fn get_first_free_id(&self) -> u32 {
-        for (i, t) in self.pm_map.iter().enumerate() {
-            if !t.is_none() {
-                return i as u32;
-            }
-        }
-        return self.pm_map.len() as u32;
-    }
-
-    /// Mark an id as active and make a new
-    /// entry for it in the map.
-    pub fn activate(&mut self, id: u32) {
-        // First handle any resizing that needs to occur
-        if id as usize >= self.pm_map.len() {
-            self.pm_map.resize(id as usize + 1, None);
-        }
-
-        assert!(self.pm_map[id as usize].is_none());
-        let mut v = Vec::with_capacity(self.pm_variants as usize);
-        v.resize(self.pm_variants as usize, None);
-        self.pm_map[id as usize] = Some(v);
-    }
-
-    pub fn deactivate(&mut self, id: u32) {
-        assert!(!self.pm_map[id as usize].is_none());
-        self.pm_map[id as usize] = None;
-    }
-
-    fn ensure_active(&mut self, id: u32) {
-        if id as usize >= self.pm_map.len() || self.pm_map[id as usize].is_none() {
-            self.activate(id);
+            pm_map: PropertyList::new(),
         }
     }
 
@@ -73,14 +38,17 @@ impl<T: Clone + Property> PropertyMap<T> {
     /// `id` is the WindowId we want to get the property for
     /// `prop_id` is the unique value of the variant
     /// we want to retrieve.
-    pub fn get(&self, id: u32, prop_id: PropertyId) -> Option<&T> {
-        // make sure this id exists
-        if id as usize >= self.pm_map.len() || self.pm_map[id as usize].is_none() {
+    pub fn get(&self, id: PropertyId, prop_id: PropertyId) -> Option<&T> {
+        if self.pm_map.id_exists(id) {
+            let win = self.pm_map[id].as_ref().unwrap();
+            return win[prop_id].as_ref();
+        } else {
             return None;
         }
+    }
 
-        let win = self.pm_map[id as usize].as_ref().unwrap();
-        return win[prop_id].as_ref();
+    pub fn deactivate(&mut self, id: PropertyId) {
+        self.pm_map.deactivate(id);
     }
 
     /// Get the value of a property.
@@ -88,19 +56,25 @@ impl<T: Clone + Property> PropertyMap<T> {
     /// `prop_id` is the unique value of the variant
     /// we want to set.
     /// T is the new data
-    pub fn set(&mut self, id: u32, prop_id: PropertyId, value: &T) {
-        // make sure this id exists
-        self.ensure_active(id);
-        let win = self.pm_map[id as usize].as_mut().unwrap();
-
+    pub fn set(&mut self, id: PropertyId, prop_id: PropertyId, value: &T) {
+        if !self.pm_map.id_exists(id) {
+            // Create the internal vec as all None
+            let v = std::iter::repeat(None)
+                .take(self.pm_variants as usize)
+                .collect();
+            self.pm_map.activate(id, v);
+        }
+        let win = self.pm_map[id].as_mut().unwrap();
         win[prop_id] = Some(value.clone());
     }
 
     /// Clears an entry in the mapping
     /// This will cause `get` to return None
-    pub fn clear(&mut self, id: u32, prop_id: PropertyId) {
-        let win = self.pm_map[id as usize].as_mut().unwrap();
-        win[prop_id] = None;
+    pub fn clear(&mut self, id: PropertyId, prop_id: PropertyId) {
+        if self.pm_map.id_exists(id) {
+            let win = self.pm_map[id].as_mut().unwrap();
+            win[prop_id] = None;
+        }
     }
 }
 

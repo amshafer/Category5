@@ -18,7 +18,13 @@ use std::slice;
 // to the compositor. A client may have multiple surfaces,
 // eacho of which has a WindowId
 #[derive(Copy, Clone, PartialEq, Debug, Eq, Hash)]
-pub struct ClientId(pub u32);
+pub struct ClientId(pub usize);
+
+impl Into<usize> for ClientId {
+    fn into(self) -> usize {
+        self.0
+    }
+}
 
 // Window ID
 //
@@ -27,7 +33,13 @@ pub struct ClientId(pub u32);
 // the resource. For now it is a u32 since there
 // is no way we have 4 million windows open
 #[derive(Copy, Clone, PartialEq, Debug, Eq, Hash)]
-pub struct WindowId(pub u32);
+pub struct WindowId(pub usize);
+
+impl Into<usize> for WindowId {
+    fn into(self) -> usize {
+        self.0
+    }
+}
 
 // Window Contents
 //

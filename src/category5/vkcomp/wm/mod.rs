@@ -41,6 +41,7 @@ extern crate utils;
 
 use thundr as th;
 
+use crate::category5::atmosphere::property_list::PropertyList;
 use crate::category5::atmosphere::*;
 
 use utils::{log, timing::*, *};
@@ -67,6 +68,7 @@ struct Titlebar {
 /// titlebar image).
 ///
 /// See WindowManager::record_draw for how this is displayed.
+#[derive(Clone)]
 pub struct App {
     /// This id uniquely identifies the App
     a_id: WindowId,
@@ -82,6 +84,9 @@ pub struct App {
     a_surf: th::Surface,
     /// The image attached to `a_surf`
     a_image: Option<th::Image>,
+    /// Any server side decorations for this app.
+    /// Right now this is (dot, bar)
+    a_ssd: Option<(th::Surface, th::Surface)>,
 }
 
 /// Encapsulates vkcomp and provides a sensible windowing API
@@ -101,7 +106,7 @@ pub struct WindowManager {
     wm_thundr: th::Thundr,
     wm_surfaces: th::SurfaceList,
     /// This is the set of applications in this scene
-    wm_apps: Vec<App>,
+    wm_apps: PropertyList<App>,
     /// The background picture of the desktop
     wm_background: Option<th::Surface>,
     /// Image representing the software cursor
@@ -165,7 +170,7 @@ impl WindowManager {
             wm_cursor: WindowManager::get_default_cursor(&mut rend),
             wm_thundr: rend,
             wm_surfaces: th::SurfaceList::new(),
-            wm_apps: Vec::new(),
+            wm_apps: PropertyList::new(),
             wm_background: None,
         };
 
@@ -209,13 +214,14 @@ impl WindowManager {
     fn create_window(&mut self, id: WindowId) {
         log::info!("wm: Creating new window {:?}", id);
 
-        self.wm_apps.insert(
-            0,
+        self.wm_apps.update_or_create(
+            id.into(),
             App {
                 a_id: id,
                 a_marked_for_death: false,
                 a_surf: self.wm_thundr.create_surface(0.0, 0.0, 0.0, 0.0),
                 a_image: None,
+                a_ssd: None,
             },
         );
     }
@@ -228,7 +234,7 @@ impl WindowManager {
     fn update_window_contents_from_dmabuf(&mut self, info: &UpdateWindowContentsFromDmabuf) {
         log::error!("Updating window {:?} with {:#?}", info.ufd_id, info);
         // Find the app corresponding to that window id
-        let app = match self.wm_apps.iter_mut().find(|app| app.a_id == info.ufd_id) {
+        let mut app = match self.wm_apps[info.ufd_id.into()].as_mut() {
             Some(a) => a,
             // If the id is not found, then don't update anything
             None => {
@@ -272,7 +278,7 @@ impl WindowManager {
     fn update_window_contents_from_mem(&mut self, info: &UpdateWindowContentsFromMem) {
         log::error!("Updating window {:?} with {:#?}", info.id, info);
         // Find the app corresponding to that window id
-        let app = match self.wm_apps.iter_mut().find(|app| app.a_id == info.id) {
+        let mut app = match self.wm_apps[info.id.into()].as_mut() {
             Some(a) => a,
             // If the id is not found, then don't update anything
             None => {
@@ -301,7 +307,7 @@ impl WindowManager {
 
     /// Handles generating draw commands for one window
     fn record_draw_for_id(&mut self, id: WindowId) {
-        let a = match self.wm_apps.iter_mut().find(|a| a.a_id == id) {
+        let a = match self.wm_apps[id.into()].as_mut() {
             Some(a) => a,
             // app must have been closed
             None => {
@@ -437,12 +443,9 @@ impl WindowManager {
 
     fn close_window(&mut self, id: WindowId) {
         // if it exists, mark it for death
-        self.wm_apps
-            .iter_mut()
-            .find(|app| app.a_id == id)
-            .map(|app| {
-                app.a_marked_for_death = true;
-            });
+        if let Some(app) = self.wm_apps.get_mut(id.into()) {
+            app.a_marked_for_death = true;
+        }
     }
 
     /// Remove any apps marked for death. Usually we can't remove
@@ -454,17 +457,26 @@ impl WindowManager {
         let thundr = &mut self.wm_thundr;
 
         // Only retain alive windows in the array
-        self.wm_apps.retain(|app| {
-            if app.a_marked_for_death {
-                // Destroy the rendering resources
-                app.a_image
-                    .as_ref()
-                    .map(|image| thundr.destroy_image(image.clone()));
+        for i in 0..self.wm_apps.len() {
+            let mut should_kill = false;
 
-                return false;
+            if let Some(app) = self.wm_apps[i].as_ref() {
+                if app.a_marked_for_death {
+                    // TODO: remove from the surfacelist
+
+                    // Destroy the rendering resources
+                    app.a_image
+                        .as_ref()
+                        .map(|image| thundr.destroy_image(image.clone()));
+
+                    should_kill = true;
+                }
             }
-            return true;
-        });
+
+            if should_kill {
+                self.wm_apps.deactivate(i)
+            }
+        }
     }
 
     /// Begin rendering a frame
@@ -585,11 +597,13 @@ impl Drop for WindowManager {
     /// We need to free our resources before we free
     /// the renderer, since they were allocated from it.
     fn drop(&mut self) {
-        // Free all imagees in each app
-        for a in self.wm_apps.iter_mut() {
-            // now destroy the image
-            self.wm_thundr
-                .destroy_image(a.a_image.as_ref().unwrap().clone());
+        // Free all images in each app
+        for i in 0..self.wm_apps.len() {
+            if let Some(a) = self.wm_apps[i].as_mut() {
+                // now destroy the image
+                self.wm_thundr
+                    .destroy_image(a.a_image.as_ref().unwrap().clone());
+            }
         }
         std::mem::drop(&self.wm_thundr);
     }
