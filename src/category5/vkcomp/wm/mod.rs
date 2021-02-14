@@ -104,7 +104,13 @@ pub struct WindowManager {
     /// The vulkan renderer. It implements the draw logic,
     /// whereas WindowManager implements organizational logic
     wm_thundr: th::Thundr,
+    /// This is the thundr surface list constructed from the resources that
+    /// ways notified us of. Our job is to keep this up to date and call Thundr.
     wm_surfaces: th::SurfaceList,
+    /// These are the surfaces that have been removed, and need their resources
+    /// torn down. We keep this in a separate array so that we don't have to
+    /// rescan the entire surface list every time we check for dead windows.
+    wm_will_die: Vec<WindowId>,
     /// This is the set of applications in this scene
     wm_apps: PropertyList<App>,
     /// The background picture of the desktop
@@ -170,6 +176,7 @@ impl WindowManager {
             wm_cursor: WindowManager::get_default_cursor(&mut rend),
             wm_thundr: rend,
             wm_surfaces: th::SurfaceList::new(),
+            wm_will_die: Vec::new(),
             wm_apps: PropertyList::new(),
             wm_background: None,
         };
@@ -386,13 +393,16 @@ impl WindowManager {
     }
 
     /// Recursively get the list of surface and subsurface ids
-    fn get_ids_to_record(&self, ids: &mut Vec<WindowId>, id: WindowId) {
+    fn get_ids_to_record(&self, i: &mut i32, ids: &mut Vec<WindowId>, id: WindowId) {
         // Render any subsurfaces first. The surface list for thundr
         // is from front to back, so we push these before the main surface
         for sub in self.wm_atmos.visible_subsurfaces(id) {
-            self.get_ids_to_record(ids, sub);
+            self.get_ids_to_record(i, ids, sub);
         }
+
         ids.push(id);
+        // Increment the counter recursively
+        *i += 1;
     }
 
     /// Record all the drawing operations for the current scene
@@ -422,9 +432,11 @@ impl WindowManager {
         // all of which we need to draw.
         // ----------------------------------------------------------------
         let mut ids = Vec::new();
+        let mut i = 0;
         for id in self.wm_atmos.visible_windows() {
-            self.get_ids_to_record(&mut ids, id);
+            self.get_ids_to_record(&mut i, &mut ids, id);
         }
+
         // do the draw call separately due to the borrow checker
         // throwing a fit if it is in the loop above
         for id in ids {
@@ -441,11 +453,15 @@ impl WindowManager {
         // ----------------------------------------------------------------
     }
 
+    /// Flag this window to be killed.
+    ///
+    /// This adds it to our death list, which will be reaped next frame after
+    /// we are done using its resources.
     fn close_window(&mut self, id: WindowId) {
-        // if it exists, mark it for death
-        if let Some(app) = self.wm_apps.get_mut(id.into()) {
-            app.a_marked_for_death = true;
-        }
+        assert!(self.wm_apps.id_exists(id));
+
+        self.wm_apps[i].as_mut().unwrap().a_marked_for_death = true;
+        self.wm_will_die.push(id);
     }
 
     /// Remove any apps marked for death. Usually we can't remove
@@ -457,23 +473,15 @@ impl WindowManager {
         let thundr = &mut self.wm_thundr;
 
         // Only retain alive windows in the array
-        for i in 0..self.wm_apps.len() {
-            let mut should_kill = false;
-
+        for i in self.wm_will_die.drain(..) {
             if let Some(app) = self.wm_apps[i].as_ref() {
-                if app.a_marked_for_death {
-                    // TODO: remove from the surfacelist
+                assert!(app.a_marked_for_death);
 
-                    // Destroy the rendering resources
-                    app.a_image
-                        .as_ref()
-                        .map(|image| thundr.destroy_image(image.clone()));
+                // Destroy the rendering resources
+                app.a_image
+                    .as_ref()
+                    .map(|image| thundr.destroy_image(image.clone()));
 
-                    should_kill = true;
-                }
-            }
-
-            if should_kill {
                 self.wm_apps.deactivate(i)
             }
         }

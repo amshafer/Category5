@@ -213,6 +213,22 @@ impl Thundr {
         }
     }
 
+    /// Remove an image from the surfacelist.
+    fn remove_image_at_index(&mut self, i: usize) {
+        self.th_image_list.remove(i);
+
+        // now that we have removed the image, we need to update all of the
+        // ids, since some of them will have been shifted
+        // TODO: OPTIMIZEME
+        for (idx, i) in self.th_image_list.iter_mut().enumerate() {
+            i.set_id(idx as i32);
+        }
+    }
+
+    /// Helper for removing an image by handle.
+    ///
+    /// This may not be very performant. If you already know the index position,
+    /// then use remove_image_at_index.
     fn remove_image(&mut self, image: &Image) {
         let i = match self.th_image_list.iter().position(|v| *v == *image) {
             Some(v) => v,
@@ -220,10 +236,20 @@ impl Thundr {
             // our image list
             None => return,
         };
-        self.th_image_list.remove(i);
+
+        self.remove_image_at_index(i);
+    }
+
+    /// Insert an image into the surfacelist.
+    ///
+    /// This should be used when you know what location you want the new surface
+    /// placed at.
+    fn insert_image_at_index(&mut self, i: usize, image: Image) {
+        self.th_image_list.insert(i, image);
 
         // now that we have removed the image, we need to update all of the
         // ids, since some of them will have been shifted
+        // TODO: OPTIMIZEME
         for (idx, i) in self.th_image_list.iter_mut().enumerate() {
             i.set_id(idx as i32);
         }
