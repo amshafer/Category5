@@ -240,22 +240,7 @@ impl Thundr {
         self.remove_image_at_index(i);
     }
 
-    /// Insert an image into the surfacelist.
-    ///
-    /// This should be used when you know what location you want the new surface
-    /// placed at.
-    fn insert_image_at_index(&mut self, i: usize, image: Image) {
-        self.th_image_list.insert(i, image);
-
-        // now that we have removed the image, we need to update all of the
-        // ids, since some of them will have been shifted
-        // TODO: OPTIMIZEME
-        for (idx, i) in self.th_image_list.iter_mut().enumerate() {
-            i.set_id(idx as i32);
-        }
-    }
-
-    // create_image_from_bits
+    /// create_image_from_bits
     pub fn create_image_from_bits(
         &mut self,
         img: &MemImage,
@@ -268,7 +253,7 @@ impl Thundr {
         return ret;
     }
 
-    // create_image_from_dmabuf
+    /// create_image_from_dmabuf
     pub fn create_image_from_dmabuf(
         &mut self,
         dmabuf: &Dmabuf,

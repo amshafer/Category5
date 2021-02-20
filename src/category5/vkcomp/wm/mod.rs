@@ -107,6 +107,9 @@ pub struct WindowManager {
     /// This is the thundr surface list constructed from the resources that
     /// ways notified us of. Our job is to keep this up to date and call Thundr.
     wm_surfaces: th::SurfaceList,
+    /// This is the same window order as wm_surfaces, but tracks windo ids instead.
+    wm_surface_ids: Vec<WindowId>,
+    wm_atmos_ids: Vec<WindowId>,
     /// These are the surfaces that have been removed, and need their resources
     /// torn down. We keep this in a separate array so that we don't have to
     /// rescan the entire surface list every time we check for dead windows.
@@ -172,16 +175,21 @@ impl WindowManager {
             //.enable_traditional_composition()
             .build();
         let mut rend = th::Thundr::new(&info).unwrap();
+        let mut list = th::SurfaceList::new();
+        let cursor = WindowManager::get_default_cursor(&mut rend);
+        list.push(cursor.as_ref().unwrap().clone());
 
         let mut wm = WindowManager {
             wm_atmos: Atmosphere::new(tx, rx),
             wm_titlebar: WindowManager::get_default_titlebar(&mut rend),
-            wm_cursor: WindowManager::get_default_cursor(&mut rend),
+            wm_cursor: cursor,
             wm_thundr: rend,
-            wm_surfaces: th::SurfaceList::new(),
+            wm_surfaces: list,
             wm_apps: PropertyList::new(),
             wm_will_die: Vec::new(),
             wm_reordered: Vec::new(),
+            wm_surface_ids: Vec::new(),
+            wm_atmos_ids: Vec::new(),
             wm_background: None,
         };
 
@@ -210,6 +218,8 @@ impl WindowManager {
             .wm_thundr
             .create_surface(0.0, 0.0, res.0 as f32, res.1 as f32);
         self.wm_thundr.bind_image(&mut surf, image);
+        self.wm_surfaces
+            .insert(self.wm_surfaces.len() as usize, surf.clone());
         self.wm_background = Some(surf);
     }
 
@@ -225,10 +235,13 @@ impl WindowManager {
     fn create_window(&mut self, id: WindowId) {
         log::info!("wm: Creating new window {:?}", id);
         // This surface will have its dimensions updated during recording
-        let surf = self.wm_thundr.create_surface(0.0, 0.0, 0.0, 0.0);
+        let mut surf = self.wm_thundr.create_surface(0.0, 0.0, 8.0, 8.0);
+        // The bar should be a percentage of the screen height
+        let barsize = self.wm_atmos.get_barsize();
+
         // draw buttons on the titlebar
         // ----------------------------------------------------------------
-        let dims = Self::get_dot_dims();
+        let dims = Self::get_dot_dims(barsize, &(8.0, 8.0));
         let mut dot = self
             .wm_thundr
             .create_surface(dims.0, dims.1, dims.2, dims.3);
@@ -241,7 +254,7 @@ impl WindowManager {
         // now render the bar itself, as wide as the window
         // the bar needs to be behind the dots
         // ----------------------------------------------------------------
-        let dims = Self::get_bar_dims();
+        let dims = Self::get_bar_dims(barsize, &(8.0, 8.0));
         let mut bar = self
             .wm_thundr
             .create_surface(dims.0, dims.1, dims.2, dims.3);
@@ -341,15 +354,11 @@ impl WindowManager {
             .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
     }
 
-    fn get_bar_dims() -> (f32, f32, f32, f32) {
-        // The bar should be a percentage of the screen height
-        let barsize = self.wm_atmos.get_barsize();
-        // The dotsize should be just slightly smaller
-        let dotsize = barsize * 0.95;
-
+    /// We have to pass in the barsize to get around some annoying borrow checker stuff
+    fn get_bar_dims(barsize: f32, surface_size: &(f32, f32)) -> (f32, f32, f32, f32) {
         (
             // align it at the top right
-            0,
+            0.0,
             // draw the bar above the window
             -barsize,
             // the bar is as wide as the window
@@ -359,9 +368,7 @@ impl WindowManager {
         )
     }
 
-    fn get_dot_dims() -> (f32, f32, f32, f32) {
-        // The bar should be a percentage of the screen height
-        let barsize = self.wm_atmos.get_barsize();
+    fn get_dot_dims(barsize: f32, surface_size: &(f32, f32)) -> (f32, f32, f32, f32) {
         // The dotsize should be just slightly smaller
         let dotsize = barsize * 0.95;
 
@@ -376,87 +383,6 @@ impl WindowManager {
         )
     }
 
-    /// Handles generating draw commands for one window
-    fn record_draw_for_id(&mut self, id: WindowId) {
-        let a = match self.wm_apps[id.into()].as_mut() {
-            Some(a) => a,
-            // app must have been closed
-            None => {
-                log::error!("Could not find id {:?} to record for drawing", id);
-                return;
-            }
-        };
-        // If this window has been closed or if it is not ready for
-        // rendering, ignore it
-        if a.a_marked_for_death || !self.wm_atmos.get_window_in_use(a.a_id) {
-            return;
-        }
-
-        // get parameters
-        // ----------------------------------------------------------------
-        let surface_pos = self.wm_atmos.get_surface_pos(a.a_id);
-        let surface_size = self.wm_atmos.get_surface_size(a.a_id);
-
-        // update the th::Surface pos and size
-        a.a_surf.set_pos(surface_pos.0, surface_pos.1);
-        a.a_surf.set_size(surface_size.0, surface_size.1);
-        // ----------------------------------------------------------------
-
-        // Only display the bar for toplevel surfaces
-        // i.e. don't for popups
-        if self.wm_atmos.get_toplevel(id) {
-            // Each toplevel window has two subsurfaces (in thundr): the
-            // window bar and the window dot. If it's toplevel we are drawing SSD,
-            // so we need to update the positions of these as well.
-            let subsurfaces = &a.a_surf.s_internal.borrow_mut().s_subsurfaces;
-            let dims = Self::get_dot_dims();
-            subsurfaces[0].set_pos(dims.0, dims.1);
-            subsurfaces[0].set_size(dims.2, dims.3);
-
-            let dims = Self::get_bar_dims();
-            subsurfaces[1].set_pos(dims.0, dims.1);
-            subsurfaces[1].set_size(dims.2, dims.3);
-        }
-
-        // Finally, we can draw the window itself
-        // If the image does not exist, then only the titlebar
-        // and other window decorations will be drawn
-        if a.a_image.is_some() {
-            // ----------------------------------------------------------------
-            self.wm_surfaces.push(a.a_surf.clone());
-            // ----------------------------------------------------------------
-        }
-    }
-
-    /// Recursively get the list of surface and subsurface ids
-    fn get_ids_to_record(&self, i: &mut i32, ids: &mut Vec<WindowId>, id: WindowId) {
-        // Render any subsurfaces first. The surface list for thundr
-        // is from front to back, so we push these before the main surface
-        for sub in self.wm_atmos.visible_subsurfaces(id) {
-            self.get_ids_to_record(i, ids, sub);
-        }
-
-        ids.push(id);
-        // 1) if it has been reordered, that means we have already processed
-        //    it and inserted it previously. We should remove it now
-        // 2) else if the current id doesn't match our surfacelist, then
-        //   2.1) insert it
-        //   2.2) mark it as reordered
-        // 3) else do nothing. It is already correct
-        if self.wm_surfaces_ids[i] != id {
-            // exclude based on 1)
-            if !self.wm_reordered.contains(id) {
-                // 2.*
-                self.wm_surfaces
-                    .insert(i, self.wm_apps[id].as_ref().unwrap().a_surf.clone());
-                self.wm_reordered.push(id);
-            }
-        }
-
-        // Increment the counter recursively
-        *i += 1;
-    }
-
     /// Record all the drawing operations for the current scene
     ///
     /// Vulkan requires that we record a list of operations into a command
@@ -466,16 +392,12 @@ impl WindowManager {
     /// params: a private info structure for the Thundr. It holds all
     /// the data about what we are recording.
     fn record_draw(&mut self) {
-        // recreate our surface list to pass to thundr
-        self.wm_surfaces.clear();
-
         // get the latest cursor position
         // ----------------------------------------------------------------
         let (cursor_x, cursor_y) = self.wm_atmos.get_cursor_pos();
         log::profiling!("Drawing cursor at ({}, {})", cursor_x, cursor_y);
         if let Some(cursor) = self.wm_cursor.as_mut() {
             cursor.set_pos(cursor_x as f32, cursor_y as f32);
-            self.wm_surfaces.push(cursor.clone());
         }
         // ----------------------------------------------------------------
 
@@ -483,27 +405,99 @@ impl WindowManager {
         // Each app should have one or more windows,
         // all of which we need to draw.
         // ----------------------------------------------------------------
-        let mut ids = Vec::new();
-        let mut i = 0;
         self.wm_reordered.clear();
-        for id in self.wm_atmos.visible_windows() {
-            self.get_ids_to_record(&mut i, &mut ids, id);
+        self.wm_atmos_ids.clear();
+
+        // Cache the inorder surface list from atmos
+        // This helps us avoid nasty borrow checker stuff by avoiding recursion
+        // ----------------------------------------------------------------
+        let aids = &mut self.wm_atmos_ids;
+        self.wm_atmos.map_inorder_on_surfs(|id| {
+            aids.push(id);
+            return true;
+        });
+
+        // Update our th::SurfaceList based on the atmosphere list
+        // ----------------------------------------------------------------
+        for (i, r_id) in self.wm_atmos_ids.iter().enumerate() {
+            let id = *r_id;
+            // 1) if it has been reordered, that means we have already processed
+            //    it and inserted it previously. We should remove it now
+            // 2) else if the current id doesn't match our surfacelist, then
+            //   2.1) insert it
+            //   2.2) mark it as reordered
+            // 3) else do nothing. It is already correct
+            let cloned_surf = self.wm_apps[id.into()].as_ref().unwrap().a_surf.clone();
+            if i >= self.wm_surface_ids.len() {
+                // If our index is larger than the arrays, we just push new surfaces
+                self.wm_surface_ids.push(id);
+                self.wm_reordered.push(id);
+                self.wm_surfaces.push(cloned_surf);
+            } else if self.wm_surface_ids[i] != id {
+                // exclude based on 1)
+                if !self.wm_reordered.contains(&id) {
+                    // 2.*
+                    // we add 1 since the 0th surf will always be the cursor
+                    self.wm_surfaces.insert(i + 1, cloned_surf);
+                    self.wm_reordered.push(id);
+                }
+            }
         }
 
         // do the draw call separately due to the borrow checker
-        // throwing a fit if it is in the loop above
-        for id in ids {
+        // throwing a fit if it is in the loop above.
+        //
+        // This section really just updates the size and position of all the
+        // surfaces. They should already have images attached, and damage will
+        // be calculated from the result.
+        // ----------------------------------------------------------------
+        for r_id in self.wm_surface_ids.iter() {
+            let id = *r_id;
             // Now render the windows
-            self.record_draw_for_id(id);
-        }
-        // ----------------------------------------------------------------
+            let a = match self.wm_apps[id.into()].as_mut() {
+                Some(a) => a,
+                // app must have been closed
+                None => {
+                    log::error!("Could not find id {:?} to record for drawing", id);
+                    return;
+                }
+            };
+            // If this window has been closed or if it is not ready for
+            // rendering, ignore it
+            if a.a_marked_for_death || !self.wm_atmos.get_window_in_use(a.a_id) {
+                return;
+            }
 
-        // Draw the desktop background last
-        // ----------------------------------------------------------------
-        if let Some(back) = self.wm_background.as_ref() {
-            self.wm_surfaces.push(back.clone());
+            // get parameters
+            // ----------------------------------------------------------------
+            let surface_pos = self.wm_atmos.get_surface_pos(a.a_id);
+            let surface_size = self.wm_atmos.get_surface_size(a.a_id);
+
+            // update the th::Surface pos and size
+            a.a_surf.set_pos(surface_pos.0, surface_pos.1);
+            a.a_surf.set_size(surface_size.0, surface_size.1);
+            // ----------------------------------------------------------------
+
+            // Only display the bar for toplevel surfaces
+            // i.e. don't for popups
+            if self.wm_atmos.get_toplevel(id) {
+                // The bar should be a percentage of the screen height
+                let barsize = self.wm_atmos.get_barsize();
+
+                // Each toplevel window has two subsurfaces (in thundr): the
+                // window bar and the window dot. If it's toplevel we are drawing SSD,
+                // so we need to update the positions of these as well.
+                let mut sub = a.a_surf.get_subsurface(0);
+                let dims = Self::get_dot_dims(barsize, &surface_size);
+                sub.set_pos(dims.0, dims.1);
+                sub.set_size(dims.2, dims.3);
+
+                let dims = Self::get_bar_dims(barsize, &surface_size);
+                let mut sub = a.a_surf.get_subsurface(0);
+                sub.set_pos(dims.0, dims.1);
+                sub.set_size(dims.2, dims.3);
+            }
         }
-        // ----------------------------------------------------------------
     }
 
     /// Flag this window to be killed.
@@ -511,15 +505,15 @@ impl WindowManager {
     /// This adds it to our death list, which will be reaped next frame after
     /// we are done using its resources.
     fn close_window(&mut self, id: WindowId) {
-        assert!(self.wm_apps.id_exists(id));
+        assert!(self.wm_apps.id_exists(id.into()));
 
-        let mut app = self.wm_apps[i].as_mut().unwrap();
+        let mut app = self.wm_apps[id.into()].as_mut().unwrap();
         app.a_marked_for_death = true;
         self.wm_will_die.push(id);
 
         // Remove the surface. The surfacelist will damage the region that the
         // window occupied
-        self.wm_surfaces.remove_surface(app.a_surf);
+        self.wm_surfaces.remove_surface(app.a_surf.clone());
     }
 
     /// Remove any apps marked for death. Usually we can't remove
@@ -531,8 +525,8 @@ impl WindowManager {
         let thundr = &mut self.wm_thundr;
 
         // Only retain alive windows in the array
-        for i in self.wm_will_die.drain(..) {
-            if let Some(app) = self.wm_apps[i].as_ref() {
+        for id in self.wm_will_die.drain(..) {
+            if let Some(app) = self.wm_apps[id.into()].as_ref() {
                 assert!(app.a_marked_for_death);
 
                 // Destroy the rendering resources
@@ -540,7 +534,7 @@ impl WindowManager {
                     .as_ref()
                     .map(|image| thundr.destroy_image(image.clone()));
 
-                self.wm_apps.deactivate(i)
+                self.wm_apps.deactivate(id.into())
             }
         }
     }

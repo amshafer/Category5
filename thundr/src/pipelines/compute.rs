@@ -801,47 +801,13 @@ impl CompPipeline {
         );
     }
 
-    fn gen_window_list_from_scratch(&mut self, surfaces: &SurfaceList) {
-        self.cp_winlist.clear();
-        for surf_rc in surfaces.iter() {
-            let surf = surf_rc.s_internal.borrow();
-            let opaque_reg = match surf_rc.get_opaque() {
-                Some(r) => r,
-                // If no opaque data was attached, place a -1 in the start.x component
-                // to tell the shader to ignore this
-                None => Rect::new(-1, 0, -1, 0),
-            };
-            let image = match surf.s_image.as_ref() {
-                Some(i) => i,
-                None => {
-                    log::debug!(
-                        "[thundr] warning: surface does not have image attached. Not drawing"
-                    );
-                    continue;
-                }
-            };
-
-            self.cp_winlist.push(Window {
-                w_id: (image.get_id(), 0, 0, 0),
-                w_dims: Rect::new(
-                    surf.s_rect.r_pos.0 as i32,
-                    surf.s_rect.r_pos.1 as i32,
-                    surf.s_rect.r_size.0 as i32,
-                    surf.s_rect.r_size.1 as i32,
-                ),
-                w_opaque: opaque_reg,
-            });
-        }
-    }
-
     /// This updates the winlist entry for surf, which should be stored
     /// at `index`.
-    fn update_winlist_for_surf(
-        &self,
+    fn get_winlist_entry_for_surf(
+        &mut self,
         base: Option<&SurfaceInternal>,
         surf: &SurfaceInternal,
-        index: usize,
-    ) {
+    ) -> Window {
         let opaque_reg = match surf.get_opaque() {
             Some(r) => r,
             // If no opaque data was attached, place a -1 in the start.x component
@@ -851,19 +817,19 @@ impl CompPipeline {
         let image = match surf.s_image.as_ref() {
             Some(i) => i,
             None => {
-                log::debug!(
+                panic!(
                         "[thundr] warning: surface was changed bug does not have image attached. ignoring."
                     );
-                return;
             }
         };
 
-        /// Calculate our base offset from the parent surface, if passed in
+        // Calculate our base offset from the parent surface, if passed in
         let base_pos = match base {
             Some(b) => (b.s_rect.r_pos.0, b.s_rect.r_pos.1),
             None => (0.0, 0.0),
         };
-        self.cp_winlist[index] = Window {
+
+        Window {
             w_id: (image.get_id(), 0, 0, 0),
             w_dims: Rect::new(
                 (base_pos.0 + surf.s_rect.r_pos.0) as i32,
@@ -872,7 +838,18 @@ impl CompPipeline {
                 surf.s_rect.r_size.1 as i32,
             ),
             w_opaque: opaque_reg,
-        };
+        }
+    }
+
+    /// update a field of the winlist.
+    /// If the surface order has changed, we regen the list and just push the window instead
+    /// of using the index.
+    fn update_winlist_entry(&mut self, surfaces: &SurfaceList, index: usize, win: Window) {
+        if surfaces.l_changed || index == self.cp_winlist.len() {
+            self.cp_winlist.push(win);
+        } else {
+            self.cp_winlist[index] = win;
+        }
     }
 
     /// Updates the window list if surfaces has changed
@@ -892,7 +869,8 @@ impl CompPipeline {
                     "ERROR: recursive subsurfaces not supported"
                 );
                 if sub.s_was_damaged {
-                    self.update_winlist_for_surf(Some(&surf), &sub, index);
+                    let nwin = self.get_winlist_entry_for_surf(Some(&surf), &sub);
+                    self.update_winlist_entry(surfaces, index, nwin);
                     ret = true;
                 }
 
@@ -901,7 +879,8 @@ impl CompPipeline {
 
             // If the surface wasn't updated, then don't bother
             if surf.s_was_damaged {
-                self.update_winlist_for_surf(None, &surf, index);
+                let nwin = self.get_winlist_entry_for_surf(None, &surf);
+                self.update_winlist_entry(surfaces, index, nwin);
                 ret = true;
             }
 
@@ -950,31 +929,17 @@ impl Pipeline for CompPipeline {
 
             // Only do this if the surface list has changed and the shader needs a new
             // window ordering
-            let winlist_needs_flush = if surfaces.l_changed {
-                stop.start();
-                self.gen_window_list_from_scratch(surfaces);
-                stop.end();
+            // The surfacelist ordering didn't change, but the individual
+            // surfaces might have. We need to copy the new values for
+            // any changed
+            stop.start();
+            let winlist_needs_flush = self.update_window_list(surfaces);
+            stop.end();
 
-                log::debug!(
-                    "Took {} ms to generate the window list",
-                    stop.get_duration().as_millis()
-                );
-                true
-            } else {
-                // The surfacelist ordering didn't change, but the individual
-                // surfaces might have. We need to copy the new values for
-                // any changed
-                stop.start();
-                let nf = self.update_window_list(surfaces);
-                stop.end();
-
-                log::debug!(
-                    "Took {} ms to generate the window list",
-                    stop.get_duration().as_millis()
-                );
-
-                nf
-            };
+            log::debug!(
+                "Took {} ms to generate the window list",
+                stop.get_duration().as_millis()
+            );
 
             // TODO: don't even use CPU copies of the datastructs and perform
             // the tile/window updates in the mapped GPU memory

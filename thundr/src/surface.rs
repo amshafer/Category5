@@ -34,7 +34,7 @@ pub(crate) struct SurfaceInternal {
     /// Surfaces may be layered above one another. This allows us to model wayland
     /// subsurfaces. The surfaces here will be drawn in-order on top of the base
     /// surface.
-    pub(crate) s_subsurfaces: Vec<Surface>,
+    pub s_subsurfaces: Vec<Surface>,
 }
 
 impl SurfaceInternal {
@@ -187,5 +187,12 @@ impl Surface {
     /// This appends `surf` to the end of the subsurface list
     pub fn add_subsurface(&mut self, surf: Surface) {
         self.s_internal.borrow_mut().s_subsurfaces.push(surf);
+    }
+
+    pub fn get_subsurface(&self, i: usize) -> Surface {
+        let internal = self.s_internal.borrow();
+        assert!(internal.s_subsurfaces.len() > i);
+
+        internal.s_subsurfaces[i].clone()
     }
 }
