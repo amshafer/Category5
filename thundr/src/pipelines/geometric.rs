@@ -143,14 +143,29 @@ impl Pipeline for GeomPipeline {
         surfaces: &mut SurfaceList,
     ) {
         self.begin_recording(rend, params);
+        let mut index = 0;
 
-        for (i, surf) in surfaces.iter().rev().enumerate() {
+        for surf in surfaces.iter().rev() {
             // TODO: make a limit to the number of windows
             // we have to call rev before enumerate, so we need
             // to correct this by setting the depth of the earliest
             // surfaces to the deepest
-            let depth = 1.0 - 0.000001 * i as f32;
-            self.record_surface_draw(rend, params, surf, depth);
+            let depth = 1.0 - 0.000001 * index as f32;
+            self.record_surface_draw(rend, params, surf, &(0.0, 0.0), depth);
+            index += 1;
+
+            // Now do the subsurfaces for this surf, in reverse order too
+            let s = surf.s_internal.borrow();
+            for sub in s.s_subsurfaces.iter().rev() {
+                let depth = 1.0 - 0.000001 * index as f32;
+                assert!(
+                    sub.s_internal.borrow().s_subsurfaces.len() == 0,
+                    "ERROR: recursive subsurfaces not supported"
+                );
+                self.record_surface_draw(rend, params, sub, &surf.get_pos(), depth);
+
+                index += 1;
+            }
         }
 
         // make sure to end recording
@@ -899,12 +914,16 @@ impl GeomPipeline {
     /// sets should be updated whenever window contents are
     /// changed, and then cbufs should be regenerated using this.
     ///
+    /// Base, is the offset to add to the surface's position.
+    /// This is useful for subsurface offsets.
+    ///
     /// Must be called while recording a cbuf
     pub fn record_surface_draw(
         &self,
         rend: &Renderer,
         params: &RecordParams,
         thundr_surf: &Surface,
+        base: &(f32, f32),
         depth: f32,
     ) {
         let surf = thundr_surf.s_internal.borrow();
@@ -917,8 +936,8 @@ impl GeomPipeline {
 
         let push = PushConstants {
             order: depth,
-            x: surf.s_rect.r_pos.0,
-            y: surf.s_rect.r_pos.1,
+            x: base.0 + surf.s_rect.r_pos.0,
+            y: base.1 + surf.s_rect.r_pos.1,
             width: surf.s_rect.r_size.0,
             height: surf.s_rect.r_size.1,
         };

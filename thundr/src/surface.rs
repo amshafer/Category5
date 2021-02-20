@@ -30,6 +30,36 @@ pub(crate) struct SurfaceInternal {
     /// Was this surface moved/mapped? This signifies if the pipeline needs
     /// to update its data
     pub(crate) s_was_damaged: bool,
+    /// A list of subsurfaces.
+    /// Surfaces may be layered above one another. This allows us to model wayland
+    /// subsurfaces. The surfaces here will be drawn in-order on top of the base
+    /// surface.
+    pub(crate) s_subsurfaces: Vec<Surface>,
+}
+
+impl SurfaceInternal {
+    /// adjusts from image-coords to surface-coords.
+    pub fn get_opaque(&self) -> Option<Rect<i32>> {
+        if let Some(image_rc) = self.s_image.as_ref() {
+            let image = image_rc.i_internal.borrow();
+            if let Some(opaque) = image.i_opaque.as_ref() {
+                // We need to scale from the image size to the
+                // size of this particular surface
+                let scale = (
+                    image.i_image_resolution.width as f32 / self.s_rect.r_size.0,
+                    image.i_image_resolution.height as f32 / self.s_rect.r_size.1,
+                );
+
+                return Some(Rect::new(
+                    (opaque.r_pos.0 as f32 / scale.0) as i32,
+                    (opaque.r_pos.1 as f32 / scale.1) as i32,
+                    (opaque.r_size.0 as f32 / scale.0) as i32,
+                    (opaque.r_size.1 as f32 / scale.1) as i32,
+                ));
+            }
+        }
+        return None;
+    }
 }
 
 /// A surface that describes how an `Image` should be displayed onscreen
@@ -50,6 +80,7 @@ impl Surface {
                 s_image: None,
                 s_damage: None,
                 s_was_damaged: false,
+                s_subsurfaces: Vec::with_capacity(0), // this keeps us from allocating
             })),
         }
     }
@@ -115,25 +146,7 @@ impl Surface {
     /// adjusts from image-coords to surface-coords.
     pub fn get_opaque(&self) -> Option<Rect<i32>> {
         let surf = self.s_internal.borrow();
-        if let Some(image_rc) = surf.s_image.as_ref() {
-            let image = image_rc.i_internal.borrow();
-            if let Some(opaque) = image.i_opaque.as_ref() {
-                // We need to scale from the image size to the
-                // size of this particular surface
-                let scale = (
-                    image.i_image_resolution.width as f32 / surf.s_rect.r_size.0,
-                    image.i_image_resolution.height as f32 / surf.s_rect.r_size.1,
-                );
-
-                return Some(Rect::new(
-                    (opaque.r_pos.0 as f32 / scale.0) as i32,
-                    (opaque.r_pos.1 as f32 / scale.1) as i32,
-                    (opaque.r_size.0 as f32 / scale.0) as i32,
-                    (opaque.r_size.1 as f32 / scale.1) as i32,
-                ));
-            }
-        }
-        return None;
+        return surf.get_opaque();
     }
 
     /// adjusts damage from image-coords to surface-coords.
@@ -166,5 +179,10 @@ impl Surface {
 
     pub(crate) fn take_surface_damage(&self) -> Option<Damage> {
         self.s_internal.borrow_mut().s_damage.take()
+    }
+
+    /// This appends `surf` to the end of the subsurface list
+    pub fn add_subsurface(&mut self, surf: Surface) {
+        self.s_internal.borrow_mut().s_subsurfaces.push(surf);
     }
 }

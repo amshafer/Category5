@@ -61,6 +61,40 @@ impl SurfaceList {
         self.l_damage.iter()
     }
 
+    /// The recursive portion of `map_on_all_surfs`.
+    /// Taken from Atmosphere.
+    fn map_on_all_surfaces_recurse<F>(&self, surf: &Surface, func: &mut F) -> bool
+    where
+        F: FnMut(&Surface) -> bool,
+    {
+        // First recursively check all subsurfaces
+        for sub in surf.s_internal.borrow().s_subsurfaces.iter() {
+            if !self.map_on_all_surfaces_recurse(sub, func) {
+                return false;
+            }
+            if !func(sub) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// This is the generic map implementation, entrypoint to the recursive
+    /// surface evaluation.
+    fn map_on_all_surfaces<F>(&self, mut func: F)
+    where
+        F: FnMut(&Surface) -> bool,
+    {
+        for surf in self.l_vec.iter() {
+            if !self.map_on_all_surfaces_recurse(surf, &mut func) {
+                return;
+            }
+            if !func(surf) {
+                return;
+            }
+        }
+    }
+
     pub fn clear_damage(&mut self) {
         self.l_damage.clear();
     }

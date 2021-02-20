@@ -14,6 +14,7 @@ use ash::{util, vk, Instance};
 use super::Pipeline;
 use crate::display::Display;
 use crate::renderer::{RecordParams, Renderer};
+use crate::surface::SurfaceInternal;
 use crate::{Image, SurfaceList};
 
 use utils::region::Rect;
@@ -833,46 +834,78 @@ impl CompPipeline {
         }
     }
 
+    /// This updates the winlist entry for surf, which should be stored
+    /// at `index`.
+    fn update_winlist_for_surf(
+        &self,
+        base: Option<&SurfaceInternal>,
+        surf: &SurfaceInternal,
+        index: usize,
+    ) {
+        let opaque_reg = match surf.get_opaque() {
+            Some(r) => r,
+            // If no opaque data was attached, place a -1 in the start.x component
+            // to tell the shader to ignore this
+            None => Rect::new(-1, 0, -1, 0),
+        };
+        let image = match surf.s_image.as_ref() {
+            Some(i) => i,
+            None => {
+                log::debug!(
+                        "[thundr] warning: surface was changed bug does not have image attached. ignoring."
+                    );
+                return;
+            }
+        };
+
+        /// Calculate our base offset from the parent surface, if passed in
+        let base_pos = match base {
+            Some(b) => (b.s_rect.r_pos.0, b.s_rect.r_pos.1),
+            None => (0.0, 0.0),
+        };
+        self.cp_winlist[index] = Window {
+            w_id: (image.get_id(), 0, 0, 0),
+            w_dims: Rect::new(
+                (base_pos.0 + surf.s_rect.r_pos.0) as i32,
+                (base_pos.1 + surf.s_rect.r_pos.1) as i32,
+                surf.s_rect.r_size.0 as i32,
+                surf.s_rect.r_size.1 as i32,
+            ),
+            w_opaque: opaque_reg,
+        };
+    }
+
     /// Updates the window list if surfaces has changed
     ///
     /// Returns true if an update was made, false if nothing needs flushing.
     fn update_window_list(&mut self, surfaces: &SurfaceList) -> bool {
         let mut ret = false;
+        let mut index = 0;
 
-        for (i, surf_rc) in surfaces.iter().enumerate() {
+        for surf_rc in surfaces.iter() {
             let surf = surf_rc.s_internal.borrow();
-            // If the surface wasn't updated, then don't bother
-            if !surf.s_was_damaged {
-                continue;
-            }
-            ret = true;
-
-            let opaque_reg = match surf_rc.get_opaque() {
-                Some(r) => r,
-                // If no opaque data was attached, place a -1 in the start.x component
-                // to tell the shader to ignore this
-                None => Rect::new(-1, 0, -1, 0),
-            };
-            let image = match surf.s_image.as_ref() {
-                Some(i) => i,
-                None => {
-                    log::debug!(
-                        "[thundr] warning: surface was changed bug does not have image attached. ignoring."
-                    );
-                    continue;
+            // First process all of the subsurfaces
+            for sub_rc in surf.s_subsurfaces.iter() {
+                let sub = sub_rc.s_internal.borrow();
+                assert!(
+                    sub.s_subsurfaces.len() == 0,
+                    "ERROR: recursive subsurfaces not supported"
+                );
+                if sub.s_was_damaged {
+                    self.update_winlist_for_surf(Some(&surf), &sub, index);
+                    ret = true;
                 }
-            };
 
-            self.cp_winlist[i] = Window {
-                w_id: (image.get_id(), 0, 0, 0),
-                w_dims: Rect::new(
-                    surf.s_rect.r_pos.0 as i32,
-                    surf.s_rect.r_pos.1 as i32,
-                    surf.s_rect.r_size.0 as i32,
-                    surf.s_rect.r_size.1 as i32,
-                ),
-                w_opaque: opaque_reg,
-            };
+                index += 1;
+            }
+
+            // If the surface wasn't updated, then don't bother
+            if surf.s_was_damaged {
+                self.update_winlist_for_surf(None, &surf, index);
+                ret = true;
+            }
+
+            index += 1;
         }
 
         return ret;
