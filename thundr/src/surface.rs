@@ -60,6 +60,17 @@ impl SurfaceInternal {
         }
         return None;
     }
+
+    fn record_damage(&mut self) {
+        self.s_was_damaged = true;
+        let new_rect = self.s_rect.into();
+
+        if let Some(d) = self.s_damage.as_mut() {
+            d.add(&new_rect);
+        } else {
+            self.s_damage = Some(Damage::new(vec![new_rect]));
+        }
+    }
 }
 
 /// A surface that describes how an `Image` should be displayed onscreen
@@ -91,15 +102,7 @@ impl Surface {
     /// Methods that alter the surface should be wrapped in two
     /// calls to this to record their movement.
     pub(crate) fn record_damage(&mut self) {
-        let mut internal = self.s_internal.borrow_mut();
-        internal.s_was_damaged = true;
-        let new_rect = internal.s_rect.into();
-
-        if let Some(d) = internal.s_damage.as_mut() {
-            d.add(&new_rect);
-        } else {
-            internal.s_damage = Some(Damage::new(vec![new_rect]));
-        }
+        self.s_internal.borrow_mut().record_damage();
     }
 
     /// Attaches an image to this surface, when this surface
@@ -118,13 +121,13 @@ impl Surface {
         (surf.s_rect.r_pos.0, surf.s_rect.r_pos.1)
     }
     pub fn set_pos(&mut self, x: f32, y: f32) {
-        self.record_damage();
-        {
-            let mut surf = self.s_internal.borrow_mut();
+        let mut surf = self.s_internal.borrow_mut();
+        if surf.s_rect.r_pos.0 != x || surf.s_rect.r_pos.1 != y {
+            surf.record_damage();
             surf.s_rect.r_pos.0 = x;
             surf.s_rect.r_pos.1 = y;
+            surf.record_damage();
         }
-        self.record_damage();
     }
 
     pub fn get_size(&self) -> (f32, f32) {
@@ -134,13 +137,13 @@ impl Surface {
     }
 
     pub fn set_size(&mut self, w: f32, h: f32) {
-        self.record_damage();
-        {
-            let mut surf = self.s_internal.borrow_mut();
+        let mut surf = self.s_internal.borrow_mut();
+        if surf.s_rect.r_size.0 != w || surf.s_rect.r_size.1 != h {
+            surf.record_damage();
             surf.s_rect.r_size.0 = w;
             surf.s_rect.r_size.1 = h;
+            surf.record_damage();
         }
-        self.record_damage();
     }
 
     /// adjusts from image-coords to surface-coords.
