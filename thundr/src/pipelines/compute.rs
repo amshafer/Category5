@@ -605,6 +605,7 @@ impl CompPipeline {
         }
 
         // create our data and a storage buffer
+        // TODO: DEADLY make this dynamic.
         let winlist: Vec<Window> = Vec::with_capacity(64);
         let (wl_storage, wl_storage_mem) = unsafe {
             rend.create_buffer_with_size(
@@ -841,53 +842,40 @@ impl CompPipeline {
         }
     }
 
-    /// update a field of the winlist.
-    /// If the surface order has changed, we regen the list and just push the window instead
-    /// of using the index.
-    fn update_winlist_entry(&mut self, surfaces: &SurfaceList, index: usize, win: Window) {
-        if surfaces.l_changed || index == self.cp_winlist.len() {
-            self.cp_winlist.push(win);
-        } else {
-            self.cp_winlist[index] = win;
-        }
-    }
-
-    /// Updates the window list if surfaces has changed
-    ///
-    /// Returns true if an update was made, false if nothing needs flushing.
     fn update_window_list(&mut self, surfaces: &SurfaceList) -> bool {
-        let mut ret = false;
-        let mut index = 0;
-
+        self.cp_winlist.clear();
         for surf_rc in surfaces.iter() {
             let surf = surf_rc.s_internal.borrow();
-            // First process all of the subsurfaces
-            for sub_rc in surf.s_subsurfaces.iter() {
-                let sub = sub_rc.s_internal.borrow();
-                assert!(
-                    sub.s_subsurfaces.len() == 0,
-                    "ERROR: recursive subsurfaces not supported"
-                );
-                if sub.s_was_damaged {
-                    let nwin = self.get_winlist_entry_for_surf(Some(&surf), &sub);
-                    self.update_winlist_entry(surfaces, index, nwin);
-                    ret = true;
+            let opaque_reg = match surf_rc.get_opaque() {
+                Some(r) => r,
+                // If no opaque data was attached, place a -1 in the start.x component
+                // to tell the shader to ignore this
+                None => Rect::new(-1, 0, -1, 0),
+            };
+            let image = match surf.s_image.as_ref() {
+                Some(i) => i,
+                None => {
+                    log::debug!(
+                        "[thundr] warning: surface does not have image attached. Not drawing"
+                    );
+                    continue;
                 }
+            };
 
-                index += 1;
-            }
-
-            // If the surface wasn't updated, then don't bother
-            if surf.s_was_damaged {
-                let nwin = self.get_winlist_entry_for_surf(None, &surf);
-                self.update_winlist_entry(surfaces, index, nwin);
-                ret = true;
-            }
-
-            index += 1;
+            self.cp_winlist.push(Window {
+                w_id: (image.get_id(), 0, 0, 0),
+                w_dims: Rect::new(
+                    surf.s_rect.r_pos.0 as i32,
+                    surf.s_rect.r_pos.1 as i32,
+                    surf.s_rect.r_size.0 as i32,
+                    surf.s_rect.r_size.1 as i32,
+                ),
+                w_opaque: opaque_reg,
+            });
         }
 
-        return ret;
+        // TODO: if surfaces hasn't changed update windows individually
+        return true;
     }
 }
 

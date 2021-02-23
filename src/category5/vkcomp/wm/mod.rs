@@ -432,7 +432,10 @@ impl WindowManager {
                 // If our index is larger than the arrays, we just push new surfaces
                 self.wm_surface_ids.push(id);
                 self.wm_reordered.push(id);
-                self.wm_surfaces.push(cloned_surf);
+                // len - 1 since the last entry of the surfaceslist is always the
+                // desktop background.
+                self.wm_surfaces
+                    .insert(self.wm_surfaces.len() as usize - 1, cloned_surf);
             } else if self.wm_surface_ids[i] != id {
                 // exclude based on 1)
                 if !self.wm_reordered.contains(&id) {
