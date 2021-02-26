@@ -1349,26 +1349,38 @@ impl Renderer {
         // get the next frame to draw into
         self.get_next_swapchain_image();
 
+        // TODO: redo the way I track swap ages. The order the images are acquired
+        // isn't guaranteed to be constant
+
         // Now combine the first n lists (depending on the current
         // image's age) into one list for vkPresentRegionsKHR (and `gen_tile_list`)
         // We need to do this first since popping an entry off damage_regions
         // would remove one of the regions we need to process.
         // Using in lets us never go past the end of the array
-        for i in 0..(std::cmp::min(
-            self.swap_ages[self.current_image as usize],
-            self.swap_ages.len(),
-        )) {
+        assert!(self.swap_ages[self.current_image as usize] <= self.damage_regions.len());
+        for i in 0..(self.swap_ages[self.current_image as usize]) {
             self.current_damage.extend(&self.damage_regions[i as usize]);
         }
 
         // We need to accumulate a list of damage for the current frame. We are
-        // going to retire the oldest damage list, and create a new one from
+        // going to retire the oldest damage lists, and create a new one from
         // the damages passed to surfaces
-        let mut regions = self
-            .damage_regions
-            .pop_back()
-            .expect("Could not get a damage list from the queue");
-        regions.clear();
+        let mut am_eldest = true;
+        let mut next_oldest = 0;
+        for (i, age) in self.swap_ages.iter().enumerate() {
+            // oldest until proven otherwise
+            if self.swap_ages[i] > self.swap_ages[self.current_image as usize] {
+                am_eldest = false;
+            }
+            // Get the max age of the other framebuffers
+            if i != self.current_image as usize && *age > next_oldest {
+                next_oldest = *age;
+            }
+        }
+        if am_eldest {
+            self.damage_regions.truncate(next_oldest);
+        }
+        let mut regions = Vec::new();
 
         for surf_rc in surfaces.iter() {
             // add the new damage to the list of damages
@@ -1397,6 +1409,8 @@ impl Renderer {
 
         // Only update the ages after we have processed them
         self.update_buffer_ages();
+
+        log::debug!("Damage for this frame: {:#?}", self.current_damage);
 
         self.get_recording_parameters()
     }
@@ -1617,6 +1631,11 @@ impl Renderer {
             ) {
                 // TODO: handle suboptimal surface regeneration
                 Ok((index, _)) => {
+                    log::debug!(
+                        "Getting next swapchain image: Current {:?}, New {:?}",
+                        self.current_image,
+                        index
+                    );
                     self.current_image = index;
                     return true;
                 }
