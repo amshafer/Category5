@@ -23,7 +23,7 @@ use crate::platform::VKDeviceFeatures;
 
 extern crate utils as cat5_utils;
 use crate::{CreateInfo, Damage, Surface};
-use cat5_utils::log;
+use cat5_utils::{log, MemImage};
 
 // this happy little debug callback is from the ash examples
 // all it does is print any errors/warnings thrown.
@@ -142,6 +142,11 @@ pub struct Renderer {
     pub(crate) copy_cbuf_fence: vk::Fence,
     /// This is an allocator for the dynamic sets (samplers)
     pub(crate) desc_pool: DescPool,
+
+    /// These are for loading textures into images
+    pub(crate) transfer_buf_len: usize,
+    pub(crate) transfer_buf: vk::Buffer,
+    pub(crate) transfer_mem: vk::DeviceMemory,
 }
 
 /// Recording parameters
@@ -1060,7 +1065,7 @@ impl Renderer {
             // you are now the proud owner of a half complete
             // rendering context
             // p.s. you still need a Pipeline
-            Renderer {
+            let mut rend = Renderer {
                 debug_loader: dr_loader,
                 debug_callback: d_callback,
                 loader: entry,
@@ -1097,6 +1102,62 @@ impl Renderer {
                 copy_cbuf: copy_cbuf,
                 copy_cbuf_fence: copy_fence,
                 desc_pool: descpool,
+                transfer_buf: vk::Buffer::null(), // Initialize in its own method
+                transfer_mem: vk::DeviceMemory::null(),
+                transfer_buf_len: 0,
+            };
+            rend.initialize_transfer_mem();
+
+            return rend;
+        }
+    }
+
+    fn initialize_transfer_mem(&mut self) {
+        let transfer_buf_len = 64;
+        let (buffer, buf_mem) = unsafe {
+            self.create_buffer_with_size(
+                vk::BufferUsageFlags::TRANSFER_SRC,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+                transfer_buf_len,
+            )
+        };
+
+        self.transfer_buf_len = transfer_buf_len as usize;
+        self.transfer_buf = buffer;
+        self.transfer_mem = buf_mem;
+    }
+
+    pub(crate) fn upload_memimage_to_transfer(&mut self, memimg: &MemImage) {
+        unsafe {
+            // We might be in the middle of copying the transfer buf to an image
+            // wait for that if its the case
+            self.dev
+                .wait_for_fences(
+                    &[self.copy_cbuf_fence],
+                    true,          // wait for all
+                    std::u64::MAX, //timeout
+                )
+                .unwrap();
+            // resize the transfer mem if needed
+            // TODO: make the staging buffer owned by Renderer
+            if memimg.as_slice().len() > self.transfer_buf_len {
+                // Out with the old TODO: make this a drop impl
+                self.dev.destroy_buffer(self.transfer_buf, None);
+                self.free_memory(self.transfer_mem);
+                // in with the new
+                let (buffer, buf_mem) = self.create_buffer(
+                    vk::BufferUsageFlags::TRANSFER_SRC,
+                    vk::SharingMode::EXCLUSIVE,
+                    vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+                    memimg.as_slice(),
+                );
+                self.transfer_buf = buffer;
+                self.transfer_mem = buf_mem;
+                self.transfer_buf_len = memimg.as_slice().len();
+            } else {
+                // copy the data into the staging buffer
+                self.update_memory(self.transfer_mem, 0, memimg.as_slice());
             }
         }
     }
@@ -1378,6 +1439,16 @@ impl Renderer {
             }
         }
         if am_eldest {
+            log::debug!(
+                "I (image {:?}) am the eldest: {:?}",
+                self.current_image,
+                self.swap_ages
+            );
+            log::debug!(
+                "Truncating damage_regions from {:?} to {:?}",
+                self.damage_regions.len(),
+                next_oldest
+            );
             self.damage_regions.truncate(next_oldest);
         }
         let mut regions = Vec::new();
@@ -1725,6 +1796,9 @@ impl Drop for Renderer {
 
             // first wait for the device to finish working
             self.dev.device_wait_idle().unwrap();
+
+            self.dev.destroy_buffer(self.transfer_buf, None);
+            self.dev.free_memory(self.transfer_mem, None);
 
             self.dev.destroy_semaphore(self.present_sema, None);
             self.dev.destroy_semaphore(self.render_sema, None);

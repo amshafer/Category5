@@ -132,15 +132,7 @@ impl fmt::Debug for Image {
 #[derive(Debug)]
 enum ImagePrivate {
     Dmabuf(DmabufPrivate),
-    MemImage(MemImagePrivate),
-}
-
-/// Private data for shm images
-#[derive(Debug)]
-struct MemImagePrivate {
-    /// The staging buffer for copies to image.image
-    transfer_buf: vk::Buffer,
-    transfer_mem: vk::DeviceMemory,
+    MemImage,
 }
 
 /// Private data for gpu buffers
@@ -159,7 +151,7 @@ impl Renderer {
     pub fn create_image_from_bits(
         &mut self,
         img: &MemImage,
-        release: Option<Box<dyn Drop>>,
+        _release: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
         unsafe {
             let tex_res = vk::Extent2D {
@@ -167,14 +159,9 @@ impl Renderer {
                 height: img.height as u32,
             };
 
-            // The image is created with DEVICE_LOCAL memory types,
-            // so we need to make a staging buffer to copy the data from.
-            let (buffer, buf_mem) = self.create_buffer(
-                vk::BufferUsageFlags::TRANSFER_SRC,
-                vk::SharingMode::EXCLUSIVE,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-                img.as_slice(),
-            );
+            self.upload_memimage_to_transfer(img);
+            // At this point we can drop release. We have already copied from the
+            // memimage so we are good to signal wayland
 
             // This image will back the contents of the on-screen
             // client window.
@@ -186,19 +173,16 @@ impl Renderer {
                 vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
                 vk::ImageAspectFlags::COLOR,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                buffer,
+                self.transfer_buf,
             );
 
             return self.create_image_common(
-                ImagePrivate::MemImage(MemImagePrivate {
-                    transfer_buf: buffer,
-                    transfer_mem: buf_mem,
-                }),
+                ImagePrivate::MemImage,
                 &tex_res,
                 image,
                 img_mem,
                 view,
-                release,
+                None,
             );
         }
     }
@@ -483,80 +467,61 @@ impl Renderer {
         &mut self,
         thundr_image: &mut Image,
         memimg: &MemImage,
-        release: Option<Box<dyn Drop>>,
+        _release: Option<Box<dyn Drop>>,
     ) {
         // we have to take a mut ref to the dereferenced value, so that
         // we get a full mutable borrow of i_internal, which tells rust
         // that we can borrow individual fields later in this function
         let mut image = &mut *thundr_image.i_internal.borrow_mut();
-        if let ImagePrivate::MemImage(mp) = &mut image.i_priv {
-            unsafe {
-                log::debug!(
-                    "update_fr_mem_img: new img is {}x{} and image_resolution is {:?}",
-                    memimg.width,
-                    memimg.height,
-                    image.i_image_resolution
+        unsafe {
+            log::debug!(
+                "update_fr_mem_img: new img is {}x{} and old image_resolution is {:?}",
+                memimg.width,
+                memimg.height,
+                image.i_image_resolution
+            );
+            // resize the transfer mem if needed
+            // TODO: only do this when the staging buffer is too small
+            // TODO: make the staging buffer owned by Renderer
+            self.upload_memimage_to_transfer(memimg);
+            if memimg.width != image.i_image_resolution.width as usize
+                || memimg.height != image.i_image_resolution.height as usize
+            {
+                self.dev.free_memory(image.i_image_mem, None);
+                self.dev.destroy_image_view(image.i_image_view, None);
+                self.dev.destroy_image(image.i_image, None);
+                // we need to re-create & resize the image since we changed
+                // the resolution
+                let (vkimage, view, img_mem) = self.create_image_with_contents(
+                    &vk::Extent2D {
+                        width: memimg.width as u32,
+                        height: memimg.height as u32,
+                    },
+                    vk::Format::R8G8B8A8_UNORM,
+                    vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                    vk::ImageAspectFlags::COLOR,
+                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                    self.transfer_buf,
                 );
-                // resize the transfer mem if needed
-                // TODO: only do this when the staging buffer is too small
-                if memimg.width != image.i_image_resolution.width as usize
-                    || memimg.height != image.i_image_resolution.height as usize
-                {
-                    // Out with the old TODO: make this a drop impl
-                    self.dev.destroy_buffer(mp.transfer_buf, None);
-                    self.free_memory(mp.transfer_mem);
-                    // in with the new
-                    let (buffer, buf_mem) = self.create_buffer(
-                        vk::BufferUsageFlags::TRANSFER_SRC,
-                        vk::SharingMode::EXCLUSIVE,
-                        vk::MemoryPropertyFlags::HOST_VISIBLE
-                            | vk::MemoryPropertyFlags::HOST_COHERENT,
-                        memimg.as_slice(),
-                    );
-                    *mp = MemImagePrivate {
-                        transfer_buf: buffer,
-                        transfer_mem: buf_mem,
-                    };
-
-                    // update our image's resolution
-                    image.i_image_resolution.width = memimg.width as u32;
-                    image.i_image_resolution.height = memimg.height as u32;
-                    self.dev.free_memory(image.i_image_mem, None);
-                    self.dev.destroy_image_view(image.i_image_view, None);
-                    self.dev.destroy_image(image.i_image, None);
-                    // we need to re-create & resize the image since we changed
-                    // the resolution
-                    let (vkimage, view, img_mem) = self.create_image_with_contents(
-                        &vk::Extent2D {
-                            width: memimg.width as u32,
-                            height: memimg.height as u32,
-                        },
-                        vk::Format::R8G8B8A8_UNORM,
-                        vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-                        vk::ImageAspectFlags::COLOR,
-                        vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                        buffer,
-                    );
-                    image.i_image = vkimage;
-                    image.i_image_view = view;
-                    image.i_image_mem = img_mem;
-                } else {
-                    // copy the data into the staging buffer
-                    self.update_memory(mp.transfer_mem, 0, memimg.as_slice());
-                    // copy the staging buffer into the image
-                    self.update_image_contents_from_buf(
-                        mp.transfer_buf,
-                        image.i_image,
-                        image.i_image_resolution.width,
-                        image.i_image_resolution.height,
-                    );
-                }
+                image.i_image = vkimage;
+                image.i_image_view = view;
+                image.i_image_mem = img_mem;
+                // update our image's resolution
+                image.i_image_resolution.width = memimg.width as u32;
+                image.i_image_resolution.height = memimg.height as u32;
+            } else {
+                // copy the staging buffer into the image
+                self.update_image_contents_from_buf(
+                    self.transfer_buf,
+                    image.i_image,
+                    image.i_image_resolution.width,
+                    image.i_image_resolution.height,
+                );
             }
-        } else {
-            panic!("Updating non-memimg Image with MemImg");
         }
 
-        self.update_common(&mut image, release);
+        // We already copied the image, so silently drop the release info
+        self.update_common(&mut image, None);
     }
 
     /// Update image contents from a GPU buffer
@@ -649,10 +614,7 @@ impl Renderer {
             match &image.i_priv {
                 // dma has nothing dynamic to free
                 ImagePrivate::Dmabuf(_) => {}
-                ImagePrivate::MemImage(m) => {
-                    self.dev.destroy_buffer(m.transfer_buf, None);
-                    self.free_memory(m.transfer_mem);
-                }
+                ImagePrivate::MemImage => {}
             }
             // free our descriptors
             self.desc_pool.destroy_samplers(
