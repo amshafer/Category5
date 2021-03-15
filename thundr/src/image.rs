@@ -75,6 +75,10 @@ impl Image {
         }
     }
 
+    pub fn reset_damage(&mut self, damage: Damage) {
+        self.i_internal.borrow_mut().i_damage = Some(damage);
+    }
+
     /// set the id. This should only be done by Thundr
     pub(crate) fn set_id(&mut self, id: i32) {
         self.i_internal.borrow_mut().i_id = id;

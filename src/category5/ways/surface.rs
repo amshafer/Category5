@@ -9,6 +9,9 @@ extern crate wayland_server as ws;
 use ws::protocol::{wl_buffer, wl_callback, wl_output, wl_region, wl_surface as wlsi, wl_surface};
 use ws::Main;
 
+extern crate Thundr;
+use thundr as th;
+
 use super::role::Role;
 use super::shm::*;
 use super::wl_region::Region;
@@ -50,6 +53,11 @@ pub struct Surface {
     /// The input region.
     /// Input events will only be delivered if this region is in focus
     pub s_input: Option<Rc<RefCell<Region>>>,
+    /// Arrays of damage for this image. This will eventually
+    /// be propogated to thundr
+    pub s_surf_damage: th::Damage,
+    /// Buffer damage,
+    pub s_damage: th::Damage,
 }
 
 impl Surface {
@@ -71,6 +79,8 @@ impl Surface {
             s_opaque: None,
             s_input: None,
             s_commit_in_progress: false,
+            s_surf_damage: th::Damage::empty(),
+            s_damage: th::Damage::empty(),
         }
     }
 
@@ -104,19 +114,22 @@ impl Surface {
         match req {
             wlsi::Request::Attach { buffer, x, y } => self.attach(surf, buffer, x, y),
             wlsi::Request::Commit => self.commit(&mut atmos, false),
-            // TODO: implement damage tracking
             wlsi::Request::Damage {
                 x,
                 y,
                 width,
                 height,
-            } => {}
+            } => {
+                self.s_surf_damage.add(&th::Rect::new(x, y, width, height));
+            }
             wlsi::Request::DamageBuffer {
                 x,
                 y,
                 width,
                 height,
-            } => {}
+            } => {
+                self.s_damage.add(&th::Rect::new(x, y, width, height));
+            }
             wlsi::Request::SetOpaqueRegion { region } => {
                 self.s_opaque = self.get_priv_from_region(region);
                 log::debug!(
@@ -276,6 +289,17 @@ impl Surface {
             surf_size.1
         );
         atmos.set_surface_size(self.s_id, surf_size.0, surf_size.1);
+
+        if !self.s_surf_damage.is_empty() {
+            let mut nd = th::Damage::empty();
+            std::mem::swap(&mut self.s_surf_damage, &mut nd);
+            atmos.set_surface_damage(nd);
+        }
+        if !self.s_damage.is_empty() {
+            let mut nd = th::Damage::empty();
+            std::mem::swap(&mut self.s_damage, &mut nd);
+            atmos.set_buffer_damage(nd);
+        }
 
         // Make sure to unmark this before returning
         self.s_commit_in_progress = false;

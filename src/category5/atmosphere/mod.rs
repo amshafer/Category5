@@ -572,6 +572,14 @@ impl Atmosphere {
         }
     }
 
+    /// This releases any resources that exist for only one frame, such
+    /// as damage regions for a window. These per-frame data will be added
+    /// in ways, propogated to vkcomp, and then released with this once the
+    /// frame has completed
+    pub fn release_consumables(&mut self) {
+        self.a_hemi.unwrap().reset_consumables();
+    }
+
     /// Has the current hemisphere been changed
     ///
     /// Ways will use this to know if it should flip
@@ -735,6 +743,25 @@ impl Atmosphere {
         self.a_hemi.as_mut().unwrap().wm_task_pop()
     }
 
+    /// Set the damage for this surface
+    /// This will be added once a frame, and then cleared before the next.
+    fn set_surface_damage(&mut self, id: WindowId, damage: th::Damage) {
+        self.a_hemi.unwrap().add_surface_damage(id, damage)
+    }
+    fn get_surface_damage(&mut self, id: WindowId) -> Option<th::Damage> {
+        self.a_hemi.unwrap().get_surface_damage(id)
+    }
+
+    /// Set the damage for this window's buffer
+    /// This is the same as set_surface_damage, but operates on buffer coordinates.
+    /// It is the preferred method.
+    fn set_buffer_damage(&mut self, id: WindowId, damage: th::Damage) {
+        self.a_hemi.unwrap().add_buffer_damage(id, damage)
+    }
+    fn get_buffer_damage(&mut self, id: WindowId) -> Option<th::Damage> {
+        self.a_hemi.unwrap().get_buffer_damage(id)
+    }
+
     /// Add an offset to the cursor patch
     ///
     /// This increments the cursor position, which will later
@@ -888,6 +915,8 @@ pub struct Hemisphere {
     /// be added elsewhere. A task is a transfer of ownership from
     /// ways to vkcommp
     h_wm_tasks: VecDeque<wm::task::Task>,
+    h_surf_damages: PropertyList<th::Damage>,
+    h_damages: PropertyList<th::Damage>,
 }
 
 impl Hemisphere {
@@ -897,7 +926,12 @@ impl Hemisphere {
             h_global_props: PropertyMap::new(),
             h_client_props: PropertyMap::new(),
             h_window_props: PropertyMap::new(),
+            // These are added to a hemisphere by one side,
+            // and are consumed by the other
+            // They are not patched
             h_wm_tasks: VecDeque::new(),
+            h_surf_damages: PropertyList::new(),
+            h_damages: PropertyList::new(),
         }
     }
 
@@ -953,6 +987,11 @@ impl Hemisphere {
         self.h_has_changed = false;
     }
 
+    fn reset_consumables(&mut self) {
+        self.h_surf_damages.clear();
+        self.h_damages.clear();
+    }
+
     fn is_changed(&self) -> bool {
         self.h_has_changed
     }
@@ -973,5 +1012,19 @@ impl Hemisphere {
     pub fn wm_task_pop(&mut self) -> Option<wm::task::Task> {
         self.mark_changed();
         self.h_wm_tasks.pop_front()
+    }
+
+    fn set_surface_damage(&mut self, id: WindowId, damage: th::Damage) {
+        self.h_surf_damages.update_or_create(id, damage)
+    }
+    fn get_surface_damage(&mut self, id: WindowId) -> Option<th::Damage> {
+        self.h_surf_damages?.clone()
+    }
+
+    fn set_buffer_damage(&mut self, id: WindowId, damage: th::Damage) {
+        self.h_damages.update_or_create(id, damage)
+    }
+    fn get_buffer_damage(&mut self, id: WindowId) -> Option<th::Damage> {
+        self.h_damages?.clone()
     }
 }

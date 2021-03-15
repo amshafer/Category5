@@ -314,8 +314,8 @@ impl WindowManager {
             );
         }
 
-        // TODO: use real damage
-        app.a_image.as_mut().map(|i| i.set_damage(0, 0, 500, 500));
+        let damage = self.wm_atmos.get_surface_damage(info.ufd_id);
+        app.a_image.as_mut().map(|i| i.reset_damage(damage));
         self.wm_thundr
             .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
     }
@@ -347,9 +347,8 @@ impl WindowManager {
         }
 
         // Damage the image
-        app.a_image
-            .as_mut()
-            .map(|i| i.set_damage(0, 0, info.width as i32, info.height as i32));
+        let damage = self.wm_atmos.get_surface_damage(info.ufd_id);
+        app.a_image.as_mut().map(|i| i.reset_damage(damage));
         self.wm_thundr
             .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
     }
@@ -639,8 +638,6 @@ impl WindowManager {
                 draw_stop.get_duration().as_millis()
             );
 
-            self.reap_dead_windows();
-
             // present our frame
             draw_stop.start();
             self.end_frame();
@@ -650,6 +647,9 @@ impl WindowManager {
                 "spent {} ms presenting this frame",
                 draw_stop.get_duration().as_millis()
             );
+
+            self.reap_dead_windows();
+            self.wm_atmos.release_consumables();
 
             log::debug!("_____________________________ FRAME END");
         }

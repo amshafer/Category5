@@ -12,7 +12,14 @@ pub struct Damage {
 
 impl Damage {
     pub fn empty() -> Self {
-        Self::new(Vec::new())
+        Self {
+            d_damaged: false,
+            d_regions: Vec::with_capacity(0),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.d_damaged
     }
 
     pub fn new(regions: Vec<Rect<i32>>) -> Self {
