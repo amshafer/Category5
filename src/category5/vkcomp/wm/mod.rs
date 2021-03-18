@@ -314,8 +314,12 @@ impl WindowManager {
             );
         }
 
-        let damage = self.wm_atmos.get_surface_damage(info.ufd_id);
-        app.a_image.as_mut().map(|i| i.reset_damage(damage));
+        if let Some(damage) = self.wm_atmos.take_buffer_damage(info.ufd_id) {
+            app.a_image.as_mut().map(|i| i.reset_damage(damage));
+        }
+        if let Some(damage) = self.wm_atmos.take_surface_damage(info.ufd_id) {
+            app.a_surf.damage(damage);
+        }
         self.wm_thundr
             .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
     }
@@ -347,8 +351,12 @@ impl WindowManager {
         }
 
         // Damage the image
-        let damage = self.wm_atmos.get_surface_damage(info.ufd_id);
-        app.a_image.as_mut().map(|i| i.reset_damage(damage));
+        if let Some(damage) = self.wm_atmos.take_buffer_damage(info.id) {
+            app.a_image.as_mut().map(|i| i.reset_damage(damage));
+        }
+        if let Some(damage) = self.wm_atmos.take_surface_damage(info.id) {
+            app.a_surf.damage(damage);
+        }
         self.wm_thundr
             .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
     }

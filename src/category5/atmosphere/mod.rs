@@ -116,11 +116,14 @@
 extern crate wayland_server as ws;
 use ws::protocol::wl_surface;
 
+extern crate thundr as th;
+
 pub mod property;
 use property::{Property, PropertyId};
 pub mod property_map;
 use property_map::PropertyMap;
 pub mod property_list;
+use property_list::PropertyList;
 mod skiplist;
 
 use crate::category5::vkcomp::wm;
@@ -577,7 +580,7 @@ impl Atmosphere {
     /// in ways, propogated to vkcomp, and then released with this once the
     /// frame has completed
     pub fn release_consumables(&mut self) {
-        self.a_hemi.unwrap().reset_consumables();
+        self.a_hemi.as_mut().unwrap().reset_consumables();
     }
 
     /// Has the current hemisphere been changed
@@ -745,21 +748,25 @@ impl Atmosphere {
 
     /// Set the damage for this surface
     /// This will be added once a frame, and then cleared before the next.
-    fn set_surface_damage(&mut self, id: WindowId, damage: th::Damage) {
-        self.a_hemi.unwrap().add_surface_damage(id, damage)
+    pub fn set_surface_damage(&mut self, id: WindowId, damage: th::Damage) {
+        self.a_hemi.as_mut().unwrap().set_surface_damage(id, damage)
     }
-    fn get_surface_damage(&mut self, id: WindowId) -> Option<th::Damage> {
-        self.a_hemi.unwrap().get_surface_damage(id)
+    /// For efficiency, this takes the damage so that we can avoid
+    /// copying it
+    pub fn take_surface_damage(&mut self, id: WindowId) -> Option<th::Damage> {
+        self.a_hemi.as_mut().unwrap().take_surface_damage(id)
     }
 
     /// Set the damage for this window's buffer
     /// This is the same as set_surface_damage, but operates on buffer coordinates.
     /// It is the preferred method.
-    fn set_buffer_damage(&mut self, id: WindowId, damage: th::Damage) {
-        self.a_hemi.unwrap().add_buffer_damage(id, damage)
+    pub fn set_buffer_damage(&mut self, id: WindowId, damage: th::Damage) {
+        self.a_hemi.as_mut().unwrap().set_buffer_damage(id, damage)
     }
-    fn get_buffer_damage(&mut self, id: WindowId) -> Option<th::Damage> {
-        self.a_hemi.unwrap().get_buffer_damage(id)
+    /// For efficiency, this takes the damage so that we can avoid
+    /// copying it
+    pub fn take_buffer_damage(&mut self, id: WindowId) -> Option<th::Damage> {
+        self.a_hemi.as_mut().unwrap().take_buffer_damage(id)
     }
 
     /// Add an offset to the cursor patch
@@ -1015,16 +1022,22 @@ impl Hemisphere {
     }
 
     fn set_surface_damage(&mut self, id: WindowId, damage: th::Damage) {
-        self.h_surf_damages.update_or_create(id, damage)
+        self.h_surf_damages.update_or_create(id.into(), damage)
     }
-    fn get_surface_damage(&mut self, id: WindowId) -> Option<th::Damage> {
-        self.h_surf_damages?.clone()
+    fn take_surface_damage(&mut self, id: WindowId) -> Option<th::Damage> {
+        if self.h_surf_damages.id_exists(id.into()) {
+            return self.h_surf_damages[id.into()].take();
+        }
+        return None;
     }
 
     fn set_buffer_damage(&mut self, id: WindowId, damage: th::Damage) {
-        self.h_damages.update_or_create(id, damage)
+        self.h_damages.update_or_create(id.into(), damage)
     }
-    fn get_buffer_damage(&mut self, id: WindowId) -> Option<th::Damage> {
-        self.h_damages?.clone()
+    fn take_buffer_damage(&mut self, id: WindowId) -> Option<th::Damage> {
+        if self.h_damages.id_exists(id.into()) {
+            return self.h_damages[id.into()].take();
+        }
+        return None;
     }
 }

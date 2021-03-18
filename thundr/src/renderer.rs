@@ -1453,7 +1453,7 @@ impl Renderer {
         }
         let mut regions = Vec::new();
 
-        for surf_rc in surfaces.iter() {
+        for surf_rc in surfaces.iter_mut() {
             // add the new damage to the list of damages
             // If the surface does not have damage attached, then don't generate tiles
             if let Some(damage) = surf_rc.get_damage() {

@@ -749,15 +749,15 @@ impl CompPipeline {
                 Self::clamp_to_grid(reg.offset.x, rend.resolution.width as i32),
                 Self::clamp_to_grid(reg.offset.y, rend.resolution.width as i32),
             );
+
+            // We need to clamp the extent to the proper width/height
+            // Wayland clients may use INT_MAX for this
+            let width = std::cmp::min(reg.extent.width, rend.resolution.width) as i32;
+            let height = std::cmp::min(reg.extent.width, rend.resolution.height) as i32;
+
             let end = (
-                Self::clamp_to_grid(
-                    reg.offset.x + reg.extent.width as i32,
-                    rend.resolution.width as i32,
-                ),
-                Self::clamp_to_grid(
-                    reg.offset.y + reg.extent.height as i32,
-                    rend.resolution.width as i32,
-                ),
+                Self::clamp_to_grid(reg.offset.x + width, width),
+                Self::clamp_to_grid(reg.offset.y + height, width),
             );
 
             // Now we can go through the tiles this region overlaps with

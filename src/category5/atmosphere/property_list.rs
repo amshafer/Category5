@@ -35,6 +35,14 @@ impl<T> PropertyList<T> {
         self.pl_list[id] = None;
     }
 
+    pub fn clear(&mut self) {
+        for id in 0..self.pl_list.len() {
+            if self.id_exists(id) {
+                self.deactivate(id);
+            }
+        }
+    }
+
     pub fn id_exists(&self, id: PropertyId) -> bool {
         id < self.pl_list.len() && self.pl_list[id].is_some()
     }
@@ -51,6 +59,12 @@ impl<T> PropertyList<T> {
         return self.pl_list.len();
     }
 
+    pub fn get<'a>(&self, id: PropertyId) -> Option<&T> {
+        if self.id_exists(id) {
+            return self[id].as_ref();
+        }
+        return None;
+    }
     pub fn get_mut<'a>(&mut self, id: PropertyId) -> Option<&mut T> {
         if self.id_exists(id) {
             return self[id].as_mut();
@@ -81,12 +95,14 @@ impl<T> Index<usize> for PropertyList<T> {
     type Output = Option<T>;
 
     fn index(&self, i: usize) -> &Self::Output {
+        assert!(i < self.pl_list.len());
         &self.pl_list[i]
     }
 }
 
 impl<T> IndexMut<usize> for PropertyList<T> {
     fn index_mut(&mut self, i: usize) -> &mut Self::Output {
+        assert!(i < self.pl_list.len());
         &mut self.pl_list[i]
     }
 }

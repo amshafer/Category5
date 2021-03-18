@@ -27,6 +27,9 @@ pub(crate) struct SurfaceInternal {
     pub(crate) s_image: Option<Image>,
     /// Damage caused by moving or altering the surface itself.
     s_damage: Option<Damage>,
+    /// This is the surface damage that has been attached by clients.
+    /// It differs from s_damage in that it needs to be offset by the surface pos.
+    s_surf_damage: Option<Damage>,
     /// Was this surface moved/mapped? This signifies if the pipeline needs
     /// to update its data
     pub(crate) s_was_damaged: bool,
@@ -71,6 +74,10 @@ impl SurfaceInternal {
             self.s_damage = Some(Damage::new(vec![new_rect]));
         }
     }
+
+    fn damage(&mut self, other: Damage) {
+        self.s_surf_damage = Some(other);
+    }
 }
 
 /// A surface that describes how an `Image` should be displayed onscreen
@@ -90,6 +97,7 @@ impl Surface {
                 s_rect: Rect::new(x, y, width, height),
                 s_image: None,
                 s_damage: None,
+                s_surf_damage: None,
                 s_was_damaged: false,
                 s_subsurfaces: Vec::with_capacity(0), // this keeps us from allocating
             })),
@@ -103,6 +111,11 @@ impl Surface {
     /// calls to this to record their movement.
     pub(crate) fn record_damage(&mut self) {
         self.s_internal.borrow_mut().record_damage();
+    }
+
+    /// Thundr clients use this to add *surface* damage.
+    pub fn damage(&mut self, other: Damage) {
+        self.s_internal.borrow_mut().damage(other);
     }
 
     /// Attaches an image to this surface, when this surface
@@ -153,12 +166,14 @@ impl Surface {
     }
 
     /// adjusts damage from image-coords to surface-coords.
-    pub fn get_damage(&self) -> Option<Damage> {
-        let surf = self.s_internal.borrow();
+    pub fn get_damage(&mut self) -> Option<Damage> {
+        let mut surf = self.s_internal.borrow_mut();
+        let mut ret = Damage::empty();
+
+        // First add up the damage from the buffer
         if let Some(image_rc) = surf.s_image.as_ref() {
             let image = image_rc.i_internal.borrow();
             if let Some(damage) = image.i_damage.as_ref() {
-                let mut ret = Damage::empty();
                 // We need to scale the damage from the image size to the
                 // size of this particular surface
                 let scale = (
@@ -174,10 +189,27 @@ impl Surface {
                         (r.r_size.1 as f32 / scale.1) as i32,
                     ));
                 }
-                return Some(ret);
             }
         }
-        return None;
+
+        // Now add in the surface damage
+        if let Some(damage) = surf.s_surf_damage.take() {
+            for r in damage.regions() {
+                // This damage doesn't need to be transformed, but it does
+                // need to be offset from the base of the surface
+                ret.add(&Rect::new(
+                    r.r_pos.0 + surf.s_rect.r_pos.0 as i32,
+                    r.r_pos.1 + surf.s_rect.r_pos.1 as i32,
+                    r.r_size.0,
+                    r.r_size.1,
+                ));
+            }
+        }
+
+        if ret.is_empty() {
+            return None;
+        }
+        return Some(ret);
     }
 
     pub(crate) fn take_surface_damage(&self) -> Option<Damage> {

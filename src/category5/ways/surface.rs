@@ -9,7 +9,7 @@ extern crate wayland_server as ws;
 use ws::protocol::{wl_buffer, wl_callback, wl_output, wl_region, wl_surface as wlsi, wl_surface};
 use ws::Main;
 
-extern crate Thundr;
+extern crate thundr;
 use thundr as th;
 
 use super::role::Role;
@@ -293,12 +293,14 @@ impl Surface {
         if !self.s_surf_damage.is_empty() {
             let mut nd = th::Damage::empty();
             std::mem::swap(&mut self.s_surf_damage, &mut nd);
-            atmos.set_surface_damage(nd);
+            log::debug!("Setting surface damage of {:?} to {:?}", self.s_id, nd);
+            atmos.set_surface_damage(self.s_id, nd);
         }
         if !self.s_damage.is_empty() {
             let mut nd = th::Damage::empty();
             std::mem::swap(&mut self.s_damage, &mut nd);
-            atmos.set_buffer_damage(nd);
+            log::debug!("Setting buffer damage of {:?} to {:?}", self.s_id, nd);
+            atmos.set_buffer_damage(self.s_id, nd);
         }
 
         // Make sure to unmark this before returning

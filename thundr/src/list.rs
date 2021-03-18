@@ -58,7 +58,9 @@ impl SurfaceList {
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = &Surface> {
         self.l_vec.iter()
     }
-
+    pub fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut Surface> {
+        self.l_vec.iter_mut()
+    }
     pub fn damage(&self) -> impl DoubleEndedIterator<Item = &Damage> {
         self.l_damage.iter()
     }
