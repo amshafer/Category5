@@ -55,6 +55,9 @@ impl Image {
     pub(crate) fn get_view(&self) -> vk::ImageView {
         self.i_internal.borrow().i_image_view
     }
+    pub(crate) fn get_resolution(&self) -> vk::Extent2D {
+        self.i_internal.borrow().i_image_resolution
+    }
 
     /// Sets an opaque region for the image to help the internal compositor
     /// optimize when possible.

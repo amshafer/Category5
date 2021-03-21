@@ -55,6 +55,10 @@ pub trait Pipeline {
         surfaces: &mut SurfaceList,
     );
 
+    /// This helper prints out any per-frame statistics for debug
+    /// info, such as the window positions and the attached images.
+    fn debug_frame_print(&self);
+
     fn destroy(&mut self, rend: &mut Renderer);
 }
 

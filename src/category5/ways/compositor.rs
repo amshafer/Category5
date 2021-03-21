@@ -226,6 +226,7 @@ impl EventManager {
                         shm_handle_request(r, shm.deref().clone());
                     });
                     r.format(wl_shm::Format::Xrgb8888);
+                    r.format(wl_shm::Format::Argb8888);
                 },
             ),
         );
@@ -378,7 +379,7 @@ impl EventManager {
     fn create_wl_data_device_manager_global(&mut self) {
         self.em_display
             .create_global::<wlddm::WlDataDeviceManager, _>(
-                1, // version
+                2, // version
                 Filter::new(
                     move |(res, _): (ws::Main<wlddm::WlDataDeviceManager>, u32), _, _| {
                         res.quick_assign(move |_, _, _| {

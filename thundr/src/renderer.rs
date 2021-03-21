@@ -1481,8 +1481,6 @@ impl Renderer {
         // Only update the ages after we have processed them
         self.update_buffer_ages();
 
-        log::debug!("Damage for this frame: {:#?}", self.current_damage);
-
         self.get_recording_parameters()
     }
 

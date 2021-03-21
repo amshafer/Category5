@@ -1116,6 +1116,27 @@ impl Pipeline for CompPipeline {
         }
     }
 
+    fn debug_frame_print(&self) {
+        log::debug!("Compute Pipeline Debug Statistics:");
+        log::debug!("---------------------------------");
+        log::debug!("Number of tiles to be drawn: {}", self.cp_tiles.tiles.len());
+
+        log::debug!("Window list:");
+        for (i, w) in self.cp_winlist.iter().enumerate() {
+            log::debug!(
+                "[{}] Image={}, Pos={:?}, Size={:?}, Opaque(Pos={:?}, Size={:?})",
+                i,
+                w.w_id.0,
+                w.w_dims.r_pos,
+                w.w_dims.r_size,
+                w.w_opaque.r_pos,
+                w.w_opaque.r_size
+            );
+        }
+
+        log::debug!("---------------------------------");
+    }
+
     fn destroy(&mut self, rend: &mut Renderer) {
         unsafe {
             rend.dev.destroy_buffer(self.cp_tiles_buf, None);

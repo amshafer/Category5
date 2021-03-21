@@ -198,6 +198,7 @@ pub fn xdg_wm_base_handle_request(
             // else needs to look it up
             id.as_ref().user_data().set(move || pos);
         }
+        xdg_wm_base::Request::Destroy => log::debug!("xdg_wm_base.destroy: impelementme"),
         _ => unimplemented!(),
     };
 }

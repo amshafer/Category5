@@ -86,6 +86,7 @@ pub use surface::Surface;
 extern crate utils;
 pub use crate::utils::region::Rect;
 pub use crate::utils::{Dmabuf, MemImage};
+use utils::log;
 
 #[macro_use]
 extern crate memoffset;
@@ -325,6 +326,43 @@ impl Thundr {
         // Now that we have processed this surfacelist, unmark it as changed
         surfaces.l_changed = false;
         self.clear_damage_on_all_images();
+
+        // Debugging stats
+        log::debug!("Thundr rendering frame:");
+        log::debug!(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+        log::debug!("Surface List:");
+        log::debug!("--------------------------------");
+        for (i, s) in surfaces.iter().enumerate() {
+            let img = s.get_image();
+            log::debug!(
+                "[{}] Image={}, Pos={:?}, Size={:?}",
+                i,
+                match img {
+                    Some(img) => img.get_id(),
+                    None => -1,
+                },
+                s.get_pos(),
+                s.get_size()
+            );
+        }
+        log::debug!("Images List:");
+        log::debug!("--------------------------------");
+        for (i, img) in self.th_image_list.iter().enumerate() {
+            log::debug!(
+                "[{}] Id={}, Size={:?}",
+                i,
+                img.get_id(),
+                img.get_resolution()
+            );
+        }
+        log::debug!("Damaged vkPresentRegions:");
+        log::debug!("--------------------------------");
+        for (i, pr) in self.th_rend.current_damage.iter().enumerate() {
+            log::debug!("[{}] Base={:?}, Size={:?}", i, pr.offset, pr.extent);
+        }
+
+        self.th_pipe.debug_frame_print();
+        log::debug!("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
     }
 
     // present

@@ -19,6 +19,8 @@ use super::Pipeline;
 use crate::renderer::{RecordParams, Renderer};
 use crate::{Image, Surface, SurfaceList};
 
+use utils::log;
+
 // This is the reference data for a normal quad
 // that will be used to draw client windows.
 static QUAD_DATA: [VertData; 4] = [
@@ -176,6 +178,12 @@ impl Pipeline for GeomPipeline {
 
         // now start rendering
         self.begin_frame(rend);
+    }
+
+    fn debug_frame_print(&self) {
+        log::debug!("Geometric Pipeline Debug Statistics:");
+        log::debug!("---------------------------------");
+        log::debug!("---------------------------------");
     }
 
     fn destroy(&mut self, rend: &mut Renderer) {

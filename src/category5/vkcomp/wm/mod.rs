@@ -646,6 +646,8 @@ impl WindowManager {
                 draw_stop.get_duration().as_millis()
             );
 
+            self.wm_atmos.print_surface_tree();
+
             // present our frame
             draw_stop.start();
             self.end_frame();
