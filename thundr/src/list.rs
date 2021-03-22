@@ -32,15 +32,18 @@ impl SurfaceList {
         };
     }
 
+    pub fn remove(&mut self, index: usize) {
+        self.l_changed = true;
+        let surf = self.l_vec.remove(index);
+        self.damage_removed_surf(surf);
+    }
+
     pub fn remove_surface(&mut self, surf: Surface) {
         let index = match self.l_vec.iter().enumerate().find(|(_, s)| **s == surf) {
             Some((i, _)) => i,
             None => return,
         };
-        self.damage_removed_surf(surf);
-
-        self.l_changed = true;
-        self.l_vec.remove(index);
+        self.remove(index);
     }
 
     pub fn insert(&mut self, order: usize, mut surf: Surface) {

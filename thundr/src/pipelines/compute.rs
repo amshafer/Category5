@@ -756,8 +756,8 @@ impl CompPipeline {
             let height = std::cmp::min(reg.extent.width, rend.resolution.height) as i32;
 
             let end = (
-                Self::clamp_to_grid(reg.offset.x + width, width),
-                Self::clamp_to_grid(reg.offset.y + height, width),
+                Self::clamp_to_grid(reg.offset.x + width, rend.resolution.width as i32),
+                Self::clamp_to_grid(reg.offset.y + height, rend.resolution.width as i32),
             );
 
             // Now we can go through the tiles this region overlaps with

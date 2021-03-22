@@ -423,35 +423,77 @@ impl WindowManager {
             aids.push(id);
             return true;
         });
+        log::debug!("Surfacelist from atmos: {:?}", self.wm_atmos_ids);
+        log::debug!("Current surface list: {:?}", self.wm_surface_ids);
 
+        // Let's begin our stupidly weird reordering code!
         // Update our th::SurfaceList based on the atmosphere list
+        //
+        // This exists because I hate myself and I split category5 in half. Ways is updating
+        // the surface positions and ordering, but vkcomp won't know about them until now.
+        // We need to get our thundr surface list up to speed on what's happened since we
+        // last used it, and so we need to do some reordering. We reorder instead of completely
+        // regenerating because a thundr surface list accumulates damage based on changes
+        // in surface order/insertion/removal.
         // ----------------------------------------------------------------
-        for (i, r_id) in self.wm_atmos_ids.iter().enumerate() {
-            let id = *r_id;
-            // 1) if it has been reordered, that means we have already processed
-            //    it and inserted it previously. We should remove it now
-            // 2) else if the current id doesn't match our surfacelist, then
-            //   2.1) insert it
-            //   2.2) mark it as reordered
-            // 3) else do nothing. It is already correct
-            let cloned_surf = self.wm_apps[id.into()].as_ref().unwrap().a_surf.clone();
-            if i >= self.wm_surface_ids.len() {
-                // If our index is larger than the arrays, we just push new surfaces
-                self.wm_surface_ids.push(id);
-                self.wm_reordered.push(id);
-                // len - 1 since the last entry of the surfaceslist is always the
-                // desktop background.
-                self.wm_surfaces
-                    .insert(self.wm_surfaces.len() as usize - 1, cloned_surf);
-            } else if self.wm_surface_ids[i] != id {
-                // exclude based on 1)
-                if !self.wm_reordered.contains(&id) {
-                    // 2.*
-                    // we add 1 since the 0th surf will always be the cursor
-                    self.wm_surfaces.insert(i + 1, cloned_surf);
-                    self.wm_reordered.push(id);
+        // This weird while loop exists because we need to iterate fully through both
+        // the atmos ids and our outdated surface ids
+        let mut i = 0;
+        while i < std::cmp::max(self.wm_atmos_ids.len(), self.wm_surface_ids.len()) {
+            // This means that we are past the end of the correct surface list from atmos
+            // and we should just remove everything remaining
+            if i >= self.wm_atmos_ids.len() && i < self.wm_surface_ids.len() {
+                // Even more gross. Because of our nasty while loop the wm_surface_ids len
+                // will be shrinking, so we have to cash it and do it all here
+                for _ in i..self.wm_surface_ids.len() {
+                    // Again, use i because everything will be shifted in wm_surfaces
+                    // while we are removing things
+                    self.wm_surfaces.remove(i + 1);
+                }
+                self.wm_surface_ids.truncate(self.wm_atmos_ids.len());
+                break;
+            } else {
+                // This is the id for this window in atmos's surface list
+                let aid = self.wm_atmos_ids[i];
+                // 1) if it has been reordered, that means we have already processed
+                //    it and inserted it previously. We should remove it now
+                // 2) else if the current id doesn't match our surfacelist, then
+                //   2.1) insert it
+                //   2.2) mark it as reordered
+                // 3) else do nothing. It is already correct
+                let cloned_surf = self.wm_apps[aid.into()].as_ref().unwrap().a_surf.clone();
+
+                if i >= self.wm_surface_ids.len() {
+                    // If our index is larger than the arrays, we just push new surfaces
+                    self.wm_surface_ids.push(aid);
+                    self.wm_reordered.push(aid);
+                    // len - 1 since the last entry of the surfaceslist is always the
+                    // desktop background.
+                    self.wm_surfaces
+                        .insert(self.wm_surfaces.len() as usize - 1, cloned_surf);
+                } else if self.wm_surface_ids[i] != aid {
+                    // Atmos did not match the id for the window at position i in our (outdated) list
+                    // exclude based on 1)
+                    if !self.wm_reordered.contains(&aid) {
+                        // 2.*
+                        // we add 1 since the 0th surf will always be the cursor
+                        self.wm_surfaces.insert(i + 1, cloned_surf);
+                        self.wm_surface_ids.insert(i, aid);
+                        self.wm_reordered.push(aid);
+                    } else {
+                        // This window has been reordered, so as per 1) remove it
+                        self.wm_surface_ids.remove(i);
+                        self.wm_surfaces.remove(i + 1);
+                    }
                 }
             }
+
+            i += 1;
+        }
+        log::debug!("New surface list: {:?}", self.wm_surface_ids);
+
+        for (i, sid) in self.wm_surface_ids.iter().enumerate() {
+            assert!(*sid == self.wm_atmos_ids[i]);
         }
 
         // do the draw call separately due to the borrow checker
@@ -523,7 +565,8 @@ impl WindowManager {
 
         // Remove the surface. The surfacelist will damage the region that the
         // window occupied
-        self.wm_surfaces.remove_surface(app.a_surf.clone());
+        // This is haneld in the reordering bits
+        //self.wm_surfaces.remove_surface(app.a_surf.clone());
     }
 
     /// Remove any apps marked for death. Usually we can't remove

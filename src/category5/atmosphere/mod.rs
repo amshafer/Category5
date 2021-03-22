@@ -598,7 +598,7 @@ impl Atmosphere {
     }
 
     fn mark_changed(&mut self) {
-        self.a_hemi.as_mut().map(|h| h.mark_changed());
+        self.a_hemi.as_mut().unwrap().mark_changed();
     }
 
     pub fn get_barsize(&self) -> f32 {
@@ -738,7 +738,7 @@ impl Atmosphere {
 
     /// Adds a one-time task to the queue
     pub fn add_wm_task(&mut self, task: wm::task::Task) {
-        self.a_hemi.as_mut().map(|h| h.add_wm_task(task));
+        self.a_hemi.as_mut().unwrap().add_wm_task(task);
     }
 
     /// pulls a one-time task off the queue
@@ -1022,6 +1022,7 @@ impl Hemisphere {
     }
 
     fn set_surface_damage(&mut self, id: WindowId, damage: th::Damage) {
+        self.mark_changed();
         self.h_surf_damages.update_or_create(id.into(), damage)
     }
     fn take_surface_damage(&mut self, id: WindowId) -> Option<th::Damage> {
@@ -1032,6 +1033,7 @@ impl Hemisphere {
     }
 
     fn set_buffer_damage(&mut self, id: WindowId, damage: th::Damage) {
+        self.mark_changed();
         self.h_damages.update_or_create(id.into(), damage)
     }
     fn take_buffer_damage(&mut self, id: WindowId) -> Option<th::Damage> {
