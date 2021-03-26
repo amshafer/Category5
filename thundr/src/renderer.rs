@@ -22,7 +22,7 @@ use crate::pipelines::PipelineType;
 use crate::platform::VKDeviceFeatures;
 
 extern crate utils as cat5_utils;
-use crate::{CreateInfo, Damage, Surface};
+use crate::{CreateInfo, Damage};
 use cat5_utils::{log, MemImage};
 
 // this happy little debug callback is from the ash examples
@@ -1344,41 +1344,8 @@ impl Renderer {
         }
     }
 
-    fn aggregate_damage_on_surf(
-        &self,
-        surf_rc: &Surface,
-        damage: &Damage,
-        regions: &mut Vec<vk::RectLayerKHR>,
-    ) {
-        let surf = surf_rc.s_internal.borrow();
-
-        // get the true offset, since the damage is relative to the window
-        let w = &surf.s_rect;
-
-        // Add an entry for each region in this damage
-        for d in damage.regions() {
-            // Now offset the damage values from the window base
-            let rect = vk::RectLayerKHR::builder()
-                .offset(
-                    vk::Offset2D::builder()
-                        .x(w.r_pos.0 as i32 + d.r_pos.0)
-                        .y(w.r_pos.1 as i32 + d.r_pos.1)
-                        .build(),
-                )
-                .extent(
-                    vk::Extent2D::builder()
-                        .width(d.r_size.0 as u32)
-                        .height(d.r_size.1 as u32)
-                        .build(),
-                )
-                .build();
-
-            regions.push(rect);
-        }
-    }
-
     /// Adds damage to `regions` without modifying the damage
-    fn aggregate_raw_damage(&self, damage: &Damage, regions: &mut Vec<vk::RectLayerKHR>) {
+    fn aggregate_damage(&self, damage: &Damage, regions: &mut Vec<vk::RectLayerKHR>) {
         for d in damage.regions() {
             let rect = vk::RectLayerKHR::builder()
                 .offset(vk::Offset2D::builder().x(d.r_pos.0).y(d.r_pos.1).build())
@@ -1457,7 +1424,7 @@ impl Renderer {
             // add the new damage to the list of damages
             // If the surface does not have damage attached, then don't generate tiles
             if let Some(damage) = surf_rc.get_damage() {
-                self.aggregate_damage_on_surf(surf_rc, &damage, &mut regions);
+                self.aggregate_damage(&damage, &mut regions);
             }
 
             // now we have to consider damage caused by moving the surface
@@ -1465,13 +1432,13 @@ impl Renderer {
             // We don't have to correct the position based on the surface pos
             // since the damage was already recorded for the surface
             if let Some(damage) = surf_rc.take_surface_damage() {
-                self.aggregate_raw_damage(&damage, &mut regions);
+                self.aggregate_damage(&damage, &mut regions);
             }
         }
 
         // Finally we add any damage that the surfacelist has
         for damage in surfaces.damage() {
-            self.aggregate_raw_damage(damage, &mut regions);
+            self.aggregate_damage(damage, &mut regions);
         }
         surfaces.clear_damage();
 
