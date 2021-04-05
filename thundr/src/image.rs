@@ -80,6 +80,7 @@ impl Image {
 
     pub fn reset_damage(&mut self, damage: Damage) {
         self.i_internal.borrow_mut().i_damage = Some(damage);
+        // TODO: clip to image size
     }
 
     /// set the id. This should only be done by Thundr
@@ -470,10 +471,14 @@ impl Renderer {
     }
 
     /// Update image contents from a shm buffer
+    ///
+    /// If damage is passed, then only those sections of the image will be
+    /// updated.
     pub fn update_image_from_bits(
         &mut self,
         thundr_image: &mut Image,
         memimg: &MemImage,
+        damage: Option<&Damage>,
         _release: Option<Box<dyn Drop>>,
     ) {
         // we have to take a mut ref to the dereferenced value, so that
@@ -518,12 +523,19 @@ impl Renderer {
                 image.i_image_resolution.height = memimg.height as u32;
             } else {
                 // copy the staging buffer into the image
-                self.update_image_contents_from_buf(
-                    self.transfer_buf,
-                    image.i_image,
-                    image.i_image_resolution.width,
-                    image.i_image_resolution.height,
-                );
+                match damage {
+                    None => self.update_image_contents_from_buf(
+                        self.transfer_buf,
+                        image.i_image,
+                        image.i_image_resolution.width,
+                        image.i_image_resolution.height,
+                    ),
+                    Some(damage) => self.update_image_contents_from_damaged_buf(
+                        self.transfer_buf,
+                        image.i_image,
+                        damage,
+                    ),
+                }
             }
         }
 

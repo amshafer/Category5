@@ -339,10 +339,24 @@ impl WindowManager {
                 return;
             }
         };
+        let buffer_damage = self.wm_atmos.take_buffer_damage(info.id);
+        let surface_damage = self.wm_atmos.take_surface_damage(info.id);
+        // Damage the image
+        if let Some(damage) = buffer_damage {
+            app.a_image.as_mut().map(|i| i.reset_damage(damage));
+        }
+        if let Some(damage) = surface_damage {
+            app.a_surf.damage(damage);
+        }
 
         if let Some(image) = app.a_image.as_mut() {
-            self.wm_thundr
-                .update_image_from_bits(image, &info.pixels, None);
+            self.wm_thundr.update_image_from_bits(
+                image,
+                &info.pixels,
+                // TODO: maybe don't do anything if there isn't damage?
+                app.a_surf.get_image_damage().as_ref(),
+                None,
+            );
         } else {
             // If it does not have a image, then this must be the
             // first time contents were attached to it. Go ahead
@@ -350,13 +364,6 @@ impl WindowManager {
             app.a_image = self.wm_thundr.create_image_from_bits(&info.pixels, None);
         }
 
-        // Damage the image
-        if let Some(damage) = self.wm_atmos.take_buffer_damage(info.id) {
-            app.a_image.as_mut().map(|i| i.reset_damage(damage));
-        }
-        if let Some(damage) = self.wm_atmos.take_surface_damage(info.id) {
-            app.a_surf.damage(damage);
-        }
         self.wm_thundr
             .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
     }

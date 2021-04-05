@@ -7,7 +7,7 @@ use utils::region::Rect;
 #[derive(Debug, PartialEq)]
 pub struct Damage {
     pub(crate) d_damaged: bool,
-    d_regions: Vec<Rect<i32>>,
+    pub(crate) d_regions: Vec<Rect<i32>>,
 }
 
 impl Damage {

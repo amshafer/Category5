@@ -165,7 +165,7 @@ impl Surface {
         return surf.get_opaque();
     }
 
-    /// adjusts damage from image-coords to surface-coords.
+    /// adjusts damage from image-coords to screen-coords.
     pub fn get_damage(&mut self) -> Option<Damage> {
         let mut surf = self.s_internal.borrow_mut();
         let mut ret = Damage::empty();
@@ -212,6 +212,55 @@ impl Surface {
         return Some(ret);
     }
 
+    /// This gets damage in image-coords.
+    ///
+    /// This is used for getting the total amount of damage that the image should be
+    /// updated by. It's a union of the unchanged image damage and the screen
+    /// damage mapped on the image dimensions.
+    pub fn get_image_damage(&mut self) -> Option<Damage> {
+        let mut surf = self.s_internal.borrow_mut();
+        let surf_damage = surf.s_surf_damage.take();
+        let mut ret = Damage::empty();
+
+        // First add up the damage from the buffer
+        if let Some(image_rc) = surf.s_image.as_ref() {
+            let image = image_rc.i_internal.borrow();
+            // We need to scale the damage from the image size to the
+            // size of this particular surface
+            let scale = (
+                surf.s_rect.r_size.0 / image.i_image_resolution.width as f32,
+                surf.s_rect.r_size.1 / image.i_image_resolution.height as f32,
+            );
+
+            if let Some(damage) = image.i_damage.as_ref() {
+                ret.union(damage);
+            }
+
+            // Now add in the surface damage
+            if let Some(damage) = surf_damage {
+                for r in damage.regions() {
+                    // Remap the damage in image-coords, and clamp at the image size
+                    ret.add(&Rect::new(
+                        r.r_pos.0,
+                        r.r_pos.1,
+                        std::cmp::min(
+                            (r.r_size.0 as f32 / scale.0) as i32,
+                            image.i_image_resolution.width as i32,
+                        ),
+                        std::cmp::min(
+                            (r.r_size.1 as f32 / scale.0) as i32,
+                            image.i_image_resolution.height as i32,
+                        ),
+                    ));
+                }
+            }
+        }
+
+        if ret.is_empty() {
+            return None;
+        }
+        return Some(ret);
+    }
     pub(crate) fn take_surface_damage(&self) -> Option<Damage> {
         self.s_internal.borrow_mut().s_damage.take()
     }

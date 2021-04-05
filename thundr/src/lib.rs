@@ -276,10 +276,11 @@ impl Thundr {
         &mut self,
         image: &mut Image,
         memimg: &MemImage,
+        damage: Option<&Damage>,
         release_info: Option<Box<dyn Drop>>,
     ) {
         self.th_rend
-            .update_image_from_bits(image, memimg, release_info)
+            .update_image_from_bits(image, memimg, damage, release_info)
     }
 
     // create_image_from_dmabuf

@@ -773,53 +773,6 @@ impl Renderer {
         );
     }
 
-    /// Copies a widthxheight buffer to an image
-    ///
-    /// This is used to load a texture into an image
-    /// to be sampled by the shaders. The buffer will
-    /// usually be a staging buffer, see
-    /// `create_image_with_contents` for an example.
-    ///
-    /// needs to be recorded in a cbuf
-    unsafe fn copy_buf_to_img(
-        &self,
-        cbuf: vk::CommandBuffer,
-        buffer: vk::Buffer,
-        image: vk::Image,
-        width: u32,
-        height: u32,
-    ) {
-        let region = vk::BufferImageCopy::builder()
-            // 0 specifies that the pixels are tightly packed
-            .buffer_offset(0)
-            .buffer_row_length(0)
-            .buffer_image_height(0)
-            .image_subresource(
-                vk::ImageSubresourceLayers::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .mip_level(0)
-                    .base_array_layer(0)
-                    .layer_count(1)
-                    .build(),
-            )
-            .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
-            .image_extent(vk::Extent3D {
-                width: width,
-                height: height,
-                depth: 1,
-            })
-            .build();
-
-        self.dev.cmd_copy_buffer_to_image(
-            cbuf,
-            buffer,
-            image,
-            // this is the layout the image is currently using
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            &[region],
-        );
-    }
-
     /// Returns true if there are any resources in
     /// the current release list.
     pub fn release_is_empty(&mut self) -> bool {
@@ -858,6 +811,90 @@ impl Renderer {
         width: u32,
         height: u32,
     ) {
+        let region = &[vk::BufferImageCopy::builder()
+            // 0 specifies that the pixels are tightly packed
+            .buffer_offset(0)
+            .buffer_row_length(0)
+            .buffer_image_height(0)
+            .image_subresource(
+                vk::ImageSubresourceLayers::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .mip_level(0)
+                    .base_array_layer(0)
+                    .layer_count(1)
+                    .build(),
+            )
+            .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+            .image_extent(vk::Extent3D {
+                width: width,
+                height: height,
+                depth: 1,
+            })
+            .build()];
+
+        self.update_image_contents_from_buf_common(buffer, image, || region);
+    }
+
+    /// Copies a list of regions from a buffer into an image.
+    ///
+    /// Instead of copying the entire buffer, use a thundr::Damage to
+    /// populate only certain parts of the image. `damage` takes place
+    /// in the image's coordinate system.
+    pub(crate) unsafe fn update_image_contents_from_damaged_buf(
+        &mut self,
+        buffer: vk::Buffer,
+        image: vk::Image,
+        damage: &Damage,
+    ) {
+        std::thread::sleep(std::time::Duration::from_millis(8));
+        log::debug!("Updating image with damage: {:?}", damage);
+        assert!(damage.d_regions.len() > 0);
+
+        let mut regions = Vec::new();
+
+        for d in damage.d_regions.iter() {
+            regions.push(
+                vk::BufferImageCopy::builder()
+                    // 0 specifies that the pixels are tightly packed
+                    .buffer_offset(0)
+                    .buffer_row_length(0)
+                    .buffer_image_height(0)
+                    .image_subresource(
+                        vk::ImageSubresourceLayers::builder()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .mip_level(0)
+                            .base_array_layer(0)
+                            .layer_count(1)
+                            .build(),
+                    )
+                    .image_offset(vk::Offset3D {
+                        x: d.r_pos.0,
+                        y: d.r_pos.1,
+                        z: 0,
+                    })
+                    .image_extent(vk::Extent3D {
+                        width: d.r_size.0 as u32,
+                        height: d.r_size.1 as u32,
+                        depth: 1,
+                    })
+                    .build(),
+            );
+        }
+
+        self.update_image_contents_from_buf_common(buffer, image, || regions.as_slice());
+    }
+
+    /// This function performs common setup, completion for update functions.
+    ///
+    /// It handles fence waiting and cbuf recording.
+    pub(crate) unsafe fn update_image_contents_from_buf_common<'a, F>(
+        &mut self,
+        buffer: vk::Buffer,
+        image: vk::Image,
+        get_regions: F,
+    ) where
+        F: FnOnce() -> &'a [vk::BufferImageCopy],
+    {
         self.dev
             .wait_for_fences(
                 &[self.copy_cbuf_fence],
@@ -879,7 +916,14 @@ impl Renderer {
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         );
 
-        self.copy_buf_to_img(self.copy_cbuf, buffer, image, width, height);
+        self.dev.cmd_copy_buffer_to_image(
+            self.copy_cbuf,
+            buffer,
+            image,
+            // this is the layout the image is currently using
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            get_regions(),
+        );
 
         // transition back to the optimal color layout
         self.transition_image_layout(
