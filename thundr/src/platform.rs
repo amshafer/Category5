@@ -152,6 +152,11 @@ impl VKDeviceFeatures {
                 ret.push(*e)
             }
         }
+        if self.vkc_supports_incremental_present {
+            for e in self.vkc_incremental_present_exts.iter() {
+                ret.push(*e)
+            }
+        }
 
         return ret;
     }

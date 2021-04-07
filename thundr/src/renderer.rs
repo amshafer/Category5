@@ -194,14 +194,13 @@ impl Renderer {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("Thundr").unwrap();
 
-        let layer_names =
-            if !info.enable_traditional_composition && !info.enable_compute_composition {
-                // For some reason the validation layers segfault in renderpass on the geometric
-                // one, so only use validation on compute
-                vec![CString::new("VK_LAYER_KHRONOS_validation").unwrap()]
-            } else {
-                Vec::new()
-            };
+        let layer_names = if !info.enable_traditional_composition {
+            // For some reason the validation layers segfault in renderpass on the geometric
+            // one, so only use validation on compute
+            vec![CString::new("VK_LAYER_KHRONOS_validation").unwrap()]
+        } else {
+            Vec::new()
+        };
 
         let layer_names_raw: Vec<*const i8> = layer_names
             .iter()
@@ -846,7 +845,6 @@ impl Renderer {
         image: vk::Image,
         damage: &Damage,
     ) {
-        std::thread::sleep(std::time::Duration::from_millis(8));
         log::debug!("Updating image with damage: {:?}", damage);
         assert!(damage.d_regions.len() > 0);
 
@@ -1772,12 +1770,14 @@ impl Renderer {
             .image_indices(&indices);
 
         if self.dev_features.vkc_supports_incremental_present {
-            let pres_info = vk::PresentRegionsKHR::builder()
-                .regions(&[vk::PresentRegionKHR::builder()
-                    .rectangles(self.current_damage.as_slice())
-                    .build()])
-                .build();
-            info.p_next = &pres_info as *const _ as *const c_void;
+            if self.current_damage.len() > 0 {
+                let pres_info = vk::PresentRegionsKHR::builder()
+                    .regions(&[vk::PresentRegionKHR::builder()
+                        .rectangles(self.current_damage.as_slice())
+                        .build()])
+                    .build();
+                info.p_next = &pres_info as *const _ as *const c_void;
+            }
         }
         // Now that this frame's damage has been consumed, clear it
         self.current_damage.clear();
