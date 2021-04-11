@@ -143,7 +143,7 @@ impl Pipeline for GeomPipeline {
         params: &RecordParams,
         _images: &[Image],
         surfaces: &mut SurfaceList,
-    ) {
+    ) -> bool {
         self.begin_recording(rend, params);
         let mut index = 0;
 
@@ -178,6 +178,7 @@ impl Pipeline for GeomPipeline {
 
         // now start rendering
         self.begin_frame(rend);
+        return true;
     }
 
     fn debug_frame_print(&self) {

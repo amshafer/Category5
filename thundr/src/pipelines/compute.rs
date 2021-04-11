@@ -890,7 +890,7 @@ impl Pipeline for CompPipeline {
         _params: &RecordParams,
         images: &[Image],
         surfaces: &mut SurfaceList,
-    ) {
+    ) -> bool {
         unsafe {
             let mut stop = StopWatch::new();
 
@@ -912,7 +912,7 @@ impl Pipeline for CompPipeline {
             // If no tiles were damaged, then we have nothing to render
             if self.cp_tiles.tiles.len() == 0 {
                 log::profiling!("No tiles damaged, not drawing anything");
-                return;
+                return false;
             }
 
             // Only do this if the surface list has changed and the shader needs a new
@@ -1114,6 +1114,7 @@ impl Pipeline for CompPipeline {
                 &[rend.render_sema],  // signal_semas
             );
         }
+        return true;
     }
 
     fn debug_frame_print(&self) {

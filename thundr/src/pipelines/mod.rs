@@ -47,13 +47,16 @@ pub trait Pipeline {
     /// a frame. `params` tells us which cbufs/image we are
     /// recording for. We need to generate draw calls to update
     /// changes that have happened in `surfaces`.
+    ///
+    /// Returns if vkQueueSubmit was called, and if Renderer.render_sema
+    /// should be waited on during presentation.
     fn draw(
         &mut self,
         rend: &mut Renderer,
         params: &RecordParams,
         images: &[Image],
         surfaces: &mut SurfaceList,
-    );
+    ) -> bool;
 
     /// This helper prints out any per-frame statistics for debug
     /// info, such as the window positions and the attached images.

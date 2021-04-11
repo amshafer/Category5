@@ -318,7 +318,7 @@ impl Thundr {
     pub fn draw_frame(&mut self, surfaces: &mut SurfaceList) {
         // record rendering commands
         let params = self.th_rend.begin_recording_one_frame(surfaces);
-        self.th_pipe.draw(
+        self.th_rend.draw_call_submitted = self.th_pipe.draw(
             &mut self.th_rend,
             &params,
             self.th_image_list.as_slice(),

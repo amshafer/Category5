@@ -147,6 +147,9 @@ pub struct Renderer {
     pub(crate) transfer_buf_len: usize,
     pub(crate) transfer_buf: vk::Buffer,
     pub(crate) transfer_mem: vk::DeviceMemory,
+
+    /// Has vkQueueSubmit been called.
+    pub(crate) draw_call_submitted: bool,
 }
 
 /// Recording parameters
@@ -1147,6 +1150,7 @@ impl Renderer {
                 transfer_buf: vk::Buffer::null(), // Initialize in its own method
                 transfer_mem: vk::DeviceMemory::null(),
                 transfer_buf_len: 0,
+                draw_call_submitted: false,
             };
             rend.initialize_transfer_mem();
 
@@ -1761,7 +1765,14 @@ impl Renderer {
                 .unwrap();
         }
 
-        let wait_semas = [self.render_sema];
+        // This is a bit odd. So if a draw call was submitted, then
+        // we need to wait for rendering to complete before presenting. If
+        // no draw call was submitted (no work to do) then we need to
+        // wait on the present of the previous frame.
+        let wait_semas = match self.draw_call_submitted {
+            true => [self.render_sema],
+            false => [self.present_sema],
+        };
         let swapchains = [self.swapchain];
         let indices = [self.current_image];
         let mut info = vk::PresentInfoKHR::builder()
