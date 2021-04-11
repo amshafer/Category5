@@ -950,23 +950,24 @@ impl Pipeline for CompPipeline {
                 // if thundr has allocated a different number of images than we were expecting,
                 // we need to realloc the variable descriptor memory
                 self.realloc_image_list(rend, images.len() as u32);
+            }
 
-                self.cp_image_infos.clear();
-                for image in images.iter() {
-                    self.cp_image_infos.push(
-                        vk::DescriptorImageInfo::builder()
-                            .sampler(rend.image_sampler)
-                            .image_view(image.get_view())
-                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                            .build(),
-                    );
-                }
-                stop.end();
-                log::debug!(
-                    "Took {} ms to generate the image info list",
-                    stop.get_duration().as_millis()
+            self.cp_image_infos.clear();
+            for image in images.iter() {
+                self.cp_image_infos.push(
+                    vk::DescriptorImageInfo::builder()
+                        .sampler(rend.image_sampler)
+                        // The image view could have been recreated and this would be stale
+                        .image_view(image.get_view())
+                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                        .build(),
                 );
             }
+            stop.end();
+            log::debug!(
+                "Took {} ms to generate the image info list",
+                stop.get_duration().as_millis()
+            );
 
             // We need to do this afterwards, since it depends on cp_image_infos
             // This always needs to be done, since we are binding the latest swapchain image

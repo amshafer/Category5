@@ -41,6 +41,7 @@ pub(crate) struct ImageInternal {
     pub i_image_mem: vk::DeviceMemory,
     pub i_image_resolution: vk::Extent2D,
     pub i_pool_handle: usize,
+    // TODO: move these into geometric pipeline
     pub i_sampler_descriptors: Vec<vk::DescriptorSet>,
     /// specific to the type of image
     i_priv: ImagePrivate,
