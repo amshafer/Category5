@@ -1397,8 +1397,9 @@ impl Renderer {
                 .offset(vk::Offset2D::builder().x(d.r_pos.0).y(d.r_pos.1).build())
                 .extent(
                     vk::Extent2D::builder()
-                        .width(d.r_size.0 as u32)
-                        .height(d.r_size.1 as u32)
+                        // Limit the damage to the screen dimensions
+                        .width(std::cmp::min(d.r_size.0 as u32, self.resolution.width))
+                        .height(std::cmp::min(d.r_size.1 as u32, self.resolution.height))
                         .build(),
                 )
                 .build();
@@ -1469,7 +1470,7 @@ impl Renderer {
         for surf_rc in surfaces.iter_mut() {
             // add the new damage to the list of damages
             // If the surface does not have damage attached, then don't generate tiles
-            if let Some(damage) = surf_rc.get_damage() {
+            if let Some(damage) = surf_rc.get_global_damage() {
                 self.aggregate_damage(&damage, &mut regions);
             }
 

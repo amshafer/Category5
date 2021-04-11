@@ -159,14 +159,13 @@ impl Surface {
         }
     }
 
-    /// adjusts from image-coords to surface-coords.
     pub fn get_opaque(&self) -> Option<Rect<i32>> {
         let surf = self.s_internal.borrow();
         return surf.get_opaque();
     }
 
-    /// adjusts damage from image-coords to screen-coords.
-    pub fn get_damage(&mut self) -> Option<Damage> {
+    /// Get's damage. Returned values are in surface coordinates.
+    pub fn get_surf_damage(&mut self) -> Option<Damage> {
         let mut surf = self.s_internal.borrow_mut();
         let mut ret = Damage::empty();
 
@@ -182,11 +181,17 @@ impl Surface {
                 );
 
                 for r in damage.regions() {
-                    ret.add(&Rect::new(
+                    let base = (
                         (r.r_pos.0 as f32 / scale.0) as i32,
                         (r.r_pos.1 as f32 / scale.1) as i32,
-                        (r.r_size.0 as f32 / scale.0) as i32,
-                        (r.r_size.1 as f32 / scale.1) as i32,
+                    );
+                    // Here we scale the image damage onto the surface size, and then
+                    // clip it to the max surf extent.
+                    ret.add(&Rect::new(
+                        base.0,
+                        base.1,
+                        std::cmp::min(base.0, surf.s_rect.r_size.0 as i32 - base.0),
+                        std::cmp::min(base.1, surf.s_rect.r_size.1 as i32 - base.1),
                     ));
                 }
             }
@@ -195,13 +200,14 @@ impl Surface {
         // Now add in the surface damage
         if let Some(damage) = surf.s_surf_damage.take() {
             for r in damage.regions() {
-                // This damage doesn't need to be transformed, but it does
-                // need to be offset from the base of the surface
+                let base = (r.r_pos.0 as i32, r.r_pos.1 as i32);
+                // Here we scale the image damage onto the surface size, and then
+                // clip it to the max image extent.
                 ret.add(&Rect::new(
-                    r.r_pos.0 + surf.s_rect.r_pos.0 as i32,
-                    r.r_pos.1 + surf.s_rect.r_pos.1 as i32,
-                    r.r_size.0,
-                    r.r_size.1,
+                    base.0,
+                    base.1,
+                    std::cmp::min(base.0, surf.s_rect.r_size.0 as i32 - base.0),
+                    std::cmp::min(base.1, surf.s_rect.r_size.1 as i32 - base.1),
                 ));
             }
         }
@@ -210,6 +216,21 @@ impl Surface {
             return None;
         }
         return Some(ret);
+    }
+
+    /// This gets the surface damage and offsets it into the
+    /// screen coordinate space.
+    pub fn get_global_damage(&mut self) -> Option<Damage> {
+        let mut ret = self.get_surf_damage();
+        let surf = self.s_internal.borrow_mut();
+
+        if let Some(surf_damage) = ret.as_mut() {
+            for r in surf_damage.d_regions.iter_mut() {
+                r.r_pos.0 += surf.s_rect.r_pos.0 as i32;
+                r.r_pos.1 += surf.s_rect.r_pos.1 as i32;
+            }
+        }
+        return ret;
     }
 
     /// This gets damage in image-coords.
