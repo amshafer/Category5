@@ -496,6 +496,9 @@ impl Renderer {
             // resize the transfer mem if needed
             // TODO: only do this when the staging buffer is too small
             // TODO: make the staging buffer owned by Renderer
+
+            // Wait for the previous copy to complete before stomping on the
+            // transfer buffer.
             self.upload_memimage_to_transfer(memimg);
             if memimg.width != image.i_image_resolution.width as usize
                 || memimg.height != image.i_image_resolution.height as usize

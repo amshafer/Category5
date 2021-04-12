@@ -885,6 +885,18 @@ impl Renderer {
         self.update_image_contents_from_buf_common(buffer, image, || regions.as_slice());
     }
 
+    /// Waits for the fence of the latest submitted copy operation to
+    /// signal.
+    pub(crate) unsafe fn wait_for_copy_operation(&self) {
+        self.dev
+            .wait_for_fences(
+                &[self.copy_cbuf_fence],
+                true,          // wait for all
+                std::u64::MAX, //timeout
+            )
+            .unwrap();
+    }
+
     /// This function performs common setup, completion for update functions.
     ///
     /// It handles fence waiting and cbuf recording.
@@ -896,13 +908,8 @@ impl Renderer {
     ) where
         F: FnOnce() -> &'a [vk::BufferImageCopy],
     {
-        self.dev
-            .wait_for_fences(
-                &[self.copy_cbuf_fence],
-                true,          // wait for all
-                std::u64::MAX, //timeout
-            )
-            .unwrap();
+        self.wait_for_prev_submit();
+        self.wait_for_copy_operation();
         // unsignal it, may be extraneous
         self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
 
@@ -917,13 +924,15 @@ impl Renderer {
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         );
 
+        let regions = get_regions();
+        log::debug!("Copy image with regions: {:?}", regions);
         self.dev.cmd_copy_buffer_to_image(
             self.copy_cbuf,
             buffer,
             image,
             // this is the layout the image is currently using
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            get_regions(),
+            regions,
         );
 
         // transition back to the optimal color layout
@@ -1178,13 +1187,11 @@ impl Renderer {
         unsafe {
             // We might be in the middle of copying the transfer buf to an image
             // wait for that if its the case
-            self.dev
-                .wait_for_fences(
-                    &[self.copy_cbuf_fence],
-                    true,          // wait for all
-                    std::u64::MAX, //timeout
-                )
-                .unwrap();
+            self.wait_for_copy_operation();
+            //let garbage: Vec<u32> = std::iter::repeat(4282712064)
+            //    .take(self.transfer_buf_len / 4)
+            //    .collect();
+            //self.update_memory(self.transfer_mem, 0, garbage.as_slice());
             // resize the transfer mem if needed
             // TODO: make the staging buffer owned by Renderer
             if memimg.as_slice().len() > self.transfer_buf_len {
@@ -1201,11 +1208,27 @@ impl Renderer {
                 self.transfer_buf = buffer;
                 self.transfer_mem = buf_mem;
                 self.transfer_buf_len = memimg.as_slice().len();
+            //let garbage: Vec<u32> = std::iter::repeat(4282712064)
+            //    .take(self.transfer_buf_len / 4)
+            //    .collect();
+            //self.update_memory(self.transfer_mem, 0, garbage.as_slice());
+            //self.update_memory(self.transfer_mem, 0, memimg.as_slice());
             } else {
                 // copy the data into the staging buffer
                 self.update_memory(self.transfer_mem, 0, memimg.as_slice());
             }
         }
+    }
+
+    /// Wait for the submit_fence
+    unsafe fn wait_for_prev_submit(&self) {
+        self.dev
+            .wait_for_fences(
+                &[self.submit_fence],
+                true,          // wait for all
+                std::u64::MAX, //timeout
+            )
+            .unwrap();
     }
 
     /// Records and submits a one-time command buffer.
@@ -1239,13 +1262,7 @@ impl Renderer {
         unsafe {
             // We need to wait for the command submission to finish, this
             // is why you should avoid using this function
-            self.dev
-                .wait_for_fences(
-                    &[self.submit_fence],
-                    true,          // wait for all
-                    std::u64::MAX, //timeout
-                )
-                .unwrap();
+            self.wait_for_prev_submit();
 
             // do not reset the fence since the next cbuf_submit will
             // expect it to be signaled
