@@ -168,6 +168,12 @@ impl Surface {
     pub fn get_surf_damage(&mut self) -> Option<Damage> {
         let mut surf = self.s_internal.borrow_mut();
         let mut ret = Damage::empty();
+        let surf_extent = Rect::new(
+            0,
+            0,
+            surf.s_rect.r_size.0 as i32,
+            surf.s_rect.r_size.1 as i32,
+        );
 
         // First add up the damage from the buffer
         if let Some(image_rc) = surf.s_image.as_ref() {
@@ -181,18 +187,17 @@ impl Surface {
                 );
 
                 for r in damage.regions() {
-                    let base = (
+                    // The image region scaled to surface space
+                    let region = Rect::new(
                         (r.r_pos.0 as f32 / scale.0) as i32,
                         (r.r_pos.1 as f32 / scale.1) as i32,
+                        (r.r_size.0 as f32 / scale.0) as i32,
+                        (r.r_size.1 as f32 / scale.1) as i32,
                     );
+
                     // Here we scale the image damage onto the surface size, and then
                     // clip it to the max surf extent.
-                    ret.add(&Rect::new(
-                        base.0,
-                        base.1,
-                        std::cmp::min(base.0, surf.s_rect.r_size.0 as i32 - base.0),
-                        std::cmp::min(base.1, surf.s_rect.r_size.1 as i32 - base.1),
-                    ));
+                    ret.add(&region.clip(&surf_extent));
                 }
             }
         }
@@ -200,15 +205,14 @@ impl Surface {
         // Now add in the surface damage
         if let Some(damage) = surf.s_surf_damage.take() {
             for r in damage.regions() {
-                let base = (r.r_pos.0 as i32, r.r_pos.1 as i32);
-                // Here we scale the image damage onto the surface size, and then
-                // clip it to the max image extent.
-                ret.add(&Rect::new(
-                    base.0,
-                    base.1,
-                    std::cmp::min(base.0, surf.s_rect.r_size.0 as i32 - base.0),
-                    std::cmp::min(base.1, surf.s_rect.r_size.1 as i32 - base.1),
-                ));
+                // The image region scaled to surface space
+                let region = Rect::new(
+                    r.r_pos.0 as i32,
+                    r.r_pos.1 as i32,
+                    r.r_size.0 as i32,
+                    r.r_size.1 as i32,
+                );
+                ret.add(&region.clip(&surf_extent));
             }
         }
 
@@ -246,6 +250,13 @@ impl Surface {
         // First add up the damage from the buffer
         if let Some(image_rc) = surf.s_image.as_ref() {
             let image = image_rc.i_internal.borrow();
+            let image_extent = Rect::new(
+                0,
+                0,
+                image.i_image_resolution.width as i32,
+                image.i_image_resolution.height as i32,
+            );
+
             // We need to scale the damage from the image size to the
             // size of this particular surface
             let scale = (
@@ -261,18 +272,14 @@ impl Surface {
             if let Some(damage) = surf_damage {
                 for r in damage.regions() {
                     // Remap the damage in image-coords, and clamp at the image size
-                    ret.add(&Rect::new(
+                    let region = Rect::new(
                         r.r_pos.0,
                         r.r_pos.1,
-                        std::cmp::min(
-                            (r.r_size.0 as f32 / scale.0) as i32,
-                            image.i_image_resolution.width as i32,
-                        ),
-                        std::cmp::min(
-                            (r.r_size.1 as f32 / scale.0) as i32,
-                            image.i_image_resolution.height as i32,
-                        ),
-                    ));
+                        (r.r_size.0 as f32 / scale.0) as i32,
+                        (r.r_size.1 as f32 / scale.0) as i32,
+                    );
+
+                    ret.add(&region.clip(&image_extent));
                 }
             }
         }

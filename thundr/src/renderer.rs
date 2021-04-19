@@ -23,7 +23,7 @@ use crate::platform::VKDeviceFeatures;
 
 extern crate utils as cat5_utils;
 use crate::{CreateInfo, Damage};
-use cat5_utils::{log, MemImage};
+use cat5_utils::{log, region::Rect, MemImage};
 
 // this happy little debug callback is from the ash examples
 // all it does is print any errors/warnings thrown.
@@ -1409,14 +1409,28 @@ impl Renderer {
 
     /// Adds damage to `regions` without modifying the damage
     fn aggregate_damage(&self, damage: &Damage, regions: &mut Vec<vk::RectLayerKHR>) {
+        let swapchain_extent = Rect::new(
+            0,
+            0,
+            self.resolution.width as i32,
+            self.resolution.height as i32,
+        );
+
         for d in damage.regions() {
+            // Limit the damage to the screen dimensions
+            let region = d.clip(&swapchain_extent);
+
             let rect = vk::RectLayerKHR::builder()
-                .offset(vk::Offset2D::builder().x(d.r_pos.0).y(d.r_pos.1).build())
+                .offset(
+                    vk::Offset2D::builder()
+                        .x(region.r_pos.0)
+                        .y(region.r_pos.1)
+                        .build(),
+                )
                 .extent(
                     vk::Extent2D::builder()
-                        // Limit the damage to the screen dimensions
-                        .width(std::cmp::min(d.r_size.0 as u32, self.resolution.width))
-                        .height(std::cmp::min(d.r_size.1 as u32, self.resolution.height))
+                        .width(region.r_size.0 as u32)
+                        .height(region.r_size.1 as u32)
                         .build(),
                 )
                 .build();

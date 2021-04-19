@@ -4,8 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use std::cmp::PartialOrd;
-use std::ops::Add;
+use std::cmp::{Ord, PartialOrd};
+use std::ops::{Add, Sub};
 
 /// A rectangular region
 ///
@@ -36,6 +36,18 @@ impl<T: PartialOrd + Copy + Add + Add<Output = T>> Rect<T> {
             && y > self.r_pos.1
             && x < self.r_pos.0 + self.r_size.0
             && y < self.r_pos.1 + self.r_size.1
+    }
+}
+
+impl<T: Ord + PartialOrd + Copy + Add + Add<Output = T> + Sub + Sub<Output = T>> Rect<T> {
+    /// Clip this Rect inside `other`.
+    pub fn clip(&self, other: &Rect<T>) -> Rect<T> {
+        Rect::new(
+            std::cmp::max(self.r_pos.0, other.r_pos.0),
+            std::cmp::max(self.r_pos.1, other.r_pos.1),
+            std::cmp::min(self.r_size.0, other.r_size.0 - self.r_pos.0),
+            std::cmp::min(self.r_size.1, other.r_size.1 - self.r_pos.1),
+        )
     }
 }
 
