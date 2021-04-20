@@ -1187,6 +1187,7 @@ impl Renderer {
         unsafe {
             // We might be in the middle of copying the transfer buf to an image
             // wait for that if its the case
+            self.wait_for_prev_submit();
             self.wait_for_copy_operation();
             //let garbage: Vec<u32> = std::iter::repeat(4282712064)
             //    .take(self.transfer_buf_len / 4)

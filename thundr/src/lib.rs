@@ -190,6 +190,11 @@ impl Thundr {
         })
     }
 
+    pub fn get_raw_vkdev_handle(&self) -> *const std::ffi::c_void {
+        use ash::vk::Handle;
+        self.th_rend.dev.handle().as_raw() as *const std::ffi::c_void
+    }
+
     pub fn get_resolution(&self) -> (u32, u32) {
         (
             self.th_rend.resolution.width,
