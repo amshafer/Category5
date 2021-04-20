@@ -52,6 +52,9 @@ use task::*;
 
 use std::sync::mpsc::{Receiver, Sender};
 
+extern crate renderdoc;
+use renderdoc::RenderDoc;
+
 /// This consolidates the multiple resources needed
 /// to represent a titlebar
 struct Titlebar {
@@ -125,6 +128,7 @@ pub struct WindowManager {
     wm_cursor: Option<th::Surface>,
     /// Title bar to draw above the windows
     wm_titlebar: Titlebar,
+    wm_renderdoc: RenderDoc<renderdoc::V141>,
 }
 
 impl WindowManager {
@@ -134,7 +138,9 @@ impl WindowManager {
     /// up all of the titlebars in a scene. These imagees will
     /// be colored differently when multidrawn
     fn get_default_titlebar(rend: &mut th::Thundr) -> Titlebar {
-        let img = image::open("images/bar.png").unwrap().to_rgba();
+        let img = image::open("/home/ashafer/git/compositor_playground/images/bar.png")
+            .unwrap()
+            .to_rgba();
         let pixels: Vec<u8> = img.into_vec();
 
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
@@ -143,7 +149,9 @@ impl WindowManager {
         let mut bar = rend.create_image_from_bits(&mimg, None).unwrap();
         bar.set_damage(0, 0, 64, 64);
 
-        let img = image::open("images/dot.png").unwrap().to_rgba();
+        let img = image::open("/home/ashafer/git/compositor_playground/images/dot.png")
+            .unwrap()
+            .to_rgba();
         let pixels: Vec<u8> = img.into_vec();
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
         let mut dot = rend.create_image_from_bits(&mimg, None).unwrap();
@@ -153,7 +161,9 @@ impl WindowManager {
     }
 
     fn get_default_cursor(rend: &mut th::Thundr) -> Option<th::Surface> {
-        let img = image::open("images/cursor.png").unwrap().to_rgba();
+        let img = image::open("/home/ashafer/git/compositor_playground/images/cursor.png")
+            .unwrap()
+            .to_rgba();
         let pixels: Vec<u8> = img.into_vec();
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
 
@@ -171,6 +181,7 @@ impl WindowManager {
     /// the compositor. The WindowManager will create and own
     /// the Thundr, thereby readying the display to draw.
     pub fn new(tx: Sender<Box<Hemisphere>>, rx: Receiver<Box<Hemisphere>>) -> WindowManager {
+        let doc = RenderDoc::new().unwrap();
         let info = th::CreateInfo::builder()
             //.enable_traditional_composition()
             .build();
@@ -191,6 +202,7 @@ impl WindowManager {
             wm_surface_ids: Vec::new(),
             wm_atmos_ids: Vec::new(),
             wm_background: None,
+            wm_renderdoc: doc,
         };
 
         // Tell the atmosphere rend's resolution
@@ -678,6 +690,9 @@ impl WindowManager {
             // This is a synchronization point. It will block
             self.wm_atmos.flip_hemispheres();
 
+            self.wm_renderdoc
+                .start_frame_capture(std::ptr::null(), std::ptr::null());
+
             // iterate through all the tasks that ways left
             // us in this hemisphere
             //  (aka process the work queue)
@@ -708,6 +723,8 @@ impl WindowManager {
                 draw_stop.get_duration().as_millis()
             );
 
+            self.wm_renderdoc
+                .end_frame_capture(std::ptr::null(), std::ptr::null());
             self.reap_dead_windows();
             self.wm_atmos.release_consumables();
 

@@ -19,6 +19,7 @@ bitflags=""
 xkbcommon=""
 atmos_gen={path="atmos_gen"}
 utils={path="utils"}
+renderdoc=""
 
 [build-dependencies]
 wayland-scanner="0.26.4"
