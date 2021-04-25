@@ -4,7 +4,7 @@
 //
 // Austin Shafer - 2021
 use ash::extensions::khr;
-use ash::version::InstanceV1_0;
+use ash::version::{InstanceV1_0, InstanceV1_1};
 use ash::{vk, Instance};
 
 use crate::CreateInfo;
@@ -86,40 +86,60 @@ impl VKDeviceFeatures {
             vkc_incremental_present_exts: [vk::KhrIncrementalPresentFn::name().as_ptr()],
         };
 
-        unsafe {
-            let exts = inst.enumerate_device_extension_properties(pdev).unwrap();
+        let exts = unsafe { inst.enumerate_device_extension_properties(pdev).unwrap() };
 
-            match contains_extensions(exts.as_slice(), &ret.vkc_ext_mem_exts) {
-                true => ret.vkc_supports_ext_mem = true,
-                false => {
-                    log::error!("This vulkan device does not support external memory importing")
-                }
-            }
-            match contains_extensions(exts.as_slice(), &ret.vkc_dmabuf_exts) {
-                true => ret.vkc_supports_dmabuf = true,
-                false => log::error!("This vulkan device does not support dmabuf import/export"),
-            }
-            match contains_extensions(exts.as_slice(), &ret.vkc_mut_swapchain_exts) {
-                true => ret.vkc_supports_mut_swapchain = true,
-                false => log::error!("This vulkan device does not support mutable swapchains"),
-            }
-            match contains_extensions(exts.as_slice(), &ret.vkc_desc_indexing_exts) {
-                true => ret.vkc_supports_desc_indexing = true,
-                false => log::error!("This vulkan device does not support descriptor indexing"),
-            }
-            match contains_extensions(exts.as_slice(), &ret.vkc_drm_modifiers_exts) {
-                true => ret.vkc_supports_drm_modifiers = true,
-                false => {
-                    log::error!("This vulkan device does not support importing with drm modifiers")
-                }
-            }
-            match contains_extensions(exts.as_slice(), &ret.vkc_incremental_present_exts) {
-                true => ret.vkc_supports_incremental_present = true,
-                false => {
-                    log::error!("This vulkan device does not support incremental presentation")
-                }
+        let mut supports_ext_mem = false;
+        match contains_extensions(exts.as_slice(), &ret.vkc_ext_mem_exts) {
+            true => supports_ext_mem = true,
+            false => log::error!("This vulkan device does not support external memory importing"),
+        }
+        let mut supports_dmabuf = false;
+        match contains_extensions(exts.as_slice(), &ret.vkc_dmabuf_exts) {
+            true => supports_dmabuf = true,
+            false => log::error!("This vulkan device does not support dmabuf import/export"),
+        }
+        let mut supports_mut_swapchain = false;
+        match contains_extensions(exts.as_slice(), &ret.vkc_mut_swapchain_exts) {
+            true => supports_mut_swapchain = true,
+            false => log::error!("This vulkan device does not support mutable swapchains"),
+        }
+        let mut supports_desc_indexing = false;
+        match contains_extensions(exts.as_slice(), &ret.vkc_desc_indexing_exts) {
+            true => supports_desc_indexing = true,
+            false => log::error!("This vulkan device does not support descriptor indexing"),
+        }
+        let mut supports_drm_modifiers = false;
+        match contains_extensions(exts.as_slice(), &ret.vkc_drm_modifiers_exts) {
+            true => supports_drm_modifiers = true,
+            false => {
+                log::error!("This vulkan device does not support importing with drm modifiers")
             }
         }
+        let mut supports_incremental_present = false;
+        match contains_extensions(exts.as_slice(), &ret.vkc_incremental_present_exts) {
+            true => supports_incremental_present = true,
+            false => log::error!("This vulkan device does not support incremental presentation"),
+        }
+
+        // Now test the device features to see if subcomponents of these extensions are available
+        let mut features = vk::PhysicalDeviceFeatures2::builder().build();
+        let mut index_features = vk::PhysicalDeviceDescriptorIndexingFeatures::builder().build();
+        if supports_desc_indexing {
+            features.p_next = &mut index_features as *mut _ as *mut std::ffi::c_void;
+        }
+        unsafe { inst.get_physical_device_features2(pdev, &mut features) }
+
+        ret.vkc_supports_ext_mem = supports_ext_mem;
+        ret.vkc_supports_dmabuf = supports_dmabuf;
+        ret.vkc_supports_mut_swapchain = supports_mut_swapchain;
+        ret.vkc_supports_drm_modifiers = supports_drm_modifiers;
+        ret.vkc_supports_incremental_present = supports_incremental_present;
+        ret.vkc_supports_desc_indexing = supports_desc_indexing
+            && index_features.descriptor_binding_variable_descriptor_count > 0
+            && index_features.descriptor_binding_partially_bound > 0
+            && index_features.descriptor_binding_update_unused_while_pending > 0
+            && index_features.descriptor_binding_storage_buffer_update_after_bind > 0
+            && index_features.descriptor_binding_sampled_image_update_after_bind > 0;
 
         return ret;
     }
