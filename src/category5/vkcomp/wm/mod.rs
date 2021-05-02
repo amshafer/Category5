@@ -64,6 +64,8 @@ struct Titlebar {
     dot: th::Image,
 }
 
+const IMAGE_PATH: &'static str = "/root/casa/compositor_playground/images/";
+
 /// This represents a client window.
 ///
 /// All drawn components are tracked with Image, this struct
@@ -138,7 +140,7 @@ impl WindowManager {
     /// up all of the titlebars in a scene. These imagees will
     /// be colored differently when multidrawn
     fn get_default_titlebar(rend: &mut th::Thundr) -> Titlebar {
-        let img = image::open("/home/ashafer/git/compositor_playground/images/bar.png")
+        let img = image::open(format!("{}/{}", IMAGE_PATH, "bar.png"))
             .unwrap()
             .to_rgba();
         let pixels: Vec<u8> = img.into_vec();
@@ -149,7 +151,7 @@ impl WindowManager {
         let mut bar = rend.create_image_from_bits(&mimg, None).unwrap();
         bar.set_damage(0, 0, 64, 64);
 
-        let img = image::open("/home/ashafer/git/compositor_playground/images/dot.png")
+        let img = image::open(format!("{}/{}", IMAGE_PATH, "/dot.png"))
             .unwrap()
             .to_rgba();
         let pixels: Vec<u8> = img.into_vec();
@@ -161,7 +163,7 @@ impl WindowManager {
     }
 
     fn get_default_cursor(rend: &mut th::Thundr) -> Option<th::Surface> {
-        let img = image::open("/home/ashafer/git/compositor_playground/images/cursor.png")
+        let img = image::open(format!("{}/{}", IMAGE_PATH, "/cursor.png"))
             .unwrap()
             .to_rgba();
         let pixels: Vec<u8> = img.into_vec();
