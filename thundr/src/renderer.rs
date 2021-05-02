@@ -630,6 +630,7 @@ impl Renderer {
         usage: vk::ImageUsageFlags,
         aspect: vk::ImageAspectFlags,
         flags: vk::MemoryPropertyFlags,
+        tiling: vk::ImageTiling,
     ) -> (vk::Image, vk::ImageView, vk::DeviceMemory) {
         // we create the image now, but will have to bind
         // some memory to it later.
@@ -644,7 +645,7 @@ impl Renderer {
             .mip_levels(1)
             .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
-            .tiling(vk::ImageTiling::OPTIMAL)
+            .tiling(tiling)
             .usage(usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let image = dev.create_image(&create_info, None).unwrap();
@@ -978,6 +979,7 @@ impl Renderer {
             usage,
             aspect_flags,
             mem_flags,
+            vk::ImageTiling::OPTIMAL,
         );
 
         self.update_image_contents_from_buf(src_buf, image, resolution.width, resolution.height);
@@ -1222,7 +1224,7 @@ impl Renderer {
     }
 
     /// Wait for the submit_fence
-    unsafe fn wait_for_prev_submit(&self) {
+    pub unsafe fn wait_for_prev_submit(&self) {
         self.dev
             .wait_for_fences(
                 &[self.submit_fence],

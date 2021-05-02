@@ -285,6 +285,7 @@ impl GeomPipeline {
                 vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
                 vk::ImageAspectFlags::DEPTH,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                vk::ImageTiling::OPTIMAL,
             );
 
             let framebuffers =

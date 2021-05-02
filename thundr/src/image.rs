@@ -168,7 +168,6 @@ impl Renderer {
                 height: img.height as u32,
             };
 
-            self.upload_memimage_to_transfer(img);
             // At this point we can drop release. We have already copied from the
             // memimage so we are good to signal wayland
 
@@ -176,14 +175,21 @@ impl Renderer {
             // client window.
             // TODO: this should eventually just use the image reported from
             // wayland.
-            let (image, view, img_mem) = self.create_image_with_contents(
+            let (image, view, img_mem) = Renderer::create_image(
+                &self.dev,
+                &self.mem_props,
                 &tex_res,
                 vk::Format::R8G8B8A8_UNORM,
                 vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
                 vk::ImageAspectFlags::COLOR,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                self.transfer_buf,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_COHERENT
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE,
+                vk::ImageTiling::LINEAR,
             );
+
+            // Now copy the bits into the image
+            self.update_memory(img_mem, 0, img.as_slice());
 
             return self.create_image_common(
                 ImagePrivate::MemImage,
@@ -493,13 +499,11 @@ impl Renderer {
                 memimg.height,
                 image.i_image_resolution
             );
-            // resize the transfer mem if needed
-            // TODO: only do this when the staging buffer is too small
-            // TODO: make the staging buffer owned by Renderer
 
-            // Wait for the previous copy to complete before stomping on the
-            // transfer buffer.
-            self.upload_memimage_to_transfer(memimg);
+            // Wait for any operations to complete before touching the buffer
+            self.wait_for_prev_submit();
+            // If the we are updating with a new size, then we need to recreate the
+            // image
             if memimg.width != image.i_image_resolution.width as usize
                 || memimg.height != image.i_image_resolution.height as usize
             {
@@ -508,7 +512,9 @@ impl Renderer {
                 self.dev.destroy_image(image.i_image, None);
                 // we need to re-create & resize the image since we changed
                 // the resolution
-                let (vkimage, view, img_mem) = self.create_image_with_contents(
+                let (vkimage, view, img_mem) = Renderer::create_image(
+                    &self.dev,
+                    &self.mem_props,
                     &vk::Extent2D {
                         width: memimg.width as u32,
                         height: memimg.height as u32,
@@ -516,8 +522,10 @@ impl Renderer {
                     vk::Format::R8G8B8A8_UNORM,
                     vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
                     vk::ImageAspectFlags::COLOR,
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    self.transfer_buf,
+                    vk::MemoryPropertyFlags::DEVICE_LOCAL
+                        | vk::MemoryPropertyFlags::HOST_COHERENT
+                        | vk::MemoryPropertyFlags::HOST_VISIBLE,
+                    vk::ImageTiling::LINEAR,
                 );
                 image.i_image = vkimage;
                 image.i_image_view = view;
@@ -525,21 +533,12 @@ impl Renderer {
                 // update our image's resolution
                 image.i_image_resolution.width = memimg.width as u32;
                 image.i_image_resolution.height = memimg.height as u32;
-            } else {
-                // copy the staging buffer into the image
-                match damage {
-                    None => self.update_image_contents_from_buf(
-                        self.transfer_buf,
-                        image.i_image,
-                        image.i_image_resolution.width,
-                        image.i_image_resolution.height,
-                    ),
-                    Some(damage) => self.update_image_contents_from_damaged_buf(
-                        self.transfer_buf,
-                        image.i_image,
-                        damage,
-                    ),
-                }
+            }
+
+            // Perform the copy
+            match damage {
+                None => self.update_memory(image.i_image_mem, 0, memimg.as_slice()),
+                Some(damage) => self.update_memory(image.i_image_mem, 0, memimg.as_slice()),
             }
         }
 
