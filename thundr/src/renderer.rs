@@ -217,7 +217,7 @@ impl Renderer {
             .application_version(0)
             .engine_name(&app_name)
             .engine_version(0)
-            .api_version(vk::make_version(1, 1, 127));
+            .api_version(vk::make_version(1, 2, 127));
 
         let create_info = vk::InstanceCreateInfo::builder()
             .application_info(&appinfo)
