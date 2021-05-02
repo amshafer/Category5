@@ -692,8 +692,10 @@ impl WindowManager {
             // This is a synchronization point. It will block
             self.wm_atmos.flip_hemispheres();
 
-            self.wm_renderdoc
-                .start_frame_capture(std::ptr::null(), std::ptr::null());
+            if self.wm_atmos.get_renderdoc_recording() {
+                self.wm_renderdoc
+                    .start_frame_capture(std::ptr::null(), std::ptr::null());
+            }
 
             // iterate through all the tasks that ways left
             // us in this hemisphere
@@ -725,8 +727,10 @@ impl WindowManager {
                 draw_stop.get_duration().as_millis()
             );
 
-            self.wm_renderdoc
-                .end_frame_capture(std::ptr::null(), std::ptr::null());
+            if self.wm_atmos.get_renderdoc_recording() {
+                self.wm_renderdoc
+                    .end_frame_capture(std::ptr::null(), std::ptr::null());
+            }
             self.reap_dead_windows();
             self.wm_atmos.release_consumables();
 

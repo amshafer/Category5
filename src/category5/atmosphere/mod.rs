@@ -161,6 +161,10 @@ enum GlobalProperty {
     /// that this is a subsurface. Therefore `win_focus` will be the "root" application
     /// toplevel window, and `surf_focus` may be a subsurface of that window tree.
     surf_focus(Option<WindowId>),
+    /// Is recording traces with Renderdoc enabled?
+    /// This is used for debugging. input will trigger this, which tells vkcomp
+    /// to record frames.
+    renderdoc_recording(bool),
 }
 
 // These are indexed by ClientId
@@ -366,6 +370,7 @@ impl Atmosphere {
         atmos.set_resizing(None);
         atmos.set_win_focus(None);
         atmos.set_surf_focus(None);
+        atmos.set_renderdoc_recording(false);
 
         return atmos;
     }

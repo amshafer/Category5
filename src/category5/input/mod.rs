@@ -646,13 +646,29 @@ impl Input {
         }
     }
 
+    // TODO: add gesture recognition
+    pub fn handle_compositor_shortcut(&mut self, key: &Key) -> bool {
+        let mut atmos = self.i_atmos.borrow_mut();
+        // TODO: keysyms::KEY_Meta_L doesn't work? should be 125 for left meta
+        if key.k_code == 125 {
+            match atmos.get_renderdoc_recording() {
+                true => atmos.set_renderdoc_recording(false),
+                false => atmos.set_renderdoc_recording(true),
+            }
+            return true;
+        }
+        return false;
+    }
+
     /// Handle the user typing on the keyboard.
     ///
     /// Deliver the wl_keyboard.key and modifier events.
     pub fn handle_keyboard(&mut self, key: &Key) {
-        // find the client in use
-        let atmos = self.i_atmos.borrow_mut();
+        if self.handle_compositor_shortcut(key) {
+            return;
+        }
 
+        let atmos = self.i_atmos.borrow_mut();
         // Do the xkbcommon keyboard update first, since it needs to happen
         // even if there isn't a window in focus
         // let xkb keep track of the keyboard state
