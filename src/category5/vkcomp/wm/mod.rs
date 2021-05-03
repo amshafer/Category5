@@ -64,7 +64,8 @@ struct Titlebar {
     dot: th::Image,
 }
 
-const IMAGE_PATH: &'static str = "/root/casa/compositor_playground/images/";
+//const IMAGE_PATH: &'static str = "/root/casa/compositor_playground/images/";
+const IMAGE_PATH: &'static str = "/home/ashafer/compositor_playground/images/";
 
 /// This represents a client window.
 ///
