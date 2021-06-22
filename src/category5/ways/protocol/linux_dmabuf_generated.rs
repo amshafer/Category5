@@ -8,7 +8,7 @@ static mut types_null: [*const sys::common::wl_interface; 6] = [
     NULLPTR as *const sys::common::wl_interface,
     NULLPTR as *const sys::common::wl_interface,
 ];
-#[doc = "factory for creating dmabuf-based wl_buffers\n\nFollowing the interfaces from:\nhttps://www.khronos.org/registry/egl/extensions/EXT/EGL_EXT_image_dma_buf_import.txt\nhttps://www.khronos.org/registry/EGL/extensions/EXT/EGL_EXT_image_dma_buf_import_modifiers.txt\nand the Linux DRM sub-system's AddFb2 ioctl.\n\nThis interface offers ways to create generic dmabuf-based\nwl_buffers. Immediately after a client binds to this interface,\nthe set of supported formats and format modifiers is sent with\n'format' and 'modifier' events.\n\nThe following are required from clients:\n\n- Clients must ensure that either all data in the dma-buf is\ncoherent for all subsequent read access or that coherency is\ncorrectly handled by the underlying kernel-side dma-buf\nimplementation.\n\n- Don't make any more attachments after sending the buffer to the\ncompositor. Making more attachments later increases the risk of\nthe compositor not being able to use (re-import) an existing\ndmabuf-based wl_buffer.\n\nThe underlying graphics stack must ensure the following:\n\n- The dmabuf file descriptors relayed to the server will stay valid\nfor the whole lifetime of the wl_buffer. This means the server may\nat any time use those fds to import the dmabuf into any kernel\nsub-system that might accept it.\n\nTo create a wl_buffer from one or more dmabufs, a client creates a\nzwp_linux_dmabuf_params_v1 object with a zwp_linux_dmabuf_v1.create_params\nrequest. All planes required by the intended format are added with\nthe 'add' request. Finally, a 'create' or 'create_immed' request is\nissued, which has the following outcome depending on the import success.\n\nThe 'create' request,\n- on success, triggers a 'created' event which provides the final\nwl_buffer to the client.\n- on failure, triggers a 'failed' event to convey that the server\ncannot use the dmabufs received from the client.\n\nFor the 'create_immed' request,\n- on success, the server immediately imports the added dmabufs to\ncreate a wl_buffer. No event is sent from the server in this case.\n- on failure, the server can choose to either:\n- terminate the client by raising a fatal error.\n- mark the wl_buffer as failed, and send a 'failed' event to the\nclient. If the client uses a failed wl_buffer as an argument to any\nrequest, the behaviour is compositor implementation-defined.\n\nWarning! The protocol described in this file is experimental and\nbackward incompatible changes may be made. Backward compatible changes\nmay be added together with the corresponding interface version bump.\nBackward incompatible changes are done by bumping the version number in\nthe protocol and interface names and resetting the interface version.\nOnce the protocol is to be declared stable, the 'z' prefix and the\nversion number in the protocol and interface names are removed and the\ninterface version number is reset."]
+#[doc = "factory for creating dmabuf-based wl_buffers\n\nFollowing the interfaces from:\nhttps://www.khronos.org/registry/egl/extensions/EXT/EGL_EXT_image_dma_buf_import.txt\nhttps://www.khronos.org/registry/EGL/extensions/EXT/EGL_EXT_image_dma_buf_import_modifiers.txt\nand the Linux DRM sub-system's AddFb2 ioctl.\n\nThis interface offers ways to create generic dmabuf-based\nwl_buffers. Immediately after a client binds to this interface,\nthe set of supported formats and format modifiers is sent with\n'format' and 'modifier' events.\n\nThe following are required from clients:\n\n- Clients must ensure that either all data in the dma-buf is\ncoherent for all subsequent read access or that coherency is\ncorrectly handled by the underlying kernel-side dma-buf\nimplementation.\n\n- Don't make any more attachments after sending the buffer to the\ncompositor. Making more attachments later increases the risk of\nthe compositor not being able to use (re-import) an existing\ndmabuf-based wl_buffer.\n\nThe underlying graphics stack must ensure the following:\n\n- The dmabuf file descriptors relayed to the server will stay valid\nfor the whole lifetime of the wl_buffer. This means the server may\nat any time use those fds to import the dmabuf into any kernel\nsub-system that might accept it.\n\nHowever, when the underlying graphics stack fails to deliver the\npromise, because of e.g. a device hot-unplug which raises internal\nerrors, after the wl_buffer has been successfully created the\ncompositor must not raise protocol errors to the client when dmabuf\nimport later fails.\n\nTo create a wl_buffer from one or more dmabufs, a client creates a\nzwp_linux_dmabuf_params_v1 object with a zwp_linux_dmabuf_v1.create_params\nrequest. All planes required by the intended format are added with\nthe 'add' request. Finally, a 'create' or 'create_immed' request is\nissued, which has the following outcome depending on the import success.\n\nThe 'create' request,\n- on success, triggers a 'created' event which provides the final\nwl_buffer to the client.\n- on failure, triggers a 'failed' event to convey that the server\ncannot use the dmabufs received from the client.\n\nFor the 'create_immed' request,\n- on success, the server immediately imports the added dmabufs to\ncreate a wl_buffer. No event is sent from the server in this case.\n- on failure, the server can choose to either:\n- terminate the client by raising a fatal error.\n- mark the wl_buffer as failed, and send a 'failed' event to the\nclient. If the client uses a failed wl_buffer as an argument to any\nrequest, the behaviour is compositor implementation-defined.\n\nWarning! The protocol described in this file is experimental and\nbackward incompatible changes may be made. Backward compatible changes\nmay be added together with the corresponding interface version bump.\nBackward incompatible changes are done by bumping the version number in\nthe protocol and interface names and resetting the interface version.\nOnce the protocol is to be declared stable, the 'z' prefix and the\nversion number in the protocol and interface names are removed and the\ninterface version number is reset."]
 pub mod zwp_linux_dmabuf_v1 {
     use super::sys::common::{wl_argument, wl_array, wl_interface, wl_message};
     use super::sys::server::*;
@@ -123,7 +123,7 @@ pub mod zwp_linux_dmabuf_v1 {
     pub enum Event {
         #[doc = "supported buffer format\n\nThis event advertises one buffer format that the server supports.\nAll the supported formats are advertised once when the client\nbinds to this interface. A roundtrip after binding guarantees\nthat the client has received all supported formats.\n\nFor the definition of the format codes, see the\nzwp_linux_buffer_params_v1::create request.\n\nWarning: the 'format' event is likely to be deprecated and replaced\nwith the 'modifier' event introduced in zwp_linux_dmabuf_v1\nversion 3, described below. Please refrain from using the information\nreceived from this event."]
         Format { format: u32 },
-        #[doc = "supported buffer format modifier\n\nThis event advertises the formats that the server supports, along with\nthe modifiers supported for each format. All the supported modifiers\nfor all the supported formats are advertised once when the client\nbinds to this interface. A roundtrip after binding guarantees that\nthe client has received all supported format-modifier pairs.\n\nFor legacy support, DRM_FORMAT_MOD_INVALID (that is, modifier_hi ==\n0x00ffffff and modifier_lo == 0xffffffff) is allowed in this event.\nIt indicates that the server can support the format with an implicit\nmodifier. When a plane has DRM_FORMAT_MOD_INVALID as its modifier, it\nis as if no explicit modifier is specified. The effective modifier\nwill be derived from the dmabuf.\n\nFor the definition of the format and modifier codes, see the\nzwp_linux_buffer_params_v1::create and zwp_linux_buffer_params_v1::add\nrequests.\n\nOnly available since version 3 of the interface"]
+        #[doc = "supported buffer format modifier\n\nThis event advertises the formats that the server supports, along with\nthe modifiers supported for each format. All the supported modifiers\nfor all the supported formats are advertised once when the client\nbinds to this interface. A roundtrip after binding guarantees that\nthe client has received all supported format-modifier pairs.\n\nFor legacy support, DRM_FORMAT_MOD_INVALID (that is, modifier_hi ==\n0x00ffffff and modifier_lo == 0xffffffff) is allowed in this event.\nIt indicates that the server can support the format with an implicit\nmodifier. When a plane has DRM_FORMAT_MOD_INVALID as its modifier, it\nis as if no explicit modifier is specified. The effective modifier\nwill be derived from the dmabuf.\n\nA compositor that sends valid modifiers and DRM_FORMAT_MOD_INVALID for\na given format supports both explicit modifiers and implicit modifiers.\n\nFor the definition of the format and modifier codes, see the\nzwp_linux_buffer_params_v1::create and zwp_linux_buffer_params_v1::add\nrequests.\n\nOnly available since version 3 of the interface"]
         Modifier {
             format: u32,
             modifier_hi: u32,
@@ -267,7 +267,7 @@ pub mod zwp_linux_dmabuf_v1 {
             let msg = Event::Format { format: format };
             self.0.send(msg);
         }
-        #[doc = "supported buffer format modifier\n\nThis event advertises the formats that the server supports, along with\nthe modifiers supported for each format. All the supported modifiers\nfor all the supported formats are advertised once when the client\nbinds to this interface. A roundtrip after binding guarantees that\nthe client has received all supported format-modifier pairs.\n\nFor legacy support, DRM_FORMAT_MOD_INVALID (that is, modifier_hi ==\n0x00ffffff and modifier_lo == 0xffffffff) is allowed in this event.\nIt indicates that the server can support the format with an implicit\nmodifier. When a plane has DRM_FORMAT_MOD_INVALID as its modifier, it\nis as if no explicit modifier is specified. The effective modifier\nwill be derived from the dmabuf.\n\nFor the definition of the format and modifier codes, see the\nzwp_linux_buffer_params_v1::create and zwp_linux_buffer_params_v1::add\nrequests.\n\nOnly available since version 3 of the interface."]
+        #[doc = "supported buffer format modifier\n\nThis event advertises the formats that the server supports, along with\nthe modifiers supported for each format. All the supported modifiers\nfor all the supported formats are advertised once when the client\nbinds to this interface. A roundtrip after binding guarantees that\nthe client has received all supported format-modifier pairs.\n\nFor legacy support, DRM_FORMAT_MOD_INVALID (that is, modifier_hi ==\n0x00ffffff and modifier_lo == 0xffffffff) is allowed in this event.\nIt indicates that the server can support the format with an implicit\nmodifier. When a plane has DRM_FORMAT_MOD_INVALID as its modifier, it\nis as if no explicit modifier is specified. The effective modifier\nwill be derived from the dmabuf.\n\nA compositor that sends valid modifiers and DRM_FORMAT_MOD_INVALID for\na given format supports both explicit modifiers and implicit modifiers.\n\nFor the definition of the format and modifier codes, see the\nzwp_linux_buffer_params_v1::create and zwp_linux_buffer_params_v1::add\nrequests.\n\nOnly available since version 3 of the interface."]
         pub fn modifier(&self, format: u32, modifier_hi: u32, modifier_lo: u32) -> () {
             let msg = Event::Modifier {
                 format: format,
@@ -374,28 +374,13 @@ pub mod zwp_linux_buffer_params_v1 {
             *self as u32
         }
     }
-    #[repr(u32)]
-    #[derive(Copy, Clone, Debug, PartialEq)]
-    #[non_exhaustive]
-    pub enum Flags {
-        #[doc = "contents are y-inverted"]
-        YInvert = 1,
-        #[doc = "content is interlaced"]
-        Interlaced = 2,
-        #[doc = "bottom field first"]
-        BottomFirst = 4,
-    }
+    bitflags! { pub struct Flags : u32 { # [ doc = "contents are y-inverted" ] const YInvert = 1 ; # [ doc = "content is interlaced" ] const Interlaced = 2 ; # [ doc = "bottom field first" ] const BottomFirst = 4 ; } }
     impl Flags {
         pub fn from_raw(n: u32) -> Option<Flags> {
-            match n {
-                1 => Some(Flags::YInvert),
-                2 => Some(Flags::Interlaced),
-                4 => Some(Flags::BottomFirst),
-                _ => Option::None,
-            }
+            Some(Flags::from_bits_truncate(n))
         }
         pub fn to_raw(&self) -> u32 {
-            *self as u32
+            self.bits()
         }
     }
     #[non_exhaustive]
@@ -416,7 +401,7 @@ pub mod zwp_linux_buffer_params_v1 {
             width: i32,
             height: i32,
             format: u32,
-            flags: u32,
+            flags: Flags,
         },
         #[doc = "immediately create a wl_buffer from the given dmabufs\n\nThis asks for immediate creation of a wl_buffer by importing the\nadded dmabufs.\n\nIn case of import success, no event is sent from the server, and the\nwl_buffer is ready to be used by the client.\n\nUpon import failure, either of the following may happen, as seen fit\nby the implementation:\n- the client is terminated with one of the following fatal protocol\nerrors:\n- INCOMPLETE, INVALID_FORMAT, INVALID_DIMENSIONS, OUT_OF_BOUNDS,\nin case of argument errors such as mismatch between the number\nof planes and the format, bad format, non-positive width or\nheight, or bad offset or stride.\n- INVALID_WL_BUFFER, in case the cause for failure is unknown or\nplaform specific.\n- the server creates an invalid wl_buffer, marks it as failed and\nsends a 'failed' event to the client. The result of using this\ninvalid wl_buffer as an argument in any request by the client is\ndefined by the compositor implementation.\n\nThis takes the same arguments as a 'create' request, and obeys the\nsame restrictions.\n\nOnly available since version 2 of the interface"]
         CreateImmed {
@@ -424,7 +409,7 @@ pub mod zwp_linux_buffer_params_v1 {
             width: i32,
             height: i32,
             format: u32,
-            flags: u32,
+            flags: Flags,
         },
     }
     impl super::MessageGroup for Request {
@@ -584,7 +569,7 @@ pub mod zwp_linux_buffer_params_v1 {
                         },
                         flags: {
                             if let Some(Argument::Uint(val)) = args.next() {
-                                val
+                                Flags::from_raw(val).ok_or(())?
                             } else {
                                 return Err(());
                             }
@@ -624,7 +609,7 @@ pub mod zwp_linux_buffer_params_v1 {
                         },
                         flags: {
                             if let Some(Argument::Uint(val)) = args.next() {
-                                val
+                                Flags::from_raw(val).ok_or(())?
                             } else {
                                 return Err(());
                             }
@@ -661,7 +646,7 @@ pub mod zwp_linux_buffer_params_v1 {
                         width: _args[0].i,
                         height: _args[1].i,
                         format: _args[2].u,
-                        flags: _args[3].u,
+                        flags: Flags::from_raw(_args[3].u).ok_or(())?,
                     })
                 }
                 3 => {
@@ -675,7 +660,7 @@ pub mod zwp_linux_buffer_params_v1 {
                         width: _args[1].i,
                         height: _args[2].i,
                         format: _args[3].u,
-                        flags: _args[4].u,
+                        flags: Flags::from_raw(_args[4].u).ok_or(())?,
                     })
                 }
                 _ => return Err(()),
