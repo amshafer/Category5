@@ -31,11 +31,28 @@ impl Wayc {
             c_events: queue,
             c_reg: registry,
         };
-        ret.register_globals();
+        ret.register_globals(wl_disp);
         return ret;
     }
 
-    fn register_globals(&mut self) {}
+    fn register_globals(&mut self, wl_disp: wc::Attached<wcp::wl_display::WlDisplay>) {
+        let gman = wc::GlobalManager::new(&wl_disp);
+
+        for (_name, interface, version) in gman.list() {
+            println!("Found global: {} ver {}", interface, version);
+        }
+
+        let wl_compositor = gman
+            .instantiate_range::<wcp::wl_compositor::WlCompositor>(0, 4)
+            .expect("Could not get the wl_compositor global");
+
+        wl_compositor.quick_assign(move |_proxy, event, _| {
+            match event {
+                // All other requests are invalid
+                _ => unimplemented!(),
+            }
+        });
+    }
 
     pub fn dispatch(&mut self) {
         self.c_events
