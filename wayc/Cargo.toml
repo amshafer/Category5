@@ -8,3 +8,4 @@ edition = "2018"
 
 [dependencies]
 wayland-client={features=["use_system_lib"]}
+anyhow = ""
