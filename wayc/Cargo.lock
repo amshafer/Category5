@@ -120,6 +120,8 @@ name = "wayc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libc",
+ "nix",
  "wayland-client",
 ]
 

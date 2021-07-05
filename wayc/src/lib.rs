@@ -13,6 +13,9 @@ use wc::protocol as wcp;
 extern crate anyhow;
 pub use anyhow::{Context, Result};
 
+extern crate libc;
+extern crate nix;
+
 // Now for the types we export
 mod surface;
 pub use surface::{Surface, SurfaceHandle};
@@ -33,6 +36,7 @@ pub struct Wayc {
     c_disp: wc::Display,
     c_reg: wc::Main<wcp::wl_registry::WlRegistry>,
     c_compositor: wc::Main<wcp::wl_compositor::WlCompositor>,
+    c_shm: wc::Main<wcp::wl_shm::WlShm>,
 }
 
 impl Wayc {
@@ -41,6 +45,9 @@ impl Wayc {
     /// This will connec to the system compositor following normal env vars. It will
     /// then create a wl_registry, and initialize the necessary globals (including wl_compositor)
     pub fn new() -> Result<Self> {
+        // Hook up to the window system
+        // ----------------------------------------
+
         // connection to the wayland compositor
         let disp = wc::Display::connect_to_env().context("Could not create a wl_display")?;
         let queue = disp.create_event_queue();
@@ -52,6 +59,7 @@ impl Wayc {
         let registry = wl_disp.get_registry();
 
         // Now register our globals
+        // ----------------------------------------
         let gman = wc::GlobalManager::new(&wl_disp);
 
         for (_name, interface, version) in gman.list() {
@@ -69,20 +77,55 @@ impl Wayc {
             }
         });
 
+        let wl_shm = gman
+            .instantiate_range::<wcp::wl_shm::WlShm>(0, 1)
+            .context("Could not get the wl_shm global")?;
+
+        wl_shm.quick_assign(move |_proxy, event, _| {
+            match event {
+                // All other requests are invalid
+                wcp::wl_shm::Event::Format { format } => {
+                    println!("wl_shm supports format {:?}", format)
+                }
+                _ => unimplemented!(),
+            }
+        });
+
+        // use nix to alloc a file to back our shm pool
+        // need to do this right before making our buffer(s)? pool is 3x the
+        // size of the buffer?
+        //wl_compositor.create_pool(fd, pool_size);
+
+        // ----------------------------------------
+
         Ok(Self {
             c_disp: disp,
             c_events: queue,
             c_reg: registry,
             c_compositor: wl_compositor,
+            c_shm: wl_shm,
         })
     }
 
-    pub fn create_surface(&mut self) -> SurfaceHandle {
+    /// Create a new wl_surface, and return a handle that will track its lifetime.
+    ///
+    /// This handle is really a `Rc<RefCell<Surface>`, and the same access rules apply.
+    /// You will use this handle to update the surface, and retrieve protocol objects if
+    /// needed.
+    pub fn create_surface(&mut self) -> Result<SurfaceHandle> {
         let wl_surf = self.c_compositor.create_surface();
 
-        Surface::new(wl_surf)
+        Ok(Surface::new(wl_surf))
     }
 
+    pub fn create_shm_buffer(&mut self, width: usize, height: usize) -> Result<BufferHandle> {
+        Buffer::new_shm(self, width, height)
+    }
+
+    /// Dispatch the wayland library to go handle some events.
+    ///
+    /// This is used in the main event loop, and this will eventually call down to all
+    /// the event handlers that wayc has registered on wayland objects.
     pub fn dispatch(&mut self) {
         self.c_events
             .dispatch(&mut (), |_, _, _| {
