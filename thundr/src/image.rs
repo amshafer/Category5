@@ -533,6 +533,19 @@ impl Renderer {
                 // update our image's resolution
                 image.i_image_resolution.width = memimg.width as u32;
                 image.i_image_resolution.height = memimg.height as u32;
+
+                // The image samplers are bound to an image view. So once we
+                // have recreated the image view, update the sampler descs
+                for i in 0..self.fb_count {
+                    // bind the texture for our window
+                    self.update_sampler_descriptor_set(
+                        image.i_sampler_descriptors[i],
+                        1, //n binding
+                        0, // element
+                        self.image_sampler,
+                        image.i_image_view,
+                    );
+                }
             }
 
             // Perform the copy

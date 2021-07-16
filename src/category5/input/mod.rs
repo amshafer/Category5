@@ -650,7 +650,7 @@ impl Input {
     pub fn handle_compositor_shortcut(&mut self, key: &Key) -> bool {
         let mut atmos = self.i_atmos.borrow_mut();
         // TODO: keysyms::KEY_Meta_L doesn't work? should be 125 for left meta
-        if key.k_code == 125 {
+        if key.k_code == 125 && key.k_state == KeyState::Pressed {
             match atmos.get_renderdoc_recording() {
                 true => atmos.set_renderdoc_recording(false),
                 false => atmos.set_renderdoc_recording(true),

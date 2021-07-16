@@ -65,7 +65,7 @@ struct Titlebar {
 }
 
 //const IMAGE_PATH: &'static str = "/root/casa/compositor_playground/images/";
-const IMAGE_PATH: &'static str = "/home/ashafer/compositor_playground/images/";
+const IMAGE_PATH: &'static str = "/home/ashafer/git/compositor_playground/images/";
 
 /// This represents a client window.
 ///
@@ -186,7 +186,7 @@ impl WindowManager {
     pub fn new(tx: Sender<Box<Hemisphere>>, rx: Receiver<Box<Hemisphere>>) -> WindowManager {
         let doc = RenderDoc::new().unwrap();
         let info = th::CreateInfo::builder()
-            //.enable_traditional_composition()
+            .enable_traditional_composition()
             .build();
         let mut rend = th::Thundr::new(&info).unwrap();
         let mut list = th::SurfaceList::new();
