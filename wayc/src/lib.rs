@@ -11,7 +11,7 @@ use wayland_client as wc;
 use wc::protocol as wcp;
 
 extern crate anyhow;
-pub use anyhow::{Context, Result};
+pub use anyhow::{anyhow, Context, Result};
 
 extern crate libc;
 extern crate nix;

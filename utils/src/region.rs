@@ -2,7 +2,7 @@
 //
 // Austin Shafer - 2020
 
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 
 use std::cmp::{Ord, PartialOrd};
 use std::ops::{Add, Sub};
