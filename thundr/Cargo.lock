@@ -20,6 +20,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.42"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "595d3cfa7a60d4555cb5067b99f07142a08ea778de5cf993f7b75c7d8fabc486"
+
+[[package]]
 name = "approx"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1013,6 +1019,7 @@ dependencies = [
 name = "thundr"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "ash",
  "bincode",
  "bitflags",
@@ -1024,6 +1031,7 @@ dependencies = [
  "objc",
  "serde",
  "utils",
+ "wayland-client",
  "winit",
 ]
 
@@ -1054,6 +1062,7 @@ version = "0.1.0"
 dependencies = [
  "nix 0.17.0",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]

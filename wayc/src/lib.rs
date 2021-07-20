@@ -140,4 +140,8 @@ impl Wayc {
     pub fn flush(&mut self) {
         self.c_disp.flush().unwrap();
     }
+
+    pub fn get_wl_display(&self) -> wc::Display {
+        self.c_disp.clone()
+    }
 }

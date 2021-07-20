@@ -88,6 +88,12 @@ pub use crate::utils::region::Rect;
 pub use crate::utils::{Dmabuf, MemImage};
 use utils::log;
 
+extern crate anyhow;
+pub use anyhow::{anyhow, Context, Result};
+
+#[cfg(feature = "wayland")]
+extern crate wayland_client as wc;
+
 #[macro_use]
 extern crate memoffset;
 use pipelines::*;
@@ -116,6 +122,8 @@ pub enum SurfaceType<'a> {
     Xcb(&'a winit::window::Window),
     #[cfg(feature = "macos")]
     MacOS(&'a winit::window::Window),
+    #[cfg(feature = "wayland")]
+    Wayland(wc::Display, wc::protocol::wl_surface::WlSurface),
 }
 
 /// Parameters for Renderer creation.
@@ -169,7 +177,7 @@ impl<'a> CreateInfoBuilder<'a> {
 // This is the public facing thundr api. Don't change it
 impl Thundr {
     // TODO: make get_available_params and add customization
-    pub fn new(info: &CreateInfo) -> Result<Thundr, &'static str> {
+    pub fn new(info: &CreateInfo) -> Result<Thundr> {
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
         let mut rend = Renderer::new(&info);
@@ -180,7 +188,9 @@ impl Thundr {
         } else if info.enable_compute_composition {
             Box::new(CompPipeline::new(&mut rend))
         } else {
-            return Err("Please select a composition type in the thundr CreateInfo");
+            return Err(anyhow!(
+                "Please select a composition type in the thundr CreateInfo"
+            ));
         };
 
         Ok(Thundr {

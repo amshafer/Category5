@@ -3,8 +3,10 @@ name = "dakota"
 version = "0.1.0"
 authors = ["Austin Shafer <ashafer@badland.io>"]
 edition = "2018"
-license = "BSD-2-Clause"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+thundr={path="../thundr", features=["wayland"]}
+wayc={path="../wayc"}
+anyhow=""

@@ -11,6 +11,9 @@ use ash::extensions::mvk::MacOSSurface;
 #[cfg(any(feature = "xcb", feature = "macos"))]
 extern crate winit;
 
+#[cfg(feature = "wayland")]
+extern crate wayland_client as wc;
+
 use ash::extensions::ext::DebugReport;
 use ash::extensions::khr;
 use ash::version::{EntryV1_0, InstanceV1_0};
@@ -41,7 +44,9 @@ enum Backend {
     #[cfg(feature = "xcb")]
     XcbDisplay(XcbDisplay),
     #[cfg(feature = "macos")]
-    MacOSDisplay(MacOSDisplay),
+    MacOSDisplay(MacOsDisplay),
+    #[cfg(feature = "wayland")]
+    WaylandDisplay(WlDisplay),
 }
 
 enum BackendType {
@@ -50,6 +55,8 @@ enum BackendType {
     XcbDisplay,
     #[cfg(feature = "macos")]
     MacOSDisplay,
+    #[cfg(feature = "wayland")]
+    WaylandDisplay,
 }
 
 impl Display {
@@ -60,6 +67,8 @@ impl Display {
             SurfaceType::Xcb(_) => BackendType::XcbDisplay,
             #[cfg(feature = "macos")]
             SurfaceType::MacOS(_) => BackendType::MacOSDisplay,
+            #[cfg(feature = "wayland")]
+            SurfaceType::Wayland(_, _) => BackendType::WaylandDisplay,
         }
     }
 
@@ -90,6 +99,15 @@ impl Display {
                     .get_physical_device_surface_capabilities(pdev, surf)
                     .unwrap();
                 (Backend::MacOSDisplay(xd), surf, caps.current_extent)
+            }
+            #[cfg(feature = "wayland")]
+            SurfaceType::Wayland(display, surface) => {
+                let (wd, surf) =
+                    WlDisplay::new(entry, inst, pdev, display.clone(), surface.clone());
+                let caps = s_loader
+                    .get_physical_device_surface_capabilities(pdev, surf)
+                    .unwrap();
+                (Backend::WaylandDisplay(wd), surf, caps.current_extent)
             }
         };
 
@@ -129,6 +147,10 @@ impl Display {
             Backend::MacOSDisplay(md) => {
                 md.select_surface_format(&self.d_surface_loader, self.d_surface, pdev)
             }
+            #[cfg(feature = "wayland")]
+            Backend::WaylandDisplay(wd) => {
+                wd.select_surface_format(&self.d_surface_loader, self.d_surface, pdev)
+            }
         }
     }
 
@@ -139,6 +161,8 @@ impl Display {
             BackendType::XcbDisplay => XcbDisplay::extension_names(),
             #[cfg(feature = "macos")]
             BackendType::MacOSDisplay => MacOSDisplay::extension_names(),
+            #[cfg(feature = "wayland")]
+            BackendType::WaylandDisplay => WlDisplay::extension_names(),
         }
     }
 
@@ -529,6 +553,110 @@ impl MacOSDisplay {
         vec![
             khr::Surface::name().as_ptr(),
             MacOSSurface::name().as_ptr(),
+            DebugReport::name().as_ptr(),
+        ]
+    }
+}
+
+#[cfg(feature = "wayland")]
+struct WlDisplay {
+    pub wl_loader: khr::WaylandSurface,
+    wl_display: wc::Display,
+    wl_surface: wc::protocol::wl_surface::WlSurface,
+}
+
+#[cfg(feature = "wayland")]
+impl WlDisplay {
+    /// Create an on-screen surface.
+    ///
+    /// This will grab the function pointer loaders for the
+    /// surface and display extensions and then create a
+    /// surface to be rendered to.
+    unsafe fn new<E: EntryV1_0, I: InstanceV1_0>(
+        entry: &E,
+        inst: &I,
+        pdev: vk::PhysicalDevice,
+        wl_display: wc::Display,
+        wl_surface: wc::protocol::wl_surface::WlSurface,
+    ) -> (Self, vk::SurfaceKHR) {
+        let wl_loader = khr::WaylandSurface::new(entry, inst);
+
+        let surface =
+            Self::create_surface(entry, inst, &wl_loader, pdev, &wl_display, &wl_surface).unwrap();
+
+        let ret = Self {
+            wl_loader: wl_loader,
+            wl_display: wl_display,
+            wl_surface: wl_surface,
+        };
+
+        (ret, surface)
+    }
+
+    /// choose a vkSurfaceFormatKHR for the vkSurfaceKHR
+    unsafe fn select_surface_format(
+        &self,
+        surface_loader: &khr::Surface,
+        surface: vk::SurfaceKHR,
+        pdev: vk::PhysicalDevice,
+    ) -> vk::SurfaceFormatKHR {
+        let formats = surface_loader
+            .get_physical_device_surface_formats(pdev, surface)
+            .unwrap();
+
+        formats
+            .iter()
+            .map(|fmt| match fmt.format {
+                // if the surface does not specify a desired format
+                // then we can choose our own
+                vk::Format::UNDEFINED => vk::SurfaceFormatKHR {
+                    format: vk::Format::R8G8B8A8_UNORM,
+                    color_space: fmt.color_space,
+                },
+                // if the surface has a desired format we will just
+                // use that
+                _ => *fmt,
+            })
+            .nth(0)
+            .expect("Could not find a surface format")
+    }
+
+    /// Get an x11 display surface.
+    unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>(
+        entry: &E, // entry and inst aren't used but still need
+        inst: &I,  // to be passed for compatibility
+        loader: &khr::WaylandSurface,
+        pdev: vk::PhysicalDevice,
+        wl_display: &wc::Display,
+        wl_surface: &wc::protocol::wl_surface::WlSurface,
+    ) -> Result<vk::SurfaceKHR, vk::Result> {
+        use std::ops::Deref;
+        // TODO: check that the queue we are using supports wayland
+        //if !loader.get_physical_device_wayland_presentation_support(pdev, ) {
+        //    return Err();
+        //}
+
+        // First we need to get our raw C pointers to the wayland objects
+        // for &wc::Display, we deref twice to proc the Deref trait to get
+        // to a WlDisplay
+        let display_ptr = (**wl_display).c_ptr() as *mut _;
+        let surface_ptr = wl_surface.as_ref().c_ptr() as *mut _;
+
+        // Now we can collect our info about the wayland surface
+        let info = vk::WaylandSurfaceCreateInfoKHR::builder()
+            .display(display_ptr)
+            .surface(surface_ptr)
+            .build();
+
+        // create it
+        Ok(loader.create_wayland_surface(&info, None)?)
+    }
+
+    /// The two most important extensions are Surface and Wl.
+    fn extension_names() -> Vec<*const i8> {
+        vec![
+            khr::Surface::name().as_ptr(),
+            khr::WaylandSurface::name().as_ptr(),
             DebugReport::name().as_ptr(),
         ]
     }

@@ -44,4 +44,8 @@ impl Surface {
     pub fn commit(&mut self) {
         self.s_wl_surf.commit();
     }
+
+    pub fn get_wl_surface(&self) -> Main<WlSurface> {
+        self.s_wl_surf.clone()
+    }
 }
