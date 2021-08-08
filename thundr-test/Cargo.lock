@@ -1281,6 +1281,7 @@ dependencies = [
 name = "thundr"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "ash",
  "bincode",
  "bitflags",
@@ -1343,6 +1344,7 @@ dependencies = [
  "anyhow",
  "nix 0.17.0",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]

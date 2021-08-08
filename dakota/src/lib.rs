@@ -6,9 +6,17 @@ extern crate thundr as th;
 extern crate anyhow;
 pub use anyhow::{Context, Result};
 
+extern crate serde;
+
+mod dom;
+use dom::DakotaDOM;
+
+mod xml;
+
 struct Dakota {
     d_wayc: Wayc,
     d_thundr: th::Thundr,
+    d_dom: Option<DakotaDOM>,
 }
 
 impl Dakota {
@@ -30,6 +38,7 @@ impl Dakota {
         Ok(Self {
             d_wayc: wayc,
             d_thundr: thundr,
+            d_dom: None,
         })
     }
 }
