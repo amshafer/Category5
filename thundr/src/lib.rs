@@ -85,11 +85,8 @@ pub use surface::Surface;
 // can use them
 extern crate utils;
 pub use crate::utils::region::Rect;
-pub use crate::utils::{Context, Dmabuf, MemImage, Result};
+pub use crate::utils::{anyhow, Context, Dmabuf, MemImage, Result};
 use utils::log;
-
-extern crate anyhow;
-pub use anyhow::{anyhow, Context, Result};
 
 #[cfg(feature = "wayland")]
 extern crate wayland_client as wc;

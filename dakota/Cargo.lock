@@ -241,11 +241,12 @@ dependencies = [
 name = "dakota"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "quick-xml",
  "serde",
  "thundr",
+ "utils",
  "wayc",
+ "winit",
 ]
 
 [[package]]
@@ -1101,6 +1102,7 @@ dependencies = [
  "objc",
  "serde",
  "utils",
+ "wayland-client",
  "winit",
 ]
 

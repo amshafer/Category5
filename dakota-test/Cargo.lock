@@ -215,10 +215,11 @@ dependencies = [
 name = "dakota"
 version = "0.1.0"
 dependencies = [
- "anyhow 1.0.42 (registry+https://github.com/rust-lang/crates.io-index)",
  "quick-xml 0.22.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.127 (registry+https://github.com/rust-lang/crates.io-index)",
  "thundr 0.1.0",
+ "utils 0.1.0",
+ "winit 0.24.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

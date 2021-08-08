@@ -44,7 +44,7 @@ enum Backend {
     #[cfg(feature = "xcb")]
     XcbDisplay(XcbDisplay),
     #[cfg(feature = "macos")]
-    MacOSDisplay(MacOsDisplay),
+    MacOSDisplay(MacOSDisplay),
     #[cfg(feature = "wayland")]
     WaylandDisplay(WlDisplay),
 }
@@ -515,27 +515,6 @@ impl MacOSDisplay {
     ) -> Result<vk::SurfaceKHR, vk::Result> {
         use std::{ffi::c_void, mem, ptr};
         use winit::platform::macos::WindowExtMacOS;
-        extern crate cocoa;
-        extern crate metal;
-        extern crate objc;
-        use cocoa::appkit::{NSView, NSWindow};
-        use cocoa::base::id as cocoa_id;
-        use metal::CoreAnimationLayer;
-        use objc::runtime::YES;
-
-        let wnd: cocoa_id = mem::transmute(window.ns_window());
-
-        let layer = CoreAnimationLayer::new();
-
-        layer.set_edge_antialiasing_mask(0);
-        layer.set_presents_with_transaction(false);
-        layer.remove_all_animations();
-
-        let view = wnd.contentView();
-
-        layer.set_contents_scale(view.backingScaleFactor());
-        view.setLayer(mem::transmute(layer.as_ref()));
-        view.setWantsLayer(YES);
 
         let create_info = vk::MacOSSurfaceCreateInfoMVK {
             s_type: vk::StructureType::MACOS_SURFACE_CREATE_INFO_M,
