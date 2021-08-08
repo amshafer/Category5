@@ -28,3 +28,7 @@ wayland-client={features=["use_system_lib"], optional = true}
 xcb = ["winit"]
 macos = ["winit", "cocoa", "metal", "objc"]
 wayland = ["wayland-client"]
+
+# these deps are for the tests only
+[dev-dependencies]
+image=""

@@ -75,8 +75,8 @@ mod platform;
 mod renderer;
 mod surface;
 
+pub use self::image::Image;
 pub use damage::Damage;
-pub use image::Image;
 pub use list::SurfaceList;
 pub use renderer::Renderer;
 pub use surface::Surface;
@@ -85,7 +85,7 @@ pub use surface::Surface;
 // can use them
 extern crate utils;
 pub use crate::utils::region::Rect;
-pub use crate::utils::{Dmabuf, MemImage};
+pub use crate::utils::{Context, Dmabuf, MemImage, Result};
 use utils::log;
 
 extern crate anyhow;

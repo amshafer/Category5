@@ -12,6 +12,9 @@ use std::ops::Deref;
 use std::os::unix::io::RawFd;
 use std::slice;
 
+extern crate anyhow;
+pub use anyhow::{Context, Result};
+
 // Client Id
 //
 // This uniquely identifies one client program connected
