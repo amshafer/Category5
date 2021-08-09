@@ -8,11 +8,7 @@ use wayc::Wayc;
 #[cfg(feature = "macos")]
 extern crate winit;
 #[cfg(feature = "macos")]
-use winit::{
-    event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
-};
+use winit::{event_loop::EventLoop, window::WindowBuilder};
 
 pub trait Platform {
     fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType>;

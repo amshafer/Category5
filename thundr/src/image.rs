@@ -16,8 +16,8 @@ use std::ops::Drop;
 use std::rc::Rc;
 use std::{fmt, iter, mem};
 
-use ash::version::{DeviceV1_0, InstanceV1_1};
 use ash::vk;
+use ash::{Device, Instance};
 use nix::errno::Errno;
 use nix::unistd::dup;
 use nix::Error;
@@ -319,9 +319,7 @@ impl Renderer {
                 .usage(vk::ImageUsageFlags::SAMPLED)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
             let mut ext_mem_info = vk::ExternalMemoryImageCreateInfo::builder()
-                .handle_types(
-                    vk::ExternalMemoryHandleTypeFlags::EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF,
-                )
+                .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
                 .build();
             // ???: Mesa doesn't use this one?
             // let drm_create_info =
@@ -354,7 +352,7 @@ impl Renderer {
             let dmabuf_type_bits = self
                 .external_mem_fd_loader
                 .get_memory_fd_properties_khr(
-                    vk::ExternalMemoryHandleTypeFlags::EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF,
+                    vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT,
                     dmabuf.db_fd,
                 )
                 .expect("Could not get memory fd properties")
@@ -381,7 +379,7 @@ impl Renderer {
                 .memory_type_index(memtype_index);
 
             alloc_info.p_next = &vk::ImportMemoryFdInfoKHR::builder()
-                .handle_type(vk::ExternalMemoryHandleTypeFlags::EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF)
+                .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
                 // need to dup the fd since it seems the implementation will
                 // internally free it
                 .fd(dup(dmabuf.db_fd).unwrap()) as *const _
@@ -596,9 +594,7 @@ impl Renderer {
                     .build();
 
                 let import_info = vk::ImportMemoryFdInfoKHR::builder()
-                    .handle_type(
-                        vk::ExternalMemoryHandleTypeFlags::EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF,
-                    )
+                    .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
                     // Need to dup the fd, since I think the implementation
                     // will internally free whatever we give it
                     .fd(fd)

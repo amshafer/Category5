@@ -8,7 +8,7 @@ edition = "2018"
 
 [dependencies]
 utils={path="../utils"}
-ash="0.30.0"
+ash="0.33"
 bitflags=""
 cgmath="0.17"
 memoffset="0.5"
@@ -19,14 +19,13 @@ anyhow=""
 
 # The following are only for the window system features
 winit={version = "0.24", optional = true }
-metal={version = "", optional = true }
-objc={version = "", optional = true }
-cocoa={version = "", optional = true }
+raw-window-handle={version = "", optional = true }
+raw-window-metal={version = "", optional = true }
 wayland-client={features=["use_system_lib"], optional = true}
 
 [features]
 xcb = ["winit"]
-macos = ["winit", "cocoa", "metal", "objc"]
+macos = ["winit", "raw-window-metal", "raw-window-handle"]
 wayland = ["wayland-client"]
 
 # these deps are for the tests only

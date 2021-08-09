@@ -14,7 +14,7 @@ fn main() {
 
     let info = CreateInfo::builder()
         //.enable_traditional_composition()
-        .surface_type(SurfaceType::Xcb(&window))
+        .surface_type(SurfaceType::MacOS(&window))
         .build();
     let mut thund = Thundr::new(&info).unwrap();
 

@@ -6,7 +6,7 @@
 extern crate ash;
 
 #[cfg(feature = "macos")]
-use ash::extensions::mvk::MacOSSurface;
+use ash::extensions::ext::MetalSurface;
 
 #[cfg(any(feature = "xcb", feature = "macos"))]
 extern crate winit;
@@ -16,8 +16,8 @@ extern crate wayland_client as wc;
 
 use ash::extensions::ext::DebugReport;
 use ash::extensions::khr;
-use ash::version::{EntryV1_0, InstanceV1_0};
 use ash::vk;
+use ash::{Entry, Instance};
 
 use crate::{CreateInfo, SurfaceType};
 
@@ -72,10 +72,10 @@ impl Display {
         }
     }
 
-    pub unsafe fn new<E: EntryV1_0, I: InstanceV1_0>(
+    pub unsafe fn new(
         info: &CreateInfo,
-        entry: &E,
-        inst: &I,
+        entry: &Entry,
+        inst: &Instance,
         pdev: vk::PhysicalDevice,
     ) -> Display {
         let s_loader = khr::Surface::new(entry, inst);
@@ -195,9 +195,9 @@ impl PhysicalDisplay {
     /// This will grab the function pointer loaders for the
     /// surface and display extensions and then create a
     /// surface to be rendered to.
-    unsafe fn new<E: EntryV1_0, I: InstanceV1_0>(
-        entry: &E,
-        inst: &I,
+    unsafe fn new(
+        entry: &Entry,
+        inst: &Instance,
         pdev: vk::PhysicalDevice,
     ) -> (Self, vk::SurfaceKHR, vk::Extent2D) {
         let d_loader = khr::Display::new(entry, inst);
@@ -254,9 +254,9 @@ impl PhysicalDisplay {
     ///
     /// Yea this has a gross amount of return values...
     #[cfg(unix)]
-    unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>(
-        _entry: &E, // entry and inst aren't used but still need
-        _inst: &I,  // to be passed for compatibility
+    unsafe fn create_surface(
+        _entry: &Entry,   // entry and inst aren't used but still need
+        _inst: &Instance, // to be passed for compatibility
         loader: &khr::Display,
         pdev: vk::PhysicalDevice,
     ) -> Result<
@@ -373,9 +373,9 @@ impl XcbDisplay {
     /// This will grab the function pointer loaders for the
     /// surface and display extensions and then create a
     /// surface to be rendered to.
-    unsafe fn new<E: EntryV1_0, I: InstanceV1_0>(
-        entry: &E,
-        inst: &I,
+    unsafe fn new(
+        entry: &Entry,
+        inst: &Instance,
         pdev: vk::PhysicalDevice,
         win: &winit::window::Window,
     ) -> (Self, vk::SurfaceKHR) {
@@ -451,7 +451,7 @@ impl XcbDisplay {
 #[cfg(feature = "macos")]
 struct MacOSDisplay {
     // the display itself
-    pub mac_loader: MacOSSurface,
+    pub mac_loader: MetalSurface,
 }
 
 #[cfg(feature = "macos")]
@@ -461,13 +461,13 @@ impl MacOSDisplay {
     /// This will grab the function pointer loaders for the
     /// surface and display extensions and then create a
     /// surface to be rendered to.
-    unsafe fn new<E: EntryV1_0, I: InstanceV1_0>(
-        entry: &E,
-        inst: &I,
+    unsafe fn new(
+        entry: &Entry,
+        inst: &Instance,
         pdev: vk::PhysicalDevice,
         win: &winit::window::Window,
     ) -> (Self, vk::SurfaceKHR) {
-        let x_loader = MacOSSurface::new(entry, inst);
+        let x_loader = MetalSurface::new(entry, inst);
 
         let surface = Self::create_surface(entry, inst, &x_loader, pdev, win).unwrap();
 
@@ -506,32 +506,42 @@ impl MacOSDisplay {
             .expect("Could not find a surface format")
     }
 
-    unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>(
-        entry: &E, // entry and inst aren't used but still need
-        inst: &I,  // to be passed for compatibility
-        loader: &MacOSSurface,
+    unsafe fn create_surface(
+        entry: &Entry,   // entry and inst aren't used but still need
+        inst: &Instance, // to be passed for compatibility
+        loader: &MetalSurface,
         pdev: vk::PhysicalDevice,
         window: &winit::window::Window,
     ) -> Result<vk::SurfaceKHR, vk::Result> {
-        use std::{ffi::c_void, mem, ptr};
-        use winit::platform::macos::WindowExtMacOS;
+        // from ash-window/src/lib.rs
+        extern crate raw_window_handle;
+        use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
+        extern crate raw_window_metal;
+        use raw_window_metal::{macos, Layer};
 
-        let create_info = vk::MacOSSurfaceCreateInfoMVK {
-            s_type: vk::StructureType::MACOS_SURFACE_CREATE_INFO_M,
-            p_next: ptr::null(),
-            flags: Default::default(),
-            p_view: window.ns_view() as *const c_void,
+        let handle = match window.raw_window_handle() {
+            RawWindowHandle::MacOS(handle) => handle,
+            _ => panic!("winit raw_window_handle is not of macos type"),
         };
 
-        let macos_surface_loader = MacOSSurface::new(entry, inst);
-        macos_surface_loader.create_mac_os_surface_mvk(&create_info, None)
+        let layer = match macos::metal_layer_from_handle(handle) {
+            Layer::Existing(layer) | Layer::Allocated(layer) => layer as *mut _,
+            Layer::None => panic!("No layer was found for macos"),
+        };
+
+        let create_info = vk::MetalSurfaceCreateInfoEXT::builder()
+            .layer(&*layer)
+            .build();
+
+        let metal_surface_loader = MetalSurface::new(entry, inst);
+        metal_surface_loader.create_metal_surface(&create_info, None)
     }
 
     /// The two most important extensions are Surface and Xcb.
     fn extension_names() -> Vec<*const i8> {
         vec![
             khr::Surface::name().as_ptr(),
-            MacOSSurface::name().as_ptr(),
+            MetalSurface::name().as_ptr(),
             DebugReport::name().as_ptr(),
         ]
     }

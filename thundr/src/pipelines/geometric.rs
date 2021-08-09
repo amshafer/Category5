@@ -12,8 +12,7 @@ use std::io::Cursor;
 use std::marker::Copy;
 use std::mem;
 
-use ash::version::DeviceV1_0;
-use ash::{util, vk};
+use ash::{util, vk, Device};
 
 use super::Pipeline;
 use crate::renderer::{RecordParams, Renderer};

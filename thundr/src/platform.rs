@@ -4,7 +4,6 @@
 //
 // Austin Shafer - 2021
 use ash::extensions::khr;
-use ash::version::{InstanceV1_0, InstanceV1_1};
 use ash::{vk, Instance};
 
 use crate::CreateInfo;

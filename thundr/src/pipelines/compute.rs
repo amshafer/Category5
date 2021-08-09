@@ -8,8 +8,7 @@ use std::ffi::CString;
 use std::io::Cursor;
 use std::mem;
 
-use ash::version::DeviceV1_0;
-use ash::{util, vk, Instance};
+use ash::{util, vk, Device, Instance};
 
 use super::Pipeline;
 use crate::display::Display;
