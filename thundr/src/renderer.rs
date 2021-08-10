@@ -1465,68 +1465,70 @@ impl Renderer {
         // We need to do this first since popping an entry off damage_regions
         // would remove one of the regions we need to process.
         // Using in lets us never go past the end of the array
-        assert!(self.swap_ages[self.current_image as usize] <= self.damage_regions.len());
-        for i in 0..(self.swap_ages[self.current_image as usize]) {
-            self.current_damage.extend(&self.damage_regions[i as usize]);
-        }
-
-        // We need to accumulate a list of damage for the current frame. We are
-        // going to retire the oldest damage lists, and create a new one from
-        // the damages passed to surfaces
-        let mut am_eldest = true;
-        let mut next_oldest = 0;
-        for (i, age) in self.swap_ages.iter().enumerate() {
-            // oldest until proven otherwise
-            if self.swap_ages[i] > self.swap_ages[self.current_image as usize] {
-                am_eldest = false;
-            }
-            // Get the max age of the other framebuffers
-            if i != self.current_image as usize && *age > next_oldest {
-                next_oldest = *age;
-            }
-        }
-        if am_eldest {
-            log::debug!(
-                "I (image {:?}) am the eldest: {:?}",
-                self.current_image,
-                self.swap_ages
-            );
-            log::debug!(
-                "Truncating damage_regions from {:?} to {:?}",
-                self.damage_regions.len(),
-                next_oldest
-            );
-            self.damage_regions.truncate(next_oldest);
-        }
-        let mut regions = Vec::new();
-
-        for surf_rc in surfaces.iter_mut() {
-            // add the new damage to the list of damages
-            // If the surface does not have damage attached, then don't generate tiles
-            if let Some(damage) = surf_rc.get_global_damage() {
-                self.aggregate_damage(&damage, &mut regions);
+        if self.dev_features.vkc_supports_incremental_present {
+            assert!(self.swap_ages[self.current_image as usize] <= self.damage_regions.len());
+            for i in 0..(self.swap_ages[self.current_image as usize]) {
+                self.current_damage.extend(&self.damage_regions[i as usize]);
             }
 
-            // now we have to consider damage caused by moving the surface
-            //
-            // We don't have to correct the position based on the surface pos
-            // since the damage was already recorded for the surface
-            if let Some(damage) = surf_rc.take_surface_damage() {
-                self.aggregate_damage(&damage, &mut regions);
+            // We need to accumulate a list of damage for the current frame. We are
+            // going to retire the oldest damage lists, and create a new one from
+            // the damages passed to surfaces
+            let mut am_eldest = true;
+            let mut next_oldest = 0;
+            for (i, age) in self.swap_ages.iter().enumerate() {
+                // oldest until proven otherwise
+                if self.swap_ages[i] > self.swap_ages[self.current_image as usize] {
+                    am_eldest = false;
+                }
+                // Get the max age of the other framebuffers
+                if i != self.current_image as usize && *age > next_oldest {
+                    next_oldest = *age;
+                }
             }
+            if am_eldest {
+                log::debug!(
+                    "I (image {:?}) am the eldest: {:?}",
+                    self.current_image,
+                    self.swap_ages
+                );
+                log::debug!(
+                    "Truncating damage_regions from {:?} to {:?}",
+                    self.damage_regions.len(),
+                    next_oldest
+                );
+                self.damage_regions.truncate(next_oldest);
+            }
+            let mut regions = Vec::new();
+
+            for surf_rc in surfaces.iter_mut() {
+                // add the new damage to the list of damages
+                // If the surface does not have damage attached, then don't generate tiles
+                if let Some(damage) = surf_rc.get_global_damage() {
+                    self.aggregate_damage(&damage, &mut regions);
+                }
+
+                // now we have to consider damage caused by moving the surface
+                //
+                // We don't have to correct the position based on the surface pos
+                // since the damage was already recorded for the surface
+                if let Some(damage) = surf_rc.take_surface_damage() {
+                    self.aggregate_damage(&damage, &mut regions);
+                }
+            }
+
+            // Finally we add any damage that the surfacelist has
+            for damage in surfaces.damage() {
+                self.aggregate_damage(damage, &mut regions);
+            }
+            surfaces.clear_damage();
+
+            self.current_damage.extend(&regions);
+            self.damage_regions.push_front(regions);
+
+            // Only update the ages after we have processed them
+            self.update_buffer_ages();
         }
-
-        // Finally we add any damage that the surfacelist has
-        for damage in surfaces.damage() {
-            self.aggregate_damage(damage, &mut regions);
-        }
-        surfaces.clear_damage();
-
-        self.current_damage.extend(&regions);
-        self.damage_regions.push_front(regions);
-
-        // Only update the ages after we have processed them
-        self.update_buffer_ages();
 
         self.get_recording_parameters()
     }
@@ -1805,7 +1807,10 @@ impl Renderer {
         // wait on the present of the previous frame.
         let wait_semas = match self.draw_call_submitted {
             true => [self.render_sema],
-            false => [self.present_sema],
+            false => {
+                panic!("No draw call was submitted, but thundr.present was still called");
+                [self.present_sema]
+            }
         };
         let swapchains = [self.swapchain];
         let indices = [self.current_image];

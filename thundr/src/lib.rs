@@ -368,10 +368,13 @@ impl Thundr {
                 img.get_resolution()
             );
         }
-        log::debug!("Damaged vkPresentRegions:");
-        log::debug!("--------------------------------");
-        for (i, pr) in self.th_rend.current_damage.iter().enumerate() {
-            log::debug!("[{}] Base={:?}, Size={:?}", i, pr.offset, pr.extent);
+
+        if self.th_rend.dev_features.vkc_supports_incremental_present {
+            log::debug!("Damaged vkPresentRegions:");
+            log::debug!("--------------------------------");
+            for (i, pr) in self.th_rend.current_damage.iter().enumerate() {
+                log::debug!("[{}] Base={:?}, Size={:?}", i, pr.offset, pr.extent);
+            }
         }
 
         self.th_pipe.debug_frame_print();

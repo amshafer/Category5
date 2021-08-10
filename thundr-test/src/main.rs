@@ -13,7 +13,7 @@ fn main() {
     let window = WindowBuilder::new().build(&event_loop).unwrap();
 
     let info = CreateInfo::builder()
-        //.enable_traditional_composition()
+        .enable_traditional_composition()
         .surface_type(SurfaceType::MacOS(&window))
         .build();
     let mut thund = Thundr::new(&info).unwrap();
