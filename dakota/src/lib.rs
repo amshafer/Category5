@@ -1,11 +1,11 @@
 extern crate thundr as th;
 
 extern crate utils;
-pub use utils::{Context, Result};
+pub use utils::{anyhow, Context, Result};
 
 extern crate serde;
 
-mod dom;
+pub mod dom;
 use dom::DakotaDOM;
 
 mod platform;
@@ -13,7 +13,7 @@ use platform::Platform;
 
 mod xml;
 
-struct Dakota {
+pub struct Dakota {
     d_plat: Box<dyn Platform>,
     d_thundr: th::Thundr,
     d_dom: Option<DakotaDOM>,
@@ -27,6 +27,9 @@ impl Dakota {
         #[cfg(feature = "macos")]
         let mut plat = platform::MacosPlat::new()?;
 
+        #[cfg(feature = "xcb")]
+        let mut plat = platform::XCBPlat::new()?;
+
         let info = th::CreateInfo::builder()
             .surface_type(plat.get_th_surf_type()?)
             .build();
@@ -38,5 +41,21 @@ impl Dakota {
             d_thundr: thundr,
             d_dom: None,
         })
+    }
+
+    /// Completely flush the thundr surfaces/images and recreate the scene
+    fn refresh_thundr(&mut self) -> Result<()> {
+        let dom = match &mut self.d_dom {
+            Some(dom) => dom,
+            None => {
+                return Err(anyhow!(
+                    "A scene is not loaded in Dakota. Please load one from xml",
+                ))
+            }
+        };
+
+        for lay in dom.layout.elements.iter() {}
+
+        return Ok(());
     }
 }

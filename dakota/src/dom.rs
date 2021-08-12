@@ -8,48 +8,48 @@ pub enum Format {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Image {
-    format: Format,
+    pub format: Format,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Hints {
-    constant: bool,
+    pub constant: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Data {
-    relPath: Option<String>,
-    absPath: Option<String>,
+    pub relPath: Option<String>,
+    pub absPath: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Resource {
-    name: String,
-    image: Option<Image>,
-    data: Data,
-    hints: Option<Hints>,
+    pub name: String,
+    pub image: Option<Image>,
+    pub data: Data,
+    pub hints: Option<Hints>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ResourceMap {
     #[serde(rename = "resource", default)]
-    resources: Vec<Resource>,
+    pub resources: Vec<Resource>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Element {
-    resource: String,
+    pub resource: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Layout {
     #[serde(rename = "el", default)]
-    elements: Vec<Element>,
+    pub elements: Vec<Element>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DakotaDOM {
-    version: String,
-    resourceMap: ResourceMap,
-    layout: Layout,
+    pub version: String,
+    pub resourceMap: ResourceMap,
+    pub layout: Layout,
 }

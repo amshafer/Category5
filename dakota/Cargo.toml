@@ -15,6 +15,7 @@ serde = { version = "", features = [ "derive" ] }
 quick-xml = { version = "", features = [ "serialize" ] }
 
 [features]
-default=["macos"]
+default=["xcb"]
 wayland=["thundr/wayland", "wayc"]
+xcb=["thundr/xcb", "winit"]
 macos=["thundr/macos", "winit"]

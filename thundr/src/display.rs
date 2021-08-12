@@ -8,6 +8,15 @@ extern crate ash;
 #[cfg(feature = "macos")]
 use ash::extensions::ext::MetalSurface;
 
+#[cfg(feature = "macos")]
+extern crate raw_window_handle;
+#[cfg(feature = "macos")]
+use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
+#[cfg(feature = "macos")]
+extern crate raw_window_metal;
+#[cfg(feature = "macos")]
+use raw_window_metal::{macos, Layer};
+
 #[cfg(any(feature = "xcb", feature = "macos"))]
 extern crate winit;
 
@@ -419,9 +428,9 @@ impl XcbDisplay {
     }
 
     /// Get an x11 display surface.
-    unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>(
-        entry: &E, // entry and inst aren't used but still need
-        inst: &I,  // to be passed for compatibility
+    unsafe fn create_surface(
+        entry: &Entry,   // entry and inst aren't used but still need
+        inst: &Instance, // to be passed for compatibility
         loader: &khr::XcbSurface,
         pdev: vk::PhysicalDevice,
         win: &winit::window::Window,
@@ -514,11 +523,6 @@ impl MacOSDisplay {
         window: &winit::window::Window,
     ) -> Result<vk::SurfaceKHR, vk::Result> {
         // from ash-window/src/lib.rs
-        extern crate raw_window_handle;
-        use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
-        extern crate raw_window_metal;
-        use raw_window_metal::{macos, Layer};
-
         let handle = match window.raw_window_handle() {
             RawWindowHandle::MacOS(handle) => handle,
             _ => panic!("winit raw_window_handle is not of macos type"),
@@ -561,9 +565,9 @@ impl WlDisplay {
     /// This will grab the function pointer loaders for the
     /// surface and display extensions and then create a
     /// surface to be rendered to.
-    unsafe fn new<E: EntryV1_0, I: InstanceV1_0>(
-        entry: &E,
-        inst: &I,
+    unsafe fn new(
+        entry: &Entry,
+        inst: &Instance,
         pdev: vk::PhysicalDevice,
         wl_display: wc::Display,
         wl_surface: wc::protocol::wl_surface::WlSurface,
@@ -611,9 +615,9 @@ impl WlDisplay {
     }
 
     /// Get an x11 display surface.
-    unsafe fn create_surface<E: EntryV1_0, I: InstanceV1_0>(
-        entry: &E, // entry and inst aren't used but still need
-        inst: &I,  // to be passed for compatibility
+    unsafe fn create_surface(
+        entry: &Entry,   // entry and inst aren't used but still need
+        inst: &Instance, // to be passed for compatibility
         loader: &khr::WaylandSurface,
         pdev: vk::PhysicalDevice,
         wl_display: &wc::Display,

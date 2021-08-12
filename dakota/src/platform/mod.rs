@@ -5,9 +5,9 @@ extern crate wayc;
 #[cfg(feature = "wayland")]
 use wayc::Wayc;
 
-#[cfg(feature = "macos")]
+#[cfg(any(unix, macos))]
 extern crate winit;
-#[cfg(feature = "macos")]
+#[cfg(any(unix, macos))]
 use winit::{event_loop::EventLoop, window::WindowBuilder};
 
 pub trait Platform {
@@ -69,5 +69,33 @@ impl MacosPlat {
 impl Platform for MacosPlat {
     fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType> {
         Ok(th::SurfaceType::MacOS(&self.mp_window))
+    }
+}
+
+#[cfg(feature = "xcb")]
+pub struct XCBPlat {
+    xp_event_loop: EventLoop<()>,
+    xp_window: winit::window::Window,
+}
+
+#[cfg(feature = "xcb")]
+impl XCBPlat {
+    pub fn new() -> Result<Self> {
+        let event_loop = EventLoop::new();
+        let window = WindowBuilder::new()
+            .build(&event_loop)
+            .context("Could not create window with winit")?;
+
+        Ok(Self {
+            xp_event_loop: event_loop,
+            xp_window: window,
+        })
+    }
+}
+
+#[cfg(feature = "xcb")]
+impl Platform for XCBPlat {
+    fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType> {
+        Ok(th::SurfaceType::Xcb(&self.xp_window))
     }
 }
