@@ -7,6 +7,6 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-thundr={path="../thundr", features=["macos"]}
+thundr={path="../thundr", features=["xcb"]}
 image="0.23"
 winit=""

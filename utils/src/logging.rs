@@ -71,7 +71,7 @@ macro_rules! log_internal{
         // !! NOTE: current log level set here !!
         //
         // Currently set to the debug level (2)
-        if $loglevel.get_level() <= 2 {
+        if $loglevel.get_level() <= crate::utils::logging::LogLevel::critical.get_level() {
             println!("[{:?}]<{}> {}:{} - {}",
                      log::get_current_millis(),
                      $loglevel.get_name(),

@@ -12,9 +12,14 @@ fn main() {
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
 
+    #[cfg(target_os = "macos")]
+    let surf_type = SurfaceType::MacOS(&window);
+    #[cfg(target_os = "freebsd")]
+    let surf_type = SurfaceType::Xcb(&window);
+
     let info = CreateInfo::builder()
         .enable_traditional_composition()
-        .surface_type(SurfaceType::MacOS(&window))
+        .surface_type(surf_type)
         .build();
     let mut thund = Thundr::new(&info).unwrap();
 
