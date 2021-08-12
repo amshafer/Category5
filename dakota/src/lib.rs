@@ -55,8 +55,6 @@ impl Dakota {
     }
 
     pub fn refresh_resource_map(&mut self) -> Result<()> {
-        self.d_thund.clear_all();
-
         let dom = match &mut self.d_dom {
             Some(dom) => dom,
             None => {
@@ -65,6 +63,7 @@ impl Dakota {
                 ))
             }
         };
+        self.d_thund.clear_all();
 
         // Load our resources
         //
@@ -110,8 +109,6 @@ impl Dakota {
     }
 
     pub fn refresh_elements(&mut self) -> Result<()> {
-        self.d_surfaces.clear();
-
         let dom = match &mut self.d_dom {
             Some(dom) => dom,
             None => {
@@ -120,6 +117,7 @@ impl Dakota {
                 ))
             }
         };
+        self.d_surfaces.clear();
 
         for el in dom.layout.elements.iter() {
             // make a thundr surface for each element
@@ -141,7 +139,19 @@ impl Dakota {
     /// Completely flush the thundr surfaces/images and recreate the scene
     pub fn refresh_full(&mut self) -> Result<()> {
         self.refresh_resource_map()?;
-        self.refresh_elements()
+        self.refresh_elements()?;
+
+        //TODO: enable me after adding swapchain reconstruction
+        //let dom = match &mut self.d_dom {
+        //    Some(dom) => dom,
+        //    None => {
+        //        return Err(anyhow!(
+        //            "A scene is not loaded in Dakota. Please load one from xml",
+        //        ))
+        //    }
+        //};
+        //self.d_plat.set_output_params(&dom.window)
+        Ok(())
     }
 
     pub fn dispatch(&mut self) -> Result<()> {

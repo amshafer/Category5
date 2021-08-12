@@ -1,3 +1,4 @@
+use crate::dom;
 use crate::{Context, Result};
 
 #[cfg(feature = "wayland")]
@@ -12,6 +13,8 @@ use winit::{event_loop::EventLoop, window::WindowBuilder};
 
 pub trait Platform {
     fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType>;
+
+    fn set_output_params(&mut self, win: &dom::Window) -> Result<()>;
 }
 
 #[cfg(feature = "wayland")]
@@ -31,6 +34,9 @@ impl WLPlat {
             wp_wayc: wayc,
             wp_surf: wl_surf,
         }
+    }
+    fn set_output_params(&mut self, win: &dom::Window) -> Result<()> {
+        unimplemented!();
     }
 }
 
@@ -62,6 +68,11 @@ impl MacosPlat {
             mp_event_loop: event_loop,
             mp_window: window,
         })
+    }
+    fn set_output_params(&mut self, win: &dom::Window) -> Result<()> {
+        self.xp_window.set_title(win.title);
+        self.xp_window.set_inner_size(win.width, win.height);
+        Ok(())
     }
 }
 
@@ -97,5 +108,12 @@ impl XCBPlat {
 impl Platform for XCBPlat {
     fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType> {
         Ok(th::SurfaceType::Xcb(&self.xp_window))
+    }
+
+    fn set_output_params(&mut self, win: &dom::Window) -> Result<()> {
+        self.xp_window.set_title(&win.title);
+        self.xp_window
+            .set_inner_size(winit::dpi::PhysicalSize::new(win.width, win.height));
+        Ok(())
     }
 }

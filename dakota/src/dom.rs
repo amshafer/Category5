@@ -71,7 +71,7 @@ pub struct Layout {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Window {
     pub id: u32,
-    pub name: String,
+    pub title: String,
     pub width: u32,
     pub height: u32,
 }

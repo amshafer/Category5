@@ -16,7 +16,7 @@
 	</resourceMap>
     <window>
         <id>0</id>
-        <name>Dakota Test</name>
+        <title>Dakota Test</title>
         <width>512</width>
         <height>512</height>
     </window>
