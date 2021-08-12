@@ -54,8 +54,9 @@ impl Dakota {
         })
     }
 
-    /// Completely flush the thundr surfaces/images and recreate the scene
-    fn refresh_thundr(&mut self) -> Result<()> {
+    pub fn refresh_resource_map(&mut self) -> Result<()> {
+        self.d_thund.clear_all();
+
         let dom = match &mut self.d_dom {
             Some(dom) => dom,
             None => {
@@ -64,9 +65,6 @@ impl Dakota {
                 ))
             }
         };
-
-        self.d_thund.clear_all();
-        self.d_surfaces.clear();
 
         // Load our resources
         //
@@ -108,6 +106,20 @@ impl Dakota {
                 self.d_resmap.insert(res.name.clone(), th_image);
             }
         }
+        Ok(())
+    }
+
+    pub fn refresh_elements(&mut self) -> Result<()> {
+        self.d_surfaces.clear();
+
+        let dom = match &mut self.d_dom {
+            Some(dom) => dom,
+            None => {
+                return Err(anyhow!(
+                    "A scene is not loaded in Dakota. Please load one from xml",
+                ))
+            }
+        };
 
         for el in dom.layout.elements.iter() {
             // make a thundr surface for each element
@@ -123,12 +135,16 @@ impl Dakota {
 
             // TODO: calculate positioning
         }
+        Ok(())
+    }
 
-        return Ok(());
+    /// Completely flush the thundr surfaces/images and recreate the scene
+    pub fn refresh_full(&mut self) -> Result<()> {
+        self.refresh_resource_map()?;
+        self.refresh_elements()
     }
 
     pub fn dispatch(&mut self) -> Result<()> {
-        self.refresh_thundr()?;
         self.d_thund.draw_frame(&mut self.d_surfaces);
         self.d_thund.present();
         Ok(())

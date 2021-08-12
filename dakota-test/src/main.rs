@@ -19,6 +19,7 @@ fn main() {
 
     let mut dak = Dakota::new().expect("Could not create dakota instance");
     dak.load_xml_reader(reader);
+    dak.refresh_full().unwrap();
 
     loop {
         dak.dispatch().unwrap();
