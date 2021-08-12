@@ -1,0 +1,22 @@
+<dakota>
+	<version>0.0.0.1</version>
+	<resourceMap>
+		<resource>
+			<name>cat</name>
+			<image>
+				<format type="ARGB8888"/>
+			</image>
+			<data>
+				<relPath>"./images/cat.png"</relPath>
+			</data>
+			<hints>
+				<constant>true</constant>
+			</hints>
+		</resource>
+	</resourceMap>
+	<layout>
+		<el>
+			<resource>cat</resource>
+		</el>
+	</layout>
+</dakota>
