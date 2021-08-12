@@ -35,6 +35,9 @@ use crate::Damage;
 pub(crate) struct ImageInternal {
     /// This id is the index of this image in Thundr's image list (th_image_list).
     pub i_id: i32,
+    /// Is this image known to the renderer. This is true if the image was destroyed.
+    /// If true, it needs to be dropped and recreated.
+    pub i_out_of_date: bool,
     /// image containing the contents of the window.
     pub i_image: vk::Image,
     pub i_image_view: vk::ImageView,
@@ -53,21 +56,29 @@ pub(crate) struct ImageInternal {
 }
 
 impl Image {
+    pub(crate) fn assert_valid(&self) {
+        assert!(!self.i_internal.borrow().i_out_of_date);
+    }
+
     pub(crate) fn get_view(&self) -> vk::ImageView {
+        self.assert_valid();
         self.i_internal.borrow().i_image_view
     }
     pub(crate) fn get_resolution(&self) -> vk::Extent2D {
+        self.assert_valid();
         self.i_internal.borrow().i_image_resolution
     }
 
     /// Sets an opaque region for the image to help the internal compositor
     /// optimize when possible.
     pub fn set_opaque(&mut self, opaque: Option<Rect<i32>>) {
+        self.assert_valid();
         self.i_internal.borrow_mut().i_opaque = opaque;
     }
 
     /// Attach damage to this surface. Damage is specified in surface-coordinates.
     pub fn set_damage(&mut self, x: i32, y: i32, width: i32, height: i32) {
+        self.assert_valid();
         // Check if damage is initialized. If it isn't create a new one.
         // If it is, add the damage to the existing list
         let new_rect = Rect::new(x, y, width, height);
@@ -80,12 +91,14 @@ impl Image {
     }
 
     pub fn reset_damage(&mut self, damage: Damage) {
+        self.assert_valid();
         self.i_internal.borrow_mut().i_damage = Some(damage);
         // TODO: clip to image size
     }
 
     /// set the id. This should only be done by Thundr
     pub(crate) fn set_id(&mut self, id: i32) {
+        self.assert_valid();
         self.i_internal.borrow_mut().i_id = id;
     }
 
@@ -461,6 +474,7 @@ impl Renderer {
             i_internal: Rc::new(RefCell::new(ImageInternal {
                 // The id will be filled in by thundr in lib.rs
                 i_id: 0,
+                i_out_of_date: false,
                 i_image: image,
                 i_image_view: view,
                 i_image_mem: image_mem,
@@ -637,8 +651,11 @@ impl Renderer {
     /// A simple teardown function. The renderer is needed since
     /// it allocated all these objects.
     pub fn destroy_image(&mut self, thundr_image: &Image) {
-        let image = thundr_image.i_internal.borrow();
+        thundr_image.assert_valid();
+        let mut image = thundr_image.i_internal.borrow_mut();
         unsafe {
+            // Mark that this image was destroyed
+            image.i_out_of_date = true;
             self.dev.destroy_image(image.i_image, None);
             self.dev.destroy_image_view(image.i_image_view, None);
             self.free_memory(image.i_image_mem);

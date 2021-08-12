@@ -13,6 +13,7 @@ wayc={path="../wayc", optional=true}
 winit={version="", optional=true}
 serde = { version = "", features = [ "derive" ] }
 quick-xml = { version = "", features = [ "serialize" ] }
+image = ""
 
 [features]
 default=["xcb"]

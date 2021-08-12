@@ -253,6 +253,19 @@ impl Thundr {
         self.remove_image_at_index(i);
     }
 
+    /// Helper for removing all surfaces/objects currently loaded
+    ///
+    /// This will totally flush thundr, and reset it back to when it was
+    /// created.
+    pub fn clear_all(&mut self) {
+        // Destroy all our images
+        for img in self.th_image_list.iter_mut() {
+            self.th_rend.destroy_image(img);
+        }
+
+        self.th_image_list.clear();
+    }
+
     /// create_image_from_bits
     pub fn create_image_from_bits(
         &mut self,
