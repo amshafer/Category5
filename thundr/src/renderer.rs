@@ -22,7 +22,7 @@ use crate::platform::VKDeviceFeatures;
 
 extern crate utils as cat5_utils;
 use crate::{CreateInfo, Damage};
-use cat5_utils::{log, region::Rect, MemImage};
+use cat5_utils::{anyhow, log, region::Rect, Context, MemImage, Result};
 
 // this happy little debug callback is from the ash examples
 // all it does is print any errors/warnings thrown.
@@ -1455,7 +1455,7 @@ impl Renderer {
     /// and mapping.
     pub fn begin_recording_one_frame(&mut self, surfaces: &mut SurfaceList) -> RecordParams {
         // get the next frame to draw into
-        self.get_next_swapchain_image();
+        self.get_next_swapchain_image().unwrap();
 
         // TODO: redo the way I track swap ages. The order the images are acquired
         // isn't guaranteed to be constant
@@ -1739,7 +1739,7 @@ impl Renderer {
     ///
     /// Returns if the next image index was successfully obtained
     /// false means try again later, the next image is not ready
-    pub fn get_next_swapchain_image(&mut self) -> bool {
+    pub fn get_next_swapchain_image(&mut self) -> Result<()> {
         unsafe {
             match self.swapchain_loader.acquire_next_image(
                 self.swapchain,
@@ -1755,13 +1755,19 @@ impl Renderer {
                         index
                     );
                     self.current_image = index;
-                    return true;
+                    Ok(())
                 }
-                Err(vk::Result::NOT_READY) => return false,
-                Err(vk::Result::TIMEOUT) => return false,
+                Err(vk::Result::NOT_READY) => Err(anyhow!(
+                    "vkAcquireNextImageKHR: vk::Result::NOT_READY: Current {:?}",
+                    self.current_image
+                )),
+                Err(vk::Result::TIMEOUT) => Err(anyhow!(
+                    "vkAcquireNextImageKHR: vk::Result::NOT_READY: Current {:?}",
+                    self.current_image
+                )),
                 // the call did not succeed
-                Err(err) => panic!("Could not acquire next image: {:?}", err),
-            };
+                Err(err) => Err(anyhow!("Could not acquire next image: {:?}", err)),
+            }
         }
     }
 
