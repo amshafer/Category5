@@ -66,42 +66,45 @@ fn main() {
 
     // ----------- now wait for the app to exit
     event_loop.run(move |event, _, control_flow| {
-        // ----------- update the location of the cursor
-        let curpos = cursor_surf.get_pos();
-        println!("curpos = {:?}", curpos);
-        match curpos.0 {
-            v if v < 4.0 => dx = 2.0,
-            v if v >= ws.width as f32 - 4.0 => dx = -2.0,
-            _ => {}
-        };
-        match curpos.1 {
-            v if v < 4.0 => dy = 2.0,
-            v if v >= ws.height as f32 - 4.0 => dy = -2.0,
-            _ => {}
-        };
-
-        cursor_surf.set_pos(curpos.0 + dx, curpos.1 + dy);
-
-        stop.start();
-        // ----------- Perform draw calls
-        thund.draw_frame(&mut list);
-
-        // ----------- Present to screen
-        thund.present();
-        stop.end();
-
-        println!(
-            "Thundr took {:?} ms this frame",
-            stop.get_duration().as_millis()
-        );
-
-        *control_flow = ControlFlow::Wait;
-
         match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                window_id,
-            } if window_id == window.id() => *control_flow = ControlFlow::Exit,
+            Event::WindowEvent { event, .. } => match event {
+                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                _ => (),
+            },
+            Event::RedrawRequested(_) => {
+                // ----------- update the location of the cursor
+                let curpos = cursor_surf.get_pos();
+                println!("curpos = {:?}", curpos);
+                match curpos.0 {
+                    v if v < 4.0 => dx = 2.0,
+                    v if v >= ws.width as f32 - 4.0 => dx = -2.0,
+                    _ => {}
+                };
+                match curpos.1 {
+                    v if v < 4.0 => dy = 2.0,
+                    v if v >= ws.height as f32 - 4.0 => dy = -2.0,
+                    _ => {}
+                };
+
+                cursor_surf.set_pos(curpos.0 + dx, curpos.1 + dy);
+
+                stop.start();
+                // ----------- Perform draw calls
+                thund.draw_frame(&mut list);
+
+                // ----------- Present to screen
+                thund.present();
+                stop.end();
+
+                println!(
+                    "Thundr took {:?} ms this frame",
+                    stop.get_duration().as_millis()
+                );
+
+                *control_flow = ControlFlow::Wait;
+                // Queue another frame
+                window.request_redraw();
+            }
             _ => (),
         }
     });
