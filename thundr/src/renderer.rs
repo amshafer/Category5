@@ -1223,15 +1223,7 @@ impl Renderer {
     }
 
     /// Wait for the submit_fence
-    pub unsafe fn wait_for_prev_submit(&self) {
-        self.dev
-            .wait_for_fences(
-                &[self.submit_fence],
-                true,          // wait for all
-                std::u64::MAX, //timeout
-            )
-            .unwrap();
-    }
+    pub unsafe fn wait_for_prev_submit(&self) {}
 
     /// Records and submits a one-time command buffer.
     ///
@@ -1259,15 +1251,36 @@ impl Renderer {
 
         self.cbuf_end_recording(cbuf);
 
-        self.cbuf_submit(cbuf, queue, wait_stages, wait_semas, signal_semas);
-
         unsafe {
-            // We need to wait for the command submission to finish, this
-            // is why you should avoid using this function
-            self.wait_for_prev_submit();
+            // once the one-time buffer has been recorded we can submit
+            // it for execution.
+            let submit_info = vk::SubmitInfo::builder()
+                .wait_semaphores(wait_semas)
+                .wait_dst_stage_mask(wait_stages)
+                .command_buffers(&[cbuf])
+                .signal_semaphores(signal_semas)
+                .build();
 
-            // do not reset the fence since the next cbuf_submit will
-            // expect it to be signaled
+            let fence = self
+                .dev
+                .create_fence(&vk::FenceCreateInfo::default(), None)
+                .expect("Could not create fence");
+
+            // create a fence to be notified when the commands have finished
+            // executing. Wait immediately for the fence.
+            self.dev
+                .queue_submit(queue, &[submit_info], fence)
+                .expect("Could not submit buffer to queue");
+
+            self.dev
+                .wait_for_fences(
+                    &[fence],
+                    true,          // wait for all
+                    std::u64::MAX, //timeout
+                )
+                .expect("Could not wait for the submit fence");
+            // the commands are now executed
+            self.dev.destroy_fence(fence, None);
         }
     }
 
@@ -1294,30 +1307,35 @@ impl Renderer {
         signal_semas: &[vk::Semaphore],
     ) {
         unsafe {
-            let fences = vec![self.submit_fence, self.copy_cbuf_fence];
+            // once the one-time buffer has been recorded we can submit
+            // it for execution.
+            let submit_info = vk::SubmitInfo::builder()
+                .wait_semaphores(wait_semas)
+                .wait_dst_stage_mask(wait_stages)
+                .command_buffers(&[cbuf])
+                .signal_semaphores(signal_semas)
+                .build();
 
-            // Before we submit ourselves, we need to wait for the
-            // previous frame's execution and any copy commands to finish
+            let fence = self
+                .dev
+                .create_fence(&vk::FenceCreateInfo::default(), None)
+                .expect("Could not create fence");
+
+            // create a fence to be notified when the commands have finished
+            // executing. Wait immediately for the fence.
+            self.dev
+                .queue_submit(queue, &[submit_info], fence)
+                .expect("Could not submit buffer to queue");
+
             self.dev
                 .wait_for_fences(
-                    fences.as_slice(),
+                    &[fence],
                     true,          // wait for all
                     std::u64::MAX, //timeout
                 )
-                .unwrap();
-
-            // we need to reset the fence since it has been signaled
-            // copy fence will be handled elsewhere
-            self.dev.reset_fences(&[self.submit_fence]).unwrap();
-
-            self.cbuf_submit_async(
-                cbuf,
-                queue,
-                wait_stages,
-                wait_semas,
-                signal_semas,
-                self.submit_fence,
-            );
+                .expect("Could not wait for the submit fence");
+            // the commands are now executed
+            self.dev.destroy_fence(fence, None);
         }
     }
 
@@ -1797,16 +1815,6 @@ impl Renderer {
     /// Finally we can actually flip the buffers and present
     /// this image.
     pub fn present(&mut self) {
-        unsafe {
-            self.dev
-                .wait_for_fences(
-                    &[self.submit_fence],
-                    true,          // wait for all
-                    std::u64::MAX, //timeout
-                )
-                .unwrap();
-        }
-
         // This is a bit odd. So if a draw call was submitted, then
         // we need to wait for rendering to complete before presenting. If
         // no draw call was submitted (no work to do) then we need to

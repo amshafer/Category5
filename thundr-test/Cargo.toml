@@ -8,5 +8,6 @@ edition = "2018"
 
 [dependencies]
 thundr={path="../thundr", features=["macos"]}
+utils={path="../utils"}
 image="0.23"
 winit=""

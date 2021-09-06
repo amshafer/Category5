@@ -1,6 +1,9 @@
 extern crate thundr;
 use thundr::{CreateInfo, MemImage, SurfaceType, Thundr};
 
+extern crate utils;
+use utils::timing::*;
+
 extern crate winit;
 use winit::{
     event::{Event, WindowEvent},
@@ -59,6 +62,8 @@ fn main() {
     let mut dx = 2.0;
     let mut dy = 2.0;
 
+    let mut stop = StopWatch::new();
+
     // ----------- now wait for the app to exit
     event_loop.run(move |event, _, control_flow| {
         // ----------- update the location of the cursor
@@ -77,11 +82,18 @@ fn main() {
 
         cursor_surf.set_pos(curpos.0 + dx, curpos.1 + dy);
 
+        stop.start();
         // ----------- Perform draw calls
         thund.draw_frame(&mut list);
 
         // ----------- Present to screen
         thund.present();
+        stop.end();
+
+        println!(
+            "Thundr took {:?} ms this frame",
+            stop.get_duration().as_millis()
+        );
 
         *control_flow = ControlFlow::Wait;
 
