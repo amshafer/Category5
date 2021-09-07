@@ -9,12 +9,18 @@ use wayc::Wayc;
 #[cfg(any(unix, macos))]
 extern crate winit;
 #[cfg(any(unix, macos))]
-use winit::{event_loop::EventLoop, window::WindowBuilder};
+use winit::{
+    event::{Event, WindowEvent},
+    event_loop::{ControlFlow, EventLoop},
+    window::WindowBuilder,
+};
 
 pub trait Platform {
     fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType>;
 
     fn set_output_params(&mut self, win: &dom::Window) -> Result<()>;
+
+    fn run<F: FnMut()>(&mut self, func: F) -> Result<()>;
 }
 
 #[cfg(feature = "wayland")]
@@ -114,6 +120,33 @@ impl Platform for XCBPlat {
         self.xp_window.set_title(&win.title);
         self.xp_window
             .set_inner_size(winit::dpi::PhysicalSize::new(win.width, win.height));
+        Ok(())
+    }
+
+    fn run<F>(&mut self, mut func: F) -> Result<()>
+    where
+        F: FnMut(),
+    {
+        use winit::platform::run_return::EventLoopExtRunReturn;
+
+        let evloop = &mut self.xp_event_loop;
+        let window = &mut self.xp_window;
+
+        evloop.run_return(|event, _, control_flow| {
+            match event {
+                Event::WindowEvent { event, .. } => match event {
+                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                    _ => (),
+                },
+                Event::RedrawRequested(_) => {
+                    func();
+                    window.request_redraw();
+                    // Draw one frame and then return
+                    *control_flow = ControlFlow::Exit;
+                }
+                _ => (),
+            };
+        });
         Ok(())
     }
 }

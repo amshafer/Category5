@@ -22,6 +22,6 @@ fn main() {
     dak.refresh_full().unwrap();
 
     loop {
-        dak.dispatch().unwrap();
+        dak.dispatch(|| {}).unwrap();
     }
 }

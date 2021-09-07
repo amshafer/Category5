@@ -17,7 +17,8 @@ use std::io::prelude::*;
 use std::io::BufReader;
 
 pub struct Dakota {
-    d_plat: Box<dyn Platform>,
+    #[cfg(feature = "xcb")]
+    d_plat: platform::XCBPlat,
     d_thund: th::Thundr,
     d_resmap: HashMap<String, th::Image>,
     d_surfaces: th::SurfaceList,
@@ -46,7 +47,7 @@ impl Dakota {
         let thundr = th::Thundr::new(&info).context("Failed to initialize Thundr")?;
 
         Ok(Self {
-            d_plat: Box::new(plat),
+            d_plat: plat,
             d_thund: thundr,
             d_surfaces: th::SurfaceList::new(),
             d_resmap: HashMap::new(),
@@ -154,9 +155,24 @@ impl Dakota {
         Ok(())
     }
 
-    pub fn dispatch(&mut self) -> Result<()> {
-        self.d_thund.draw_frame(&mut self.d_surfaces);
-        self.d_thund.present();
-        Ok(())
+    /// run the dakota thread.
+    ///
+    /// Dakota requires takover of one thread, because that's just how winit
+    /// wants to work. It's annoying, but we live with it. `func` will get
+    /// called before the next frame is drawn, it is the winsys event handler
+    /// for the app.
+    pub fn dispatch<F>(&mut self, mut func: F) -> Result<()>
+    where
+        F: FnMut(),
+    {
+        let plat = &mut self.d_plat;
+        let thund = &mut self.d_thund;
+        let surfs = &mut self.d_surfaces;
+
+        plat.run(|| {
+            func();
+            thund.draw_frame(surfs);
+            thund.present();
+        })
     }
 }
