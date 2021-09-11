@@ -22,7 +22,9 @@
     </window>
 	<layout>
 		<el>
-			<resource>samson</resource>
+            <content>
+                <resource>samson</resource>
+            </content>
 		</el>
 	</layout>
 </dakota>

@@ -120,19 +120,29 @@ impl Dakota {
         };
         self.d_surfaces.clear();
 
+        // TODO: construct layout tree with sizes of all boxes
+
+        // TODO: create (update?) a thundr surface for each box
         for el in dom.layout.elements.iter() {
+            assert!(
+                (el.children.len() > 0 && el.content.is_none())
+                    || (el.children.len() == 0 && el.content.is_some())
+            );
+
             // make a thundr surface for each element
             let mut surf = self.d_thund.create_surface(0.0, 0.0, 512.0, 512.0);
-            // look up and bind to the image specified by <resource>
-            let th_image = self
-                .d_resmap
-                .get(&el.resource)
-                .context("Could not find resource. Please specify it as part of resourceMap")?;
+            if let Some(content) = el.content.as_ref() {
+                // TODO: recurse here for box contents
+                if let Some(res) = content.resource.as_ref() {
+                    // look up and bind to the image specified by <resource>
+                    let th_image = self.d_resmap.get(res).context(
+                        "Could not find resource. Please specify it as part of resourceMap",
+                    )?;
+                    self.d_thund.bind_image(&mut surf, th_image.clone());
+                }
+            }
 
-            self.d_thund.bind_image(&mut surf, th_image.clone());
             self.d_surfaces.push(surf);
-
-            // TODO: calculate positioning
         }
         Ok(())
     }

@@ -58,8 +58,18 @@ pub struct ResourceMap {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct Content {
+    pub resource: Option<String>,
+    pub el: Option<Box<Element>>,
+}
+
+/// Only one of content or children may be defined,
+/// they are mutually exclusive.
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Element {
-    pub resource: String,
+    pub content: Option<Content>,
+    #[serde(rename = "el", default)]
+    pub children: Vec<Element>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
