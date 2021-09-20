@@ -16,7 +16,7 @@ quick-xml = { version = "", features = [ "serialize" ] }
 image = ""
 
 [features]
-default=["xcb"]
+default=["macos"]
 wayland=["thundr/wayland", "wayc"]
 xcb=["thundr/xcb", "winit"]
 macos=["thundr/macos", "winit"]

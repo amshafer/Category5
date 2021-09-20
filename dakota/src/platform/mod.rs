@@ -75,17 +75,46 @@ impl MacosPlat {
             mp_window: window,
         })
     }
-    fn set_output_params(&mut self, win: &dom::Window) -> Result<()> {
-        self.xp_window.set_title(win.title);
-        self.xp_window.set_inner_size(win.width, win.height);
-        Ok(())
-    }
 }
 
 #[cfg(feature = "macos")]
 impl Platform for MacosPlat {
     fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType> {
         Ok(th::SurfaceType::MacOS(&self.mp_window))
+    }
+
+    fn set_output_params(&mut self, win: &dom::Window) -> Result<()> {
+        self.mp_window.set_title(&win.title);
+        self.mp_window
+            .set_inner_size(winit::dpi::PhysicalSize::new(win.width, win.height));
+        Ok(())
+    }
+
+    fn run<F>(&mut self, mut func: F) -> Result<()>
+    where
+        F: FnMut(),
+    {
+        use winit::platform::run_return::EventLoopExtRunReturn;
+
+        let evloop = &mut self.mp_event_loop;
+        let window = &mut self.mp_window;
+
+        evloop.run_return(|event, _, control_flow| {
+            match event {
+                Event::WindowEvent { event, .. } => match event {
+                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                    _ => (),
+                },
+                Event::RedrawRequested(_) => {
+                    func();
+                    window.request_redraw();
+                    // Draw one frame and then return
+                    *control_flow = ControlFlow::Exit;
+                }
+                _ => (),
+            };
+        });
+        Ok(())
     }
 }
 

@@ -19,6 +19,8 @@ use std::io::BufReader;
 pub struct Dakota {
     #[cfg(feature = "xcb")]
     d_plat: platform::XCBPlat,
+    #[cfg(feature = "macos")]
+    d_plat: platform::MacosPlat,
     d_thund: th::Thundr,
     d_resmap: HashMap<String, th::Image>,
     d_surfaces: th::SurfaceList,
@@ -41,6 +43,7 @@ impl Dakota {
         let mut plat = platform::XCBPlat::new()?;
 
         let info = th::CreateInfo::builder()
+            .enable_traditional_composition()
             .surface_type(plat.get_th_surf_type()?)
             .build();
 
