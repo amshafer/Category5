@@ -18,6 +18,8 @@
 extern crate atmos_gen;
 #[macro_use]
 extern crate bitflags;
+#[macro_use]
+extern crate utils;
 
 mod category5;
 use category5::Category5;
