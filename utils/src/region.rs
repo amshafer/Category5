@@ -14,7 +14,7 @@ use std::ops::{Add, Sub};
 /// the corders of a rectangle:
 ///   r_start: the upper left corner's position on the desktop
 ///   r_size:  the distance from the left to the lower right
-#[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Serialize, Deserialize)]
 #[repr(C)]
 pub struct Rect<T: PartialOrd + Copy + Add + Add<Output = T>> {
     pub r_pos: (T, T),
@@ -48,6 +48,14 @@ impl<T: Ord + PartialOrd + Copy + Add + Add<Output = T> + Sub + Sub<Output = T>>
             std::cmp::min(self.r_size.0, other.r_size.0 - self.r_pos.0),
             std::cmp::min(self.r_size.1, other.r_size.1 - self.r_pos.1),
         )
+    }
+
+    /// Enlarge this rect enough to contain `other`
+    pub fn union(&mut self, other: &Self) {
+        self.r_pos.0 = std::cmp::min(self.r_pos.0, other.r_pos.0);
+        self.r_pos.1 = std::cmp::max(self.r_pos.1, other.r_pos.1);
+        self.r_size.0 = std::cmp::min(self.r_size.0, other.r_size.0);
+        self.r_size.1 = std::cmp::max(self.r_size.1, other.r_size.1);
     }
 }
 

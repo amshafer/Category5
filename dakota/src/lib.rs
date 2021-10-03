@@ -3,7 +3,7 @@ extern crate serde;
 extern crate thundr as th;
 
 extern crate utils;
-pub use utils::{anyhow, Context, MemImage, Result};
+pub use utils::{anyhow, region::Rect, Context, MemImage, Result};
 
 pub mod dom;
 use dom::DakotaDOM;
@@ -13,7 +13,6 @@ pub mod xml;
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::prelude::*;
 use std::io::BufReader;
 
 pub struct Dakota {
@@ -112,41 +111,93 @@ impl Dakota {
         Ok(())
     }
 
-    pub fn refresh_elements(&mut self) -> Result<()> {
-        let dom = match &mut self.d_dom {
-            Some(dom) => dom,
-            None => {
-                return Err(anyhow!(
-                    "A scene is not loaded in Dakota. Please load one from xml",
-                ))
+    /// Get the minimum size that a resource wants.
+    ///
+    /// This is used to scale boxes larger than the requirements of the children.
+    pub fn get_resource_size(&mut self, _res: &String) -> Result<dom::Size> {
+        // TODO: look up resource size in map
+        Err(anyhow!(""))
+    }
+
+    /// Create a layout tree of boxes.
+    ///
+    /// This gives all the layout information for where we should place
+    /// thundr surfaces.
+    ///
+    /// This will add boxes to the box array, but will also return the
+    /// box signifying the final size. By handing the size up the recursion
+    /// chain, each box can see the sizes of its children as they are
+    /// created, and can set its final size accordingly. This should prevent
+    /// us from having to do more recursion later since everything is calculated
+    /// now.
+    pub fn calculate_sizes(
+        &mut self,
+        el: &mut dom::Element,
+        available_width: Option<u32>,
+        available_height: Option<u32>,
+    ) -> Result<()> {
+        assert!(
+            (el.children.len() > 0 && el.content.is_none())
+                || (el.children.len() == 0 && el.content.is_some())
+        );
+
+        // check if this element has its size set, shrink the available space
+        // to match.
+
+        // if the box has children, then recurse through them and calculate our
+        // box size based on the fill type.
+        if el.children.len() > 0 {
+            for child in el.children.iter_mut() {
+                self.calculate_sizes(child, available_width, available_height)?;
             }
-        };
+        } else {
+            // This box has centered content.
+            // We should either recurse the child box or calculate the
+            // size based on the centered resource.
+            let content = el.content.as_mut().unwrap();
+            if let Some(mut child) = content.el.as_mut() {
+                self.calculate_sizes(&mut child, available_width, available_height)?;
+            }
+        }
+
+        // Now that we have calculated all the children, we can handle
+        // this element.
+        // 1. If it has a size assigned, that is the final size, all children
+        // will be clipped or scrolled inside that window.
+        // 2. If no size is assigned, and we are limited in the amount of space
+        // we have, then the size is available_space
+        // 3. No size and no bounds means we are inside of a scrolling arena, and
+        // we should grow this box to hold all of its children.
+
+        return Ok(());
+    }
+
+    /// This refreshes the entire scene
+    pub fn refresh_elements(&mut self) -> Result<()> {
         self.d_surfaces.clear();
 
-        // TODO: construct layout tree with sizes of all boxes
-
-        // TODO: create (update?) a thundr surface for each box
-        for el in dom.layout.elements.iter() {
-            assert!(
-                (el.children.len() > 0 && el.content.is_none())
-                    || (el.children.len() == 0 && el.content.is_some())
-            );
-
-            // make a thundr surface for each element
-            let mut surf = self.d_thund.create_surface(0.0, 0.0, 512.0, 512.0);
-            if let Some(content) = el.content.as_ref() {
-                // TODO: recurse here for box contents
-                if let Some(res) = content.resource.as_ref() {
-                    // look up and bind to the image specified by <resource>
-                    let th_image = self.d_resmap.get(res).context(
-                        "Could not find resource. Please specify it as part of resourceMap",
-                    )?;
-                    self.d_thund.bind_image(&mut surf, th_image.clone());
-                }
-            }
-
-            self.d_surfaces.push(surf);
+        if self.d_dom.is_none() {
+            return Ok(());
         }
+        let mut dom = self.d_dom.take().unwrap();
+
+        // TODO: construct layout tree with sizes of all boxes
+        // create our thundr surfaces while we are at it.
+        let result = self.calculate_sizes(
+            &mut dom.layout.root_element,
+            Some(dom.window.width),  // available width
+            Some(dom.window.height), // available height
+        );
+
+        self.d_dom = Some(dom);
+
+        // now handle the error from our layout tree recursive call after
+        // we have put the dom back
+        result?;
+
+        // TODO: Create our thundr surface and add it to the list
+        // one list with subsurfaces?
+
         Ok(())
     }
 
