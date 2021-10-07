@@ -133,8 +133,8 @@ impl Dakota {
     pub fn calculate_sizes(
         &mut self,
         el: &mut dom::Element,
-        available_width: Option<u32>,
-        available_height: Option<u32>,
+        mut available_width: Option<u32>,
+        mut available_height: Option<u32>,
     ) -> Result<()> {
         assert!(
             (el.children.len() > 0 && el.content.is_none())
@@ -143,6 +143,10 @@ impl Dakota {
 
         // check if this element has its size set, shrink the available space
         // to match.
+        if let Some(size) = el.size.as_ref() {
+            available_width = Some(size.width);
+            available_height = Some(size.height);
+        }
 
         // if the box has children, then recurse through them and calculate our
         // box size based on the fill type.
@@ -168,6 +172,33 @@ impl Dakota {
         // we have, then the size is available_space
         // 3. No size and no bounds means we are inside of a scrolling arena, and
         // we should grow this box to hold all of its children.
+
+        if el.size.is_none() {
+            // first grow this box to fit its children.
+            el.resize_to_children()?;
+
+            // if the size is still empty, there were no children. This should just be
+            // sized to the available space
+            if el.size.is_none() {
+                // The default size is based on the resource's default size.
+                // No size + no resource + no bounds means we default to size
+                // of 0.
+                el.size = match el.resource.as_ref() {
+                    Some(res) => Some(self.get_resource_size(&res)?),
+                    None => None,
+                };
+            }
+
+            // Then clip the box by any available dimensions
+            if let Some(size) = el.size.as_mut() {
+                if let Some(width) = available_width {
+                    size.width = std::cmp::min(width, size.width);
+                }
+                if let Some(height) = available_height {
+                    size.height = std::cmp::min(height, size.height);
+                }
+            }
+        }
 
         return Ok(());
     }

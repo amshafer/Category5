@@ -84,6 +84,12 @@ pub struct Size {
 }
 
 impl Size {
+    pub fn new(w: u32, h: u32) -> Self {
+        Self {
+            width: w,
+            height: h,
+        }
+    }
     fn union(&mut self, other: &Self) {
         self.width = std::cmp::max(self.width, other.width);
         self.height = std::cmp::max(self.height, other.height);
@@ -160,29 +166,23 @@ impl Element {
         // If we are iterating in loops and the like, then the borrow checker doesn't like
         // us passing an element owned by self into a function
         let resize_func =
-            |parent_size: &mut Option<Size>, parent_offset: &mut Option<Offset>, other: &Self| {
-                let size = match other.size.as_ref() {
-                    Some(s) => s,
+            |parent_size: &mut Option<Size>, _parent_offset: &mut Option<Offset>, other: &Self| {
+                let mut size = match other.size.as_ref() {
+                    Some(s) => s.clone(),
                     None => return Err(anyhow!("Input element does not have a size")),
-                };
-                let offset = match other.offset.as_ref() {
-                    Some(s) => s,
-                    None => return Err(anyhow!("Input element does not have a offset")),
                 };
 
                 // We have a size, so we need to resize it. Otherwise this element gains
                 // the size of the other one.
                 if let Some(my_size) = parent_size.as_mut() {
-                    my_size.union(size);
+                    // add any offsets to our size
+                    if let Some(offset) = other.offset.as_ref() {
+                        size.width += offset.x;
+                        size.height += offset.y;
+                    }
+                    my_size.union(&size);
                 } else {
-                    *parent_size = Some(size.clone());
-                }
-
-                // same goes for offsets
-                if let Some(my_offset) = parent_offset.as_mut() {
-                    my_offset.union(offset);
-                } else {
-                    *parent_offset = Some(offset.clone());
+                    *parent_size = Some(size);
                 }
 
                 Ok(())
