@@ -1266,7 +1266,6 @@ dependencies = [
  "nix 0.17.0",
  "serde",
  "utils",
- "winit",
 ]
 
 [[package]]
