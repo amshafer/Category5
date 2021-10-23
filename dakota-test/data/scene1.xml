@@ -23,7 +23,9 @@
 	<layout>
 		<el>
 			<content>
-				<resource>samson</resource>
+				<el>
+					<resource>samson</resource>
+				</el>
 			</content>
 		</el>
 	</layout>

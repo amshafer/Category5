@@ -136,11 +136,6 @@ impl Dakota {
         mut available_width: Option<u32>,
         mut available_height: Option<u32>,
     ) -> Result<()> {
-        assert!(
-            (el.children.len() > 0 && el.content.is_none())
-                || (el.children.len() == 0 && el.content.is_some())
-        );
-
         // check if this element has its size set, shrink the available space
         // to match.
         if let Some(size) = el.size.as_ref() {
@@ -154,11 +149,10 @@ impl Dakota {
             for child in el.children.iter_mut() {
                 self.calculate_sizes(child, available_width, available_height)?;
             }
-        } else {
+        } else if let Some(content) = el.content.as_mut() {
             // This box has centered content.
             // We should either recurse the child box or calculate the
             // size based on the centered resource.
-            let content = el.content.as_mut().unwrap();
             if let Some(mut child) = content.el.as_mut() {
                 self.calculate_sizes(&mut child, available_width, available_height)?;
             }
@@ -181,15 +175,24 @@ impl Dakota {
             // sized to the available space
             if el.size.is_none() {
                 // The default size is based on the resource's default size.
-                // No size + no resource + no bounds means we default to size
-                // of 0.
+                // No size + no resource + no bounds means we default to size 0
                 el.size = match el.resource.as_ref() {
                     Some(res) => Some(self.get_resource_size(&res)?),
-                    None => None,
+                    // Try to use the bounds if available
+                    None => Some(dom::Size {
+                        width: match available_width {
+                            Some(aw) => aw,
+                            None => 0,
+                        },
+                        height: match available_height {
+                            Some(ah) => ah,
+                            None => 0,
+                        },
+                    }),
                 };
             }
 
-            // Then clip the box by any available dimensions
+            // Then possibly clip the box by any available dimensions.
             if let Some(size) = el.size.as_mut() {
                 if let Some(width) = available_width {
                     size.width = std::cmp::min(width, size.width);
@@ -248,8 +251,6 @@ impl Dakota {
     /// This refreshes the entire scene, and regenerates
     /// the Thundr surface list.
     pub fn refresh_elements(&mut self) -> Result<()> {
-        self.d_surfaces.clear();
-
         if self.d_dom.is_none() {
             return Ok(());
         }
