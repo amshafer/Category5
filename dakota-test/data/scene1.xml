@@ -14,17 +14,17 @@
 			</hints>
 		</resource>
 	</resourceMap>
-    <window>
-        <id>0</id>
-        <title>Dakota Test</title>
-        <width>512</width>
-        <height>512</height>
-    </window>
+	<window>
+		<id>0</id>
+		<title>Dakota Test</title>
+		<width>512</width>
+		<height>512</height>
+	</window>
 	<layout>
 		<el>
-            <content>
-                <resource>samson</resource>
-            </content>
+			<content>
+				<resource>samson</resource>
+			</content>
 		</el>
 	</layout>
 </dakota>

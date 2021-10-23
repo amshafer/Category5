@@ -203,7 +203,50 @@ impl Dakota {
         return Ok(());
     }
 
-    /// This refreshes the entire scene
+    /// This takes care of freeing all of our Thundr Images and such.
+    /// This isn't handled by th::Image::Drop since we have to call
+    /// functions on Thundr to free the image.
+    fn clear_thundr_surfaces(&mut self) {
+        for surf in self.d_surfaces.iter_mut() {
+            if let Some(image) = surf.get_image() {
+                self.d_thund.destroy_image(image);
+            }
+        }
+    }
+
+    /// Create the thundr surfaces from the Element layout tree.
+    ///
+    /// At this point the layout tree should have been constructed, aka
+    /// Elements will have their sizes correctly (re)calculated and filled
+    /// in by `calculate_sizes`.
+    fn create_thundr_surf_for_el(&mut self, el: &dom::Element) -> Result<th::Surface> {
+        let offset = match el.offset {
+            Some(off) => off,
+            None => dom::Offset { x: 0, y: 0 },
+        };
+        let size = el
+            .size
+            .expect("Element should have its size filled in by now");
+
+        // first create a surface for this element
+        let mut surf = self.d_thund.create_surface(
+            offset.x as f32,
+            offset.y as f32,
+            size.width as f32,
+            size.height as f32,
+        );
+
+        // now iterate through all of it's children, and recursively do the same
+        for child in el.children.iter() {
+            // add the new child surface as a subsurface
+            let child_surf = self.create_thundr_surf_for_el(child)?;
+            surf.add_subsurface(child_surf);
+        }
+        Ok(surf)
+    }
+
+    /// This refreshes the entire scene, and regenerates
+    /// the Thundr surface list.
     pub fn refresh_elements(&mut self) -> Result<()> {
         self.d_surfaces.clear();
 
@@ -212,7 +255,7 @@ impl Dakota {
         }
         let mut dom = self.d_dom.take().unwrap();
 
-        // TODO: construct layout tree with sizes of all boxes
+        // construct layout tree with sizes of all boxes
         // create our thundr surfaces while we are at it.
         let result = self.calculate_sizes(
             &mut dom.layout.root_element,
@@ -220,34 +263,32 @@ impl Dakota {
             Some(dom.window.height), // available height
         );
 
-        self.d_dom = Some(dom);
-
         // now handle the error from our layout tree recursive call after
         // we have put the dom back
-        result?;
+        if result.is_err() {
+            self.d_dom = Some(dom);
+            return result;
+        }
 
-        // TODO: Create our thundr surface and add it to the list
+        // Create our thundr surface and add it to the list
         // one list with subsurfaces?
+        let thundr_tree = self.create_thundr_surf_for_el(&dom.layout.root_element);
 
-        Ok(())
+        if thundr_tree.is_err() {
+            self.d_dom = Some(dom);
+            return Err(anyhow!("Could not construct Thundr surface tree"));
+        }
+
+        // add the newly constructed tree to the thundr list
+        self.clear_thundr_surfaces();
+
+        return result;
     }
 
     /// Completely flush the thundr surfaces/images and recreate the scene
     pub fn refresh_full(&mut self) -> Result<()> {
         self.refresh_resource_map()?;
-        self.refresh_elements()?;
-
-        //TODO: enable me after adding swapchain reconstruction
-        //let dom = match &mut self.d_dom {
-        //    Some(dom) => dom,
-        //    None => {
-        //        return Err(anyhow!(
-        //            "A scene is not loaded in Dakota. Please load one from xml",
-        //        ))
-        //    }
-        //};
-        //self.d_plat.set_output_params(&dom.window)
-        Ok(())
+        self.refresh_elements()
     }
 
     /// run the dakota thread.

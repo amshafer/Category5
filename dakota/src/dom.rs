@@ -144,7 +144,7 @@ pub struct Element {
     pub size: Option<Size>,
     #[serde(rename = "scrolling", default)]
     pub bounds: Option<Edges>,
-    #[serde(rename = "el")]
+    #[serde(rename = "el", default)]
     pub children: Vec<Element>,
 }
 
