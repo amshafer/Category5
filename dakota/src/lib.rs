@@ -15,13 +15,18 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 
+struct ResMapEntry {
+    rme_size: dom::Size,
+    rme_image: th::Image,
+}
+
 pub struct Dakota {
     #[cfg(feature = "xcb")]
     d_plat: platform::XCBPlat,
     #[cfg(feature = "macos")]
     d_plat: platform::MacosPlat,
     d_thund: th::Thundr,
-    d_resmap: HashMap<String, th::Image>,
+    d_resmap: HashMap<String, ResMapEntry>,
     d_surfaces: th::SurfaceList,
     d_dom: Option<DakotaDOM>,
 }
@@ -105,7 +110,16 @@ impl Dakota {
                 let th_image = self.d_thund.create_image_from_bits(&mimg, None).unwrap();
 
                 // Add the new image to our resource map
-                self.d_resmap.insert(res.name.clone(), th_image);
+                self.d_resmap.insert(
+                    res.name.clone(),
+                    ResMapEntry {
+                        rme_size: dom::Size {
+                            width: resolution.0 as u32,
+                            height: resolution.1 as u32,
+                        },
+                        rme_image: th_image,
+                    },
+                );
             }
         }
         Ok(())
@@ -114,9 +128,12 @@ impl Dakota {
     /// Get the minimum size that a resource wants.
     ///
     /// This is used to scale boxes larger than the requirements of the children.
-    pub fn get_resource_size(&mut self, _res: &String) -> Result<dom::Size> {
-        // TODO: look up resource size in map
-        Err(anyhow!(""))
+    pub fn get_resource_size(&mut self, res: &String) -> Result<dom::Size> {
+        if let Some(rme) = self.d_resmap.get(res) {
+            return Ok(rme.rme_size);
+        } else {
+            return Err(anyhow!("Could not find resource {}", res));
+        }
     }
 
     /// Create a layout tree of boxes.
