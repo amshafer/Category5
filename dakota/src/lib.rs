@@ -239,7 +239,7 @@ impl Dakota {
     /// At this point the layout tree should have been constructed, aka
     /// Elements will have their sizes correctly (re)calculated and filled
     /// in by `calculate_sizes`.
-    fn create_thundr_surf_for_el(&mut self, el: &dom::Element) -> Result<th::Surface> {
+    fn create_thundr_surf_for_el(&mut self, el: &dom::Element) -> Result<Option<th::Surface>> {
         let offset = match el.offset {
             Some(off) => off,
             None => dom::Offset { x: 0, y: 0 },
@@ -248,21 +248,66 @@ impl Dakota {
             .size
             .expect("Element should have its size filled in by now");
 
-        // first create a surface for this element
-        let mut surf = self.d_thund.create_surface(
-            offset.x as f32,
-            offset.y as f32,
-            size.width as f32,
-            size.height as f32,
-        );
+        if let Some(resname) = el.resource.as_ref() {
+            // first create a surface for this element
+            let mut surf = self.d_thund.create_surface(
+                offset.x as f32,
+                offset.y as f32,
+                size.width as f32,
+                size.height as f32,
+            );
 
-        // now iterate through all of it's children, and recursively do the same
-        for child in el.children.iter() {
+            // We need to get the resource's content from our resource map, get
+            // the thundr image for it, and bind it to our new surface.
+            let rme = match self.d_resmap.get(resname) {
+                Some(rme) => rme,
+                None => {
+                    return Err(anyhow!(
+                        "This Element references resource {:?}, which does not exist",
+                        resname
+                    ))
+                }
+            };
+            self.d_thund.bind_image(&mut surf, rme.rme_image.clone());
+            self.d_surfaces.push(surf.clone());
+
+            // now iterate through all of it's children, and recursively do the same
+            for child in el.children.iter() {
+                // add the new child surface as a subsurface
+                let child_surf = self.create_thundr_surf_for_el(child)?;
+                if let Some(csurf) = child_surf {
+                    surf.add_subsurface(csurf);
+                }
+            }
+
+            return Ok(Some(surf));
+        }
+
+        let mut handle_child_surf = |child| -> Result<Option<th::Surface>> {
             // add the new child surface as a subsurface
             let child_surf = self.create_thundr_surf_for_el(child)?;
-            surf.add_subsurface(child_surf);
+            if let Some(csurf) = child_surf {
+                self.d_surfaces.push(csurf);
+            }
+            Ok(None)
+        };
+
+        // if we are here, then the current element does not have content.
+        // Instead what we do is recursively call this function on the
+        // children, and append them to the surfacelist.
+        for child in el.children.iter() {
+            handle_child_surf(child)?;
         }
-        Ok(surf)
+        if let Some(content) = el.content.as_ref() {
+            // This box has centered content.
+            // We should either recurse the child box or calculate the
+            // size based on the centered resource.
+            if let Some(child) = content.el.as_ref() {
+                handle_child_surf(child)?;
+            }
+        }
+
+        return Ok(None);
     }
 
     /// This refreshes the entire scene, and regenerates
@@ -288,19 +333,18 @@ impl Dakota {
             return result;
         }
 
-        // Create our thundr surface and add it to the list
-        // one list with subsurfaces?
-        let thundr_tree = self.create_thundr_surf_for_el(&dom.layout.root_element);
-
-        if thundr_tree.is_err() {
-            self.d_dom = Some(dom);
-            return Err(anyhow!("Could not construct Thundr surface tree"));
-        }
-
-        // add the newly constructed tree to the thundr list
         self.clear_thundr_surfaces();
 
-        return result;
+        // Create our thundr surface and add it to the list
+        // one list with subsurfaces?
+        let result = self.create_thundr_surf_for_el(&dom.layout.root_element);
+
+        self.d_dom = Some(dom);
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e.context("Could not construct Thundr surface tree")),
+        }
     }
 
     /// Completely flush the thundr surfaces/images and recreate the scene
