@@ -18,7 +18,8 @@ fn main() {
     let mut reader = BufReader::new(f);
 
     let mut dak = Dakota::new().expect("Could not create dakota instance");
-    dak.load_xml_reader(reader).unwrap();
+    dak.load_xml_reader(reader)
+        .expect("Could not parse XML dakota file");
     dak.refresh_full().unwrap();
 
     loop {

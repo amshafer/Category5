@@ -1,0 +1,49 @@
+<dakota>
+	<version>0.0.0.1</version>
+	<resourceMap>
+		<resource>
+			<name>samson</name>
+			<image>
+				<format type="ARGB8888"/>
+			</image>
+			<data>
+				<relPath>images/brock.jpg</relPath>
+			</data>
+			<hints>
+				<constant>true</constant>
+			</hints>
+		</resource>
+	</resourceMap>
+	<window>
+		<id>0</id>
+		<title>Dakota Test</title>
+		<width>512</width>
+		<height>512</height>
+	</window>
+	<layout>
+		<el>
+			<el>
+				<resource>samson</resource>
+				<offset>
+					<x>256</x>
+					<y>256</y>
+				</offset>
+				<size>
+					<width>128</width>
+					<height>128</height>
+				</size>
+			</el>
+			<el>
+				<resource>samson</resource>
+				<offset>
+					<x>32</x>
+					<y>64</y>
+				</offset>
+				<size>
+					<width>128</width>
+					<height>128</height>
+				</size>
+			</el>
+		</el>
+	</layout>
+</dakota>

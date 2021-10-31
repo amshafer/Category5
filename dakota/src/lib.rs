@@ -351,6 +351,10 @@ impl Dakota {
         }
         let mut dom = self.d_dom.take().unwrap();
 
+        // we need to update the window dimensions if possible,
+        // so call into our platform do handle it
+        self.d_plat.set_output_params(&dom.window);
+
         // construct layout tree with sizes of all boxes
         // create our thundr surfaces while we are at it.
         let result = self.calculate_sizes(

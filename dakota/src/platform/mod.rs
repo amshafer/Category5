@@ -67,6 +67,7 @@ impl MacosPlat {
     pub fn new() -> Result<Self> {
         let event_loop = EventLoop::new();
         let window = WindowBuilder::new()
+            .with_inner_size(winit::dpi::PhysicalSize::new(512, 512))
             .build(&event_loop)
             .context("Could not create window with winit")?;
 
@@ -85,6 +86,7 @@ impl Platform for MacosPlat {
 
     fn set_output_params(&mut self, win: &dom::Window) -> Result<()> {
         self.mp_window.set_title(&win.title);
+        // BUG: For unknown reasons, this seems to have no effect?
         self.mp_window
             .set_inner_size(winit::dpi::PhysicalSize::new(win.width, win.height));
         Ok(())
