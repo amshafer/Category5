@@ -172,6 +172,32 @@ impl Dakota {
             // size based on the centered resource.
             if let Some(mut child) = content.el.as_mut() {
                 self.calculate_sizes(&mut child, available_width, available_height)?;
+                // Centered content does not have offsets
+                assert!(child.offset.is_none());
+                // At this point the size of the is calculated
+                // and we can determine the offset. We want to center the
+                // box, so that's the center point of the parent minus
+                // half the size of the child.
+                //
+                // If the available space is not set, then we don't offset the
+                // content at all, since there is an infinte space and we
+                // can't center it.
+                //
+                // The child size should have already been clipped to the available space
+                let mut offset = dom::Offset { x: 0, y: 0 };
+                let child_size = child
+                    .size
+                    .as_ref()
+                    .expect("Child should have been assigned a size by now");
+
+                if let Some(width) = available_width {
+                    offset.x = std::cmp::max((width / 2) - (child_size.width / 2), 0);
+                }
+                if let Some(height) = available_height {
+                    offset.y = std::cmp::max((height / 2) - (child_size.height / 2), 0);
+                }
+
+                child.offset = Some(offset);
             }
         }
 
@@ -210,12 +236,19 @@ impl Dakota {
             }
 
             // Then possibly clip the box by any available dimensions.
+            // Add our offsets while calculating this to account for space
+            // used by moving the box.
             if let Some(size) = el.size.as_mut() {
+                let offset = match el.offset.as_ref() {
+                    Some(off) => off,
+                    None => &dom::Offset { x: 0, y: 0 },
+                };
+
                 if let Some(width) = available_width {
-                    size.width = std::cmp::min(width, size.width);
+                    size.width = std::cmp::min(width + offset.x, size.width);
                 }
                 if let Some(height) = available_height {
-                    size.height = std::cmp::min(height, size.height);
+                    size.height = std::cmp::min(height + offset.y, size.height);
                 }
             }
         }
