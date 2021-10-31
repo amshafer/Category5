@@ -7,4 +7,8 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-dakota={path="../dakota", features=["xcb"]}
+dakota={path="../dakota"}
+
+[features]
+xcb = ["dakota/xcb"]
+macos = ["dakota/macos"]
