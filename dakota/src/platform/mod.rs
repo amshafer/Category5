@@ -42,7 +42,7 @@ impl WLPlat {
         }
     }
     fn set_output_params(&mut self, win: &dom::Window) -> Result<()> {
-        unimplemented!();
+        println!("set_output_params on wayland is unimplemented");
     }
 }
 

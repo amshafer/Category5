@@ -1089,6 +1089,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "raw-window-metal"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2cd21ed1cdef7f1b1579b972148ba6058b5b545959a14d91ea83c4f0ea9f289b"
+dependencies = [
+ "cocoa",
+ "core-graphics 0.22.2",
+ "objc",
+ "raw-window-handle",
+]
+
+[[package]]
 name = "rayon"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1264,8 +1276,11 @@ dependencies = [
  "cgmath",
  "memoffset 0.5.6",
  "nix 0.17.0",
+ "raw-window-handle",
+ "raw-window-metal",
  "serde",
  "utils",
+ "winit",
 ]
 
 [[package]]

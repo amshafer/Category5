@@ -14,12 +14,12 @@ use winit::{
 
 fn main() {
     // NOTE: uncomment me for winit version
-    //let event_loop = EventLoop::new();
-    //let window = WindowBuilder::new().build(&event_loop).unwrap();
+    let event_loop = EventLoop::new();
+    let window = WindowBuilder::new().build(&event_loop).unwrap();
 
+    let surf_type = SurfaceType::Display(PhantomData);
     #[cfg(target_os = "macos")]
     let surf_type = SurfaceType::MacOS(&window);
-    let surf_type = SurfaceType::Display(PhantomData);
 
     let info = CreateInfo::builder()
         .enable_traditional_composition()
@@ -66,7 +66,7 @@ fn main() {
 
     let mut stop = StopWatch::new();
 
-    let mut draw_func = || {
+    let mut draw_func = move || {
         // ----------- update the location of the cursor
         let curpos = cursor_surf.get_pos();
         println!("curpos = {:?}", curpos);
@@ -98,23 +98,23 @@ fn main() {
     };
 
     // ----------- now wait for the app to exit
-    //event_loop.run(move |event, _, control_flow| {
-    //    match event {
-    //        Event::WindowEvent { event, .. } => match event {
-    //            WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-    //            _ => (),
-    //        },
-    //        Event::RedrawRequested(_) => {
-    //            draw_func();
-    //            *control_flow = ControlFlow::Wait;
-    //            // Queue another frame
-    //            window.request_redraw();
-    //        }
-    //        _ => (),
-    //    }
-    //});
+    event_loop.run(move |event, _, control_flow| {
+        match event {
+            Event::WindowEvent { event, .. } => match event {
+                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                _ => (),
+            },
+            Event::RedrawRequested(_) => {
+                draw_func();
+                *control_flow = ControlFlow::Wait;
+                // Queue another frame
+                window.request_redraw();
+            }
+            _ => (),
+        }
+    });
 
-    loop {
-        draw_func();
-    }
+    //loop {
+    //    draw_func();
+    //}
 }

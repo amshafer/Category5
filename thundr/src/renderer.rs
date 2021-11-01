@@ -372,6 +372,62 @@ impl Renderer {
         inst.create_device(pdev, &dev_create_info, None).unwrap()
     }
 
+    /// Tear down all the swapchain-dependent vulkan objects we have created.
+    /// This will be used when dropping everything and when we need to handle
+    /// OOD events.
+    unsafe fn destroy_swapchain(&mut self) {
+        for view in self.views.iter() {
+            self.dev.destroy_image_view(*view, None);
+        }
+        self.views.clear();
+        for image in self.images.iter() {
+            self.dev.destroy_image(*image, None);
+        }
+        self.images.clear();
+
+        self.dev
+            .free_command_buffers(self.pool, self.cbufs.as_slice());
+        self.cbufs.clear();
+
+        self.swapchain_loader
+            .destroy_swapchain(self.swapchain, None);
+        self.swapchain = vk::SwapchainKHR::null();
+    }
+
+    /// Recreate our swapchain.
+    ///
+    /// This will be done on VK_ERROR_OUT_OF_DATE_KHR, signifying that
+    /// the window is being resized and we have to regenerate accordingly.
+    /// Keep in mind the Pipeline in Thundr will also have to be recreated
+    /// separately.
+    pub(crate) unsafe fn recreate_swapchain(&mut self) {
+        // first wait for the device to finish working
+        self.dev.device_wait_idle().unwrap();
+        self.destroy_swapchain();
+
+        self.swapchain = Renderer::create_swapchain(
+            &self.inst,
+            &self.swapchain_loader,
+            &self.display.d_surface_loader,
+            self.pdev,
+            self.display.d_surface,
+            &self.surface_caps,
+            self.surface_format,
+            &self.resolution,
+        );
+
+        let (images, views) = Renderer::select_images_and_views(
+            &self.inst,
+            self.pdev,
+            &self.swapchain_loader,
+            self.swapchain,
+            &self.dev,
+            self.surface_format,
+        );
+        self.images = images;
+        self.views = views;
+    }
+
     /// create a new vkSwapchain
     ///
     /// Swapchains contain images that can be used for WSI presentation
@@ -1875,17 +1931,12 @@ impl Drop for Renderer {
 
             self.dev.destroy_semaphore(self.present_sema, None);
             self.dev.destroy_semaphore(self.render_sema, None);
-
-            for &view in self.views.iter() {
-                self.dev.destroy_image_view(view, None);
-            }
-
             self.desc_pool.destroy(&self.dev);
-            self.dev.destroy_command_pool(self.pool, None);
-
             self.dev.destroy_sampler(self.image_sampler, None);
-            self.swapchain_loader
-                .destroy_swapchain(self.swapchain, None);
+
+            self.destroy_swapchain();
+
+            self.dev.destroy_command_pool(self.pool, None);
             self.dev.destroy_fence(self.submit_fence, None);
             self.dev.destroy_device(None);
 

@@ -104,6 +104,7 @@ pub struct Thundr {
 
     /// Application specific stuff that will be set up after
     /// the original initialization
+    pub(crate) th_pipe_type: PipelineType,
     pub(crate) th_pipe: Box<dyn Pipeline>,
 }
 
@@ -180,10 +181,18 @@ impl Thundr {
         let mut rend = Renderer::new(&info);
 
         // Create the pipeline(s) requested
-        let pipe: Box<dyn Pipeline> = if info.enable_traditional_composition {
-            Box::new(GeomPipeline::new(&mut rend))
+        // Record the type we are using so that we know which type to regenerate
+        // on window resizing
+        let (pipe, ty): (Box<dyn Pipeline>, PipelineType) = if info.enable_traditional_composition {
+            (
+                Box::new(GeomPipeline::new(&mut rend)),
+                PipelineType::GEOMETRIC,
+            )
         } else if info.enable_compute_composition {
-            Box::new(CompPipeline::new(&mut rend))
+            (
+                Box::new(CompPipeline::new(&mut rend)),
+                PipelineType::COMPUTE,
+            )
         } else {
             return Err(anyhow!(
                 "Please select a composition type in the thundr CreateInfo"
@@ -193,6 +202,7 @@ impl Thundr {
         Ok(Thundr {
             th_rend: rend,
             th_image_list: Vec::new(),
+            th_pipe_type: ty,
             th_pipe: pipe,
         })
     }

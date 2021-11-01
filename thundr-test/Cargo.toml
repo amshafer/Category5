@@ -11,3 +11,6 @@ thundr={path="../thundr"}
 utils={path="../utils"}
 image="0.23"
 winit=""
+
+[features]
+macos=["thundr/macos"]
