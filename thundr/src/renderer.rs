@@ -21,8 +21,9 @@ use crate::pipelines::PipelineType;
 use crate::platform::VKDeviceFeatures;
 
 extern crate utils as cat5_utils;
+use crate::ThundrError;
 use crate::{CreateInfo, Damage};
-use cat5_utils::{anyhow, log, region::Rect, Context, MemImage, Result};
+use cat5_utils::{anyhow, log, region::Rect, MemImage, Result};
 
 // this happy little debug callback is from the ash examples
 // all it does is print any errors/warnings thrown.
@@ -196,7 +197,7 @@ impl Renderer {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("Thundr").unwrap();
 
-        let layer_names = if !info.enable_traditional_composition {
+        let layer_names = if info.enable_traditional_composition {
             // For some reason the validation layers segfault in renderpass on the geometric
             // one, so only use validation on compute
             vec![CString::new("VK_LAYER_KHRONOS_validation").unwrap()]
@@ -376,14 +377,12 @@ impl Renderer {
     /// This will be used when dropping everything and when we need to handle
     /// OOD events.
     unsafe fn destroy_swapchain(&mut self) {
+        // Don't destroy the images here, the destroy swapchain call
+        // will take care of them
         for view in self.views.iter() {
             self.dev.destroy_image_view(*view, None);
         }
         self.views.clear();
-        for image in self.images.iter() {
-            self.dev.destroy_image(*image, None);
-        }
-        self.images.clear();
 
         self.dev
             .free_command_buffers(self.pool, self.cbufs.as_slice());
@@ -400,10 +399,21 @@ impl Renderer {
     /// the window is being resized and we have to regenerate accordingly.
     /// Keep in mind the Pipeline in Thundr will also have to be recreated
     /// separately.
-    pub(crate) unsafe fn recreate_swapchain(&mut self) {
+    pub unsafe fn recreate_swapchain(&mut self) {
         // first wait for the device to finish working
         self.dev.device_wait_idle().unwrap();
         self.destroy_swapchain();
+
+        // We need to get the updated size of our swapchain. This
+        // will be the current size of the surface in use. We should
+        // also update Display.d_resolution while we are at it.
+        let new_res = self
+            .display
+            .d_surface_loader
+            .get_physical_device_surface_capabilities(self.pdev, self.display.d_surface)
+            .expect("Could not get physical device surface capabilities");
+        self.display.d_resolution = new_res.current_extent;
+        self.resolution = new_res.current_extent;
 
         self.swapchain = Renderer::create_swapchain(
             &self.inst,
@@ -426,6 +436,9 @@ impl Renderer {
         );
         self.images = images;
         self.views = views;
+
+        self.cbufs =
+            Renderer::create_command_buffers(&self.dev, self.pool, self.images.len() as u32);
     }
 
     /// create a new vkSwapchain
@@ -1527,9 +1540,12 @@ impl Renderer {
     ///
     /// This adds to the current_damage that has been set by surface moving
     /// and mapping.
-    pub fn begin_recording_one_frame(&mut self, surfaces: &mut SurfaceList) -> RecordParams {
+    pub fn begin_recording_one_frame(
+        &mut self,
+        surfaces: &mut SurfaceList,
+    ) -> Result<RecordParams, ThundrError> {
         // get the next frame to draw into
-        self.get_next_swapchain_image().unwrap();
+        self.get_next_swapchain_image()?;
 
         // TODO: redo the way I track swap ages. The order the images are acquired
         // isn't guaranteed to be constant
@@ -1604,7 +1620,7 @@ impl Renderer {
             self.update_buffer_ages();
         }
 
-        self.get_recording_parameters()
+        Ok(self.get_recording_parameters())
     }
 
     /// Create a descriptor pool for the uniform buffer
@@ -1813,7 +1829,7 @@ impl Renderer {
     ///
     /// Returns if the next image index was successfully obtained
     /// false means try again later, the next image is not ready
-    pub fn get_next_swapchain_image(&mut self) -> Result<()> {
+    pub fn get_next_swapchain_image(&mut self) -> Result<(), ThundrError> {
         unsafe {
             match self.swapchain_loader.acquire_next_image(
                 self.swapchain,
@@ -1831,16 +1847,23 @@ impl Renderer {
                     self.current_image = index;
                     Ok(())
                 }
-                Err(vk::Result::NOT_READY) => Err(anyhow!(
-                    "vkAcquireNextImageKHR: vk::Result::NOT_READY: Current {:?}",
-                    self.current_image
-                )),
-                Err(vk::Result::TIMEOUT) => Err(anyhow!(
-                    "vkAcquireNextImageKHR: vk::Result::NOT_READY: Current {:?}",
-                    self.current_image
-                )),
+                Err(vk::Result::NOT_READY) => {
+                    log::debug!(
+                        "vkAcquireNextImageKHR: vk::Result::NOT_READY: Current {:?}",
+                        self.current_image
+                    );
+                    Err(ThundrError::NOT_READY)
+                }
+                Err(vk::Result::TIMEOUT) => {
+                    log::debug!(
+                        "vkAcquireNextImageKHR: vk::Result::NOT_READY: Current {:?}",
+                        self.current_image
+                    );
+                    Err(ThundrError::TIMEOUT)
+                }
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(ThundrError::OUT_OF_DATE),
                 // the call did not succeed
-                Err(err) => Err(anyhow!("Could not acquire next image: {:?}", err)),
+                Err(err) => Err(ThundrError::COULD_NOT_ACQUIRE_NEXT_IMAGE),
             }
         }
     }
@@ -1870,7 +1893,7 @@ impl Renderer {
     ///
     /// Finally we can actually flip the buffers and present
     /// this image.
-    pub fn present(&mut self) {
+    pub fn present(&mut self) -> Result<(), ThundrError> {
         // This is a bit odd. So if a draw call was submitted, then
         // we need to wait for rendering to complete before presenting. If
         // no draw call was submitted (no work to do) then we need to
@@ -1879,7 +1902,6 @@ impl Renderer {
             true => [self.render_sema],
             false => {
                 panic!("No draw call was submitted, but thundr.present was still called");
-                [self.present_sema]
             }
         };
         let swapchains = [self.swapchain];
@@ -1903,9 +1925,14 @@ impl Renderer {
         self.current_damage.clear();
 
         unsafe {
-            self.swapchain_loader
+            match self
+                .swapchain_loader
                 .queue_present(self.present_queue, &info)
-                .unwrap();
+            {
+                Ok(_) => Ok(()),
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(ThundrError::OUT_OF_DATE),
+                Err(e) => Err(ThundrError::PRESENT_FAILED),
+            }
         }
     }
 }

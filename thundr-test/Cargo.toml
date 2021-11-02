@@ -14,3 +14,4 @@ winit=""
 
 [features]
 macos=["thundr/macos"]
+xcb=["thundr/xcb"]

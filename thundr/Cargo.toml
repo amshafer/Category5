@@ -16,6 +16,7 @@ serde = { version="1.0", features=["derive"] }
 bincode="1.2.1"
 nix="0.17"
 anyhow=""
+thiserror=""
 
 # The following are only for the window system features
 winit={version = "0.24", optional = true }

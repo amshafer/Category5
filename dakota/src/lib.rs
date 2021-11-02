@@ -3,6 +3,7 @@ extern crate serde;
 extern crate thundr as th;
 
 extern crate utils;
+use utils::log;
 pub use utils::{anyhow, region::Rect, Context, MemImage, Result};
 
 pub mod dom;
@@ -406,8 +407,16 @@ impl Dakota {
 
         plat.run(|| {
             func();
-            thund.draw_frame(surfs);
-            thund.present();
+            match thund.draw_frame(surfs) {
+                Ok(()) => {}
+                Err(th::ThundrError::OUT_OF_DATE) => return,
+                Err(e) => log::error!("Thundr: drawing failed with error {:?}", e),
+            };
+            match thund.present() {
+                Ok(()) => {}
+                Err(th::ThundrError::OUT_OF_DATE) => return,
+                Err(e) => log::error!("Thundr: presentation failed with error {:?}", e),
+            };
         })
     }
 }

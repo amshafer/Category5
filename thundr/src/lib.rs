@@ -95,6 +95,25 @@ extern crate wayland_client as wc;
 extern crate memoffset;
 use pipelines::*;
 
+extern crate thiserror;
+use thiserror::Error;
+
+/// Thundr error codes
+/// These signify that action should be taken by the app.
+#[derive(Error, Debug)]
+pub enum ThundrError {
+    #[error("Operation timed out")]
+    TIMEOUT,
+    #[error("Operation is not ready, it needs to be redone")]
+    NOT_READY,
+    #[error("Failed to acquire the next swapchain image")]
+    COULD_NOT_ACQUIRE_NEXT_IMAGE,
+    #[error("vkQueuePresent failed")]
+    PRESENT_FAILED,
+    #[error("The internal Vulkan swapchain is out of date")]
+    OUT_OF_DATE,
+}
+
 pub struct Thundr {
     th_rend: Renderer,
 
@@ -349,10 +368,34 @@ impl Thundr {
         self.th_rend.release_pending_resources();
     }
 
+    /// This is a candidate for an out of date error. We should
+    /// let the application know about this so it can recalculate anything
+    /// that depends on the window size, so we exit returning OOD.
+    ///
+    /// We have to destroy and recreate our pipeline along the way since
+    /// it depends on the swapchain.
+    fn handle_ood(&mut self) {
+        self.th_pipe.destroy(&mut self.th_rend);
+        unsafe {
+            self.th_rend.recreate_swapchain();
+        }
+        self.th_pipe = match self.th_pipe_type {
+            PipelineType::GEOMETRIC => Box::new(GeomPipeline::new(&mut self.th_rend)),
+            PipelineType::COMPUTE => Box::new(CompPipeline::new(&mut self.th_rend)),
+        };
+    }
+
     // draw_frame
-    pub fn draw_frame(&mut self, surfaces: &mut SurfaceList) {
+    pub fn draw_frame(&mut self, surfaces: &mut SurfaceList) -> Result<(), ThundrError> {
         // record rendering commands
-        let params = self.th_rend.begin_recording_one_frame(surfaces);
+        let params = match self.th_rend.begin_recording_one_frame(surfaces) {
+            Ok(params) => params,
+            Err(ThundrError::OUT_OF_DATE) => {
+                self.handle_ood();
+                return Err(ThundrError::OUT_OF_DATE);
+            }
+            Err(e) => return Err(e),
+        };
         self.th_rend.draw_call_submitted = self.th_pipe.draw(
             &mut self.th_rend,
             &params,
@@ -402,11 +445,13 @@ impl Thundr {
 
         self.th_pipe.debug_frame_print();
         log::debug!("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
+
+        Ok(())
     }
 
     // present
-    pub fn present(&mut self) {
-        self.th_rend.present();
+    pub fn present(&mut self) -> Result<(), ThundrError> {
+        self.th_rend.present()
     }
 }
 
