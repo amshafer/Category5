@@ -1,10 +1,11 @@
 extern crate image;
 extern crate serde;
 extern crate thundr as th;
+pub use th::ThundrError as DakotaError;
 
 extern crate utils;
 use utils::log;
-pub use utils::{anyhow, region::Rect, Context, MemImage, Result};
+pub use utils::{anyhow, region::Rect, Context, Error, MemImage, Result};
 
 pub mod dom;
 use dom::DakotaDOM;
@@ -173,8 +174,10 @@ impl Dakota {
             // size based on the centered resource.
             if let Some(mut child) = content.el.as_mut() {
                 self.calculate_sizes(&mut child, available_width, available_height)?;
-                // Centered content does not have offsets
-                assert!(child.offset.is_none());
+                // Centered content does not have offsets, it will be overwritten
+                // here. The only reason offset is not None is if we previously
+                // calculated it.
+                //
                 // At this point the size of the is calculated
                 // and we can determine the offset. We want to center the
                 // box, so that's the center point of the parent minus
@@ -254,18 +257,19 @@ impl Dakota {
             }
         }
 
+        log::debug!("Final size of element is {:?}", el);
+
         return Ok(());
     }
 
     /// This takes care of freeing all of our Thundr Images and such.
     /// This isn't handled by th::Image::Drop since we have to call
     /// functions on Thundr to free the image.
-    fn clear_thundr_surfaces(&mut self) {
-        for surf in self.d_surfaces.iter_mut() {
-            if let Some(image) = surf.get_image() {
-                self.d_thund.destroy_image(image);
-            }
-        }
+    fn clear_thundr(&mut self) {
+        // This drops our surfaces
+        self.d_surfaces.clear();
+        // This destroys all of the images
+        self.d_thund.clear_all();
     }
 
     /// Create the thundr surfaces from the Element layout tree.
@@ -320,9 +324,6 @@ impl Dakota {
         let mut handle_child_surf = |child| -> Result<Option<th::Surface>> {
             // add the new child surface as a subsurface
             let child_surf = self.create_thundr_surf_for_el(child)?;
-            if let Some(csurf) = child_surf {
-                self.d_surfaces.push(csurf);
-            }
             Ok(None)
         };
 
@@ -371,7 +372,9 @@ impl Dakota {
             return result;
         }
 
-        self.clear_thundr_surfaces();
+        // reset our thundr surface list. If the set of resources has
+        // changed, then we should have called clear_thundr to do so by now.
+        self.d_surfaces.clear();
 
         // Create our thundr surface and add it to the list
         // one list with subsurfaces?
@@ -387,6 +390,7 @@ impl Dakota {
 
     /// Completely flush the thundr surfaces/images and recreate the scene
     pub fn refresh_full(&mut self) -> Result<()> {
+        self.clear_thundr();
         self.refresh_resource_map()?;
         self.refresh_elements()
     }
@@ -401,22 +405,24 @@ impl Dakota {
     where
         F: FnMut(),
     {
-        let plat = &mut self.d_plat;
-        let thund = &mut self.d_thund;
-        let surfs = &mut self.d_surfaces;
+        func();
+        match self.d_thund.draw_frame(&mut self.d_surfaces) {
+            Ok(()) => {}
+            Err(th::ThundrError::OUT_OF_DATE) => {
+                self.refresh_elements()?;
+                return Err(Error::from(th::ThundrError::OUT_OF_DATE));
+            }
+            Err(e) => return Err(Error::from(e).context("Thundr: drawing failed with error")),
+        };
+        match self.d_thund.present() {
+            Ok(()) => {}
+            Err(th::ThundrError::OUT_OF_DATE) => {
+                self.refresh_elements()?;
+                return Err(Error::from(th::ThundrError::OUT_OF_DATE));
+            }
+            Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
+        };
 
-        plat.run(|| {
-            func();
-            match thund.draw_frame(surfs) {
-                Ok(()) => {}
-                Err(th::ThundrError::OUT_OF_DATE) => return,
-                Err(e) => log::error!("Thundr: drawing failed with error {:?}", e),
-            };
-            match thund.present() {
-                Ok(()) => {}
-                Err(th::ThundrError::OUT_OF_DATE) => return,
-                Err(e) => log::error!("Thundr: presentation failed with error {:?}", e),
-            };
-        })
+        self.d_plat.run(|| {})
     }
 }
