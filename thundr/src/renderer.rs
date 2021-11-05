@@ -11,6 +11,7 @@ use std::marker::Copy;
 use std::os::raw::{c_char, c_void};
 
 use ash::extensions::ext;
+use ash::extensions::ext::DebugReport;
 use ash::extensions::khr;
 use ash::{vk, Device, Entry, Instance};
 
@@ -210,7 +211,8 @@ impl Renderer {
             .map(|raw_name: &CString| raw_name.as_ptr())
             .collect();
 
-        let extension_names_raw = Display::extension_names(info);
+        let mut extension_names_raw = Display::extension_names(info);
+        extension_names_raw.push(DebugReport::name().as_ptr());
 
         let appinfo = vk::ApplicationInfo::builder()
             .application_name(&app_name)

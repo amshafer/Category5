@@ -5,30 +5,21 @@
 #![allow(dead_code, non_camel_case_types)]
 extern crate ash;
 
-#[cfg(feature = "macos")]
-use ash::extensions::ext::MetalSurface;
-
-#[cfg(feature = "macos")]
-extern crate raw_window_handle;
-#[cfg(feature = "macos")]
-use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
-#[cfg(feature = "macos")]
-extern crate raw_window_metal;
-#[cfg(feature = "macos")]
-use raw_window_metal::{macos, Layer};
-
-#[cfg(any(feature = "xcb", feature = "macos"))]
-extern crate winit;
+#[cfg(feature = "sdl")]
+extern crate sdl2;
 
 #[cfg(feature = "wayland")]
 extern crate wayland_client as wc;
 
-use ash::extensions::ext::DebugReport;
 use ash::extensions::khr;
 use ash::vk;
 use ash::{Entry, Instance};
 
 use crate::{CreateInfo, SurfaceType};
+#[cfg(feature = "sdl")]
+use std::marker::PhantomData;
+#[cfg(feature = "sdl")]
+use utils::log;
 
 /// A display represents a physical screen
 ///
@@ -45,25 +36,25 @@ pub struct Display {
     // function pointer loaders
     pub d_surface_loader: khr::Surface,
     pub d_resolution: vk::Extent2D,
-    d_back: Backend,
+    d_back: Box<dyn Backend>,
 }
 
-enum Backend {
-    PhysicalDisplay(PhysicalDisplay),
-    #[cfg(feature = "xcb")]
-    XcbDisplay(XcbDisplay),
-    #[cfg(feature = "macos")]
-    MacOSDisplay(MacOSDisplay),
-    #[cfg(feature = "wayland")]
-    WaylandDisplay(WlDisplay),
+trait Backend {
+    /// Get an x11 display surface.
+    unsafe fn create_surface(
+        &self,
+        entry: &Entry,   // entry and inst aren't used but still need
+        inst: &Instance, // to be passed for compatibility
+        pdev: vk::PhysicalDevice,
+        surface_loader: &khr::Surface,
+        surf_type: &SurfaceType,
+    ) -> Result<vk::SurfaceKHR, vk::Result>;
 }
 
 enum BackendType {
     PhysicalDisplay,
-    #[cfg(feature = "xcb")]
-    XcbDisplay,
-    #[cfg(feature = "macos")]
-    MacOSDisplay,
+    #[cfg(feature = "sdl")]
+    SDL2Display,
     #[cfg(feature = "wayland")]
     WaylandDisplay,
 }
@@ -72,10 +63,8 @@ impl Display {
     fn choose_display_backend(info: &CreateInfo) -> BackendType {
         match info.surface_type {
             SurfaceType::Display(_) => BackendType::PhysicalDisplay,
-            #[cfg(feature = "xcb")]
-            SurfaceType::Xcb(_) => BackendType::XcbDisplay,
-            #[cfg(feature = "macos")]
-            SurfaceType::MacOS(_) => BackendType::MacOSDisplay,
+            #[cfg(feature = "sdl")]
+            SurfaceType::SDL2(_) => BackendType::SDL2Display,
             #[cfg(feature = "wayland")]
             SurfaceType::Wayland(_, _) => BackendType::WaylandDisplay,
         }
@@ -90,35 +79,18 @@ impl Display {
         let s_loader = khr::Surface::new(entry, inst);
         let (back, surf, res) = match &info.surface_type {
             SurfaceType::Display(_) => {
-                let n = PhysicalDisplay::new(entry, inst, pdev);
-                (Backend::PhysicalDisplay(n.0), n.1, n.2)
+                PhysicalDisplay::new(entry, inst, pdev, &s_loader, &info.surface_type)
             }
-            #[cfg(feature = "xcb")]
-            SurfaceType::Xcb(win) => {
-                let (xd, surf) = XcbDisplay::new(entry, inst, pdev, &win);
-                let caps = s_loader
-                    .get_physical_device_surface_capabilities(pdev, surf)
-                    .unwrap();
-                (Backend::XcbDisplay(xd), surf, caps.current_extent)
-            }
-            #[cfg(feature = "macos")]
-            SurfaceType::MacOS(win) => {
-                let (xd, surf) = MacOSDisplay::new(entry, inst, pdev, &win);
-                let caps = s_loader
-                    .get_physical_device_surface_capabilities(pdev, surf)
-                    .unwrap();
-                (Backend::MacOSDisplay(xd), surf, caps.current_extent)
+            #[cfg(feature = "sdl")]
+            SurfaceType::SDL2(_) => {
+                SDL2DisplayBackend::new(entry, inst, pdev, &s_loader, &info.surface_type)
             }
             #[cfg(feature = "wayland")]
-            SurfaceType::Wayland(display, surface) => {
-                let (wd, surf) =
-                    WlDisplay::new(entry, inst, pdev, display.clone(), surface.clone());
-                let caps = s_loader
-                    .get_physical_device_surface_capabilities(pdev, surf)
-                    .unwrap();
-                (Backend::WaylandDisplay(wd), surf, caps.current_extent)
+            SurfaceType::Wayland(_, _) => {
+                WlDisplay::new(entry, inst, pdev, &s_loader, &info.surface_type)
             }
-        };
+        }
+        .unwrap();
 
         Self {
             d_surface_loader: s_loader,
@@ -144,34 +116,37 @@ impl Display {
     }
 
     pub unsafe fn select_surface_format(&self, pdev: vk::PhysicalDevice) -> vk::SurfaceFormatKHR {
-        match &self.d_back {
-            Backend::PhysicalDisplay(pd) => {
-                pd.select_surface_format(&self.d_surface_loader, self.d_surface, pdev)
-            }
-            #[cfg(feature = "xcb")]
-            Backend::XcbDisplay(xd) => {
-                xd.select_surface_format(&self.d_surface_loader, self.d_surface, pdev)
-            }
-            #[cfg(feature = "macos")]
-            Backend::MacOSDisplay(md) => {
-                md.select_surface_format(&self.d_surface_loader, self.d_surface, pdev)
-            }
-            #[cfg(feature = "wayland")]
-            Backend::WaylandDisplay(wd) => {
-                wd.select_surface_format(&self.d_surface_loader, self.d_surface, pdev)
-            }
-        }
+        let formats = self
+            .d_surface_loader
+            .get_physical_device_surface_formats(pdev, self.d_surface)
+            .unwrap();
+
+        formats
+            .iter()
+            .map(|fmt| match fmt.format {
+                // if the surface does not specify a desired format
+                // then we can choose our own
+                vk::Format::UNDEFINED => vk::SurfaceFormatKHR {
+                    format: vk::Format::R8G8B8A8_UNORM,
+                    color_space: fmt.color_space,
+                },
+                // if the surface has a desired format we will just
+                // use that
+                _ => *fmt,
+            })
+            .nth(0)
+            .expect("Could not find a surface format")
     }
 
     pub fn extension_names(info: &CreateInfo) -> Vec<*const i8> {
         match Self::choose_display_backend(info) {
-            BackendType::PhysicalDisplay => PhysicalDisplay::extension_names(),
-            #[cfg(feature = "xcb")]
-            BackendType::XcbDisplay => XcbDisplay::extension_names(),
-            #[cfg(feature = "macos")]
-            BackendType::MacOSDisplay => MacOSDisplay::extension_names(),
+            BackendType::PhysicalDisplay => PhysicalDisplay::extension_names(&info.surface_type),
+            #[cfg(feature = "sdl")]
+            BackendType::SDL2Display => {
+                SDL2DisplayBackend::extension_names(&info.surface_type).unwrap()
+            }
             #[cfg(feature = "wayland")]
-            BackendType::WaylandDisplay => WlDisplay::extension_names(),
+            BackendType::WaylandDisplay => WlDisplay::extension_names(&info.surface_type),
         }
     }
 
@@ -193,8 +168,6 @@ impl Display {
 struct PhysicalDisplay {
     // the display itself
     pub display: vk::DisplayKHR,
-    // The mode the display was created with
-    pub display_mode: vk::DisplayModeKHR,
     pub display_loader: khr::Display,
 }
 
@@ -208,19 +181,26 @@ impl PhysicalDisplay {
         entry: &Entry,
         inst: &Instance,
         pdev: vk::PhysicalDevice,
-    ) -> (Self, vk::SurfaceKHR, vk::Extent2D) {
+        surface_loader: &khr::Surface,
+        surf_type: &SurfaceType,
+    ) -> Option<(Box<dyn Backend>, vk::SurfaceKHR, vk::Extent2D)> {
         let d_loader = khr::Display::new(entry, inst);
+        let disp_props = d_loader
+            .get_physical_device_display_properties(pdev)
+            .unwrap();
 
-        let (display, surface, mode, resolution) =
-            PhysicalDisplay::create_surface(entry, inst, &d_loader, pdev).unwrap();
-
-        let ret = PhysicalDisplay {
+        let ret = Box::new(PhysicalDisplay {
             display_loader: d_loader,
-            display_mode: mode,
-            display: display,
-        };
+            display: disp_props[0].display,
+        });
+        let surface = ret
+            .create_surface(entry, inst, pdev, surface_loader, surf_type)
+            .unwrap();
+        let caps = surface_loader
+            .get_physical_device_surface_capabilities(pdev, surface)
+            .unwrap();
 
-        (ret, surface, resolution)
+        Some((ret, surface, caps.current_extent))
     }
 
     /// choose a vkSurfaceFormatKHR for the vkSurfaceKHR
@@ -254,6 +234,16 @@ impl PhysicalDisplay {
             .expect("Could not find a surface format")
     }
 
+    /// this should really go in its own Platform module
+    ///
+    /// The two most important extensions are Surface and Display.
+    /// Without them we cannot render anything.
+    fn extension_names(_surf_type: &SurfaceType) -> Vec<*const i8> {
+        vec![khr::Surface::name().as_ptr(), khr::Display::name().as_ptr()]
+    }
+}
+
+impl Backend for PhysicalDisplay {
     /// Get a physical display surface.
     ///
     /// This returns the surfaceKHR to create a swapchain with, the
@@ -264,23 +254,20 @@ impl PhysicalDisplay {
     /// Yea this has a gross amount of return values...
     #[cfg(unix)]
     unsafe fn create_surface(
+        &self,
         _entry: &Entry,   // entry and inst aren't used but still need
         _inst: &Instance, // to be passed for compatibility
-        loader: &khr::Display,
         pdev: vk::PhysicalDevice,
-    ) -> Result<
-        (
-            vk::DisplayKHR,
-            vk::SurfaceKHR,
-            vk::DisplayModeKHR,
-            vk::Extent2D,
-        ),
-        vk::Result,
-    > {
+        surface_loader: &khr::Surface,
+        _surf_type: &SurfaceType,
+    ) -> Result<vk::SurfaceKHR, vk::Result> {
         // This is essentially a list of the available displays.
         // Despite having a display_name member, the names are very
         // unhelpful. (e.x. "monitor").
-        let disp_props = loader.get_physical_device_display_properties(pdev).unwrap();
+        let disp_props = self
+            .display_loader
+            .get_physical_device_display_properties(pdev)
+            .unwrap();
 
         for (i, p) in disp_props.iter().enumerate() {
             println!("{} display: {:#?}", i, p);
@@ -288,8 +275,9 @@ impl PhysicalDisplay {
 
         // The available modes for the display. This holds
         // the resolution.
-        let mode_props = loader
-            .get_display_mode_properties(pdev, disp_props[0].display)
+        let mode_props = self
+            .display_loader
+            .get_display_mode_properties(pdev, self.display)
             .unwrap();
 
         for (i, m) in mode_props.iter().enumerate() {
@@ -299,14 +287,16 @@ impl PhysicalDisplay {
         // As of now we are not doing anything important with planes,
         // but it is still useful to see which ones are reported by
         // the hardware.
-        let plane_props = loader
+        let plane_props = self
+            .display_loader
             .get_physical_device_display_plane_properties(pdev)
             .unwrap();
 
         for (i, p) in plane_props.iter().enumerate() {
             println!("display 0 - plane: {} props = {:#?}", i, p);
 
-            let supported = loader
+            let supported = self
+                .display_loader
                 .get_display_plane_supported_displays(pdev, 0) // plane index
                 .unwrap();
 
@@ -320,13 +310,15 @@ impl PhysicalDisplay {
         // create a display mode from the parameters we got earlier
         let mode_info =
             vk::DisplayModeCreateInfoKHR::builder().parameters(mode_props[0].parameters);
-        let mode = loader
-            .create_display_mode(pdev, disp_props[0].display, &mode_info, None)
+        let mode = self
+            .display_loader
+            .create_display_mode(pdev, self.display, &mode_info, None)
             .unwrap();
 
         // Print out the plane capabilities
         for (i, _) in plane_props.iter().enumerate() {
-            let caps = loader
+            let caps = self
+                .display_loader
                 .get_display_plane_capabilities(pdev, mode, i as u32)
                 .unwrap();
             println!("Plane {}: supports alpha {:?}", i, caps.supported_alpha);
@@ -343,40 +335,21 @@ impl PhysicalDisplay {
             .alpha_mode(vk::DisplayPlaneAlphaFlagsKHR::OPAQUE)
             .image_extent(mode_props[0].parameters.visible_region);
 
-        match loader.create_display_plane_surface(&surf_info, None) {
-            // we want to return the display, the surface, the mode
-            // (so we can free it later), and the resolution to be saved.
-            Ok(surf) => Ok((
-                disp_props[0].display,
-                surf,
-                mode,
-                mode_props[0].parameters.visible_region,
-            )),
+        match self
+            .display_loader
+            .create_display_plane_surface(&surf_info, None)
+        {
+            Ok(surf) => Ok(surf),
             Err(e) => Err(e),
         }
     }
-
-    /// this should really go in its own Platform module
-    ///
-    /// The two most important extensions are Surface and Display.
-    /// Without them we cannot render anything.
-    fn extension_names() -> Vec<*const i8> {
-        vec![
-            khr::Surface::name().as_ptr(),
-            khr::Display::name().as_ptr(),
-            DebugReport::name().as_ptr(),
-        ]
-    }
 }
 
-#[cfg(feature = "xcb")]
-struct XcbDisplay {
-    // the display itself
-    pub xcb_loader: khr::XcbSurface,
-}
+#[cfg(feature = "sdl")]
+struct SDL2DisplayBackend {}
 
-#[cfg(feature = "xcb")]
-impl XcbDisplay {
+#[cfg(feature = "sdl")]
+impl SDL2DisplayBackend {
     /// Create an on-screen surface.
     ///
     /// This will grab the function pointer loaders for the
@@ -386,171 +359,76 @@ impl XcbDisplay {
         entry: &Entry,
         inst: &Instance,
         pdev: vk::PhysicalDevice,
-        win: &winit::window::Window,
-    ) -> (Self, vk::SurfaceKHR) {
-        let x_loader = khr::XcbSurface::new(entry, inst);
-
-        let surface = Self::create_surface(entry, inst, &x_loader, pdev, win).unwrap();
-
-        let ret = Self {
-            xcb_loader: x_loader,
-        };
-
-        (ret, surface)
-    }
-
-    /// choose a vkSurfaceFormatKHR for the vkSurfaceKHR
-    unsafe fn select_surface_format(
-        &self,
         surface_loader: &khr::Surface,
-        surface: vk::SurfaceKHR,
-        pdev: vk::PhysicalDevice,
-    ) -> vk::SurfaceFormatKHR {
-        let formats = surface_loader
-            .get_physical_device_surface_formats(pdev, surface)
-            .unwrap();
+        surf_type: &SurfaceType,
+    ) -> Option<(Box<dyn Backend>, vk::SurfaceKHR, vk::Extent2D)> {
+        match surf_type {
+            SurfaceType::SDL2(win) => {
+                let ret = Box::new(Self {});
 
-        formats
-            .iter()
-            .map(|fmt| match fmt.format {
-                // if the surface does not specify a desired format
-                // then we can choose our own
-                vk::Format::UNDEFINED => vk::SurfaceFormatKHR {
-                    format: vk::Format::R8G8B8A8_UNORM,
-                    color_space: fmt.color_space,
-                },
-                // if the surface has a desired format we will just
-                // use that
-                _ => *fmt,
-            })
-            .nth(0)
-            .expect("Could not find a surface format")
+                let surface = ret
+                    .create_surface(entry, inst, pdev, surface_loader, surf_type)
+                    .unwrap();
+                let caps = surface_loader
+                    .get_physical_device_surface_capabilities(pdev, surface)
+                    .unwrap();
+
+                Some((ret, surface, caps.current_extent))
+            }
+            _ => None,
+        }
     }
 
+    /// The two most important extensions are Surface and Xcb.
+    fn extension_names(surf_type: &SurfaceType) -> Option<Vec<*const i8>> {
+        match surf_type {
+            SurfaceType::SDL2(win) => Some(
+                win.vulkan_instance_extensions()
+                    .unwrap()
+                    .iter()
+                    .map(|s| {
+                        // we need to turn a Vec<&str> into a Vec<*const i8>
+                        s.as_ptr() as *const i8
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(feature = "sdl")]
+impl Backend for SDL2DisplayBackend {
     /// Get an x11 display surface.
     unsafe fn create_surface(
-        entry: &Entry,   // entry and inst aren't used but still need
-        inst: &Instance, // to be passed for compatibility
-        loader: &khr::XcbSurface,
-        pdev: vk::PhysicalDevice,
-        win: &winit::window::Window,
-    ) -> Result<vk::SurfaceKHR, vk::Result> {
-        use winit::platform::unix::WindowExtUnix;
-        let x11_conn = win.xcb_connection().unwrap();
-        let x11_window = win.xlib_window().unwrap();
-        let x11_create_info = vk::XcbSurfaceCreateInfoKHR::builder()
-            .window(x11_window as u32)
-            .connection(x11_conn)
-            .build();
-
-        let xcb_surface_loader = khr::XcbSurface::new(entry, inst);
-        loader.create_xcb_surface(&x11_create_info, None)
-    }
-
-    /// The two most important extensions are Surface and Xcb.
-    fn extension_names() -> Vec<*const i8> {
-        vec![
-            khr::Surface::name().as_ptr(),
-            khr::XcbSurface::name().as_ptr(),
-            DebugReport::name().as_ptr(),
-        ]
-    }
-}
-
-#[cfg(feature = "macos")]
-struct MacOSDisplay {
-    // the display itself
-    pub mac_loader: MetalSurface,
-}
-
-#[cfg(feature = "macos")]
-impl MacOSDisplay {
-    /// Create an on-screen surface.
-    ///
-    /// This will grab the function pointer loaders for the
-    /// surface and display extensions and then create a
-    /// surface to be rendered to.
-    unsafe fn new(
-        entry: &Entry,
-        inst: &Instance,
-        pdev: vk::PhysicalDevice,
-        win: &winit::window::Window,
-    ) -> (Self, vk::SurfaceKHR) {
-        let x_loader = MetalSurface::new(entry, inst);
-
-        let surface = Self::create_surface(entry, inst, &x_loader, pdev, win).unwrap();
-
-        let ret = Self {
-            mac_loader: x_loader,
-        };
-
-        (ret, surface)
-    }
-
-    /// choose a vkSurfaceFormatKHR for the vkSurfaceKHR
-    unsafe fn select_surface_format(
         &self,
-        surface_loader: &khr::Surface,
-        surface: vk::SurfaceKHR,
-        pdev: vk::PhysicalDevice,
-    ) -> vk::SurfaceFormatKHR {
-        let formats = surface_loader
-            .get_physical_device_surface_formats(pdev, surface)
-            .unwrap();
-
-        formats
-            .iter()
-            .map(|fmt| match fmt.format {
-                // if the surface does not specify a desired format
-                // then we can choose our own
-                vk::Format::UNDEFINED => vk::SurfaceFormatKHR {
-                    format: vk::Format::R8G8B8A8_UNORM,
-                    color_space: fmt.color_space,
-                },
-                // if the surface has a desired format we will just
-                // use that
-                _ => *fmt,
-            })
-            .nth(0)
-            .expect("Could not find a surface format")
-    }
-
-    unsafe fn create_surface(
         entry: &Entry,   // entry and inst aren't used but still need
         inst: &Instance, // to be passed for compatibility
-        loader: &MetalSurface,
         pdev: vk::PhysicalDevice,
-        window: &winit::window::Window,
+        surface_loader: &khr::Surface,
+        surf_type: &SurfaceType,
     ) -> Result<vk::SurfaceKHR, vk::Result> {
-        // from ash-window/src/lib.rs
-        let handle = match window.raw_window_handle() {
-            RawWindowHandle::MacOS(handle) => handle,
-            _ => panic!("winit raw_window_handle is not of macos type"),
-        };
+        use vk::Handle;
 
-        let layer = match macos::metal_layer_from_handle(handle) {
-            Layer::Existing(layer) | Layer::Allocated(layer) => layer as *mut _,
-            Layer::None => panic!("No layer was found for macos"),
-        };
+        match surf_type {
+            SurfaceType::SDL2(win) => {
+                // we need to convert our ash instance into the pointer to the raw vk instance
+                let raw_surf = match win.vulkan_create_surface(inst.handle().as_raw() as usize) {
+                    Ok(s) => s,
+                    Err(s) => {
+                        log::error!("SDL2 vulkan_create_surface failed: {}", s);
+                        return Err(vk::Result::ERROR_UNKNOWN);
+                    }
+                };
 
-        let create_info = vk::MetalSurfaceCreateInfoEXT::builder()
-            .layer(&*layer)
-            .build();
-
-        let metal_surface_loader = MetalSurface::new(entry, inst);
-        metal_surface_loader.create_metal_surface(&create_info, None)
-    }
-
-    /// The two most important extensions are Surface and Xcb.
-    fn extension_names() -> Vec<*const i8> {
-        vec![
-            khr::Surface::name().as_ptr(),
-            MetalSurface::name().as_ptr(),
-            DebugReport::name().as_ptr(),
-        ]
+                Ok(vk::SurfaceKHR::from_raw(raw_surf))
+            }
+            _ => panic!("Trying to create SDL backend on non-SDL surface"),
+        }
     }
 }
 
+// TODO: totally broken
 #[cfg(feature = "wayland")]
 struct WlDisplay {
     pub wl_loader: khr::WaylandSurface,
@@ -646,7 +524,7 @@ impl WlDisplay {
     }
 
     /// The two most important extensions are Surface and Wl.
-    fn extension_names() -> Vec<*const i8> {
+    fn extension_names(_surf_type: &SurfaceType) -> Vec<*const i8> {
         vec![
             khr::Surface::name().as_ptr(),
             khr::WaylandSurface::name().as_ptr(),

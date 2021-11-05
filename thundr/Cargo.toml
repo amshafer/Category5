@@ -19,14 +19,11 @@ anyhow=""
 thiserror=""
 
 # The following are only for the window system features
-winit={version = "0.24", optional = true }
-raw-window-handle={version = "", optional = true }
-raw-window-metal={version = "", optional = true }
-wayland-client={features=["use_system_lib"], optional = true}
+sdl2={ version="", optional=true }
+wayland-client={ version="", optional=true }
 
 [features]
-xcb = ["winit"]
-macos = ["winit", "raw-window-metal", "raw-window-handle"]
+sdl=["sdl2"]
 wayland = ["wayland-client"]
 
 # these deps are for the tests only

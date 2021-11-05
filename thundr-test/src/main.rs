@@ -5,27 +5,34 @@ extern crate utils;
 use std::marker::PhantomData;
 use utils::timing::*;
 
-extern crate winit;
-use winit::{
-    event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
-};
+#[cfg(feature = "sdl")]
+extern crate sdl2;
+#[cfg(feature = "sdl")]
+use sdl2::{event::Event, keyboard::Keycode, pixels::Color};
 
 fn main() {
-    // NOTE: uncomment me for winit version
-    let event_loop = EventLoop::new();
-    let window = WindowBuilder::new().build(&event_loop).unwrap();
+    // SDL goodies
+    let sdl_context = sdl2::init().unwrap();
+    let video_subsystem = sdl_context.video().unwrap();
+    let window = video_subsystem
+        .window("thundr-test", 800, 600)
+        .vulkan()
+        .position_centered()
+        .build()
+        .unwrap();
+    let mut event_pump = sdl_context.event_pump().unwrap();
 
     let surf_type = SurfaceType::Display(PhantomData);
-    #[cfg(target_os = "macos")]
-    let surf_type = SurfaceType::MacOS(&window);
+    #[cfg(feature = "sdl")]
+    let surf_type = SurfaceType::SDL2(&window);
 
     let info = CreateInfo::builder()
         .enable_traditional_composition()
         .surface_type(surf_type)
         .build();
     let mut thund = Thundr::new(&info).unwrap();
+
+    let mut canvas = window.into_canvas().build().unwrap();
 
     // ----------- unused surface
     let img = image::open("images/hurricane.png").unwrap().to_rgba();
@@ -98,23 +105,21 @@ fn main() {
     };
 
     // ----------- now wait for the app to exit
-    event_loop.run(move |event, _, control_flow| {
-        match event {
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                _ => (),
-            },
-            Event::RedrawRequested(_) => {
-                draw_func();
-                *control_flow = ControlFlow::Wait;
-                // Queue another frame
-                window.request_redraw();
-            }
-            _ => (),
-        }
-    });
 
-    //loop {
-    //    draw_func();
-    //}
+    'running: loop {
+        draw_func();
+        canvas.clear();
+        for event in event_pump.poll_iter() {
+            match event {
+                Event::Quit { .. }
+                | Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    ..
+                } => break 'running,
+                _ => {}
+            }
+        }
+
+        canvas.present();
+    }
 }

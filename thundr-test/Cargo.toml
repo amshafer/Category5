@@ -10,8 +10,7 @@ edition = "2018"
 thundr={path="../thundr"}
 utils={path="../utils"}
 image="0.23"
-winit=""
+sdl2={version="", optional=true}
 
 [features]
-macos=["thundr/macos"]
-xcb=["thundr/xcb"]
+sdl=["sdl2", "thundr/sdl"]
