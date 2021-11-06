@@ -1,11 +1,8 @@
 extern crate dakota;
-use dakota::dom::DakotaDOM;
-use dakota::xml::*;
 use dakota::{Dakota, DakotaError};
 
 use std::env;
 use std::fs::File;
-use std::io::prelude::*;
 use std::io::BufReader;
 
 fn main() {
@@ -15,7 +12,7 @@ fn main() {
     println!("Loading scene {}", args[1]);
 
     let f = File::open(&args[1]).expect("could not open file");
-    let mut reader = BufReader::new(f);
+    let reader = BufReader::new(f);
 
     let mut dak = Dakota::new().expect("Could not create dakota instance");
     dak.load_xml_reader(reader)
@@ -27,20 +24,20 @@ fn main() {
         // Continue normally if everything is Ok or if out of date
         // and the window needs redrawn
         let err = match dak.dispatch(|| {}) {
-            /// Dispatch was successful. If Dakota says the window was
-            /// closed then we can exit here.
+            // Dispatch was successful. If Dakota says the window was
+            // closed then we can exit here.
             Ok(should_exit) => {
                 if should_exit {
                     break;
                 }
                 continue;
             }
-            /// If things were not successful there can be two reasons:
-            /// 1. there was a legitimate failure and we should bail
-            /// 2. the window's drawable is out of date. The window has
-            /// been resized and we need to redraw. Dakota will handle the
-            /// redrawing for us, but we still get notified it happened so
-            /// the app can update anything it wants before re-dispatching.
+            // If things were not successful there can be two reasons:
+            // 1. there was a legitimate failure and we should bail
+            // 2. the window's drawable is out of date. The window has
+            // been resized and we need to redraw. Dakota will handle the
+            // redrawing for us, but we still get notified it happened so
+            // the app can update anything it wants before re-dispatching.
             Err(e) => match e.downcast::<DakotaError>() {
                 Ok(e) => match e {
                     DakotaError::OUT_OF_DATE => continue,

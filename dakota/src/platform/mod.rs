@@ -1,5 +1,5 @@
 use crate::dom;
-use crate::{Context, Result};
+use crate::Result;
 
 #[cfg(feature = "wayland")]
 extern crate wayc;
@@ -57,7 +57,7 @@ impl Platform for WLPlat {
 pub struct SDL2Plat {
     sdl: sdl2::Sdl,
     sdl_video_sys: sdl2::VideoSubsystem,
-    sdl_canvas: sdl2::render::Canvas<sdl2::video::Window>,
+    sdl_window: sdl2::video::Window,
     sdl_event_pump: sdl2::EventPump,
 }
 
@@ -74,12 +74,11 @@ impl SDL2Plat {
             .position_centered()
             .build()?;
         let mut event_pump = sdl_context.event_pump().unwrap();
-        let mut canvas = window.into_canvas().build().unwrap();
         Ok(Self {
             sdl: sdl_context,
             sdl_video_sys: video_subsystem,
             sdl_event_pump: event_pump,
-            sdl_canvas: canvas,
+            sdl_window: window,
         })
     }
 }
@@ -87,11 +86,11 @@ impl SDL2Plat {
 #[cfg(feature = "sdl")]
 impl Platform for SDL2Plat {
     fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType> {
-        Ok(th::SurfaceType::SDL2(self.sdl_canvas.window()))
+        Ok(th::SurfaceType::SDL2(&self.sdl_window))
     }
 
     fn set_output_params(&mut self, win: &dom::Window) -> Result<()> {
-        let mut sdl_win = self.sdl_canvas.window_mut();
+        let mut sdl_win = &mut self.sdl_window;
         sdl_win.set_title(&win.title);
         sdl_win.set_size(win.width, win.height);
         Ok(())
