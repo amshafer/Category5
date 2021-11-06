@@ -30,9 +30,10 @@ fn main() {
             /// Dispatch was successful. If Dakota says the window was
             /// closed then we can exit here.
             Ok(should_exit) => {
-                if !should_exit {
+                if should_exit {
                     break;
                 }
+                continue;
             }
             /// If things were not successful there can be two reasons:
             /// 1. there was a legitimate failure and we should bail

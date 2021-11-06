@@ -1864,6 +1864,7 @@ impl Renderer {
                     Err(ThundrError::TIMEOUT)
                 }
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(ThundrError::OUT_OF_DATE),
+                Err(vk::Result::SUBOPTIMAL_KHR) => Err(ThundrError::OUT_OF_DATE),
                 // the call did not succeed
                 Err(_) => Err(ThundrError::COULD_NOT_ACQUIRE_NEXT_IMAGE),
             }
@@ -1933,6 +1934,7 @@ impl Renderer {
             {
                 Ok(_) => Ok(()),
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(ThundrError::OUT_OF_DATE),
+                Err(vk::Result::SUBOPTIMAL_KHR) => Err(ThundrError::OUT_OF_DATE),
                 Err(_) => Err(ThundrError::PRESENT_FAILED),
             }
         }

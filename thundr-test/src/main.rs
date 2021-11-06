@@ -1,4 +1,4 @@
-extern crate thundr;
+extern crate thundr as th;
 use thundr::{CreateInfo, MemImage, SurfaceType, Thundr};
 
 extern crate utils;
@@ -15,11 +15,12 @@ fn main() {
     let window = video_subsystem
         .window("thundr-test", 800, 600)
         .vulkan()
+        .resizable()
         .position_centered()
         .build()
         .unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
-    let mut canvas = window.into_canvas().build().unwrap();
+    let canvas = window.into_canvas().build().unwrap();
 
     //let surf_type = SurfaceType::Display(PhantomData);
     let surf_type = SurfaceType::SDL2(canvas.window());
@@ -88,10 +89,18 @@ fn main() {
 
         stop.start();
         // ----------- Perform draw calls
-        thund.draw_frame(&mut list).expect("Failed to draw frame");
+        match thund.draw_frame(&mut list) {
+            Ok(_) => {}
+            Err(th::ThundrError::OUT_OF_DATE) => return,
+            Err(e) => panic!("failed to draw frame: {:?}", e),
+        };
 
         // ----------- Present to screen
-        thund.present().expect("Failed to present frame");
+        match thund.present() {
+            Ok(_) => {}
+            Err(th::ThundrError::OUT_OF_DATE) => return,
+            Err(e) => panic!("failed to draw frame: {:?}", e),
+        };
         stop.end();
 
         println!(

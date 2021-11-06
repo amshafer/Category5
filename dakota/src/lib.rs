@@ -23,11 +23,14 @@ struct ResMapEntry {
 }
 
 pub struct Dakota {
+    // GROSS: we need thund to be before plat so that it gets dropped first
+    // It might reference the window inside plat, and will segfault if
+    // dropped after it.
+    d_thund: th::Thundr,
     #[cfg(feature = "wayland")]
     d_plat: platform::WlPlat,
     #[cfg(feature = "sdl")]
     d_plat: platform::SDL2Plat,
-    d_thund: th::Thundr,
     d_resmap: HashMap<String, ResMapEntry>,
     d_surfaces: th::SurfaceList,
     d_dom: Option<DakotaDOM>,

@@ -70,6 +70,7 @@ impl SDL2Plat {
         let window = video_subsystem
             .window("dakota", 800, 600)
             .vulkan()
+            .resizable()
             .position_centered()
             .build()?;
         let mut event_pump = sdl_context.event_pump().unwrap();
