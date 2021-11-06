@@ -16,7 +16,8 @@ pub trait Platform {
 
     fn set_output_params(&mut self, win: &dom::Window) -> Result<()>;
 
-    fn run<F: FnMut()>(&mut self, func: F) -> Result<()>;
+    /// Returns true if we should terminate i.e. the window has been closed.
+    fn run<F: FnMut()>(&mut self, func: F) -> Result<bool>;
 }
 
 #[cfg(feature = "wayland")]
@@ -95,23 +96,20 @@ impl Platform for SDL2Plat {
         Ok(())
     }
 
-    fn run<F>(&mut self, mut func: F) -> Result<()>
+    fn run<F>(&mut self, mut func: F) -> Result<bool>
     where
         F: FnMut(),
     {
-        self.sdl_canvas.clear();
         for event in self.sdl_event_pump.poll_iter() {
             match event {
                 Event::Quit { .. }
                 | Event::KeyDown {
                     keycode: Some(Keycode::Escape),
                     ..
-                } => break,
+                } => return Ok(true),
                 _ => {}
             }
         }
-
-        self.sdl_canvas.present();
-        Ok(())
+        Ok(false)
     }
 }

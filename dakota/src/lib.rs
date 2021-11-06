@@ -398,7 +398,9 @@ impl Dakota {
     /// wants to work. It's annoying, but we live with it. `func` will get
     /// called before the next frame is drawn, it is the winsys event handler
     /// for the app.
-    pub fn dispatch<F>(&mut self, mut func: F) -> Result<()>
+    ///
+    /// Returns true if we should terminate i.e. the window was closed.
+    pub fn dispatch<F>(&mut self, mut func: F) -> Result<bool>
     where
         F: FnMut(),
     {

@@ -104,7 +104,6 @@ fn main() {
 
     'running: loop {
         draw_func();
-        canvas.clear();
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. }
@@ -115,7 +114,5 @@ fn main() {
                 _ => {}
             }
         }
-
-        canvas.present();
     }
 }

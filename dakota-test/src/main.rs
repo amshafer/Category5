@@ -27,7 +27,19 @@ fn main() {
         // Continue normally if everything is Ok or if out of date
         // and the window needs redrawn
         let err = match dak.dispatch(|| {}) {
-            Ok(()) => continue,
+            /// Dispatch was successful. If Dakota says the window was
+            /// closed then we can exit here.
+            Ok(should_exit) => {
+                if !should_exit {
+                    break;
+                }
+            }
+            /// If things were not successful there can be two reasons:
+            /// 1. there was a legitimate failure and we should bail
+            /// 2. the window's drawable is out of date. The window has
+            /// been resized and we need to redraw. Dakota will handle the
+            /// redrawing for us, but we still get notified it happened so
+            /// the app can update anything it wants before re-dispatching.
             Err(e) => match e.downcast::<DakotaError>() {
                 Ok(e) => match e {
                     DakotaError::OUT_OF_DATE => continue,
