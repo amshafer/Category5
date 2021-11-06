@@ -17,8 +17,6 @@ use ash::{Entry, Instance};
 
 use crate::{CreateInfo, SurfaceType};
 #[cfg(feature = "sdl")]
-use std::marker::PhantomData;
-#[cfg(feature = "sdl")]
 use utils::log;
 
 /// A display represents a physical screen
@@ -258,7 +256,7 @@ impl Backend for PhysicalDisplay {
         _entry: &Entry,   // entry and inst aren't used but still need
         _inst: &Instance, // to be passed for compatibility
         pdev: vk::PhysicalDevice,
-        surface_loader: &khr::Surface,
+        _surface_loader: &khr::Surface,
         _surf_type: &SurfaceType,
     ) -> Result<vk::SurfaceKHR, vk::Result> {
         // This is essentially a list of the available displays.
@@ -363,7 +361,7 @@ impl SDL2DisplayBackend {
         surf_type: &SurfaceType,
     ) -> Option<(Box<dyn Backend>, vk::SurfaceKHR, vk::Extent2D)> {
         match surf_type {
-            SurfaceType::SDL2(win) => {
+            SurfaceType::SDL2(_win) => {
                 let ret = Box::new(Self {});
 
                 let surface = ret
@@ -402,10 +400,10 @@ impl Backend for SDL2DisplayBackend {
     /// Get an x11 display surface.
     unsafe fn create_surface(
         &self,
-        entry: &Entry,   // entry and inst aren't used but still need
+        _entry: &Entry,  // entry and inst aren't used but still need
         inst: &Instance, // to be passed for compatibility
-        pdev: vk::PhysicalDevice,
-        surface_loader: &khr::Surface,
+        _pdev: vk::PhysicalDevice,
+        _surface_loader: &khr::Surface,
         surf_type: &SurfaceType,
     ) -> Result<vk::SurfaceKHR, vk::Result> {
         use vk::Handle;

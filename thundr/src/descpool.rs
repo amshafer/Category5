@@ -8,7 +8,7 @@
 #![allow(dead_code, non_camel_case_types)]
 extern crate ash;
 
-use ash::{vk, Device, Entry, Instance};
+use ash::{vk, Device};
 
 /// The default size of each pool in DescPool
 static POOL_SIZE: u32 = 4;
@@ -146,7 +146,8 @@ impl DescPool {
 
         unsafe {
             for s in samplers {
-                dev.free_descriptor_sets(self.pools[pool_handle], &[*s]);
+                dev.free_descriptor_sets(self.pools[pool_handle], &[*s])
+                    .unwrap();
             }
         }
     }

@@ -24,7 +24,7 @@ use crate::platform::VKDeviceFeatures;
 extern crate utils as cat5_utils;
 use crate::ThundrError;
 use crate::{CreateInfo, Damage};
-use cat5_utils::{anyhow, log, region::Rect, MemImage, Result};
+use cat5_utils::{log, region::Rect, MemImage, Result};
 
 // this happy little debug callback is from the ash examples
 // all it does is print any errors/warnings thrown.
@@ -219,7 +219,7 @@ impl Renderer {
             .application_version(0)
             .engine_name(&app_name)
             .engine_version(0)
-            .api_version(vk::make_version(1, 2, 127));
+            .api_version(vk::API_VERSION_1_2);
 
         let create_info = vk::InstanceCreateInfo::builder()
             .application_info(&appinfo)
@@ -1865,7 +1865,7 @@ impl Renderer {
                 }
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(ThundrError::OUT_OF_DATE),
                 // the call did not succeed
-                Err(err) => Err(ThundrError::COULD_NOT_ACQUIRE_NEXT_IMAGE),
+                Err(_) => Err(ThundrError::COULD_NOT_ACQUIRE_NEXT_IMAGE),
             }
         }
     }
@@ -1933,7 +1933,7 @@ impl Renderer {
             {
                 Ok(_) => Ok(()),
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(ThundrError::OUT_OF_DATE),
-                Err(e) => Err(ThundrError::PRESENT_FAILED),
+                Err(_) => Err(ThundrError::PRESENT_FAILED),
             }
         }
     }

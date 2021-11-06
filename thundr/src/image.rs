@@ -3,6 +3,9 @@
 //
 // Austin Shafer - 2020
 #![allow(dead_code)]
+// We allow using dyn Drop here for the drop info fields
+// that will be passed around
+#![allow(dyn_drop)]
 extern crate ash;
 extern crate nix;
 
@@ -17,7 +20,6 @@ use std::rc::Rc;
 use std::{fmt, iter, mem};
 
 use ash::vk;
-use ash::{Device, Instance};
 use nix::errno::Errno;
 use nix::unistd::dup;
 use nix::Error;
@@ -563,7 +565,7 @@ impl Renderer {
             // Perform the copy
             match damage {
                 None => self.update_memory(image.i_image_mem, 0, memimg.as_slice()),
-                Some(damage) => self.update_memory(image.i_image_mem, 0, memimg.as_slice()),
+                Some(_) => self.update_memory(image.i_image_mem, 0, memimg.as_slice()),
             }
         }
 

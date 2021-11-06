@@ -7,10 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-thundr={path="../thundr"}
+thundr={path="../thundr", features=["sdl"]}
 utils={path="../utils"}
 image="0.23"
-sdl2={version="", optional=true}
-
-[features]
-sdl=["sdl2", "thundr/sdl"]
+sdl2="0.35"

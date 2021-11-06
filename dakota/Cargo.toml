@@ -10,12 +10,11 @@ edition = "2018"
 utils={path="../utils"}
 thundr={path="../thundr"}
 wayc={path="../wayc", optional=true}
-winit={version="", optional=true}
-serde = { version = "", features = [ "derive" ] }
-quick-xml = { version = "", features = [ "serialize" ] }
-image = ""
+serde = { version = "1.0", features = [ "derive" ] }
+quick-xml = { version = "0.22", features = [ "serialize" ] }
+image="0.23.14"
+sdl2={ version="0.35", optional=true }
 
 [features]
 wayland=["thundr/wayland", "wayc"]
-xcb=["thundr/xcb", "winit"]
-macos=["thundr/macos", "winit"]
+sdl=["thundr/sdl", "sdl2"]

@@ -2,13 +2,11 @@ extern crate thundr;
 use thundr::{CreateInfo, MemImage, SurfaceType, Thundr};
 
 extern crate utils;
-use std::marker::PhantomData;
+//use std::marker::PhantomData;
 use utils::timing::*;
 
-#[cfg(feature = "sdl")]
 extern crate sdl2;
-#[cfg(feature = "sdl")]
-use sdl2::{event::Event, keyboard::Keycode, pixels::Color};
+use sdl2::{event::Event, keyboard::Keycode};
 
 fn main() {
     // SDL goodies
@@ -22,8 +20,7 @@ fn main() {
         .unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
-    let surf_type = SurfaceType::Display(PhantomData);
-    #[cfg(feature = "sdl")]
+    //let surf_type = SurfaceType::Display(PhantomData);
     let surf_type = SurfaceType::SDL2(&window);
 
     let info = CreateInfo::builder()
@@ -35,7 +32,7 @@ fn main() {
     let mut canvas = window.into_canvas().build().unwrap();
 
     // ----------- unused surface
-    let img = image::open("images/hurricane.png").unwrap().to_rgba();
+    let img = image::open("images/hurricane.png").unwrap().to_rgba8();
     let pixels: Vec<u8> = img.into_vec();
     let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 512, 512);
     let mut bg_image = thund.create_image_from_bits(&mimg, None).unwrap();
@@ -44,7 +41,7 @@ fn main() {
     thund.bind_image(&mut bg_surf, bg_image);
 
     // ----------- cursor creation
-    let img = image::open("images/cursor.png").unwrap().to_rgba();
+    let img = image::open("images/cursor.png").unwrap().to_rgba8();
     let pixels: Vec<u8> = img.into_vec();
     let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
     let mut cursor_image = thund.create_image_from_bits(&mimg, None).unwrap();
@@ -53,7 +50,7 @@ fn main() {
     thund.bind_image(&mut cursor_surf, cursor_image);
 
     // ----------- background creation
-    let img = image::open("images/brick.png").unwrap().to_rgba();
+    let img = image::open("images/brick.png").unwrap().to_rgba8();
     let pixels: Vec<u8> = img.into_vec();
     let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 512, 512);
     let mut bg_image = thund.create_image_from_bits(&mimg, None).unwrap();
@@ -92,10 +89,10 @@ fn main() {
 
         stop.start();
         // ----------- Perform draw calls
-        thund.draw_frame(&mut list);
+        thund.draw_frame(&mut list).expect("Failed to draw frame");
 
         // ----------- Present to screen
-        thund.present();
+        thund.present().expect("Failed to present frame");
         stop.end();
 
         println!(

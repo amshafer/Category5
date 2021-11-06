@@ -61,6 +61,7 @@
 //! * VK_KHR_debug_report
 //! * VK_KHR_descriptor_indexing
 //! * VK_KHR_external_memory
+#![allow(dyn_drop)]
 
 // Austin Shafer - 2020
 use std::marker::PhantomData;
@@ -101,6 +102,7 @@ use thiserror::Error;
 /// Thundr error codes
 /// These signify that action should be taken by the app.
 #[derive(Error, Debug)]
+#[allow(non_camel_case_types)]
 pub enum ThundrError {
     #[error("Operation timed out")]
     TIMEOUT,

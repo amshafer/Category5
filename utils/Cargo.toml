@@ -8,6 +8,6 @@ edition = "2018"
 
 [dependencies]
 nix="0.17"
-serde=""
-serde_derive=""
-anyhow=""
+serde="1.0"
+serde_derive="1.0"
+anyhow="1.0"
