@@ -23,10 +23,10 @@ struct ResMapEntry {
 }
 
 pub struct Dakota {
-    #[cfg(feature = "xcb")]
-    d_plat: platform::XCBPlat,
-    #[cfg(feature = "macos")]
-    d_plat: platform::MacosPlat,
+    #[cfg(feature = "wayland")]
+    d_plat: platform::WlPlat,
+    #[cfg(feature = "sdl")]
+    d_plat: platform::SDL2Plat,
     d_thund: th::Thundr,
     d_resmap: HashMap<String, ResMapEntry>,
     d_surfaces: th::SurfaceList,
@@ -42,11 +42,8 @@ impl Dakota {
         #[cfg(feature = "wayland")]
         let mut plat = platform::WLPlat::new()?;
 
-        #[cfg(feature = "macos")]
-        let mut plat = platform::MacosPlat::new()?;
-
-        #[cfg(feature = "xcb")]
-        let mut plat = platform::XCBPlat::new()?;
+        #[cfg(feature = "sdl")]
+        let mut plat = platform::SDL2Plat::new()?;
 
         let info = th::CreateInfo::builder()
             .enable_traditional_composition()

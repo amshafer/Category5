@@ -7,13 +7,9 @@ extern crate wayc;
 use wayc::Wayc;
 
 #[cfg(any(unix, macos))]
-extern crate winit;
+extern crate sdl2;
 #[cfg(any(unix, macos))]
-use winit::{
-    event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
-};
+use sdl2::{event::Event, keyboard::Keycode};
 
 pub trait Platform {
     fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType>;
@@ -56,39 +52,46 @@ impl Platform for WLPlat {
     }
 }
 
-#[cfg(feature = "macos")]
-pub struct MacosPlat {
-    mp_event_loop: EventLoop<()>,
-    mp_window: winit::window::Window,
+#[cfg(feature = "sdl")]
+pub struct SDL2Plat {
+    sdl: sdl2::Sdl,
+    sdl_video_sys: sdl2::VideoSubsystem,
+    sdl_canvas: sdl2::render::Canvas<sdl2::video::Window>,
+    sdl_event_pump: sdl2::EventPump,
 }
 
-#[cfg(feature = "macos")]
-impl MacosPlat {
+#[cfg(feature = "sdl")]
+impl SDL2Plat {
     pub fn new() -> Result<Self> {
-        let event_loop = EventLoop::new();
-        let window = WindowBuilder::new()
-            .with_inner_size(winit::dpi::PhysicalSize::new(512, 512))
-            .build(&event_loop)
-            .context("Could not create window with winit")?;
-
+        // SDL goodies
+        let sdl_context = sdl2::init().unwrap();
+        let video_subsystem = sdl_context.video().unwrap();
+        let window = video_subsystem
+            .window("dakota", 800, 600)
+            .vulkan()
+            .position_centered()
+            .build()?;
+        let mut event_pump = sdl_context.event_pump().unwrap();
+        let mut canvas = window.into_canvas().build().unwrap();
         Ok(Self {
-            mp_event_loop: event_loop,
-            mp_window: window,
+            sdl: sdl_context,
+            sdl_video_sys: video_subsystem,
+            sdl_event_pump: event_pump,
+            sdl_canvas: canvas,
         })
     }
 }
 
-#[cfg(feature = "macos")]
-impl Platform for MacosPlat {
+#[cfg(feature = "sdl")]
+impl Platform for SDL2Plat {
     fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType> {
-        Ok(th::SurfaceType::MacOS(&self.mp_window))
+        Ok(th::SurfaceType::SDL2(self.sdl_canvas.window()))
     }
 
     fn set_output_params(&mut self, win: &dom::Window) -> Result<()> {
-        self.mp_window.set_title(&win.title);
-        // BUG: For unknown reasons, this seems to have no effect?
-        self.mp_window
-            .set_inner_size(winit::dpi::PhysicalSize::new(win.width, win.height));
+        let mut sdl_win = self.sdl_canvas.window_mut();
+        sdl_win.set_title(&win.title);
+        sdl_win.set_size(win.width, win.height);
         Ok(())
     }
 
@@ -96,88 +99,19 @@ impl Platform for MacosPlat {
     where
         F: FnMut(),
     {
-        use winit::platform::run_return::EventLoopExtRunReturn;
-
-        let evloop = &mut self.mp_event_loop;
-        let window = &mut self.mp_window;
-
-        evloop.run_return(|event, _, control_flow| {
+        self.sdl_canvas.clear();
+        for event in self.sdl_event_pump.poll_iter() {
             match event {
-                Event::WindowEvent { event, .. } => match event {
-                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                    _ => (),
-                },
-                Event::RedrawRequested(_) => {
-                    func();
-                    window.request_redraw();
-                    // Draw one frame and then return
-                    *control_flow = ControlFlow::Exit;
-                }
-                _ => (),
-            };
-        });
-        Ok(())
-    }
-}
+                Event::Quit { .. }
+                | Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    ..
+                } => break,
+                _ => {}
+            }
+        }
 
-#[cfg(feature = "xcb")]
-pub struct XCBPlat {
-    xp_event_loop: EventLoop<()>,
-    xp_window: winit::window::Window,
-}
-
-#[cfg(feature = "xcb")]
-impl XCBPlat {
-    pub fn new() -> Result<Self> {
-        let event_loop = EventLoop::new();
-        let window = WindowBuilder::new()
-            .build(&event_loop)
-            .context("Could not create window with winit")?;
-
-        Ok(Self {
-            xp_event_loop: event_loop,
-            xp_window: window,
-        })
-    }
-}
-
-#[cfg(feature = "xcb")]
-impl Platform for XCBPlat {
-    fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType> {
-        Ok(th::SurfaceType::Xcb(&self.xp_window))
-    }
-
-    fn set_output_params(&mut self, win: &dom::Window) -> Result<()> {
-        self.xp_window.set_title(&win.title);
-        self.xp_window
-            .set_inner_size(winit::dpi::PhysicalSize::new(win.width, win.height));
-        Ok(())
-    }
-
-    fn run<F>(&mut self, mut func: F) -> Result<()>
-    where
-        F: FnMut(),
-    {
-        use winit::platform::run_return::EventLoopExtRunReturn;
-
-        let evloop = &mut self.xp_event_loop;
-        let window = &mut self.xp_window;
-
-        evloop.run_return(|event, _, control_flow| {
-            match event {
-                Event::WindowEvent { event, .. } => match event {
-                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                    _ => (),
-                },
-                Event::RedrawRequested(_) => {
-                    func();
-                    window.request_redraw();
-                    // Draw one frame and then return
-                    *control_flow = ControlFlow::Exit;
-                }
-                _ => (),
-            };
-        });
+        self.sdl_canvas.present();
         Ok(())
     }
 }

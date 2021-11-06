@@ -19,17 +19,16 @@ fn main() {
         .build()
         .unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
+    let mut canvas = window.into_canvas().build().unwrap();
 
     //let surf_type = SurfaceType::Display(PhantomData);
-    let surf_type = SurfaceType::SDL2(&window);
+    let surf_type = SurfaceType::SDL2(canvas.window());
 
     let info = CreateInfo::builder()
         .enable_traditional_composition()
         .surface_type(surf_type)
         .build();
     let mut thund = Thundr::new(&info).unwrap();
-
-    let mut canvas = window.into_canvas().build().unwrap();
 
     // ----------- unused surface
     let img = image::open("images/hurricane.png").unwrap().to_rgba8();
