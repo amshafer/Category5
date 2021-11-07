@@ -151,6 +151,9 @@ pub struct Renderer {
 
     /// Has vkQueueSubmit been called.
     pub(crate) draw_call_submitted: bool,
+
+    /// The type of pipeline(s) being in use
+    pub(crate) r_pipe_type: PipelineType,
 }
 
 /// Recording parameters
@@ -428,6 +431,8 @@ impl Renderer {
             &self.surface_caps,
             self.surface_format,
             &self.resolution,
+            &self.dev_features,
+            self.r_pipe_type,
         );
 
         let (images, views) = Renderer::select_images_and_views(
@@ -462,6 +467,8 @@ impl Renderer {
         surface_caps: &vk::SurfaceCapabilitiesKHR,
         surface_format: vk::SurfaceFormatKHR,
         resolution: &vk::Extent2D,
+        dev_features: &VKDeviceFeatures,
+        pipe_type: PipelineType,
     ) -> vk::SwapchainKHR {
         // how many images we want the swapchain to contain
         let mut desired_image_count = surface_caps.min_image_count + 1;
@@ -493,19 +500,28 @@ impl Renderer {
 
         // we need to check if the surface format supports the
         // storage image type
-        let _extra_usage = match surface_caps
+        let mut extra_usage = vk::ImageUsageFlags::empty();
+        let mut swap_flags = vk::SwapchainCreateFlagsKHR::empty();
+        // We should use a mutable swapchain to allow for rendering to
+        // RGBA8888 if the swapchain doesn't suppport it and if the mutable
+        // swapchain extensions are present. This is for intel
+        if surface_caps
             .supported_usage_flags
             .contains(vk::ImageUsageFlags::STORAGE)
         {
-            true => vk::ImageUsageFlags::STORAGE,
-            false => vk::ImageUsageFlags::empty(),
-        };
+            extra_usage |= vk::ImageUsageFlags::STORAGE;
+            if pipe_type.requires_storage_images() && dev_features.vkc_supports_mut_swapchain {
+                swap_flags |= vk::SwapchainCreateFlagsKHR::MUTABLE_FORMAT;
+            } else {
+                unimplemented!("fallback to traditional composition?");
+            }
+        }
 
         // see this for how to get storage swapchain on intel:
         // https://github.com/doitsujin/dxvk/issues/504
 
         let mut create_info = vk::SwapchainCreateInfoKHR::builder()
-            .flags(vk::SwapchainCreateFlagsKHR::MUTABLE_FORMAT)
+            .flags(swap_flags)
             .surface(surface)
             .min_image_count(desired_image_count)
             .image_color_space(surface_format.color_space)
@@ -515,10 +531,11 @@ impl Renderer {
             //
             // WEIRD: validation layers throw an issue with this on intel since it doesn't
             // support storage for the swapchain format.
-            // You can ignore this: https://www.reddit.com/r/vulkan/comments/ahtw8x/shouldnt_validation_layers_catch_the_wrong_format/
+            // You can ignore this:
+            // https://www.reddit.com/r/vulkan/comments/ahtw8x/shouldnt_validation_layers_catch_the_wrong_format/
             //
             // Leave the STORAGE flag to be explicit that we need it
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | extra_usage)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
@@ -526,16 +543,18 @@ impl Renderer {
             .clipped(true)
             .image_array_layers(1);
 
-        // specifying the mutable format flag also requires that we add a
-        // list of additional formats. We need this so that mesa will
-        // set VK_IMAGE_CREATE_EXTENDED_USAGE_BIT_KHR for the swapchain images
-        // we also need to include the surface format, since it seems mesa wants
-        // the supported format + any new formats we select.
-        let add_formats = vk::ImageFormatListCreateInfoKHR::builder()
-            // just add rgba32 because it's the most common.
-            .view_formats(&[vk::Format::R8G8B8A8_UNORM, surface_format.format])
-            .build();
-        create_info.p_next = &add_formats as *const _ as *mut std::ffi::c_void;
+        if dev_features.vkc_supports_mut_swapchain {
+            // specifying the mutable format flag also requires that we add a
+            // list of additional formats. We need this so that mesa will
+            // set VK_IMAGE_CREATE_EXTENDED_USAGE_BIT_KHR for the swapchain images
+            // we also need to include the surface format, since it seems mesa wants
+            // the supported format + any new formats we select.
+            let add_formats = vk::ImageFormatListCreateInfoKHR::builder()
+                // just add rgba32 because it's the most common.
+                .view_formats(&[vk::Format::R8G8B8A8_UNORM, surface_format.format])
+                .build();
+            create_info.p_next = &add_formats as *const _ as *mut std::ffi::c_void;
+        }
 
         // views for all of the swapchains images will be set up in
         // select_images_and_views
@@ -1110,12 +1129,13 @@ impl Renderer {
             // create the graphics,transfer, and pipeline specific queues
             let mut families = vec![graphics_queue_family, transfer_queue_family];
 
-            let mut enabled_pipelines = Vec::new();
-            if info.enable_compute_composition {
-                enabled_pipelines.push(PipelineType::COMPUTE);
-            } else if info.enable_traditional_composition {
-                enabled_pipelines.push(PipelineType::GEOMETRIC);
-            }
+            // TODO: allow for multiple pipes in use at once
+            let pipe_type = if info.enable_compute_composition {
+                PipelineType::COMPUTE
+            } else {
+                PipelineType::GEOMETRIC
+            };
+            let enabled_pipelines = vec![pipe_type];
 
             for t in enabled_pipelines.iter() {
                 if let Some(family) = t.get_queue_family(&inst, &display, pdev) {
@@ -1148,6 +1168,8 @@ impl Renderer {
                 &surface_caps,
                 surface_format,
                 &surface_resolution,
+                &dev_features,
+                pipe_type,
             );
 
             let (images, image_views) = Renderer::select_images_and_views(
@@ -1234,6 +1256,7 @@ impl Renderer {
                 transfer_mem: vk::DeviceMemory::null(),
                 transfer_buf_len: 0,
                 draw_call_submitted: false,
+                r_pipe_type: pipe_type,
             };
             rend.initialize_transfer_mem();
 

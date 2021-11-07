@@ -65,9 +65,24 @@ pub trait Pipeline {
     fn destroy(&mut self, rend: &mut Renderer);
 }
 
+#[derive(Copy, Clone, Debug)]
 pub enum PipelineType {
     COMPUTE,
     GEOMETRIC,
+    #[allow(dead_code)]
+    ALL,
+}
+
+impl PipelineType {
+    /// Compute pipelines require storage images on the target swapchain
+    /// so that the compute shaders can write to the framebuffer.
+    pub fn requires_storage_images(&self) -> bool {
+        match self {
+            PipelineType::COMPUTE => true,
+            PipelineType::ALL => true,
+            _ => false,
+        }
+    }
 }
 
 impl PipelineType {
@@ -80,6 +95,7 @@ impl PipelineType {
         match self {
             Self::COMPUTE => CompPipeline::get_queue_family(inst, display, pdev),
             Self::GEOMETRIC => None,
+            _ => unimplemented!("Allow for multiple pipelines"),
         }
     }
 }

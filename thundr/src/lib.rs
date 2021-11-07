@@ -382,6 +382,7 @@ impl Thundr {
         self.th_pipe = match self.th_pipe_type {
             PipelineType::GEOMETRIC => Box::new(GeomPipeline::new(&mut self.th_rend)),
             PipelineType::COMPUTE => Box::new(CompPipeline::new(&mut self.th_rend)),
+            _ => unimplemented!("Allow for multiple pipes"),
         };
     }
 
