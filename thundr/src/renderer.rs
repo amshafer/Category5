@@ -8,10 +8,9 @@
 use std::collections::VecDeque;
 use std::ffi::{CStr, CString};
 use std::marker::Copy;
-use std::os::raw::{c_char, c_void};
+use std::os::raw::c_void;
 
 use ash::extensions::ext;
-use ash::extensions::ext::DebugReport;
 use ash::extensions::khr;
 use ash::{vk, Device, Entry, Instance};
 
@@ -29,16 +28,17 @@ use cat5_utils::{log, region::Rect, MemImage, Result};
 // this happy little debug callback is from the ash examples
 // all it does is print any errors/warnings thrown.
 unsafe extern "system" fn vulkan_debug_callback(
-    _: vk::DebugReportFlagsEXT,
-    _: vk::DebugReportObjectTypeEXT,
-    _: u64,
-    _: usize,
-    _: i32,
-    _: *const c_char,
-    p_message: *const c_char,
-    _: *mut c_void,
+    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    message_types: vk::DebugUtilsMessageTypeFlagsEXT,
+    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    _p_user_data: *mut c_void,
 ) -> u32 {
-    log::debug!("[RENDERER] {:?}", CStr::from_ptr(p_message));
+    log::debug!(
+        "[VK][{:?}][{:?}] {:?}",
+        message_severity,
+        message_types,
+        CStr::from_ptr(p_callback_data.as_ref().unwrap().p_message)
+    );
     println!();
     vk::FALSE
 }
@@ -58,8 +58,8 @@ unsafe extern "system" fn vulkan_debug_callback(
 /// struct, with the commonly required fields at the top.
 pub struct Renderer {
     /// debug callback sugar mentioned earlier
-    debug_loader: ext::DebugReport,
-    debug_callback: vk::DebugReportCallbackEXT,
+    debug_loader: ext::DebugUtils,
+    debug_callback: vk::DebugUtilsMessengerEXT,
 
     /// the entry just loads function pointers from the dynamic library
     /// I am calling it a loader, because that's what it does
@@ -173,18 +173,20 @@ impl Renderer {
     unsafe fn setup_debug(
         entry: &Entry,
         instance: &Instance,
-    ) -> (ext::DebugReport, vk::DebugReportCallbackEXT) {
-        let debug_info = vk::DebugReportCallbackCreateInfoEXT::builder()
-            .flags(
-                vk::DebugReportFlagsEXT::ERROR
-                    | vk::DebugReportFlagsEXT::WARNING
-                    | vk::DebugReportFlagsEXT::PERFORMANCE_WARNING,
+    ) -> (ext::DebugUtils, vk::DebugUtilsMessengerEXT) {
+        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+            .message_severity(
+                vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
+                    | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+                    | vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
+                    | vk::DebugUtilsMessageSeverityFlagsEXT::INFO,
             )
-            .pfn_callback(Some(vulkan_debug_callback));
+            .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
+            .pfn_user_callback(Some(vulkan_debug_callback));
 
-        let dr_loader = ext::DebugReport::new(entry, instance);
+        let dr_loader = ext::DebugUtils::new(entry, instance);
         let callback = dr_loader
-            .create_debug_report_callback(&debug_info, None)
+            .create_debug_utils_messenger(&debug_info, None)
             .unwrap();
         return (dr_loader, callback);
     }
@@ -212,7 +214,7 @@ impl Renderer {
             .collect();
 
         let mut extension_names_raw = Display::extension_names(info);
-        extension_names_raw.push(DebugReport::name().as_ptr());
+        extension_names_raw.push(ext::DebugUtils::name().as_ptr());
 
         let appinfo = vk::ApplicationInfo::builder()
             .application_name(&app_name)
@@ -1974,7 +1976,7 @@ impl Drop for Renderer {
             self.display.destroy();
 
             self.debug_loader
-                .destroy_debug_report_callback(self.debug_callback, None);
+                .destroy_debug_utils_messenger(self.debug_callback, None);
             self.inst.destroy_instance(None);
         }
     }
