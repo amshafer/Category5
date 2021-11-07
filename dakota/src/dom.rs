@@ -21,8 +21,10 @@ pub struct Hints {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Data {
-    pub relPath: Option<String>,
-    pub absPath: Option<String>,
+    #[serde(rename = "relPath", default)]
+    pub rel_path: Option<String>,
+    #[serde(rename = "abs_path", default)]
+    pub abs_path: Option<String>,
 }
 
 impl Data {
@@ -31,13 +33,13 @@ impl Data {
     /// This is a helper, since there are multiple types of paths. It also
     /// does rule checking to ensure that only one is specified.
     pub fn get_fs_path<'a>(&'a self) -> Result<&'a String> {
-        if self.relPath.is_some() && self.absPath.is_some() {
-            return Err(anyhow!("Cannot specify both relPath and absPath"));
+        if self.rel_path.is_some() && self.abs_path.is_some() {
+            return Err(anyhow!("Cannot specify both rel_path and abs_path"));
         }
 
-        if let Some(path) = self.relPath.as_ref() {
+        if let Some(path) = self.rel_path.as_ref() {
             return Ok(&path);
-        } else if let Some(path) = self.absPath.as_ref() {
+        } else if let Some(path) = self.abs_path.as_ref() {
             return Ok(&path);
         } else {
             return Err(anyhow!("No filesystem path was specified for this data."));
@@ -71,6 +73,7 @@ pub struct Offset {
 }
 
 impl Offset {
+    #[allow(dead_code)]
     fn union(&mut self, other: &Self) {
         self.x = std::cmp::max(self.x, other.x);
         self.y = std::cmp::max(self.y, other.y);

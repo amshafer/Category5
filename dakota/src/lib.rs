@@ -323,7 +323,7 @@ impl Dakota {
 
         let mut handle_child_surf = |child| -> Result<Option<th::Surface>> {
             // add the new child surface as a subsurface
-            let child_surf = self.create_thundr_surf_for_el(child)?;
+            self.create_thundr_surf_for_el(child)?;
             Ok(None)
         };
 
@@ -355,7 +355,7 @@ impl Dakota {
 
         // we need to update the window dimensions if possible,
         // so call into our platform do handle it
-        self.d_plat.set_output_params(&dom.window);
+        self.d_plat.set_output_params(&dom.window)?;
 
         // construct layout tree with sizes of all boxes
         // create our thundr surfaces while we are at it.

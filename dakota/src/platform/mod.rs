@@ -54,6 +54,7 @@ impl Platform for WLPlat {
 }
 
 #[cfg(feature = "sdl")]
+#[allow(dead_code)]
 pub struct SDL2Plat {
     sdl: sdl2::Sdl,
     sdl_video_sys: sdl2::VideoSubsystem,
@@ -73,7 +74,7 @@ impl SDL2Plat {
             .resizable()
             .position_centered()
             .build()?;
-        let mut event_pump = sdl_context.event_pump().unwrap();
+        let event_pump = sdl_context.event_pump().unwrap();
         Ok(Self {
             sdl: sdl_context,
             sdl_video_sys: video_subsystem,
@@ -90,9 +91,9 @@ impl Platform for SDL2Plat {
     }
 
     fn set_output_params(&mut self, win: &dom::Window) -> Result<()> {
-        let mut sdl_win = &mut self.sdl_window;
-        sdl_win.set_title(&win.title);
-        sdl_win.set_size(win.width, win.height);
+        let sdl_win = &mut self.sdl_window;
+        sdl_win.set_title(&win.title)?;
+        sdl_win.set_size(win.width, win.height)?;
         Ok(())
     }
 
@@ -100,6 +101,7 @@ impl Platform for SDL2Plat {
     where
         F: FnMut(),
     {
+        func();
         for event in self.sdl_event_pump.poll_iter() {
             match event {
                 Event::Quit { .. }

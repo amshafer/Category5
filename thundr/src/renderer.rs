@@ -487,7 +487,7 @@ impl Renderer {
         let mode = present_modes
             .iter()
             .cloned()
-            .find(|&mode| mode == vk::PresentModeKHR::FIFO)
+            .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
             // fallback to FIFO if the mailbox mode is not available
             .unwrap_or(vk::PresentModeKHR::FIFO);
 
