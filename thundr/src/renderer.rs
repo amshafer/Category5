@@ -21,9 +21,9 @@ use crate::pipelines::PipelineType;
 use crate::platform::VKDeviceFeatures;
 
 extern crate utils as cat5_utils;
-use crate::ThundrError;
 use crate::{CreateInfo, Damage};
-use cat5_utils::{log, region::Rect, MemImage, Result};
+use crate::{Result, ThundrError};
+use cat5_utils::{log, region::Rect, MemImage};
 
 // this happy little debug callback is from the ash examples
 // all it does is print any errors/warnings thrown.
@@ -502,15 +502,20 @@ impl Renderer {
         // storage image type
         let mut extra_usage = vk::ImageUsageFlags::empty();
         let mut swap_flags = vk::SwapchainCreateFlagsKHR::empty();
+        let use_mut_swapchain =
+            pipe_type.requires_storage_images() && dev_features.vkc_supports_mut_swapchain;
         // We should use a mutable swapchain to allow for rendering to
         // RGBA8888 if the swapchain doesn't suppport it and if the mutable
         // swapchain extensions are present. This is for intel
-        if surface_caps
-            .supported_usage_flags
-            .contains(vk::ImageUsageFlags::STORAGE)
+        if surface_format.format == vk::Format::B8G8R8A8_UNORM
+            && surface_caps
+                .supported_usage_flags
+                .contains(vk::ImageUsageFlags::STORAGE)
         {
             extra_usage |= vk::ImageUsageFlags::STORAGE;
-            if pipe_type.requires_storage_images() && dev_features.vkc_supports_mut_swapchain {
+        } else {
+            if use_mut_swapchain {
+                extra_usage |= vk::ImageUsageFlags::STORAGE;
                 swap_flags |= vk::SwapchainCreateFlagsKHR::MUTABLE_FORMAT;
             } else {
                 unimplemented!("fallback to traditional composition?");
@@ -543,7 +548,7 @@ impl Renderer {
             .clipped(true)
             .image_array_layers(1);
 
-        if dev_features.vkc_supports_mut_swapchain {
+        if use_mut_swapchain {
             // specifying the mutable format flag also requires that we add a
             // list of additional formats. We need this so that mesa will
             // set VK_IMAGE_CREATE_EXTENDED_USAGE_BIT_KHR for the swapchain images
@@ -551,7 +556,7 @@ impl Renderer {
             // the supported format + any new formats we select.
             let add_formats = vk::ImageFormatListCreateInfoKHR::builder()
                 // just add rgba32 because it's the most common.
-                .view_formats(&[vk::Format::R8G8B8A8_UNORM, surface_format.format])
+                .view_formats(&[vk::Format::B8G8R8A8_UNORM, surface_format.format])
                 .build();
             create_info.p_next = &add_formats as *const _ as *mut std::ffi::c_void;
         }
@@ -625,7 +630,7 @@ impl Renderer {
                 let mut create_info = vk::ImageViewCreateInfo::builder()
                     .view_type(vk::ImageViewType::TYPE_2D)
                     // see `create_swapchain` for why we don't use surface_format
-                    .format(vk::Format::R8G8B8A8_UNORM)
+                    .format(vk::Format::B8G8R8A8_UNORM)
                     // select the normal RGBA type
                     // swap the R and B channels because we are mapping this
                     // to B8G8R8_SRGB using a mutable swapchain
@@ -1088,7 +1093,7 @@ impl Renderer {
     /// All methods called after this only need to take a mutable reference to
     /// self, avoiding any nasty argument lists like the functions above.
     /// The goal is to have this make dealing with the api less wordy.
-    pub fn new(info: &CreateInfo) -> Renderer {
+    pub fn new(info: &CreateInfo) -> Result<Renderer> {
         unsafe {
             let (entry, inst) = Renderer::create_instance(info);
 
@@ -1117,7 +1122,7 @@ impl Renderer {
             let mem_props = Renderer::get_pdev_mem_properties(&inst, pdev);
 
             // do this after we have gotten a valid physical device
-            let surface_format = display.select_surface_format(pdev);
+            let surface_format = display.select_surface_format(pdev)?;
 
             let surface_caps = display
                 .d_surface_loader
@@ -1260,7 +1265,7 @@ impl Renderer {
             };
             rend.initialize_transfer_mem();
 
-            return rend;
+            return Ok(rend);
         }
     }
 
@@ -1570,7 +1575,7 @@ impl Renderer {
     pub fn begin_recording_one_frame(
         &mut self,
         surfaces: &mut SurfaceList,
-    ) -> Result<RecordParams, ThundrError> {
+    ) -> Result<RecordParams> {
         // get the next frame to draw into
         self.get_next_swapchain_image()?;
 
@@ -1856,7 +1861,7 @@ impl Renderer {
     ///
     /// Returns if the next image index was successfully obtained
     /// false means try again later, the next image is not ready
-    pub fn get_next_swapchain_image(&mut self) -> Result<(), ThundrError> {
+    pub fn get_next_swapchain_image(&mut self) -> Result<()> {
         unsafe {
             match self.swapchain_loader.acquire_next_image(
                 self.swapchain,
@@ -1921,7 +1926,7 @@ impl Renderer {
     ///
     /// Finally we can actually flip the buffers and present
     /// this image.
-    pub fn present(&mut self) -> Result<(), ThundrError> {
+    pub fn present(&mut self) -> Result<()> {
         // This is a bit odd. So if a draw call was submitted, then
         // we need to wait for rendering to complete before presenting. If
         // no draw call was submitted (no work to do) then we need to

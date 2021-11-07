@@ -86,8 +86,10 @@ pub use surface::Surface;
 // can use them
 extern crate utils;
 pub use crate::utils::region::Rect;
-pub use crate::utils::{anyhow, Context, Dmabuf, MemImage, Result};
+pub use crate::utils::{anyhow, Context, Dmabuf, MemImage};
 use utils::log;
+
+pub type Result<T> = std::result::Result<T, ThundrError>;
 
 #[cfg(feature = "wayland")]
 extern crate wayland_client as wc;
@@ -114,6 +116,10 @@ pub enum ThundrError {
     PRESENT_FAILED,
     #[error("The internal Vulkan swapchain is out of date")]
     OUT_OF_DATE,
+    #[error("Vulkan surface does not support R8G8B8A8_UNORM")]
+    VK_SURF_NOT_SUPPORTED,
+    #[error("Please select a composition type in the thundr CreateInfo")]
+    COMPOSITION_TYPE_NOT_SPECIFIED,
 }
 
 pub struct Thundr {
@@ -197,7 +203,7 @@ impl Thundr {
     pub fn new(info: &CreateInfo) -> Result<Thundr> {
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
-        let mut rend = Renderer::new(&info);
+        let mut rend = Renderer::new(&info)?;
 
         // Create the pipeline(s) requested
         // Record the type we are using so that we know which type to regenerate
@@ -213,9 +219,7 @@ impl Thundr {
                 PipelineType::COMPUTE,
             )
         } else {
-            return Err(anyhow!(
-                "Please select a composition type in the thundr CreateInfo"
-            ));
+            return Err(ThundrError::COMPOSITION_TYPE_NOT_SPECIFIED);
         };
 
         Ok(Thundr {
@@ -387,7 +391,7 @@ impl Thundr {
     }
 
     // draw_frame
-    pub fn draw_frame(&mut self, surfaces: &mut SurfaceList) -> Result<(), ThundrError> {
+    pub fn draw_frame(&mut self, surfaces: &mut SurfaceList) -> Result<()> {
         // record rendering commands
         let params = match self.th_rend.begin_recording_one_frame(surfaces) {
             Ok(params) => params,
@@ -451,7 +455,7 @@ impl Thundr {
     }
 
     // present
-    pub fn present(&mut self) -> Result<(), ThundrError> {
+    pub fn present(&mut self) -> Result<()> {
         self.th_rend.present()
     }
 }

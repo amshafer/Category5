@@ -15,7 +15,7 @@ use ash::extensions::khr;
 use ash::vk;
 use ash::{Entry, Instance};
 
-use crate::{CreateInfo, SurfaceType};
+use crate::{CreateInfo, SurfaceType, ThundrError};
 #[cfg(feature = "sdl")]
 use utils::log;
 
@@ -113,27 +113,37 @@ impl Display {
         }
     }
 
-    pub unsafe fn select_surface_format(&self, pdev: vk::PhysicalDevice) -> vk::SurfaceFormatKHR {
+    pub unsafe fn select_surface_format(
+        &self,
+        pdev: vk::PhysicalDevice,
+    ) -> crate::Result<vk::SurfaceFormatKHR> {
         let formats = self
             .d_surface_loader
             .get_physical_device_surface_formats(pdev, self.d_surface)
             .unwrap();
 
-        formats
+        match formats
             .iter()
-            .map(|fmt| match fmt.format {
-                // if the surface does not specify a desired format
-                // then we can choose our own
-                vk::Format::UNDEFINED => vk::SurfaceFormatKHR {
-                    format: vk::Format::R8G8B8A8_UNORM,
+            .find(|fmt| fmt.format == vk::Format::UNDEFINED)
+        {
+            // if the surface does not specify a desired format
+            // then we can choose our own
+            Some(fmt) => {
+                return Ok(vk::SurfaceFormatKHR {
+                    format: vk::Format::B8G8R8A8_UNORM,
                     color_space: fmt.color_space,
-                },
-                // if the surface has a desired format we will just
-                // use that
-                _ => *fmt,
-            })
-            .nth(0)
-            .expect("Could not find a surface format")
+                })
+            }
+            None => {}
+        };
+
+        match formats
+            .iter()
+            .find(|fmt| fmt.format == vk::Format::B8G8R8A8_UNORM)
+        {
+            Some(fmt) => Ok(*fmt),
+            None => Err(ThundrError::VK_SURF_NOT_SUPPORTED),
+        }
     }
 
     pub fn extension_names(info: &CreateInfo) -> Vec<*const i8> {
@@ -221,7 +231,7 @@ impl PhysicalDisplay {
                 // if the surface does not specify a desired format
                 // then we can choose our own
                 vk::Format::UNDEFINED => vk::SurfaceFormatKHR {
-                    format: vk::Format::R8G8B8A8_UNORM,
+                    format: vk::Format::B8G8R8A8_UNORM,
                     color_space: fmt.color_space,
                 },
                 // if the surface has a desired format we will just
@@ -479,7 +489,7 @@ impl WlDisplay {
                 // if the surface does not specify a desired format
                 // then we can choose our own
                 vk::Format::UNDEFINED => vk::SurfaceFormatKHR {
-                    format: vk::Format::R8G8B8A8_UNORM,
+                    format: vk::Format::B8G8R8A8_UNORM,
                     color_space: fmt.color_space,
                 },
                 // if the surface has a desired format we will just

@@ -194,7 +194,7 @@ impl Renderer {
                 &self.dev,
                 &self.mem_props,
                 &tex_res,
-                vk::Format::R8G8B8A8_UNORM,
+                vk::Format::B8G8R8A8_UNORM,
                 vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
                 vk::ImageAspectFlags::COLOR,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL
@@ -258,7 +258,7 @@ impl Renderer {
         // A lot of this is duplicated from Renderer::create_image
         unsafe {
             // According to the mesa source, this supports all modifiers
-            let target_format = vk::Format::R8G8B8A8_UNORM;
+            let target_format = vk::Format::B8G8R8A8_UNORM;
             // get_physical_device_format_properties2
             let mut format_props = vk::FormatProperties2::builder().build();
             let mut drm_fmt_props = vk::DrmFormatModifierPropertiesListEXT::builder().build();
@@ -533,7 +533,7 @@ impl Renderer {
                         width: memimg.width as u32,
                         height: memimg.height as u32,
                     },
-                    vk::Format::R8G8B8A8_UNORM,
+                    vk::Format::B8G8R8A8_UNORM,
                     vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
                     vk::ImageAspectFlags::COLOR,
                     vk::MemoryPropertyFlags::DEVICE_LOCAL
