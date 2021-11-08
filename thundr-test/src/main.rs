@@ -31,7 +31,7 @@ fn main() {
     let mut thund = Thundr::new(&info).unwrap();
 
     // ----------- unused surface
-    let img = image::open("images/hurricane.png").unwrap().to_rgba8();
+    let img = image::open("images/hurricane.png").unwrap().to_bgra8();
     let pixels: Vec<u8> = img.into_vec();
     let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 512, 512);
     let mut bg_image = thund.create_image_from_bits(&mimg, None).unwrap();
@@ -40,7 +40,7 @@ fn main() {
     thund.bind_image(&mut bg_surf, bg_image);
 
     // ----------- cursor creation
-    let img = image::open("images/cursor.png").unwrap().to_rgba8();
+    let img = image::open("images/cursor.png").unwrap().to_bgra8();
     let pixels: Vec<u8> = img.into_vec();
     let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
     let mut cursor_image = thund.create_image_from_bits(&mimg, None).unwrap();
@@ -49,7 +49,7 @@ fn main() {
     thund.bind_image(&mut cursor_surf, cursor_image);
 
     // ----------- background creation
-    let img = image::open("images/brick.png").unwrap().to_rgba8();
+    let img = image::open("images/brick.png").unwrap().to_bgra8();
     let pixels: Vec<u8> = img.into_vec();
     let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 512, 512);
     let mut bg_image = thund.create_image_from_bits(&mimg, None).unwrap();

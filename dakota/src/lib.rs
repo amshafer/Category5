@@ -14,8 +14,6 @@ use platform::Platform;
 pub mod xml;
 
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufReader;
 
 struct ResMapEntry {
     rme_size: dom::Size,
@@ -85,24 +83,17 @@ impl Dakota {
                 }
 
                 let file_path = res.data.get_fs_path()?;
-                let file = File::open(file_path)?;
-                let file_reader = BufReader::new(file);
-
-                let ireader = image::io::Reader::new(file_reader)
-                    .with_guessed_format()
-                    .context("Could not open image specified in Dakota spec")?;
 
                 // Create an in-memory representation of the image contents
                 let resolution = image::image_dimensions(std::path::Path::new(file_path)).context(
                     "Format of image could not be guessed correctly. Could not get resolution",
                 )?;
-                let image_data = ireader
-                    .decode()
-                    .context("Could not decode image")?
-                    .to_bgra8()
-                    .into_vec();
+                let img = image::open(file_path)
+                    .context(format!("Could not open image: {:?}", file_path))?
+                    .to_bgra8();
+                let pixels: Vec<u8> = img.into_vec();
                 let mimg = MemImage::new(
-                    image_data.as_slice().as_ptr() as *mut u8,
+                    pixels.as_slice().as_ptr() as *mut u8,
                     4,                     // width of a pixel
                     resolution.0 as usize, // width of texture
                     resolution.1 as usize, // height of texture
