@@ -53,7 +53,6 @@ use task::*;
 use std::sync::mpsc::{Receiver, Sender};
 
 extern crate renderdoc;
-use renderdoc::RenderDoc;
 
 /// This consolidates the multiple resources needed
 /// to represent a titlebar
@@ -633,7 +632,11 @@ impl WindowManager {
     /// WindowManager::end_frame is called.
     fn begin_frame(&mut self) {
         self.record_draw();
-        self.wm_thundr.draw_frame(&mut self.wm_surfaces);
+        match self.wm_thundr.draw_frame(&mut self.wm_surfaces) {
+            Ok(_) => {}
+            Err(th::ThundrError::OUT_OF_DATE) => return,
+            Err(e) => panic!("Failed to draw frame: {:?}", e),
+        };
     }
 
     /// End a frame
@@ -646,7 +649,11 @@ impl WindowManager {
     /// frame is presented, which is why begin/end frame is split
     /// into two methods.
     fn end_frame(&mut self) {
-        self.wm_thundr.present();
+        match self.wm_thundr.present() {
+            Ok(_) => {}
+            Err(th::ThundrError::OUT_OF_DATE) => return,
+            Err(e) => panic!("Failed to draw frame: {:?}", e),
+        };
     }
 
     pub fn process_task(&mut self, task: &Task) {

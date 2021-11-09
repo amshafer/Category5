@@ -8,7 +8,7 @@ edition = "2018"
 
 [dependencies]
 thundr={path="thundr"}
-wayland-server={version="0.26.3", features=["use_system_lib"]}
+wayland-server={version="0.29.1", features=["use_system_lib"]}
 wayland-commons="0.29.1"
 input="0.4.1"
 udev="0.2.0"
@@ -22,4 +22,4 @@ utils={path="utils"}
 renderdoc="0.10"
 
 [build-dependencies]
-wayland-scanner="0.26.4"
+wayland-scanner="0.29.1"

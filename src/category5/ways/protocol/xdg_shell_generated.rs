@@ -48,6 +48,7 @@ pub mod xdg_wm_base {
             *self as u32
         }
     }
+    #[derive(Debug)]
     #[non_exhaustive]
     pub enum Request {
         #[doc = "destroy xdg_wm_base\n\nDestroy this xdg_wm_base object.\n\nDestroying a bound xdg_wm_base object while there are surfaces\nstill alive created by this xdg_wm_base object instance is illegal\nand will result in a protocol error.\n\nThis is a destructor, once received this object cannot be used any longer."]
@@ -56,7 +57,7 @@ pub mod xdg_wm_base {
         CreatePositioner {
             id: Main<super::xdg_positioner::XdgPositioner>,
         },
-        #[doc = "create a shell surface from a surface\n\nThis creates an xdg_surface for the given surface. While xdg_surface\nitself is not a role, the corresponding surface may only be assigned\na role extending xdg_surface, such as xdg_toplevel or xdg_popup.\n\nThis creates an xdg_surface for the given surface. An xdg_surface is\nused as basis to define a role to a given surface, such as xdg_toplevel\nor xdg_popup. It also manages functionality shared between xdg_surface\nbased surface roles.\n\nSee the documentation of xdg_surface for more details about what an\nxdg_surface is and how it is used."]
+        #[doc = "create a shell surface from a surface\n\nThis creates an xdg_surface for the given surface. While xdg_surface\nitself is not a role, the corresponding surface may only be assigned\na role extending xdg_surface, such as xdg_toplevel or xdg_popup. It is\nillegal to create an xdg_surface for a wl_surface which already has an\nassigned role and this will result in a protocol error.\n\nThis creates an xdg_surface for the given surface. An xdg_surface is\nused as basis to define a role to a given surface, such as xdg_toplevel\nor xdg_popup. It also manages functionality shared between xdg_surface\nbased surface roles.\n\nSee the documentation of xdg_surface for more details about what an\nxdg_surface is and how it is used."]
         GetXdgSurface {
             id: Main<super::xdg_surface::XdgSurface>,
             surface: super::wl_surface::WlSurface,
@@ -230,6 +231,7 @@ pub mod xdg_wm_base {
             panic!("Request::as_raw_c_in can not be used Server-side.")
         }
     }
+    #[derive(Debug)]
     #[non_exhaustive]
     pub enum Event {
         #[doc = "check if the client is alive\n\nThe ping event asks the client if it's still alive. Pass the\nserial specified in the event back to the compositor by sending\na \"pong\" request back with the specified serial. See xdg_wm_base.pong.\n\nCompositors can use this to determine if the client is still\nalive. It's unspecified what will happen if the client doesn't\nrespond to the ping request, or in what timeframe. Clients should\ntry to respond in a reasonable amount of time.\n\nA compositor is free to ping in any way it wants, but a client must\nalways respond to any xdg_wm_base object it created."]
@@ -317,6 +319,11 @@ pub mod xdg_wm_base {
         #[inline]
         fn from(value: XdgWmBase) -> Self {
             value.0
+        }
+    }
+    impl std::fmt::Debug for XdgWmBase {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_fmt(format_args!("{:?}", self.0))
         }
     }
     impl Interface for XdgWmBase {
@@ -483,7 +490,7 @@ pub mod xdg_positioner {
             *self as u32
         }
     }
-    bitflags! { # [ doc = "constraint adjustments\n\nThe constraint adjustment value define ways the compositor will adjust\nthe position of the surface, if the unadjusted position would result\nin the surface being partly constrained.\n\nWhether a surface is considered 'constrained' is left to the compositor\nto determine. For example, the surface may be partly outside the\ncompositor's defined 'work area', thus necessitating the child surface's\nposition be adjusted until it is entirely inside the work area.\n\nThe adjustments can be combined, according to a defined precedence: 1)\nFlip, 2) Slide, 3) Resize." ] pub struct ConstraintAdjustment : u32 { # [ doc = "don't move the child surface when constrained\n\nDon't alter the surface position even if it is constrained on some\naxis, for example partially outside the edge of an output." ] const None = 0 ; # [ doc = "move along the x axis until unconstrained\n\nSlide the surface along the x axis until it is no longer constrained.\n\nFirst try to slide towards the direction of the gravity on the x axis\nuntil either the edge in the opposite direction of the gravity is\nunconstrained or the edge in the direction of the gravity is\nconstrained.\n\nThen try to slide towards the opposite direction of the gravity on the\nx axis until either the edge in the direction of the gravity is\nunconstrained or the edge in the opposite direction of the gravity is\nconstrained." ] const SlideX = 1 ; # [ doc = "move along the y axis until unconstrained\n\nSlide the surface along the y axis until it is no longer constrained.\n\nFirst try to slide towards the direction of the gravity on the y axis\nuntil either the edge in the opposite direction of the gravity is\nunconstrained or the edge in the direction of the gravity is\nconstrained.\n\nThen try to slide towards the opposite direction of the gravity on the\ny axis until either the edge in the direction of the gravity is\nunconstrained or the edge in the opposite direction of the gravity is\nconstrained." ] const SlideY = 2 ; # [ doc = "invert the anchor and gravity on the x axis\n\nInvert the anchor and gravity on the x axis if the surface is\nconstrained on the x axis. For example, if the left edge of the\nsurface is constrained, the gravity is 'left' and the anchor is\n'left', change the gravity to 'right' and the anchor to 'right'.\n\nIf the adjusted position also ends up being constrained, the resulting\nposition of the flip_x adjustment will be the one before the\nadjustment." ] const FlipX = 4 ; # [ doc = "invert the anchor and gravity on the y axis\n\nInvert the anchor and gravity on the y axis if the surface is\nconstrained on the y axis. For example, if the bottom edge of the\nsurface is constrained, the gravity is 'bottom' and the anchor is\n'bottom', change the gravity to 'top' and the anchor to 'top'.\n\nThe adjusted position is calculated given the original anchor\nrectangle and offset, but with the new flipped anchor and gravity\nvalues.\n\nIf the adjusted position also ends up being constrained, the resulting\nposition of the flip_y adjustment will be the one before the\nadjustment." ] const FlipY = 8 ; # [ doc = "horizontally resize the surface\n\nResize the surface horizontally so that it is completely\nunconstrained." ] const ResizeX = 16 ; # [ doc = "vertically resize the surface\n\nResize the surface vertically so that it is completely unconstrained." ] const ResizeY = 32 ; } }
+    bitflags! { # [doc = "constraint adjustments\n\nThe constraint adjustment value define ways the compositor will adjust\nthe position of the surface, if the unadjusted position would result\nin the surface being partly constrained.\n\nWhether a surface is considered 'constrained' is left to the compositor\nto determine. For example, the surface may be partly outside the\ncompositor's defined 'work area', thus necessitating the child surface's\nposition be adjusted until it is entirely inside the work area.\n\nThe adjustments can be combined, according to a defined precedence: 1)\nFlip, 2) Slide, 3) Resize."] pub struct ConstraintAdjustment : u32 { # [doc = "don't move the child surface when constrained\n\nDon't alter the surface position even if it is constrained on some\naxis, for example partially outside the edge of an output."] const None = 0 ; # [doc = "move along the x axis until unconstrained\n\nSlide the surface along the x axis until it is no longer constrained.\n\nFirst try to slide towards the direction of the gravity on the x axis\nuntil either the edge in the opposite direction of the gravity is\nunconstrained or the edge in the direction of the gravity is\nconstrained.\n\nThen try to slide towards the opposite direction of the gravity on the\nx axis until either the edge in the direction of the gravity is\nunconstrained or the edge in the opposite direction of the gravity is\nconstrained."] const SlideX = 1 ; # [doc = "move along the y axis until unconstrained\n\nSlide the surface along the y axis until it is no longer constrained.\n\nFirst try to slide towards the direction of the gravity on the y axis\nuntil either the edge in the opposite direction of the gravity is\nunconstrained or the edge in the direction of the gravity is\nconstrained.\n\nThen try to slide towards the opposite direction of the gravity on the\ny axis until either the edge in the direction of the gravity is\nunconstrained or the edge in the opposite direction of the gravity is\nconstrained."] const SlideY = 2 ; # [doc = "invert the anchor and gravity on the x axis\n\nInvert the anchor and gravity on the x axis if the surface is\nconstrained on the x axis. For example, if the left edge of the\nsurface is constrained, the gravity is 'left' and the anchor is\n'left', change the gravity to 'right' and the anchor to 'right'.\n\nIf the adjusted position also ends up being constrained, the resulting\nposition of the flip_x adjustment will be the one before the\nadjustment."] const FlipX = 4 ; # [doc = "invert the anchor and gravity on the y axis\n\nInvert the anchor and gravity on the y axis if the surface is\nconstrained on the y axis. For example, if the bottom edge of the\nsurface is constrained, the gravity is 'bottom' and the anchor is\n'bottom', change the gravity to 'top' and the anchor to 'top'.\n\nThe adjusted position is calculated given the original anchor\nrectangle and offset, but with the new flipped anchor and gravity\nvalues.\n\nIf the adjusted position also ends up being constrained, the resulting\nposition of the flip_y adjustment will be the one before the\nadjustment."] const FlipY = 8 ; # [doc = "horizontally resize the surface\n\nResize the surface horizontally so that it is completely\nunconstrained."] const ResizeX = 16 ; # [doc = "vertically resize the surface\n\nResize the surface vertically so that it is completely unconstrained."] const ResizeY = 32 ; } }
     impl ConstraintAdjustment {
         pub fn from_raw(n: u32) -> Option<ConstraintAdjustment> {
             Some(ConstraintAdjustment::from_bits_truncate(n))
@@ -492,6 +499,7 @@ pub mod xdg_positioner {
             self.bits()
         }
     }
+    #[derive(Debug)]
     #[non_exhaustive]
     pub enum Request {
         #[doc = "destroy the xdg_positioner object\n\nNotify the compositor that the xdg_positioner will no longer be used.\n\nThis is a destructor, once received this object cannot be used any longer."]
@@ -853,6 +861,7 @@ pub mod xdg_positioner {
             panic!("Request::as_raw_c_in can not be used Server-side.")
         }
     }
+    #[derive(Debug)]
     #[non_exhaustive]
     pub enum Event {}
     impl super::MessageGroup for Event {
@@ -914,6 +923,11 @@ pub mod xdg_positioner {
         #[inline]
         fn from(value: XdgPositioner) -> Self {
             value.0
+        }
+    }
+    impl std::fmt::Debug for XdgPositioner {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_fmt(format_args!("{:?}", self.0))
         }
     }
     impl Interface for XdgPositioner {
@@ -1039,6 +1053,7 @@ pub mod xdg_surface {
             *self as u32
         }
     }
+    #[derive(Debug)]
     #[non_exhaustive]
     pub enum Request {
         #[doc = "destroy the xdg_surface\n\nDestroy the xdg_surface object. An xdg_surface must only be destroyed\nafter its role object has been destroyed.\n\nThis is a destructor, once received this object cannot be used any longer."]
@@ -1307,6 +1322,7 @@ pub mod xdg_surface {
             panic!("Request::as_raw_c_in can not be used Server-side.")
         }
     }
+    #[derive(Debug)]
     #[non_exhaustive]
     pub enum Event {
         #[doc = "suggest a surface change\n\nThe configure event marks the end of a configure sequence. A configure\nsequence is a set of one or more events configuring the state of the\nxdg_surface, including the final xdg_surface.configure event.\n\nWhere applicable, xdg_surface surface roles will during a configure\nsequence extend this event as a latched state sent as events before the\nxdg_surface.configure event. Such events should be considered to make up\na set of atomically applied configuration states, where the\nxdg_surface.configure commits the accumulated state.\n\nClients should arrange their surface for the new states, and then send\nan ack_configure request with the serial sent in this configure event at\nsome point before committing the new surface.\n\nIf the client receives multiple configure events before it can respond\nto one, it is free to discard all but the last event it received."]
@@ -1394,6 +1410,11 @@ pub mod xdg_surface {
         #[inline]
         fn from(value: XdgSurface) -> Self {
             value.0
+        }
+    }
+    impl std::fmt::Debug for XdgSurface {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_fmt(format_args!("{:?}", self.0))
         }
     }
     impl Interface for XdgSurface {
@@ -1558,6 +1579,7 @@ pub mod xdg_toplevel {
             *self as u32
         }
     }
+    #[derive(Debug)]
     #[non_exhaustive]
     pub enum Request {
         #[doc = "destroy the xdg_toplevel\n\nThis request destroys the role surface and unmaps the surface;\nsee \"Unmapping\" behavior in interface section for details.\n\nThis is a destructor, once received this object cannot be used any longer."]
@@ -2052,6 +2074,7 @@ pub mod xdg_toplevel {
             panic!("Request::as_raw_c_in can not be used Server-side.")
         }
     }
+    #[derive(Debug)]
     #[non_exhaustive]
     pub enum Event {
         #[doc = "suggest a surface change\n\nThis configure event asks the client to resize its toplevel surface or\nto change its state. The configured state should not be applied\nimmediately. See xdg_surface.configure for details.\n\nThe width and height arguments specify a hint to the window\nabout how its surface should be resized in window geometry\ncoordinates. See set_window_geometry.\n\nIf the width or height arguments are zero, it means the client\nshould decide its own window dimension. This may happen when the\ncompositor needs to configure the state of the surface but doesn't\nhave any information about any previous or expected dimension.\n\nThe states listed in the event specify how the width/height\narguments should be interpreted, and possibly how it should be\ndrawn.\n\nClients must send an ack_configure in response to this event. See\nxdg_surface.configure and xdg_surface.ack_configure for details."]
@@ -2187,6 +2210,11 @@ pub mod xdg_toplevel {
         #[inline]
         fn from(value: XdgToplevel) -> Self {
             value.0
+        }
+    }
+    impl std::fmt::Debug for XdgToplevel {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_fmt(format_args!("{:?}", self.0))
         }
     }
     impl Interface for XdgToplevel {
@@ -2388,6 +2416,7 @@ pub mod xdg_popup {
             *self as u32
         }
     }
+    #[derive(Debug)]
     #[non_exhaustive]
     pub enum Request {
         #[doc = "remove xdg_popup interface\n\nThis destroys the popup. Explicitly destroying the xdg_popup\nobject will also dismiss the popup, and unmap the surface.\n\nIf this xdg_popup is not the \"topmost\" popup, a protocol error\nwill be sent.\n\nThis is a destructor, once received this object cannot be used any longer."]
@@ -2536,6 +2565,7 @@ pub mod xdg_popup {
             panic!("Request::as_raw_c_in can not be used Server-side.")
         }
     }
+    #[derive(Debug)]
     #[non_exhaustive]
     pub enum Event {
         #[doc = "configure the popup surface\n\nThis event asks the popup surface to configure itself given the\nconfiguration. The configured state should not be applied immediately.\nSee xdg_surface.configure for details.\n\nThe x and y arguments represent the position the popup was placed at\ngiven the xdg_positioner rule, relative to the upper left corner of the\nwindow geometry of the parent surface.\n\nFor version 2 or older, the configure event for an xdg_popup is only\never sent once for the initial configuration. Starting with version 3,\nit may be sent again if the popup is setup with an xdg_positioner with\nset_reactive requested, or in response to xdg_popup.reposition requests."]
@@ -2692,6 +2722,11 @@ pub mod xdg_popup {
         #[inline]
         fn from(value: XdgPopup) -> Self {
             value.0
+        }
+    }
+    impl std::fmt::Debug for XdgPopup {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_fmt(format_args!("{:?}", self.0))
         }
     }
     impl Interface for XdgPopup {

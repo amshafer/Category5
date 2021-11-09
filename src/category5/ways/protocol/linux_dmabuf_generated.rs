@@ -17,6 +17,7 @@ pub mod zwp_linux_dmabuf_v1 {
         MessageDesc, MessageGroup, Object, ObjectMetadata, Resource, NULLPTR,
     };
     use std::os::raw::c_char;
+    #[derive(Debug)]
     #[non_exhaustive]
     pub enum Request {
         #[doc = "unbind the factory\n\nObjects created through this interface, especially wl_buffers, will\nremain valid.\n\nThis is a destructor, once received this object cannot be used any longer."]
@@ -105,7 +106,7 @@ pub mod zwp_linux_dmabuf_v1 {
                     Ok(Request::CreateParams {
                         params_id: {
                             let me = Resource::<ZwpLinuxDmabufV1>::from_c_ptr(obj as *mut _);
-                            me . make_child_for :: < super :: zwp_linux_buffer_params_v1 :: ZwpLinuxBufferParamsV1 > ( _args [ 0 ] . n ) . unwrap ( )
+                            me . make_child_for :: < super :: zwp_linux_buffer_params_v1 :: ZwpLinuxBufferParamsV1 > (_args [0] . n) . unwrap ()
                         },
                     })
                 }
@@ -119,6 +120,7 @@ pub mod zwp_linux_dmabuf_v1 {
             panic!("Request::as_raw_c_in can not be used Server-side.")
         }
     }
+    #[derive(Debug)]
     #[non_exhaustive]
     pub enum Event {
         #[doc = "supported buffer format\n\nThis event advertises one buffer format that the server supports.\nAll the supported formats are advertised once when the client\nbinds to this interface. A roundtrip after binding guarantees\nthat the client has received all supported formats.\n\nFor the definition of the format codes, see the\nzwp_linux_buffer_params_v1::create request.\n\nWarning: the 'format' event is likely to be deprecated and replaced\nwith the 'modifier' event introduced in zwp_linux_dmabuf_v1\nversion 3, described below. Please refrain from using the information\nreceived from this event."]
@@ -252,6 +254,11 @@ pub mod zwp_linux_dmabuf_v1 {
             value.0
         }
     }
+    impl std::fmt::Debug for ZwpLinuxDmabufV1 {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_fmt(format_args!("{:?}", self.0))
+        }
+    }
     impl Interface for ZwpLinuxDmabufV1 {
         type Request = Request;
         type Event = Event;
@@ -374,7 +381,7 @@ pub mod zwp_linux_buffer_params_v1 {
             *self as u32
         }
     }
-    bitflags! { pub struct Flags : u32 { # [ doc = "contents are y-inverted" ] const YInvert = 1 ; # [ doc = "content is interlaced" ] const Interlaced = 2 ; # [ doc = "bottom field first" ] const BottomFirst = 4 ; } }
+    bitflags! { pub struct Flags : u32 { # [doc = "contents are y-inverted"] const YInvert = 1 ; # [doc = "content is interlaced"] const Interlaced = 2 ; # [doc = "bottom field first"] const BottomFirst = 4 ; } }
     impl Flags {
         pub fn from_raw(n: u32) -> Option<Flags> {
             Some(Flags::from_bits_truncate(n))
@@ -383,6 +390,7 @@ pub mod zwp_linux_buffer_params_v1 {
             self.bits()
         }
     }
+    #[derive(Debug)]
     #[non_exhaustive]
     pub enum Request {
         #[doc = "delete this object, used or not\n\nCleans up the temporary data sent to the server for dmabuf-based\nwl_buffer creation.\n\nThis is a destructor, once received this object cannot be used any longer."]
@@ -673,6 +681,7 @@ pub mod zwp_linux_buffer_params_v1 {
             panic!("Request::as_raw_c_in can not be used Server-side.")
         }
     }
+    #[derive(Debug)]
     #[non_exhaustive]
     pub enum Event {
         #[doc = "buffer creation succeeded\n\nThis event indicates that the attempted buffer creation was\nsuccessful. It provides the new wl_buffer referencing the dmabuf(s).\n\nUpon receiving this event, the client should destroy the\nzlinux_dmabuf_params object."]
@@ -787,6 +796,11 @@ pub mod zwp_linux_buffer_params_v1 {
         #[inline]
         fn from(value: ZwpLinuxBufferParamsV1) -> Self {
             value.0
+        }
+    }
+    impl std::fmt::Debug for ZwpLinuxBufferParamsV1 {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_fmt(format_args!("{:?}", self.0))
         }
     }
     impl Interface for ZwpLinuxBufferParamsV1 {
