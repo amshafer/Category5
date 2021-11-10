@@ -1121,8 +1121,16 @@ impl Renderer {
             );
             let mem_props = Renderer::get_pdev_mem_properties(&inst, pdev);
 
+            // TODO: allow for multiple pipes in use at once
+            let pipe_type = if info.enable_traditional_composition {
+                PipelineType::GEOMETRIC
+            } else {
+                PipelineType::COMPUTE
+            };
+            let enabled_pipelines = vec![pipe_type];
+
             // do this after we have gotten a valid physical device
-            let surface_format = display.select_surface_format(pdev)?;
+            let surface_format = display.select_surface_format(pdev, pipe_type)?;
 
             let surface_caps = display
                 .d_surface_loader
@@ -1133,14 +1141,6 @@ impl Renderer {
 
             // create the graphics,transfer, and pipeline specific queues
             let mut families = vec![graphics_queue_family, transfer_queue_family];
-
-            // TODO: allow for multiple pipes in use at once
-            let pipe_type = if info.enable_compute_composition {
-                PipelineType::COMPUTE
-            } else {
-                PipelineType::GEOMETRIC
-            };
-            let enabled_pipelines = vec![pipe_type];
 
             for t in enabled_pipelines.iter() {
                 if let Some(family) = t.get_queue_family(&inst, &display, pdev) {
