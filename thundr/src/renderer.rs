@@ -517,7 +517,7 @@ impl Renderer {
             if use_mut_swapchain {
                 extra_usage |= vk::ImageUsageFlags::STORAGE;
                 swap_flags |= vk::SwapchainCreateFlagsKHR::MUTABLE_FORMAT;
-            } else {
+            } else if pipe_type == PipelineType::COMPUTE {
                 unimplemented!("fallback to traditional composition?");
             }
         }

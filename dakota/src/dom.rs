@@ -73,8 +73,12 @@ pub struct Offset {
 }
 
 impl Offset {
+    pub fn new(w: u32, h: u32) -> Self {
+        Self { x: w, y: h }
+    }
+
     #[allow(dead_code)]
-    fn union(&mut self, other: &Self) {
+    pub fn union(&mut self, other: &Self) {
         self.x = std::cmp::max(self.x, other.x);
         self.y = std::cmp::max(self.y, other.y);
     }
@@ -93,7 +97,7 @@ impl Size {
             height: h,
         }
     }
-    fn union(&mut self, other: &Self) {
+    pub fn union(&mut self, other: &Self) {
         self.width = std::cmp::max(self.width, other.width);
         self.height = std::cmp::max(self.height, other.height);
     }
@@ -149,60 +153,6 @@ pub struct Element {
     pub bounds: Option<Edges>,
     #[serde(rename = "el", default)]
     pub children: Vec<Element>,
-}
-
-impl Element {
-    /// Resize this element to contain all of its children.
-    ///
-    /// This can be used when the size of a box was not specified, and it
-    /// should be grown to be able to hold all of the child boxes.
-    ///
-    /// We don't need to worry about bounding by an available size, this is
-    /// to be used when there are no bounds (such as in a scrolling arena) and
-    /// we just want to grow this element to fit everything.
-    ///
-    /// TODO: Needs to handle using the offset to stack many boxes.
-    pub fn resize_to_children(&mut self) -> Result<()> {
-        // This closure gets around some annoying borrow checker shortcomings
-        //
-        // Basically we want to run the following updating self.offset and self.size.
-        // If we are iterating in loops and the like, then the borrow checker doesn't like
-        // us passing an element owned by self into a function
-        let resize_func =
-            |parent_size: &mut Option<Size>, _parent_offset: &mut Option<Offset>, other: &Self| {
-                let mut size = match other.size.as_ref() {
-                    Some(s) => s.clone(),
-                    None => return Err(anyhow!("Input element does not have a size")),
-                };
-
-                // We have a size, so we need to resize it. Otherwise this element gains
-                // the size of the other one.
-                if let Some(my_size) = parent_size.as_mut() {
-                    // add any offsets to our size
-                    if let Some(offset) = other.offset.as_ref() {
-                        size.width += offset.x;
-                        size.height += offset.y;
-                    }
-                    my_size.union(&size);
-                } else {
-                    *parent_size = Some(size);
-                }
-
-                Ok(())
-            };
-
-        for i in 0..self.children.len() {
-            resize_func(&mut self.size, &mut self.offset, &self.children[i])?;
-        }
-
-        if let Some(content) = self.content.as_mut() {
-            if let Some(child) = content.el.as_ref() {
-                resize_func(&mut self.size, &mut self.offset, child)?;
-            }
-        }
-
-        return Ok(());
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

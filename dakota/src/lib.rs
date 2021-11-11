@@ -32,6 +32,51 @@ pub struct Dakota {
     d_resmap: HashMap<String, ResMapEntry>,
     d_surfaces: th::SurfaceList,
     d_dom: Option<DakotaDOM>,
+    d_layout_tree: Option<LayoutNode>,
+}
+
+/// The elements of the layout tree.
+/// This will be constructed from the Elements in the DOM
+#[derive(Debug)]
+struct LayoutNode {
+    l_resource: Option<String>,
+    l_offset: dom::Offset,
+    l_size: dom::Size,
+    l_children: Vec<LayoutNode>,
+}
+
+impl LayoutNode {
+    fn new(res: Option<String>, off: dom::Offset, size: dom::Size) -> Self {
+        Self {
+            l_resource: res,
+            l_offset: off,
+            l_size: size,
+            l_children: Vec::with_capacity(0),
+        }
+    }
+
+    fn add_child(&mut self, other: LayoutNode) {
+        self.l_children.push(other);
+    }
+
+    /// Resize this element to contain all of its children.
+    ///
+    /// This can be used when the size of a box was not specified, and it
+    /// should be grown to be able to hold all of the child boxes.
+    ///
+    /// We don't need to worry about bounding by an available size, this is
+    /// to be used when there are no bounds (such as in a scrolling arena) and
+    /// we just want to grow this element to fit everything.
+    pub fn resize_to_children(&mut self) -> Result<()> {
+        for other in self.l_children.iter() {
+            // add any offsets to our size
+            self.l_size.width += other.l_offset.x;
+            self.l_size.height += other.l_offset.y;
+            self.l_size.union(&other.l_size);
+        }
+
+        return Ok(());
+    }
 }
 
 impl Dakota {
@@ -59,6 +104,7 @@ impl Dakota {
             d_surfaces: th::SurfaceList::new(),
             d_resmap: HashMap::new(),
             d_dom: None,
+            d_layout_tree: None,
         })
     }
 
@@ -140,12 +186,18 @@ impl Dakota {
     /// created, and can set its final size accordingly. This should prevent
     /// us from having to do more recursion later since everything is calculated
     /// now.
-    pub fn calculate_sizes(
+    fn calculate_sizes(
         &mut self,
-        el: &mut dom::Element,
+        el: &dom::Element,
         mut available_width: Option<u32>,
         mut available_height: Option<u32>,
-    ) -> Result<()> {
+    ) -> Result<LayoutNode> {
+        let mut ret = LayoutNode::new(
+            el.resource.clone(),
+            dom::Offset::new(0, 0),
+            dom::Size::new(0, 0),
+        );
+
         // check if this element has its size set, shrink the available space
         // to match.
         if let Some(size) = el.size.as_ref() {
@@ -156,15 +208,17 @@ impl Dakota {
         // if the box has children, then recurse through them and calculate our
         // box size based on the fill type.
         if el.children.len() > 0 {
-            for child in el.children.iter_mut() {
-                self.calculate_sizes(child, available_width, available_height)?;
+            for child in el.children.iter() {
+                let child_size = self.calculate_sizes(child, available_width, available_height)?;
+                ret.add_child(child_size);
             }
-        } else if let Some(content) = el.content.as_mut() {
+        } else if let Some(content) = el.content.as_ref() {
             // This box has centered content.
             // We should either recurse the child box or calculate the
             // size based on the centered resource.
-            if let Some(mut child) = content.el.as_mut() {
-                self.calculate_sizes(&mut child, available_width, available_height)?;
+            if let Some(mut child) = content.el.as_ref() {
+                let mut child_size =
+                    self.calculate_sizes(&mut child, available_width, available_height)?;
                 // Centered content does not have offsets, it will be overwritten
                 // here. The only reason offset is not None is if we previously
                 // calculated it.
@@ -179,20 +233,16 @@ impl Dakota {
                 // can't center it.
                 //
                 // The child size should have already been clipped to the available space
-                let mut offset = dom::Offset { x: 0, y: 0 };
-                let child_size = child
-                    .size
-                    .as_ref()
-                    .expect("Child should have been assigned a size by now");
-
                 if let Some(width) = available_width {
-                    offset.x = std::cmp::max((width / 2) - (child_size.width / 2), 0);
+                    child_size.l_offset.x =
+                        std::cmp::max((width / 2) - (child_size.l_size.width / 2), 0);
                 }
                 if let Some(height) = available_height {
-                    offset.y = std::cmp::max((height / 2) - (child_size.height / 2), 0);
+                    child_size.l_offset.y =
+                        std::cmp::max((height / 2) - (child_size.l_size.height / 2), 0);
                 }
 
-                child.offset = Some(offset);
+                ret.add_child(child_size);
             }
         }
 
@@ -204,20 +254,26 @@ impl Dakota {
         // we have, then the size is available_space
         // 3. No size and no bounds means we are inside of a scrolling arena, and
         // we should grow this box to hold all of its children.
+        ret.l_offset = match el.offset {
+            Some(off) => off,
+            None => dom::Offset { x: 0, y: 0 },
+        };
 
-        if el.size.is_none() {
+        if let Some(size) = el.size.as_ref() {
+            ret.l_size = *size;
+        } else {
             // first grow this box to fit its children.
-            el.resize_to_children()?;
+            ret.resize_to_children()?;
 
-            // if the size is still empty, there were no children. This should just be
-            // sized to the available space
-            if el.size.is_none() {
+            if ret.l_size == dom::Size::new(0, 0) {
+                // if the size is still empty, there were no children. This should just be
+                // sized to the available space
                 // The default size is based on the resource's default size.
                 // No size + no resource + no bounds means we default to size 0
-                el.size = match el.resource.as_ref() {
-                    Some(res) => Some(self.get_resource_size(&res)?),
+                ret.l_size = match el.resource.as_ref() {
+                    Some(res) => self.get_resource_size(&res)?,
                     // Try to use the bounds if available
-                    None => Some(dom::Size {
+                    None => dom::Size {
                         width: match available_width {
                             Some(aw) => aw,
                             None => 0,
@@ -226,31 +282,24 @@ impl Dakota {
                             Some(ah) => ah,
                             None => 0,
                         },
-                    }),
+                    },
                 };
             }
 
             // Then possibly clip the box by any available dimensions.
             // Add our offsets while calculating this to account for space
             // used by moving the box.
-            if let Some(size) = el.size.as_mut() {
-                let offset = match el.offset.as_ref() {
-                    Some(off) => off,
-                    None => &dom::Offset { x: 0, y: 0 },
-                };
-
-                if let Some(width) = available_width {
-                    size.width = std::cmp::min(width + offset.x, size.width);
-                }
-                if let Some(height) = available_height {
-                    size.height = std::cmp::min(height + offset.y, size.height);
-                }
+            if let Some(width) = available_width {
+                ret.l_size.width = std::cmp::min(width + ret.l_offset.x, ret.l_size.width);
+            }
+            if let Some(height) = available_height {
+                ret.l_size.height = std::cmp::min(height + ret.l_offset.y, ret.l_size.height);
             }
         }
 
-        log::debug!("Final size of element is {:?}", el);
+        log::debug!("Final size of element is {:?}", ret);
 
-        return Ok(());
+        return Ok(ret);
     }
 
     /// This takes care of freeing all of our Thundr Images and such.
@@ -268,16 +317,11 @@ impl Dakota {
     /// At this point the layout tree should have been constructed, aka
     /// Elements will have their sizes correctly (re)calculated and filled
     /// in by `calculate_sizes`.
-    fn create_thundr_surf_for_el(&mut self, el: &dom::Element) -> Result<Option<th::Surface>> {
-        let offset = match el.offset {
-            Some(off) => off,
-            None => dom::Offset { x: 0, y: 0 },
-        };
-        let size = el
-            .size
-            .expect("Element should have its size filled in by now");
+    fn create_thundr_surf_for_el(&mut self, layout: &LayoutNode) -> Result<Option<th::Surface>> {
+        let offset = layout.l_offset;
+        let size = layout.l_size;
 
-        if let Some(resname) = el.resource.as_ref() {
+        if let Some(resname) = layout.l_resource.as_ref() {
             // first create a surface for this element
             let mut surf = self.d_thund.create_surface(
                 offset.x as f32,
@@ -301,7 +345,7 @@ impl Dakota {
             self.d_surfaces.push(surf.clone());
 
             // now iterate through all of it's children, and recursively do the same
-            for child in el.children.iter() {
+            for child in layout.l_children.iter() {
                 // add the new child surface as a subsurface
                 let child_surf = self.create_thundr_surf_for_el(child)?;
                 if let Some(csurf) = child_surf {
@@ -312,27 +356,13 @@ impl Dakota {
             return Ok(Some(surf));
         }
 
-        let mut handle_child_surf = |child| -> Result<Option<th::Surface>> {
-            // add the new child surface as a subsurface
-            self.create_thundr_surf_for_el(child)?;
-            Ok(None)
-        };
-
         // if we are here, then the current element does not have content.
         // Instead what we do is recursively call this function on the
         // children, and append them to the surfacelist.
-        for child in el.children.iter() {
-            handle_child_surf(child)?;
+        for child in layout.l_children.iter() {
+            // add the new child surface as a subsurface
+            self.create_thundr_surf_for_el(child)?;
         }
-        if let Some(content) = el.content.as_ref() {
-            // This box has centered content.
-            // We should either recurse the child box or calculate the
-            // size based on the centered resource.
-            if let Some(child) = content.el.as_ref() {
-                handle_child_surf(child)?;
-            }
-        }
-
         return Ok(None);
     }
 
@@ -358,10 +388,8 @@ impl Dakota {
 
         // now handle the error from our layout tree recursive call after
         // we have put the dom back
-        if result.is_err() {
-            self.d_dom = Some(dom);
-            return result;
-        }
+        self.d_dom = Some(dom);
+        self.d_layout_tree = Some(result?);
 
         // reset our thundr surface list. If the set of resources has
         // changed, then we should have called clear_thundr to do so by now.
@@ -369,9 +397,9 @@ impl Dakota {
 
         // Create our thundr surface and add it to the list
         // one list with subsurfaces?
-        let result = self.create_thundr_surf_for_el(&dom.layout.root_element);
-
-        self.d_dom = Some(dom);
+        let layout_tree = self.d_layout_tree.take().unwrap();
+        let result = self.create_thundr_surf_for_el(&layout_tree);
+        self.d_layout_tree = Some(layout_tree);
 
         match result {
             Ok(_) => Ok(()),

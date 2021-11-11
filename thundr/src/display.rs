@@ -123,6 +123,7 @@ impl Display {
             .d_surface_loader
             .get_physical_device_surface_formats(pdev, self.d_surface)
             .unwrap();
+        log::debug!("Formats for this vulkan surface: {:#?}", formats);
 
         match formats
             .iter()

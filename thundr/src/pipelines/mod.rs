@@ -65,7 +65,7 @@ pub trait Pipeline {
     fn destroy(&mut self, rend: &mut Renderer);
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum PipelineType {
     COMPUTE,
     GEOMETRIC,
