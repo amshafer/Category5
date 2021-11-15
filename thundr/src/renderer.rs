@@ -181,7 +181,6 @@ impl Renderer {
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
                     | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
                     | vk::DebugUtilsMessageSeverityFlagsEXT::INFO,
             )
             .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
