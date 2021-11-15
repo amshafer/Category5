@@ -436,7 +436,7 @@ impl GeomPipeline {
             // see Renderer::create_swapchain for why we aren't using
             // the native surface formate
             vk::AttachmentDescription {
-                format: vk::Format::R8G8B8A8_UNORM,
+                format: vk::Format::B8G8R8A8_UNORM,
                 samples: vk::SampleCountFlags::TYPE_1,
                 load_op: vk::AttachmentLoadOp::CLEAR,
                 store_op: vk::AttachmentStoreOp::STORE,

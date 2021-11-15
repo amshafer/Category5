@@ -24,7 +24,7 @@ use nix::errno::Errno;
 use nix::unistd::dup;
 use nix::Error;
 
-use crate::Damage;
+use crate::{Damage, PipelineType};
 
 /// A image buffer containing contents to be composited.
 ///
@@ -205,6 +205,50 @@ impl Renderer {
 
             // Now copy the bits into the image
             self.update_memory(img_mem, 0, img.as_slice());
+
+            // transition us into the appropriate memory layout for shaders
+            self.cbuf_begin_recording(self.copy_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+            let src_stage = vk::PipelineStageFlags::TOP_OF_PIPE;
+            let dst_stage = match self.r_pipe_type {
+                PipelineType::GEOMETRIC => vk::PipelineStageFlags::FRAGMENT_SHADER,
+                PipelineType::COMPUTE => vk::PipelineStageFlags::COMPUTE_SHADER,
+                PipelineType::ALL => {
+                    vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::COMPUTE_SHADER
+                }
+            };
+            let layout_barrier = vk::ImageMemoryBarrier::builder()
+                .image(image)
+                .src_access_mask(vk::AccessFlags::TRANSFER_READ)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .subresource_range(
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .layer_count(1)
+                        .level_count(1)
+                        .build(),
+                )
+                .build();
+            self.dev.cmd_pipeline_barrier(
+                self.copy_cbuf,
+                src_stage,
+                dst_stage,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[layout_barrier],
+            );
+            self.cbuf_end_recording(self.copy_cbuf);
+
+            self.cbuf_submit_async(
+                self.copy_cbuf,
+                self.present_queue,
+                &[], // wait_stages
+                &[], // wait_semas
+                &[], // signal_semas
+                self.copy_cbuf_fence,
+            );
 
             return self.create_image_common(
                 ImagePrivate::MemImage,
