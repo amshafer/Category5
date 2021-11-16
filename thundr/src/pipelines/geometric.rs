@@ -128,6 +128,8 @@ pub struct PushConstants {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+    pub use_color: bool,
+    pub color: (f32, f32, f32, f32),
 }
 
 impl Pipeline for GeomPipeline {
@@ -949,6 +951,11 @@ impl GeomPipeline {
             y: base.1 + surf.s_rect.r_pos.1,
             width: surf.s_rect.r_size.0,
             height: surf.s_rect.r_size.1,
+            use_color: surf.s_color.is_some(),
+            color: match surf.s_color {
+                Some((r, g, b, a)) => (r, g, b, a),
+                None => (0.0, 50.0, 100.0, 150.0),
+            },
         };
 
         unsafe {

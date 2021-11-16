@@ -25,6 +25,9 @@ pub(crate) struct SurfaceInternal {
     /// The size of the surface.
     /// The currently attached image.
     pub(crate) s_image: Option<Image>,
+    /// For rendering a surface as a constant color
+    /// This is mutually exclusive to s_image
+    pub(crate) s_color: Option<(f32, f32, f32, f32)>,
     /// Damage caused by moving or altering the surface itself.
     s_damage: Option<Damage>,
     /// This is the surface damage that has been attached by clients.
@@ -96,6 +99,7 @@ impl Surface {
             s_internal: Rc::new(RefCell::new(SurfaceInternal {
                 s_rect: Rect::new(x, y, width, height),
                 s_image: None,
+                s_color: None,
                 s_damage: None,
                 s_surf_damage: None,
                 s_was_damaged: false,
@@ -121,7 +125,9 @@ impl Surface {
     /// Attaches an image to this surface, when this surface
     /// is drawn the contents will be sample from `image`
     pub(crate) fn bind_image(&mut self, image: Image) {
-        self.s_internal.borrow_mut().s_image = Some(image);
+        let mut surf = self.s_internal.borrow_mut();
+        assert!(surf.s_color.is_none());
+        surf.s_image = Some(image);
     }
 
     pub fn get_image(&self) -> Option<Image> {
@@ -157,6 +163,17 @@ impl Surface {
             surf.s_rect.r_size.1 = h;
             surf.record_damage();
         }
+    }
+
+    pub fn get_color(&self) -> Option<(f32, f32, f32, f32)> {
+        let surf = self.s_internal.borrow();
+        surf.s_color
+    }
+
+    pub fn set_color(&mut self, r: f32, g: f32, b: f32, a: f32) {
+        let mut surf = self.s_internal.borrow_mut();
+        assert!(surf.s_image.is_none());
+        surf.s_color = Some((r, g, b, a));
     }
 
     pub fn get_opaque(&self) -> Option<Rect<i32>> {

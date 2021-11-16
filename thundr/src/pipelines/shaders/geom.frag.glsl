@@ -12,8 +12,14 @@ int x;
 int y;
 float width;
 float height;
+bool use_color;
+vec4 color;
 } push;
 
 void main() {
-     res = texture(tex, coord);
+    if (push.use_color) {
+        res = push.color;
+    } else {
+        res = texture(tex, coord);
+    }
 }

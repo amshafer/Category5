@@ -150,7 +150,11 @@ struct TileList {
 #[derive(Copy, Clone, Serialize, Deserialize)]
 struct Window {
     /// The id of the image. This is the offset into the unbounded sampler array.
+    /// w_id.0: id that's the offset into the unbound sampler array
+    /// w_id.1: if we should use w_color instead of texturing
     w_id: (i32, i32, i32, i32),
+    /// Opaque color
+    w_color: (f32, f32, f32, f32),
     /// The complete dimensions of the window.
     w_dims: Rect<i32>,
     /// Opaque region that tells the shader that we do not need to blend.
@@ -829,8 +833,13 @@ impl CompPipeline {
             None => (0.0, 0.0),
         };
 
+        let use_color = surf.s_color.is_some();
         Window {
-            w_id: (image.get_id(), 0, 0, 0),
+            w_id: (image.get_id(), use_color as i32, 0, 0),
+            w_color: match surf.s_color {
+                Some((r, g, b, a)) => (r, g, b, a),
+                None => (0.0, 50.0, 100.0, 150.0),
+            },
             w_dims: Rect::new(
                 (base_pos.0 + surf.s_rect.r_pos.0) as i32,
                 (base_pos.1 + surf.s_rect.r_pos.1) as i32,
@@ -863,6 +872,10 @@ impl CompPipeline {
 
             self.cp_winlist.push(Window {
                 w_id: (image.get_id(), 0, 0, 0),
+                w_color: match surf.s_color {
+                    Some((r, g, b, a)) => (r, g, b, a),
+                    None => (0.0, 50.0, 100.0, 150.0),
+                },
                 w_dims: Rect::new(
                     surf.s_rect.r_pos.0 as i32,
                     surf.s_rect.r_pos.1 as i32,

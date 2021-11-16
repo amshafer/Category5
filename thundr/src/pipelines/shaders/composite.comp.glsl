@@ -33,7 +33,11 @@ struct Rect {
 
 struct Window {
 	/* id.0 is the id. It is an ivec4 for alignment purposes */
+    /* id.0: id that's the offset into the unbound sampler array */
+    /* id.1: if we should use w_color instead of texturing */
 	ivec4 id;
+    /* the color used instead of texturing */
+    vec4 color;
 	Rect dims;
 	Rect opaque;
 };
@@ -91,7 +95,13 @@ void main() {
 		  For each window in the target_windows list
 		  blend it into the result.
 		*/
-		vec4 tex = texture(images[nonuniformEXT(windows[target_windows[i]].id.x)], win_uv);
+        vec4 tex;
+        /* id.1 is a flag telling us to use color */
+        if (windows[target_windows[i]].id.y != 0) {
+		    tex = texture(images[nonuniformEXT(windows[target_windows[i]].id.x)], win_uv);
+        } else {
+            tex = windows[target_windows[i]].color;
+        }
 		result = tex.rgb * tex.a + result * (1.0 - tex.a);
 	}
 
