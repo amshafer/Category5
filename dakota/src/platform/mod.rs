@@ -14,7 +14,7 @@ use sdl2::{event::Event, keyboard::Keycode};
 pub trait Platform {
     fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType>;
 
-    fn set_output_params(&mut self, win: &dom::Window) -> Result<()>;
+    fn set_output_params(&mut self, win: &dom::Window, dims: (u32, u32)) -> Result<()>;
 
     /// Returns true if we should terminate i.e. the window has been closed.
     fn run<F: FnMut()>(&mut self, func: F) -> Result<bool>;
@@ -38,7 +38,7 @@ impl WLPlat {
             wp_surf: wl_surf,
         }
     }
-    fn set_output_params(&mut self, win: &dom::Window) -> Result<()> {
+    fn set_output_params(&mut self, win: &dom::Window, dims: (u32, u32)) -> Result<()> {
         println!("set_output_params on wayland is unimplemented");
     }
 }
@@ -90,10 +90,10 @@ impl Platform for SDL2Plat {
         Ok(th::SurfaceType::SDL2(&self.sdl_window))
     }
 
-    fn set_output_params(&mut self, win: &dom::Window) -> Result<()> {
+    fn set_output_params(&mut self, win: &dom::Window, dims: (u32, u32)) -> Result<()> {
         let sdl_win = &mut self.sdl_window;
         sdl_win.set_title(&win.title)?;
-        sdl_win.set_size(win.width, win.height)?;
+        sdl_win.set_size(dims.0, dims.1)?;
         Ok(())
     }
 

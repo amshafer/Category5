@@ -61,7 +61,7 @@ fn main() {
 
     // ----------- create list of surfaces
     let mut list = thundr::SurfaceList::new();
-    // list.push(cursor_surf.clone());
+    list.push(cursor_surf.clone());
     list.push(bg_surf);
 
     let mut dx = 2.0;

@@ -33,6 +33,7 @@ pub struct Dakota {
     d_surfaces: th::SurfaceList,
     d_dom: Option<DakotaDOM>,
     d_layout_tree: Option<LayoutNode>,
+    d_window_dims: Option<(u32, u32)>,
 }
 
 /// The elements of the layout tree.
@@ -105,6 +106,7 @@ impl Dakota {
             d_resmap: HashMap::new(),
             d_dom: None,
             d_layout_tree: None,
+            d_window_dims: None,
         })
     }
 
@@ -289,6 +291,11 @@ impl Dakota {
             // Then possibly clip the box by any available dimensions.
             // Add our offsets while calculating this to account for space
             // used by moving the box.
+            ret.l_offset = match el.offset {
+                Some(off) => off,
+                None => dom::Offset { x: 0, y: 0 },
+            };
+
             if let Some(width) = available_width {
                 ret.l_size.width = std::cmp::min(width + ret.l_offset.x, ret.l_size.width);
             }
@@ -374,16 +381,24 @@ impl Dakota {
         }
         let mut dom = self.d_dom.take().unwrap();
 
+        // check if the window size is set. If it is not, this is the
+        // first iteration and we need to populate the dimensions
+        // from the DOM
+        if self.d_window_dims.is_none() {
+            self.d_window_dims = Some((dom.window.width, dom.window.height));
+        }
+
         // we need to update the window dimensions if possible,
         // so call into our platform do handle it
-        self.d_plat.set_output_params(&dom.window)?;
+        self.d_plat
+            .set_output_params(&dom.window, self.d_window_dims.unwrap())?;
 
         // construct layout tree with sizes of all boxes
         // create our thundr surfaces while we are at it.
         let result = self.calculate_sizes(
             &mut dom.layout.root_element,
-            Some(dom.window.width),  // available width
-            Some(dom.window.height), // available height
+            Some(self.d_window_dims.unwrap().0), // available width
+            Some(self.d_window_dims.unwrap().1), // available height
         );
 
         // now handle the error from our layout tree recursive call after
@@ -414,6 +429,14 @@ impl Dakota {
         self.refresh_elements()
     }
 
+    /// Handle vulkan swapchain out of date. This is probably because the
+    /// window's size has changed. This will requery the window size and
+    /// refresh the layout tree.
+    fn handle_ood(&mut self) -> Result<()> {
+        self.d_window_dims = Some(self.d_thund.get_resolution());
+        self.refresh_elements()
+    }
+
     /// run the dakota thread.
     ///
     /// Dakota requires takover of one thread, because that's just how winit
@@ -430,7 +453,7 @@ impl Dakota {
         match self.d_thund.draw_frame(&mut self.d_surfaces) {
             Ok(()) => {}
             Err(th::ThundrError::OUT_OF_DATE) => {
-                self.refresh_elements()?;
+                self.handle_ood()?;
                 return Err(Error::from(th::ThundrError::OUT_OF_DATE));
             }
             Err(e) => return Err(Error::from(e).context("Thundr: drawing failed with error")),
@@ -438,7 +461,7 @@ impl Dakota {
         match self.d_thund.present() {
             Ok(()) => {}
             Err(th::ThundrError::OUT_OF_DATE) => {
-                self.refresh_elements()?;
+                self.handle_ood()?;
                 return Err(Error::from(th::ThundrError::OUT_OF_DATE));
             }
             Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
