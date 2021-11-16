@@ -938,12 +938,6 @@ impl GeomPipeline {
         depth: f32,
     ) {
         let surf = thundr_surf.s_internal.borrow();
-        let image = match surf.s_image.as_ref() {
-            Some(i) => i,
-            None => return,
-        }
-        .i_internal
-        .borrow();
 
         let push = PushConstants {
             order: depth,
@@ -957,6 +951,8 @@ impl GeomPipeline {
                 None => (0.0, 50.0, 100.0, 150.0),
             },
         };
+        log::error!("Using color = {}", push.use_color);
+        log::error!("Using color = {:?}", push.color);
 
         unsafe {
             // Descriptor sets can be updated elsewhere, but
@@ -964,18 +960,23 @@ impl GeomPipeline {
             //
             // We need to bind both the uniform set, and the per-Image
             // set for the image sampler
-            rend.dev.cmd_bind_descriptor_sets(
-                params.cbuf,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.pipeline_layout,
-                0, // first set
-                &[
-                    self.ubo_descriptor,
-                    image.i_sampler_descriptors[params.image_num],
-                ],
-                &[], // dynamic offsets
-            );
-
+            match surf.s_image.as_ref() {
+                Some(i) => {
+                    let image = i.i_internal.borrow();
+                    rend.dev.cmd_bind_descriptor_sets(
+                        params.cbuf,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        self.pipeline_layout,
+                        0, // first set
+                        &[
+                            self.ubo_descriptor,
+                            image.i_sampler_descriptors[params.image_num],
+                        ],
+                        &[], // dynamic offsets
+                    );
+                }
+                None => {}
+            }
             // Set the z-ordering of the window we want to render
             // (this sets the visible window ordering)
             rend.dev.cmd_push_constants(

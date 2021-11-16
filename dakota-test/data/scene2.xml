@@ -5,10 +5,10 @@
 			<name>samson</name>
 			<image>
 				<format type="ARGB8888"/>
+                <data>
+                    <relPath>images/brock.png</relPath>
+                </data>
 			</image>
-			<data>
-				<relPath>images/brock.png</relPath>
-			</data>
 			<hints>
 				<constant>true</constant>
 			</hints>

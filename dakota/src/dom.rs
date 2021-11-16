@@ -12,6 +12,7 @@ pub enum Format {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Image {
     pub format: Format,
+    pub data: Data,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -47,11 +48,19 @@ impl Data {
     }
 }
 
+#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
+pub struct Color {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    pub a: f32,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Resource {
     pub name: String,
     pub image: Option<Image>,
-    pub data: Data,
+    pub color: Option<Color>,
     pub hints: Option<Hints>,
 }
 

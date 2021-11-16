@@ -17,7 +17,8 @@ use std::collections::HashMap;
 
 struct ResMapEntry {
     rme_size: dom::Size,
-    rme_image: th::Image,
+    rme_image: Option<th::Image>,
+    rme_color: Option<dom::Color>,
 }
 
 pub struct Dakota {
@@ -125,43 +126,51 @@ impl Dakota {
         //
         // These get tracked in a resource map so they can be looked up during element creation
         for res in dom.resource_map.resources.iter() {
-            if let Some(image) = res.image.as_ref() {
-                if image.format != dom::Format::ARGB8888 {
-                    return Err(anyhow!("Invalid image format"));
+            let (resolution, image) = match res.image.as_ref() {
+                Some(image) => {
+                    if image.format != dom::Format::ARGB8888 {
+                        return Err(anyhow!("Invalid image format"));
+                    }
+
+                    let file_path = image.data.get_fs_path()?;
+
+                    // Create an in-memory representation of the image contents
+                    let resolution = image::image_dimensions(std::path::Path::new(file_path))
+                        .context(
+                        "Format of image could not be guessed correctly. Could not get resolution",
+                    )?;
+                    let img = image::open(file_path)
+                        .context(format!("Could not open image: {:?}", file_path))?
+                        .to_bgra8();
+                    let pixels: Vec<u8> = img.into_vec();
+                    let mimg = MemImage::new(
+                        pixels.as_slice().as_ptr() as *mut u8,
+                        4,                     // width of a pixel
+                        resolution.0 as usize, // width of texture
+                        resolution.1 as usize, // height of texture
+                    );
+
+                    // create a thundr image for each resource
+                    (
+                        resolution,
+                        Some(self.d_thund.create_image_from_bits(&mimg, None).unwrap()),
+                    )
                 }
+                None => ((0, 0), None),
+            };
 
-                let file_path = res.data.get_fs_path()?;
-
-                // Create an in-memory representation of the image contents
-                let resolution = image::image_dimensions(std::path::Path::new(file_path)).context(
-                    "Format of image could not be guessed correctly. Could not get resolution",
-                )?;
-                let img = image::open(file_path)
-                    .context(format!("Could not open image: {:?}", file_path))?
-                    .to_bgra8();
-                let pixels: Vec<u8> = img.into_vec();
-                let mimg = MemImage::new(
-                    pixels.as_slice().as_ptr() as *mut u8,
-                    4,                     // width of a pixel
-                    resolution.0 as usize, // width of texture
-                    resolution.1 as usize, // height of texture
-                );
-
-                // create a thundr image for each resource
-                let th_image = self.d_thund.create_image_from_bits(&mimg, None).unwrap();
-
-                // Add the new image to our resource map
-                self.d_resmap.insert(
-                    res.name.clone(),
-                    ResMapEntry {
-                        rme_size: dom::Size {
-                            width: resolution.0 as u32,
-                            height: resolution.1 as u32,
-                        },
-                        rme_image: th_image,
+            // Add the new image to our resource map
+            self.d_resmap.insert(
+                res.name.clone(),
+                ResMapEntry {
+                    rme_size: dom::Size {
+                        width: resolution.0 as u32,
+                        height: resolution.1 as u32,
                     },
-                );
-            }
+                    rme_image: image,
+                    rme_color: res.color,
+                },
+            );
         }
         Ok(())
     }
@@ -171,9 +180,10 @@ impl Dakota {
     /// This is used to scale boxes larger than the requirements of the children.
     pub fn get_resource_size(&mut self, res: &String) -> Result<dom::Size> {
         if let Some(rme) = self.d_resmap.get(res) {
-            return Ok(rme.rme_size);
+            Ok(rme.rme_size)
         } else {
-            return Err(anyhow!("Could not find resource {}", res));
+            // In this case color drawing is in use and there is no size
+            Ok(dom::Size::new(0, 0))
         }
     }
 
@@ -348,7 +358,16 @@ impl Dakota {
                     ))
                 }
             };
-            self.d_thund.bind_image(&mut surf, rme.rme_image.clone());
+            assert!(
+                (rme.rme_image.is_some() && rme.rme_color.is_none())
+                    || (rme.rme_image.is_none() && rme.rme_color.is_some())
+            );
+            if let Some(image) = rme.rme_image.as_ref() {
+                self.d_thund.bind_image(&mut surf, image.clone());
+            }
+            if let Some(color) = rme.rme_color.as_ref() {
+                surf.set_color((color.r, color.g, color.b, color.a));
+            }
             self.d_surfaces.push(surf.clone());
 
             // now iterate through all of it's children, and recursively do the same

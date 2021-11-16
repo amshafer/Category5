@@ -170,10 +170,10 @@ impl Surface {
         surf.s_color
     }
 
-    pub fn set_color(&mut self, r: f32, g: f32, b: f32, a: f32) {
+    pub fn set_color(&mut self, color: (f32, f32, f32, f32)) {
         let mut surf = self.s_internal.borrow_mut();
         assert!(surf.s_image.is_none());
-        surf.s_color = Some((r, g, b, a));
+        surf.s_color = Some(color);
     }
 
     pub fn get_opaque(&self) -> Option<Rect<i32>> {
