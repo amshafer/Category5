@@ -1997,6 +1997,7 @@ impl Drop for Renderer {
 
             self.dev.destroy_command_pool(self.pool, None);
             self.dev.destroy_fence(self.submit_fence, None);
+            self.dev.destroy_fence(self.copy_cbuf_fence, None);
             self.dev.destroy_device(None);
 
             self.display.destroy();

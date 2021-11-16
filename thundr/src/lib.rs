@@ -464,6 +464,7 @@ impl Drop for Thundr {
     fn drop(&mut self) {
         // first destroy the pipeline specific resources
         self.th_pipe.destroy(&mut self.th_rend);
+        self.clear_all();
         // th_rend will now be dropped
     }
 }
