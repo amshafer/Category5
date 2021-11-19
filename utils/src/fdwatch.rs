@@ -11,6 +11,7 @@ use nix::sys::time::{TimeVal, TimeValLike};
 
 #[cfg(target_os = "freebsd")]
 use nix::sys::event::*;
+#[cfg(target_os = "freebsd")]
 use std::os::unix::io::RawFd;
 
 // =============================================

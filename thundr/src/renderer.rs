@@ -33,7 +33,7 @@ unsafe extern "system" fn vulkan_debug_callback(
     p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
     _p_user_data: *mut c_void,
 ) -> u32 {
-    log::debug!(
+    log::error!(
         "[VK][{:?}][{:?}] {:?}",
         message_severity,
         message_types,
@@ -201,13 +201,13 @@ impl Renderer {
         let entry = Entry::new().unwrap();
         let app_name = CString::new("Thundr").unwrap();
 
-        let layer_names = if info.enable_traditional_composition {
-            // For some reason the validation layers segfault in renderpass on the geometric
-            // one, so only use validation on compute
-            vec![CString::new("VK_LAYER_KHRONOS_validation").unwrap()]
-        } else {
-            Vec::new()
-        };
+        // For some reason old versions of the validation layers segfault in renderpass on the
+        // geometric one, so only use validation on compute
+        let layer_names = vec![
+            CString::new("VK_LAYER_KHRONOS_validation").unwrap(),
+            #[cfg(target_os = "macos")]
+            CString::new("VK_LAYER_KHRONOS_synchronization2").unwrap(),
+        ];
 
         let layer_names_raw: Vec<*const i8> = layer_names
             .iter()

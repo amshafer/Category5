@@ -241,6 +241,14 @@ impl Renderer {
             );
             self.cbuf_end_recording(self.copy_cbuf);
 
+            self.dev
+                .wait_for_fences(
+                    &[self.copy_cbuf_fence],
+                    true,          // wait for all
+                    std::u64::MAX, //timeout
+                )
+                .expect("Could not wait for the copy fence");
+            self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
             self.cbuf_submit_async(
                 self.copy_cbuf,
                 self.present_queue,

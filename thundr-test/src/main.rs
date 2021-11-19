@@ -72,7 +72,7 @@ fn main() {
     let mut draw_func = move || {
         // ----------- update the location of the cursor
         let curpos = cursor_surf.get_pos();
-        println!("curpos = {:?}", curpos);
+        //println!("curpos = {:?}", curpos);
         match curpos.0 {
             v if v < 4.0 => dx = 2.0,
             v if v >= ws.0 as f32 - 4.0 => dx = -2.0,
@@ -102,10 +102,10 @@ fn main() {
         };
         stop.end();
 
-        println!(
-            "Thundr took {:?} ms this frame",
-            stop.get_duration().as_millis()
-        );
+        //println!(
+        //    "Thundr took {:?} ms this frame",
+        //    stop.get_duration().as_millis()
+        //);
     };
 
     // ----------- now wait for the app to exit
