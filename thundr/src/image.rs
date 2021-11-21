@@ -208,7 +208,7 @@ impl Renderer {
 
             // transition us into the appropriate memory layout for shaders
             self.cbuf_begin_recording(self.copy_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-            let src_stage = vk::PipelineStageFlags::TOP_OF_PIPE;
+            let src_stage = vk::PipelineStageFlags::TRANSFER;
             let dst_stage = match self.r_pipe_type {
                 PipelineType::GEOMETRIC => vk::PipelineStageFlags::FRAGMENT_SHADER,
                 PipelineType::COMPUTE => vk::PipelineStageFlags::COMPUTE_SHADER,

@@ -13,6 +13,8 @@ float height;
 } ubo;
 
 layout(push_constant) uniform PushConstants {
+vec4 color;
+int  use_color;
 float order;
 float x;
 float y;

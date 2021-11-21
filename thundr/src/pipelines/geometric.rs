@@ -121,6 +121,8 @@ struct ShaderConstants {
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[repr(C)]
 pub struct PushConstants {
+    pub color: (f32, f32, f32, f32),
+    pub use_color: u32,
     /// the z-ordering of the window being drawn
     pub order: f32,
     /// this is [0,resolution]
@@ -128,8 +130,6 @@ pub struct PushConstants {
     pub y: f32,
     pub width: f32,
     pub height: f32,
-    pub use_color: u32,
-    pub color: (f32, f32, f32, f32),
 }
 
 impl Pipeline for GeomPipeline {
@@ -262,7 +262,7 @@ impl GeomPipeline {
 
             // make a push constant entry for the z ordering of a window
             let constants = &[vk::PushConstantRange::builder()
-                .stage_flags(vk::ShaderStageFlags::VERTEX)
+                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 .offset(0)
                 // depth is measured as a normalized float
                 .size(std::mem::size_of::<PushConstants>() as u32)
@@ -982,7 +982,7 @@ impl GeomPipeline {
             rend.dev.cmd_push_constants(
                 params.cbuf,
                 self.pipeline_layout,
-                vk::ShaderStageFlags::VERTEX,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 0, // offset
                 // get a &[u8] from our struct
                 // TODO: This should go. It is showing up as a noticeable

@@ -7,17 +7,17 @@ layout(location = 0) out vec4 res;
 layout(set = 1, binding = 1) uniform sampler2D tex;
 
 layout(push_constant) uniform PushConstants {
+vec4 color;
+int  use_color;
 float order;
-int x;
-int y;
+float x;
+float y;
 float width;
 float height;
-bool use_color;
-vec4 color;
 } push;
 
 void main() {
-    if (push.use_color) {
+    if (push.use_color == 1) {
         res = push.color;
     } else {
         res = texture(tex, coord);
