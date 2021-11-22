@@ -118,6 +118,8 @@ pub enum ThundrError {
     OUT_OF_DATE,
     #[error("Vulkan surface does not support R8G8B8A8_UNORM")]
     VK_SURF_NOT_SUPPORTED,
+    #[error("Vulkan surface does not support the necessary (bindless) extensions")]
+    VK_NOT_ALL_EXTENSIONS_AVAILABLE,
     #[error("Please select a composition type in the thundr CreateInfo")]
     COMPOSITION_TYPE_NOT_SPECIFIED,
 }

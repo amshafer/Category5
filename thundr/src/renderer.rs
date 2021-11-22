@@ -1149,6 +1149,9 @@ impl Renderer {
             families.dedup();
 
             let dev_features = VKDeviceFeatures::new(&info, &inst, pdev);
+            if !dev_features.vkc_supports_desc_indexing {
+                return Err(ThundrError::VK_NOT_ALL_EXTENSIONS_AVAILABLE);
+            }
             let dev = Renderer::create_device(&dev_features, &inst, pdev, families.as_slice());
 
             // Each window is going to have a sampler descriptor for every
