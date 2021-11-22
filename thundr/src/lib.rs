@@ -403,6 +403,10 @@ impl Thundr {
             }
             Err(e) => return Err(e),
         };
+        // TODO: check and see if the image list has been changed, or if
+        // any images have been updated.
+        self.th_rend
+            .refresh_bindless_image_infos(self.th_image_list.as_slice());
         self.th_rend.draw_call_submitted = self.th_pipe.draw(
             &mut self.th_rend,
             &params,

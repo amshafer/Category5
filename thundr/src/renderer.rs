@@ -19,6 +19,7 @@ use crate::display::Display;
 use crate::list::SurfaceList;
 use crate::pipelines::PipelineType;
 use crate::platform::VKDeviceFeatures;
+use crate::Image;
 
 extern crate utils as cat5_utils;
 use crate::{CreateInfo, Damage};
@@ -154,6 +155,11 @@ pub struct Renderer {
 
     /// The type of pipeline(s) being in use
     pub(crate) r_pipe_type: PipelineType,
+
+    /// We keep a list of image views from the surface list's images
+    /// to be passed as our unsized image array in our shader. This needs
+    /// to be regenerated any time a change to the surfacelist is made
+    pub(crate) r_image_infos: Vec<vk::DescriptorImageInfo>,
 }
 
 /// Recording parameters
@@ -1263,6 +1269,7 @@ impl Renderer {
                 transfer_buf_len: 0,
                 draw_call_submitted: false,
                 r_pipe_type: pipe_type,
+                r_image_infos: Vec::new(),
             };
             rend.initialize_transfer_mem();
 
@@ -1856,6 +1863,32 @@ impl Renderer {
         self.dev.bind_buffer_memory(buffer, memory, 0).unwrap();
 
         (buffer, memory)
+    }
+
+    /// Descriptor flags for the unbounded array of images
+    /// we need to say that it is a variably sized array, and that it is partially
+    /// bound (aka we aren't populating the full MAX_IMAGE_LIMIT)
+    pub fn get_bindless_desc_flags() -> vk::DescriptorBindingFlags {
+        vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
+            | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
+            | vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING
+            | vk::DescriptorBindingFlags::PARTIALLY_BOUND
+    }
+
+    pub fn refresh_bindless_image_infos(&mut self, images: &[Image]) {
+        // Construct a list of image views from the submitted surface list
+        // this will be our unsized texture array that the composite shader will reference
+        self.r_image_infos.clear();
+        for image in images.iter() {
+            self.r_image_infos.push(
+                vk::DescriptorImageInfo::builder()
+                    .sampler(self.image_sampler)
+                    // The image view could have been recreated and this would be stale
+                    .image_view(image.get_view())
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .build(),
+            );
+        }
     }
 
     /// Update self.current_image with the swapchain image to render to

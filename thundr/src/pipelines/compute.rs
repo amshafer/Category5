@@ -88,11 +88,6 @@ pub struct CompPipeline {
     cp_vis_buf: vk::Buffer,
     cp_vis_mem: vk::DeviceMemory,
 
-    /// We keep a list of image views from the surface list's images
-    /// to be passed as our unsized image array in our shader. This needs
-    /// to be regenerated any time a change to the surfacelist is made
-    cp_image_infos: Vec<vk::DescriptorImageInfo>,
-
     /// The compute queue
     cp_queue: vk::Queue,
     /// Queue family index for `cp_queue`
@@ -446,13 +441,7 @@ impl CompPipeline {
                 vk::DescriptorBindingFlags::empty(), // the storage buffer
                 vk::DescriptorBindingFlags::empty(), // the winlist
                 vk::DescriptorBindingFlags::empty(), // the visibility buffer
-                // The unbounded array of images
-                // we need to say that it is a variably sized array, and that it is partially
-                // bound (aka we aren't populating the full MAX_IMAGE_LIMIT)
-                vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
-                    | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                    | vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING
-                    | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+                Renderer::get_bindless_desc_flags(), // The unbounded array of images
             ])
             .build();
         info.p_next = &usage_info as *const _ as *mut std::ffi::c_void;
@@ -546,7 +535,7 @@ impl CompPipeline {
                 .dst_binding(4)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(self.cp_image_infos.as_slice())
+                .image_info(rend.r_image_infos.as_slice())
                 .build(),
         ];
         unsafe {
@@ -642,7 +631,6 @@ impl CompPipeline {
             cp_winlist_mem: wl_storage_mem,
             cp_vis_buf: vis_buf,
             cp_vis_mem: vis_mem,
-            cp_image_infos: Vec::new(),
             cp_queue: queue,
             cp_queue_family: family,
             cp_cbuf_pool: cpool,
@@ -957,29 +945,12 @@ impl Pipeline for CompPipeline {
             // Construct a list of image views from the submitted surface list
             // this will be our unsized texture array that the composite shader will reference
             // TODO: make this a changed flag
-            if self.cp_image_infos.len() != images.len() {
+            if rend.r_image_infos.len() != images.len() {
                 stop.start();
                 // if thundr has allocated a different number of images than we were expecting,
                 // we need to realloc the variable descriptor memory
                 self.realloc_image_list(rend, images.len() as u32);
             }
-
-            self.cp_image_infos.clear();
-            for image in images.iter() {
-                self.cp_image_infos.push(
-                    vk::DescriptorImageInfo::builder()
-                        .sampler(rend.image_sampler)
-                        // The image view could have been recreated and this would be stale
-                        .image_view(image.get_view())
-                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                        .build(),
-                );
-            }
-            stop.end();
-            log::debug!(
-                "Took {} ms to generate the image info list",
-                stop.get_duration().as_millis()
-            );
 
             // We need to do this afterwards, since it depends on cp_image_infos
             // This always needs to be done, since we are binding the latest swapchain image
