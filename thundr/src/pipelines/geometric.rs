@@ -59,14 +59,14 @@ static QUAD_INDICES: [Vector3<u32>; 2] = [Vector3::new(1, 2, 3), Vector3::new(1,
 pub struct GeomPipeline {
     pass: vk::RenderPass,
     pipeline: vk::Pipeline,
-    pub(crate) pipeline_layout: vk::PipelineLayout,
+    pipeline_layout: vk::PipelineLayout,
     /// This descriptor pool allocates only the 1 ubo
-    uniform_pool: vk::DescriptorPool,
+    g_desc_pool: vk::DescriptorPool,
     /// (as per `create_descriptor_layouts`)
     /// This will only be the sets holding the uniform buffers,
     /// any image specific descriptors are in the image's sets.
-    descriptor_uniform_layout: vk::DescriptorSetLayout,
-    pub(crate) ubo_descriptor: vk::DescriptorSet,
+    g_desc_layout: vk::DescriptorSetLayout,
+    g_desc: vk::DescriptorSet,
     shader_modules: Vec<vk::ShaderModule>,
     framebuffers: Vec<vk::Framebuffer>,
     /// shader constants are shared by all swapchain images
@@ -76,16 +76,16 @@ pub struct GeomPipeline {
     /// which represents an onscreen window.
     vert_buffer: vk::Buffer,
     vert_buffer_memory: vk::DeviceMemory,
-    pub(crate) vert_count: u32,
+    vert_count: u32,
     /// Resources for the index buffer
     index_buffer: vk::Buffer,
     index_buffer_memory: vk::DeviceMemory,
 
     /// an image for recording depth test data
-    pub(crate) depth_image: vk::Image,
-    pub(crate) depth_image_view: vk::ImageView,
+    depth_image: vk::Image,
+    depth_image_view: vk::ImageView,
     /// because we create the image, we need to back it with memory
-    pub(crate) depth_image_mem: vk::DeviceMemory,
+    depth_image_mem: vk::DeviceMemory,
 }
 
 /// Contiains a vertex and all its related data
@@ -205,9 +205,9 @@ impl Pipeline for GeomPipeline {
             rend.dev.destroy_render_pass(self.pass, None);
 
             rend.dev
-                .destroy_descriptor_set_layout(self.descriptor_uniform_layout, None);
+                .destroy_descriptor_set_layout(self.g_desc_layout, None);
 
-            rend.dev.destroy_descriptor_pool(self.uniform_pool, None);
+            rend.dev.destroy_descriptor_pool(self.g_desc_pool, None);
 
             rend.dev.destroy_pipeline_layout(self.pipeline_layout, None);
 
@@ -225,6 +225,25 @@ impl Pipeline for GeomPipeline {
 }
 
 impl GeomPipeline {
+    /// Create a descriptor pool for the uniform buffer
+    ///
+    /// All other dynamic sets are tracked using a DescPool. This pool
+    /// is for statically numbered resources.
+    ///
+    /// The pool returned is NOT thread safe
+    pub unsafe fn create_descriptor_pool(rend: &mut Renderer) -> vk::DescriptorPool {
+        let size = [vk::DescriptorPoolSize::builder()
+            .ty(vk::DescriptorType::UNIFORM_BUFFER)
+            .descriptor_count(1)
+            .build()];
+
+        let info = vk::DescriptorPoolCreateInfo::builder()
+            .pool_sizes(&size)
+            .max_sets(1);
+
+        rend.dev.create_descriptor_pool(&info, None).unwrap()
+    }
+
     /// Set up the application. This should *always* be called
     ///
     /// Once we have allocated a renderer with `new`, we should initialize
@@ -293,8 +312,8 @@ impl GeomPipeline {
                 GeomPipeline::create_framebuffers(rend, pass, rend.resolution, depth_image_view);
 
             // Allocate a pool only for the ubo descriptors
-            let uniform_pool = rend.create_descriptor_pool();
-            let ubo = rend.allocate_descriptor_sets(uniform_pool, &[ubo_layout])[0];
+            let g_desc_pool = Self::create_descriptor_pool(rend);
+            let ubo = rend.allocate_descriptor_sets(g_desc_pool, &[ubo_layout])[0];
 
             let consts = GeomPipeline::get_shader_constants(rend.resolution);
 
@@ -315,12 +334,12 @@ impl GeomPipeline {
                 pass: pass,
                 pipeline: pipeline,
                 pipeline_layout: layout,
-                descriptor_uniform_layout: ubo_layout,
+                g_desc_layout: ubo_layout,
                 framebuffers: framebuffers,
                 uniform_buffer: buf,
                 uniform_buffers_memory: mem,
-                uniform_pool: uniform_pool,
-                ubo_descriptor: ubo,
+                g_desc_pool: g_desc_pool,
+                g_desc: ubo,
                 shader_modules: shader_stages.iter().map(|info| info.module).collect(),
                 vert_buffer: vbuf,
                 vert_buffer_memory: vmem,
@@ -769,7 +788,7 @@ impl GeomPipeline {
     /// The layouts created will be the default for this application. This should
     /// usually be at least one descriptor for the MVP martrix.
     unsafe fn create_ubo_layout(rend: &Renderer) -> vk::DescriptorSetLayout {
-        // supplies `descriptor_uniform_layouts`
+        // supplies `g_desc_layouts`
         // ubos for the MVP matrix and image samplers for textures
         let bindings = [vk::DescriptorSetLayoutBinding::builder()
             .binding(0)
@@ -968,10 +987,7 @@ impl GeomPipeline {
                         vk::PipelineBindPoint::GRAPHICS,
                         self.pipeline_layout,
                         0, // first set
-                        &[
-                            self.ubo_descriptor,
-                            image.i_sampler_descriptors[params.image_num],
-                        ],
+                        &[self.g_desc, image.i_sampler_descriptors[params.image_num]],
                         &[], // dynamic offsets
                     );
                 }

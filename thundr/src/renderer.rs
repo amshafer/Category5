@@ -1663,25 +1663,6 @@ impl Renderer {
         Ok(self.get_recording_parameters())
     }
 
-    /// Create a descriptor pool for the uniform buffer
-    ///
-    /// All other dynamic sets are tracked using a DescPool. This pool
-    /// is for statically numbered resources.
-    ///
-    /// The pool returned is NOT thread safe
-    pub unsafe fn create_descriptor_pool(&mut self) -> vk::DescriptorPool {
-        let size = [vk::DescriptorPoolSize::builder()
-            .ty(vk::DescriptorType::UNIFORM_BUFFER)
-            .descriptor_count(1)
-            .build()];
-
-        let info = vk::DescriptorPoolCreateInfo::builder()
-            .pool_sizes(&size)
-            .max_sets(1);
-
-        self.dev.create_descriptor_pool(&info, None).unwrap()
-    }
-
     /// Allocate a descriptor set for each layout in `layouts`
     ///
     /// A descriptor set specifies a group of attachments that can

@@ -17,7 +17,6 @@ use ash::{Entry, Instance};
 
 use crate::pipelines::PipelineType;
 use crate::{CreateInfo, SurfaceType, ThundrError};
-#[cfg(feature = "sdl")]
 use utils::log;
 
 /// A display represents a physical screen
