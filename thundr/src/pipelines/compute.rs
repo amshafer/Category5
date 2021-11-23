@@ -301,53 +301,14 @@ impl CompPipeline {
         }
     }
 
-    unsafe fn allocate_variable_descs(
-        rend: &mut Renderer,
-        pool: vk::DescriptorPool,
-        layouts: &[vk::DescriptorSetLayout],
-        desc_count: u32,
-    ) -> vk::DescriptorSet {
-        let mut info = vk::DescriptorSetAllocateInfo::builder()
-            .descriptor_pool(pool)
-            .set_layouts(layouts)
-            .build();
-        let variable_info = vk::DescriptorSetVariableDescriptorCountAllocateInfo::builder()
-            // This list specifies the number of allocations for the variable
-            // descriptor entry in each layout. We only have one layout.
-            .descriptor_counts(&[desc_count])
-            .build();
-
-        info.p_next = &variable_info as *const _ as *mut std::ffi::c_void;
-
-        rend.dev.allocate_descriptor_sets(&info).unwrap()[0]
-    }
-
-    fn realloc_image_list(&mut self, rend: &mut Renderer, desc_count: u32) {
-        unsafe {
-            // free the previous descriptor sets
-            rend.dev
-                .reset_descriptor_pool(
-                    self.cp_composite.p_desc_pool,
-                    vk::DescriptorPoolResetFlags::empty(),
-                )
-                .unwrap();
-            // Allocate a new list
-            self.cp_composite.p_descs = Self::allocate_variable_descs(
-                rend,
-                self.cp_composite.p_desc_pool,
-                &[self.cp_composite.p_descriptor_layout],
-                desc_count,
-            );
-        }
-    }
-
     fn comp_create_pass(rend: &mut Renderer) -> Pass {
         let layout = Self::comp_create_descriptor_layout(rend);
         let pool = Self::comp_create_descriptor_pool(rend);
-        // two is the starting default, this will be changed to match the number
-        // of allocated images for the thundr context
-        let desc_count = 0;
-        let descs = unsafe { Self::allocate_variable_descs(rend, pool, &[layout], desc_count) };
+        let info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(pool)
+            .set_layouts(&[layout])
+            .build();
+        let descs = unsafe { rend.dev.allocate_descriptor_sets(&info).unwrap()[0] };
 
         // This is a really annoying issue with CString ptrs
         let program_entrypoint_name = CString::new("main").unwrap();
@@ -361,7 +322,7 @@ impl CompPipeline {
             CompPipeline::create_shader_stages(rend, program_entrypoint_name.as_ptr(), &mut curse)
         };
 
-        let layouts = &[layout];
+        let layouts = &[layout, rend.r_images_desc_layout];
         let pipe_layout_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(layouts);
         let pipe_layout = unsafe {
             rend.dev
@@ -419,32 +380,9 @@ impl CompPipeline {
                 .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 .descriptor_count(1)
                 .build(),
-            vk::DescriptorSetLayoutBinding::builder()
-                .binding(4)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                // This is the upper bound on the amount of descriptors that
-                // can be attached. The amount actually attached will be
-                // determined by the amount allocated using this layout.
-                .descriptor_count(MAX_IMAGE_LIMIT)
-                .build(),
         ];
-        let mut info = vk::DescriptorSetLayoutCreateInfo::builder()
-            .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
-            .bindings(&bindings);
 
-        // We need to attach some binding flags stating that we intend
-        // to use the storage image as an unsized array
-        let usage_info = vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT::builder()
-            .binding_flags(&[
-                vk::DescriptorBindingFlags::empty(), // the storage image
-                vk::DescriptorBindingFlags::empty(), // the storage buffer
-                vk::DescriptorBindingFlags::empty(), // the winlist
-                vk::DescriptorBindingFlags::empty(), // the visibility buffer
-                Renderer::get_bindless_desc_flags(), // The unbounded array of images
-            ])
-            .build();
-        info.p_next = &usage_info as *const _ as *mut std::ffi::c_void;
+        let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
 
         unsafe { rend.dev.create_descriptor_set_layout(&info, None).unwrap() }
     }
@@ -461,15 +399,9 @@ impl CompPipeline {
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(3)
                 .build(),
-            vk::DescriptorPoolSize::builder()
-                .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                // Okay it looks like this must match the layout
-                .descriptor_count(MAX_IMAGE_LIMIT)
-                .build(),
         ];
 
         let info = vk::DescriptorPoolCreateInfo::builder()
-            .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
             .pool_sizes(&size)
             .max_sets(1);
 
@@ -529,13 +461,6 @@ impl CompPipeline {
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&[window_info])
-                .build(),
-            vk::WriteDescriptorSet::builder()
-                .dst_set(self.cp_composite.p_descs)
-                .dst_binding(4)
-                .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(rend.r_image_infos.as_slice())
                 .build(),
         ];
         unsafe {
@@ -888,7 +813,7 @@ impl Pipeline for CompPipeline {
         &mut self,
         rend: &mut Renderer,
         _params: &RecordParams,
-        images: &[Image],
+        _images: &[Image],
         surfaces: &mut SurfaceList,
     ) -> bool {
         unsafe {
@@ -940,16 +865,6 @@ impl Pipeline for CompPipeline {
                     WINDOW_LIST_GLSL_OFFSET,
                     self.cp_winlist.as_slice(),
                 );
-            }
-
-            // Construct a list of image views from the submitted surface list
-            // this will be our unsized texture array that the composite shader will reference
-            // TODO: make this a changed flag
-            if rend.r_image_infos.len() != images.len() {
-                stop.start();
-                // if thundr has allocated a different number of images than we were expecting,
-                // we need to realloc the variable descriptor memory
-                self.realloc_image_list(rend, images.len() as u32);
             }
 
             // We need to do this afterwards, since it depends on cp_image_infos
@@ -1044,7 +959,7 @@ impl Pipeline for CompPipeline {
                 vk::PipelineBindPoint::COMPUTE,
                 self.cp_composite.p_pipeline_layout,
                 0, // first set
-                &[self.cp_composite.p_descs],
+                &[self.cp_composite.p_descs, rend.r_images_desc],
                 &[], // dynamic offsets
             );
 
@@ -1128,6 +1043,7 @@ impl Pipeline for CompPipeline {
             rend.free_memory(self.cp_tiles_mem);
             rend.dev.destroy_buffer(self.cp_winlist_buf, None);
             rend.free_memory(self.cp_winlist_mem);
+            rend.dev.destroy_command_pool(self.cp_cbuf_pool, None);
 
             rend.dev.destroy_buffer(self.cp_vis_buf, None);
             rend.free_memory(self.cp_vis_mem);

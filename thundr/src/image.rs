@@ -205,6 +205,7 @@ impl Renderer {
 
             // Now copy the bits into the image
             self.update_memory(img_mem, 0, img.as_slice());
+            self.wait_for_copy();
 
             // transition us into the appropriate memory layout for shaders
             self.cbuf_begin_recording(self.copy_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
@@ -241,14 +242,6 @@ impl Renderer {
             );
             self.cbuf_end_recording(self.copy_cbuf);
 
-            self.dev
-                .wait_for_fences(
-                    &[self.copy_cbuf_fence],
-                    true,          // wait for all
-                    std::u64::MAX, //timeout
-                )
-                .expect("Could not wait for the copy fence");
-            self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
             self.cbuf_submit_async(
                 self.copy_cbuf,
                 self.present_queue,

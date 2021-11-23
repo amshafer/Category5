@@ -160,6 +160,9 @@ pub struct Renderer {
     /// to be passed as our unsized image array in our shader. This needs
     /// to be regenerated any time a change to the surfacelist is made
     pub(crate) r_image_infos: Vec<vk::DescriptorImageInfo>,
+    pub(crate) r_images_desc_pool: vk::DescriptorPool,
+    pub(crate) r_images_desc_layout: vk::DescriptorSetLayout,
+    pub(crate) r_images_desc: vk::DescriptorSet,
 }
 
 /// Recording parameters
@@ -506,8 +509,7 @@ impl Renderer {
         // storage image type
         let mut extra_usage = vk::ImageUsageFlags::empty();
         let mut swap_flags = vk::SwapchainCreateFlagsKHR::empty();
-        let use_mut_swapchain =
-            pipe_type.requires_storage_images() && dev_features.vkc_supports_mut_swapchain;
+        let mut use_mut_swapchain = false;
         // We should use a mutable swapchain to allow for rendering to
         // RGBA8888 if the swapchain doesn't suppport it and if the mutable
         // swapchain extensions are present. This is for intel
@@ -518,6 +520,9 @@ impl Renderer {
         {
             extra_usage |= vk::ImageUsageFlags::STORAGE;
         } else {
+            use_mut_swapchain =
+                pipe_type.requires_storage_images() && dev_features.vkc_supports_mut_swapchain;
+
             if use_mut_swapchain {
                 extra_usage |= vk::ImageUsageFlags::STORAGE;
                 swap_flags |= vk::SwapchainCreateFlagsKHR::MUTABLE_FORMAT;
@@ -1224,6 +1229,45 @@ impl Renderer {
 
             let damage_regs = std::iter::repeat(Vec::new()).take(images.len()).collect();
 
+            // create the bindless desc set resources
+            let size = [vk::DescriptorPoolSize::builder()
+                .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                // Okay it looks like this must match the layout
+                .descriptor_count(1024)
+                .build()];
+            let info = vk::DescriptorPoolCreateInfo::builder()
+                .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
+                .pool_sizes(&size)
+                .max_sets(1);
+            let bindless_pool = dev.create_descriptor_pool(&info, None).unwrap();
+
+            let bindings = [vk::DescriptorSetLayoutBinding::builder()
+                .binding(0)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::FRAGMENT)
+                // This is the upper bound on the amount of descriptors that
+                // can be attached. The amount actually attached will be
+                // determined by the amount allocated using this layout.
+                .descriptor_count(1024)
+                .build()];
+            let mut info = vk::DescriptorSetLayoutCreateInfo::builder()
+                .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
+                .bindings(&bindings);
+
+            // We need to attach some binding flags stating that we intend
+            // to use the storage image as an unsized array
+            let usage_info = vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT::builder()
+                .binding_flags(&[
+                    Self::get_bindless_desc_flags(), // The unbounded array of images
+                ])
+                .build();
+            info.p_next = &usage_info as *const _ as *mut std::ffi::c_void;
+
+            let bindless_layout = dev.create_descriptor_set_layout(&info, None).unwrap();
+
+            let bindless_desc =
+                Self::allocate_bindless_desc(&dev, bindless_pool, &[bindless_layout], 0);
+
             // you are now the proud owner of a half complete
             // rendering context
             // p.s. you still need a Pipeline
@@ -1270,6 +1314,9 @@ impl Renderer {
                 draw_call_submitted: false,
                 r_pipe_type: pipe_type,
                 r_image_infos: Vec::new(),
+                r_images_desc_pool: bindless_pool,
+                r_images_desc_layout: bindless_layout,
+                r_images_desc: bindless_desc,
             };
             rend.initialize_transfer_mem();
 
@@ -1332,7 +1379,29 @@ impl Renderer {
     }
 
     /// Wait for the submit_fence
-    pub unsafe fn wait_for_prev_submit(&self) {}
+    pub unsafe fn wait_for_prev_submit(&self) {
+        self.dev
+            .wait_for_fences(
+                &[self.submit_fence, self.copy_cbuf_fence],
+                true,          // wait for all
+                std::u64::MAX, //timeout
+            )
+            .expect("Could not wait for the copy fence");
+        self.dev
+            .reset_fences(&[self.submit_fence, self.copy_cbuf_fence])
+            .unwrap();
+    }
+
+    pub unsafe fn wait_for_copy(&self) {
+        self.dev
+            .wait_for_fences(
+                &[self.copy_cbuf_fence],
+                true,          // wait for all
+                std::u64::MAX, //timeout
+            )
+            .expect("Could not wait for the copy fence");
+        self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
+    }
 
     /// Records and submits a one-time command buffer.
     ///
@@ -1856,7 +1925,52 @@ impl Renderer {
             | vk::DescriptorBindingFlags::PARTIALLY_BOUND
     }
 
+    fn allocate_bindless_desc(
+        dev: &Device,
+        pool: vk::DescriptorPool,
+        layouts: &[vk::DescriptorSetLayout],
+        desc_count: u32,
+    ) -> vk::DescriptorSet {
+        // if thundr has allocated a different number of images than we were expecting,
+        // we need to realloc the variable descriptor memory
+        let mut info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(pool)
+            .set_layouts(layouts)
+            .build();
+        let variable_info = vk::DescriptorSetVariableDescriptorCountAllocateInfo::builder()
+            // This list specifies the number of allocations for the variable
+            // descriptor entry in each layout. We only have one layout.
+            .descriptor_counts(&[desc_count])
+            .build();
+
+        info.p_next = &variable_info as *const _ as *mut std::ffi::c_void;
+
+        unsafe { dev.allocate_descriptor_sets(&info).unwrap()[0] }
+    }
+
     pub fn refresh_bindless_image_infos(&mut self, images: &[Image]) {
+        // Construct a list of image views from the submitted surface list
+        // this will be our unsized texture array that the composite shader will reference
+        // TODO: make this a changed flag
+        if self.r_image_infos.len() != images.len() {
+            // free the previous descriptor sets
+            unsafe {
+                self.dev
+                    .reset_descriptor_pool(
+                        self.r_images_desc_pool,
+                        vk::DescriptorPoolResetFlags::empty(),
+                    )
+                    .unwrap();
+            }
+
+            self.r_images_desc = Self::allocate_bindless_desc(
+                &self.dev,
+                self.r_images_desc_pool,
+                &[self.r_images_desc_layout],
+                images.len() as u32,
+            );
+        }
+
         // Construct a list of image views from the submitted surface list
         // this will be our unsized texture array that the composite shader will reference
         self.r_image_infos.clear();
@@ -1868,6 +1982,26 @@ impl Renderer {
                     .image_view(image.get_view())
                     .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .build(),
+            );
+        }
+
+        if self.r_image_infos.len() == 0 {
+            return;
+        }
+
+        // Now write the new bindless descriptor
+        let write_infos = &[vk::WriteDescriptorSet::builder()
+            .dst_set(self.r_images_desc)
+            .dst_binding(0)
+            .dst_array_element(0)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(self.r_image_infos.as_slice())
+            .build()];
+
+        unsafe {
+            self.dev.update_descriptor_sets(
+                write_infos, // descriptor writes
+                &[],         // descriptor copies
             );
         }
     }
@@ -2009,6 +2143,11 @@ impl Drop for Renderer {
             self.dev.destroy_semaphore(self.render_sema, None);
             self.desc_pool.destroy(&self.dev);
             self.dev.destroy_sampler(self.image_sampler, None);
+            self.dev
+                .destroy_descriptor_set_layout(self.r_images_desc_layout, None);
+
+            self.dev
+                .destroy_descriptor_pool(self.r_images_desc_pool, None);
 
             self.destroy_swapchain();
 

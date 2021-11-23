@@ -50,7 +50,7 @@ layout(binding = 3, std140) buffer window_list
 };
 
 /* The array of textures that are the window contents */
-layout(binding = 4) uniform sampler2D images[];
+layout(set = 1, binding = 0) uniform sampler2D images[];
 
 void main() {
 	ivec2 uv = get_location_for_wg();
