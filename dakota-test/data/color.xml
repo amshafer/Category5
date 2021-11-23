@@ -1,0 +1,32 @@
+<dakota>
+	<version>0.0.0.1</version>
+	<resourceMap>
+		<resource>
+			<name>colored</name>
+            <color>
+                <r>80</r>
+                <g>80</g>
+                <b>80</b>
+                <a>256</a>
+            </color>
+			<hints>
+				<constant>true</constant>
+			</hints>
+		</resource>
+	</resourceMap>
+	<window>
+		<id>0</id>
+		<title>Dakota Test</title>
+		<width>512</width>
+		<height>512</height>
+	</window>
+	<layout>
+		<el>
+			<content>
+				<el>
+					<resource>colored</resource>
+				</el>
+			</content>
+		</el>
+	</layout>
+</dakota>
