@@ -406,7 +406,7 @@ impl Thundr {
         // TODO: check and see if the image list has been changed, or if
         // any images have been updated.
         self.th_rend
-            .refresh_bindless_image_infos(self.th_image_list.as_slice());
+            .refresh_window_resources(self.th_image_list.as_slice(), surfaces);
         self.th_rend.draw_call_submitted = self.th_pipe.draw(
             &mut self.th_rend,
             &params,
@@ -452,6 +452,19 @@ impl Thundr {
             for (i, pr) in self.th_rend.current_damage.iter().enumerate() {
                 log::debug!("[{}] Base={:?}, Size={:?}", i, pr.offset, pr.extent);
             }
+        }
+
+        log::debug!("Window list:");
+        for (i, w) in self.th_rend.r_winlist.iter().enumerate() {
+            log::debug!(
+                "[{}] Image={}, Pos={:?}, Size={:?}, Opaque(Pos={:?}, Size={:?})",
+                i,
+                w.w_id.0,
+                w.w_dims.r_pos,
+                w.w_dims.r_size,
+                w.w_opaque.r_pos,
+                w.w_opaque.r_size
+            );
         }
 
         self.th_pipe.debug_frame_print();

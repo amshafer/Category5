@@ -19,12 +19,20 @@ use crate::display::Display;
 use crate::list::SurfaceList;
 use crate::pipelines::PipelineType;
 use crate::platform::VKDeviceFeatures;
+use crate::surface::SurfaceInternal;
 use crate::Image;
+
+use serde::{Deserialize, Serialize};
 
 extern crate utils as cat5_utils;
 use crate::{CreateInfo, Damage};
 use crate::{Result, ThundrError};
 use cat5_utils::{log, region::Rect, MemImage};
+
+/// This is the offset from the base of the winlist buffer to the
+/// window array in the actual ssbo. This needs to match the `offset`
+/// field in the `layout` qualifier in the shaders
+const WINDOW_LIST_GLSL_OFFSET: isize = 16;
 
 // this happy little debug callback is from the ash examples
 // all it does is print any errors/warnings thrown.
@@ -163,6 +171,32 @@ pub struct Renderer {
     pub(crate) r_images_desc_pool: vk::DescriptorPool,
     pub(crate) r_images_desc_layout: vk::DescriptorSetLayout,
     pub(crate) r_images_desc: vk::DescriptorSet,
+
+    /// The list of window dimensions that is passed to the shader
+    pub r_winlist: Vec<Window>,
+    pub r_winlist_buf: vk::Buffer,
+    pub r_winlist_mem: vk::DeviceMemory,
+}
+
+/// This must match the definition of the Window struct in the
+/// visibility shader.
+///
+/// This *MUST* be a power of two, as the layout of the shader ssbo
+/// is dependent on offsetting using the size of this.
+#[repr(C)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
+pub struct Window {
+    /// The id of the image. This is the offset into the unbounded sampler array.
+    /// w_id.0: id that's the offset into the unbound sampler array
+    /// w_id.1: if we should use w_color instead of texturing
+    pub w_id: (i32, i32, i32, i32),
+    /// Opaque color
+    pub w_color: (f32, f32, f32, f32),
+    /// The complete dimensions of the window.
+    pub w_dims: Rect<i32>,
+    /// Opaque region that tells the shader that we do not need to blend.
+    /// This will have a r_pos.0 of -1 if no opaque data was attached.
+    pub w_opaque: Rect<i32>,
 }
 
 /// Recording parameters
@@ -1092,6 +1126,67 @@ impl Renderer {
         (image, view, img_mem)
     }
 
+    unsafe fn allocate_bindless_resources(
+        dev: &Device,
+        max_image_count: u32,
+    ) -> (vk::DescriptorPool, vk::DescriptorSetLayout) {
+        // create the bindless desc set resources
+        let size = [
+            vk::DescriptorPoolSize::builder()
+                .ty(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .build(),
+            vk::DescriptorPoolSize::builder()
+                .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                // Okay it looks like this must match the layout
+                // TODO: should this be changed?
+                .descriptor_count(max_image_count)
+                .build(),
+        ];
+        let info = vk::DescriptorPoolCreateInfo::builder()
+            .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
+            .pool_sizes(&size)
+            .max_sets(1);
+        let bindless_pool = dev.create_descriptor_pool(&info, None).unwrap();
+
+        let bindings = [
+            // the window list
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::FRAGMENT)
+                .descriptor_count(1)
+                .build(),
+            // the variable image list
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(1)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::FRAGMENT)
+                // This is the upper bound on the amount of descriptors that
+                // can be attached. The amount actually attached will be
+                // determined by the amount allocated using this layout.
+                .descriptor_count(max_image_count)
+                .build(),
+        ];
+        let mut info = vk::DescriptorSetLayoutCreateInfo::builder()
+            .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
+            .bindings(&bindings);
+
+        // We need to attach some binding flags stating that we intend
+        // to use the storage image as an unsized array
+        let usage_info = vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT::builder()
+            .binding_flags(&[
+                vk::DescriptorBindingFlags::empty(), // the winlist
+                Self::get_bindless_desc_flags(),     // The unbounded array of images
+            ])
+            .build();
+        info.p_next = &usage_info as *const _ as *mut std::ffi::c_void;
+
+        let bindless_layout = dev.create_descriptor_set_layout(&info, None).unwrap();
+
+        (bindless_pool, bindless_layout)
+    }
+
     /// Create a new Vulkan Renderer
     ///
     /// This renderer is very application specific. It is not meant to be
@@ -1229,44 +1324,11 @@ impl Renderer {
 
             let damage_regs = std::iter::repeat(Vec::new()).take(images.len()).collect();
 
-            // create the bindless desc set resources
-            let size = [vk::DescriptorPoolSize::builder()
-                .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                // Okay it looks like this must match the layout
-                .descriptor_count(1024)
-                .build()];
-            let info = vk::DescriptorPoolCreateInfo::builder()
-                .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
-                .pool_sizes(&size)
-                .max_sets(1);
-            let bindless_pool = dev.create_descriptor_pool(&info, None).unwrap();
-
-            let bindings = [vk::DescriptorSetLayoutBinding::builder()
-                .binding(0)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::FRAGMENT)
-                // This is the upper bound on the amount of descriptors that
-                // can be attached. The amount actually attached will be
-                // determined by the amount allocated using this layout.
-                .descriptor_count(1024)
-                .build()];
-            let mut info = vk::DescriptorSetLayoutCreateInfo::builder()
-                .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
-                .bindings(&bindings);
-
-            // We need to attach some binding flags stating that we intend
-            // to use the storage image as an unsized array
-            let usage_info = vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT::builder()
-                .binding_flags(&[
-                    Self::get_bindless_desc_flags(), // The unbounded array of images
-                ])
-                .build();
-            info.p_next = &usage_info as *const _ as *mut std::ffi::c_void;
-
-            let bindless_layout = dev.create_descriptor_set_layout(&info, None).unwrap();
-
+            let (bindless_pool, bindless_layout) = Self::allocate_bindless_resources(&dev, 1024);
             let bindless_desc =
                 Self::allocate_bindless_desc(&dev, bindless_pool, &[bindless_layout], 0);
+
+            let winlist: Vec<Window> = Vec::with_capacity(64);
 
             // you are now the proud owner of a half complete
             // rendering context
@@ -1317,11 +1379,114 @@ impl Renderer {
                 r_images_desc_pool: bindless_pool,
                 r_images_desc_layout: bindless_layout,
                 r_images_desc: bindless_desc,
+                r_winlist: winlist,
+                r_winlist_buf: vk::Buffer::null(),
+                r_winlist_mem: vk::DeviceMemory::null(),
             };
             rend.initialize_transfer_mem();
 
+            // create our data and a storage buffer for the window list
+            let (wl_storage, wl_storage_mem) = rend.create_buffer_with_size(
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+                vk::SharingMode::EXCLUSIVE,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                (std::mem::size_of::<Window>() * 2) as u64 + WINDOW_LIST_GLSL_OFFSET as u64,
+            );
+            rend.dev
+                .bind_buffer_memory(wl_storage, wl_storage_mem, 0)
+                .unwrap();
+            rend.r_winlist_buf = wl_storage;
+            rend.r_winlist_mem = wl_storage_mem;
+
             return Ok(rend);
         }
+    }
+
+    /// This updates the winlist entry for surf, which should be stored
+    /// at `index`.
+    fn get_winlist_entry_for_surf(
+        &mut self,
+        base: Option<&SurfaceInternal>,
+        surf: &SurfaceInternal,
+    ) -> Window {
+        let opaque_reg = match surf.get_opaque() {
+            Some(r) => r,
+            // If no opaque data was attached, place a -1 in the start.x component
+            // to tell the shader to ignore this
+            None => Rect::new(-1, 0, -1, 0),
+        };
+        let image = match surf.s_image.as_ref() {
+            Some(i) => i,
+            None => {
+                panic!(
+                        "[thundr] warning: surface was changed bug does not have image attached. ignoring."
+                    );
+            }
+        };
+
+        // Calculate our base offset from the parent surface, if passed in
+        let base_pos = match base {
+            Some(b) => (b.s_rect.r_pos.0, b.s_rect.r_pos.1),
+            None => (0.0, 0.0),
+        };
+
+        let use_color = surf.s_color.is_some();
+        Window {
+            w_id: (image.get_id(), use_color as i32, 0, 0),
+            w_color: match surf.s_color {
+                Some((r, g, b, a)) => (r, g, b, a),
+                None => (0.0, 50.0, 100.0, 150.0),
+            },
+            w_dims: Rect::new(
+                (base_pos.0 + surf.s_rect.r_pos.0) as i32,
+                (base_pos.1 + surf.s_rect.r_pos.1) as i32,
+                surf.s_rect.r_size.0 as i32,
+                surf.s_rect.r_size.1 as i32,
+            ),
+            w_opaque: opaque_reg,
+        }
+    }
+
+    fn update_window_list(&mut self, surfaces: &SurfaceList) -> bool {
+        self.r_winlist.clear();
+        for surf_rc in surfaces.iter() {
+            let surf = surf_rc.s_internal.borrow();
+            let opaque_reg = match surf_rc.get_opaque() {
+                Some(r) => r,
+                // If no opaque data was attached, place a -1 in the start.x component
+                // to tell the shader to ignore this
+                None => Rect::new(-1, 0, -1, 0),
+            };
+            let image = match surf.s_image.as_ref() {
+                Some(i) => i,
+                None => {
+                    log::debug!(
+                        "[thundr] warning: surface does not have image attached. Not drawing"
+                    );
+                    continue;
+                }
+            };
+
+            self.r_winlist.push(Window {
+                w_id: (image.get_id(), 0, 0, 0),
+                w_color: match surf.s_color {
+                    Some((r, g, b, a)) => (r, g, b, a),
+                    None => (0.0, 50.0, 100.0, 150.0),
+                },
+                w_dims: Rect::new(
+                    surf.s_rect.r_pos.0 as i32,
+                    surf.s_rect.r_pos.1 as i32,
+                    surf.s_rect.r_size.0 as i32,
+                    surf.s_rect.r_size.1 as i32,
+                ),
+                w_opaque: opaque_reg,
+            });
+        }
+
+        // TODO: if surfaces hasn't changed update windows individually
+        return true;
     }
 
     fn initialize_transfer_mem(&mut self) {
@@ -1948,7 +2113,7 @@ impl Renderer {
         unsafe { dev.allocate_descriptor_sets(&info).unwrap()[0] }
     }
 
-    pub fn refresh_bindless_image_infos(&mut self, images: &[Image]) {
+    pub fn refresh_window_resources(&mut self, images: &[Image], surfaces: &mut SurfaceList) {
         // Construct a list of image views from the submitted surface list
         // this will be our unsized texture array that the composite shader will reference
         // TODO: make this a changed flag
@@ -1971,6 +2136,10 @@ impl Renderer {
             );
         }
 
+        // Now that we have possibly reallocated the descriptor sets,
+        // refresh the window list to put it back in gpu mem
+        self.refresh_window_list(surfaces);
+
         // Construct a list of image views from the submitted surface list
         // this will be our unsized texture array that the composite shader will reference
         self.r_image_infos.clear();
@@ -1990,19 +2159,59 @@ impl Renderer {
         }
 
         // Now write the new bindless descriptor
-        let write_infos = &[vk::WriteDescriptorSet::builder()
-            .dst_set(self.r_images_desc)
-            .dst_binding(0)
-            .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(self.r_image_infos.as_slice())
-            .build()];
+        let window_info = vk::DescriptorBufferInfo::builder()
+            .buffer(self.r_winlist_buf)
+            .offset(0)
+            .range(vk::WHOLE_SIZE)
+            .build();
+        let write_infos = &[
+            vk::WriteDescriptorSet::builder()
+                .dst_set(self.r_images_desc)
+                .dst_binding(0)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(&[window_info])
+                .build(),
+            vk::WriteDescriptorSet::builder()
+                .dst_set(self.r_images_desc)
+                .dst_binding(1)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(self.r_image_infos.as_slice())
+                .build(),
+        ];
 
         unsafe {
             self.dev.update_descriptor_sets(
                 write_infos, // descriptor writes
                 &[],         // descriptor copies
             );
+        }
+    }
+
+    /// This refreshes the renderer's internal variable size window
+    /// list that will be used as part of the bindless shader code.
+    pub fn refresh_window_list(&mut self, surfaces: &mut SurfaceList) {
+        // Only do this if the surface list has changed and the shader needs a new
+        // window ordering
+        // The surfacelist ordering didn't change, but the individual
+        // surfaces might have. We need to copy the new values for
+        // any changed
+        let winlist_needs_flush = self.update_window_list(surfaces);
+
+        // TODO: don't even use CPU copies of the datastructs and perform
+        // the tile/window updates in the mapped GPU memory
+        // (requires benchmark)
+        if winlist_needs_flush {
+            unsafe {
+                // Shader expects struct WindowList { int count; Window windows[] }
+                self.update_memory(self.r_winlist_mem, 0, &[self.r_winlist.len()]);
+                self.update_memory(
+                    self.r_winlist_mem,
+                    WINDOW_LIST_GLSL_OFFSET,
+                    self.r_winlist.as_slice(),
+                );
+            }
         }
     }
 
@@ -2148,6 +2357,8 @@ impl Drop for Renderer {
 
             self.dev
                 .destroy_descriptor_pool(self.r_images_desc_pool, None);
+            self.dev.destroy_buffer(self.r_winlist_buf, None);
+            self.free_memory(self.r_winlist_mem);
 
             self.destroy_swapchain();
 

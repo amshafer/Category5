@@ -25,7 +25,7 @@ fn main() {
     let surf_type = SurfaceType::SDL2(&window);
 
     let info = CreateInfo::builder()
-        //.enable_traditional_composition()
+        .enable_traditional_composition()
         .surface_type(surf_type)
         .build();
     let mut thund = Thundr::new(&info).unwrap();

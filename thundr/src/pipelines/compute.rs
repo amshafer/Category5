@@ -2,7 +2,6 @@
 //
 // Austin Shafer - 2020
 #![allow(dead_code, non_camel_case_types)]
-use serde::{Deserialize, Serialize};
 
 use std::ffi::CString;
 use std::io::Cursor;
@@ -13,19 +12,12 @@ use ash::{util, vk, Instance};
 use super::Pipeline;
 use crate::display::Display;
 use crate::renderer::{RecordParams, Renderer};
-use crate::surface::SurfaceInternal;
 use crate::{Image, SurfaceList};
 
-use utils::region::Rect;
 use utils::{log, timing::StopWatch};
 
 /// This is the width of a work group. This must match our shaders
 const TILESIZE: u32 = 16;
-
-/// This is the offset from the base of the winlist buffer to the
-/// window array in the actual ssbo. This needs to match the `offset`
-/// field in the `layout` qualifier in the shaders
-const WINDOW_LIST_GLSL_OFFSET: isize = 16;
 
 const MAX_IMAGE_LIMIT: u32 = 1024;
 
@@ -74,11 +66,6 @@ pub struct CompPipeline {
     cp_tiles: TileList,
     cp_tiles_buf: vk::Buffer,
     cp_tiles_mem: vk::DeviceMemory,
-
-    /// The list of window dimensions that is passed to the shader
-    cp_winlist: Vec<Window>,
-    cp_winlist_buf: vk::Buffer,
-    cp_winlist_mem: vk::DeviceMemory,
 
     /// Our visibility buffer.
     /// The visibility pass will fill this with the id of the window that is visible
@@ -134,27 +121,6 @@ struct TileList {
     /// This is the list of tiles that have been added to `tiles`.
     /// If tile 4 has been added to `tiles`, `enabled_tiles[4]` will be set to true.
     enabled_tiles: Vec<bool>,
-}
-
-/// This must match the definition of the Window struct in the
-/// visibility shader.
-///
-/// This *MUST* be a power of two, as the layout of the shader ssbo
-/// is dependent on offsetting using the size of this.
-#[repr(C)]
-#[derive(Copy, Clone, Serialize, Deserialize)]
-struct Window {
-    /// The id of the image. This is the offset into the unbounded sampler array.
-    /// w_id.0: id that's the offset into the unbound sampler array
-    /// w_id.1: if we should use w_color instead of texturing
-    w_id: (i32, i32, i32, i32),
-    /// Opaque color
-    w_color: (f32, f32, f32, f32),
-    /// The complete dimensions of the window.
-    w_dims: Rect<i32>,
-    /// Opaque region that tells the shader that we do not need to blend.
-    /// This will have a r_pos.0 of -1 if no opaque data was attached.
-    w_opaque: Rect<i32>,
 }
 
 impl CompPipeline {
@@ -223,12 +189,6 @@ impl CompPipeline {
                 .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 .descriptor_count(1)
                 .build(),
-            vk::DescriptorSetLayoutBinding::builder()
-                .binding(2)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                .descriptor_count(1)
-                .build(),
         ];
         let info = vk::DescriptorSetLayoutCreateInfo::builder()
             .bindings(&bindings)
@@ -242,7 +202,7 @@ impl CompPipeline {
     pub fn vis_create_descriptor_pool(rend: &Renderer) -> vk::DescriptorPool {
         let size = [vk::DescriptorPoolSize::builder()
             .ty(vk::DescriptorType::STORAGE_BUFFER)
-            .descriptor_count(3)
+            .descriptor_count(2)
             .build()];
 
         let info = vk::DescriptorPoolCreateInfo::builder()
@@ -256,11 +216,6 @@ impl CompPipeline {
         // Now update the actual descriptors
         let tile_info = vk::DescriptorBufferInfo::builder()
             .buffer(self.cp_tiles_buf)
-            .offset(0)
-            .range(vk::WHOLE_SIZE)
-            .build();
-        let window_info = vk::DescriptorBufferInfo::builder()
-            .buffer(self.cp_winlist_buf)
             .offset(0)
             .range(vk::WHOLE_SIZE)
             .build();
@@ -284,13 +239,6 @@ impl CompPipeline {
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&[tile_info])
-                .build(),
-            vk::WriteDescriptorSet::builder()
-                .dst_set(self.cp_visibility.p_descs)
-                .dst_binding(2)
-                .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&[window_info])
                 .build(),
         ];
         unsafe {
@@ -374,12 +322,6 @@ impl CompPipeline {
                 .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 .descriptor_count(1)
                 .build(),
-            vk::DescriptorSetLayoutBinding::builder()
-                .binding(3)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                .descriptor_count(1)
-                .build(),
         ];
 
         let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
@@ -397,7 +339,7 @@ impl CompPipeline {
                 .build(),
             vk::DescriptorPoolSize::builder()
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
-                .descriptor_count(3)
+                .descriptor_count(2)
                 .build(),
         ];
 
@@ -412,11 +354,6 @@ impl CompPipeline {
         // Now update the actual descriptors
         let tile_info = vk::DescriptorBufferInfo::builder()
             .buffer(self.cp_tiles_buf)
-            .offset(0)
-            .range(vk::WHOLE_SIZE)
-            .build();
-        let window_info = vk::DescriptorBufferInfo::builder()
-            .buffer(self.cp_winlist_buf)
             .offset(0)
             .range(vk::WHOLE_SIZE)
             .build();
@@ -454,13 +391,6 @@ impl CompPipeline {
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&[vis_info])
-                .build(),
-            vk::WriteDescriptorSet::builder()
-                .dst_set(self.cp_composite.p_descs)
-                .dst_binding(3)
-                .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&[window_info])
                 .build(),
         ];
         unsafe {
@@ -521,25 +451,6 @@ impl CompPipeline {
             rend.dev.bind_buffer_memory(vis_buf, vis_mem, 0).unwrap();
         }
 
-        // create our data and a storage buffer
-        // TODO: DEADLY make this dynamic.
-        let winlist: Vec<Window> = Vec::with_capacity(64);
-        let (wl_storage, wl_storage_mem) = unsafe {
-            rend.create_buffer_with_size(
-                vk::BufferUsageFlags::STORAGE_BUFFER,
-                vk::SharingMode::EXCLUSIVE,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL
-                    | vk::MemoryPropertyFlags::HOST_VISIBLE
-                    | vk::MemoryPropertyFlags::HOST_COHERENT,
-                (std::mem::size_of::<Window>() * 64) as u64,
-            )
-        };
-        unsafe {
-            rend.dev
-                .bind_buffer_memory(wl_storage, wl_storage_mem, 0)
-                .unwrap();
-        }
-
         let family = Self::get_queue_family(&rend.inst, &rend.display, rend.pdev).unwrap();
         let queue = unsafe { rend.dev.get_device_queue(family, 0) };
         let cpool = unsafe { Renderer::create_command_pool(&rend.dev, family) };
@@ -551,9 +462,6 @@ impl CompPipeline {
             cp_tiles: data,
             cp_tiles_buf: storage,
             cp_tiles_mem: storage_mem,
-            cp_winlist: winlist,
-            cp_winlist_buf: wl_storage,
-            cp_winlist_mem: wl_storage_mem,
             cp_vis_buf: vis_buf,
             cp_vis_mem: vis_mem,
             cp_queue: queue,
@@ -717,91 +625,6 @@ impl CompPipeline {
             self.cp_tiles.tiles.as_slice(),
         );
     }
-
-    /// This updates the winlist entry for surf, which should be stored
-    /// at `index`.
-    fn get_winlist_entry_for_surf(
-        &mut self,
-        base: Option<&SurfaceInternal>,
-        surf: &SurfaceInternal,
-    ) -> Window {
-        let opaque_reg = match surf.get_opaque() {
-            Some(r) => r,
-            // If no opaque data was attached, place a -1 in the start.x component
-            // to tell the shader to ignore this
-            None => Rect::new(-1, 0, -1, 0),
-        };
-        let image = match surf.s_image.as_ref() {
-            Some(i) => i,
-            None => {
-                panic!(
-                        "[thundr] warning: surface was changed bug does not have image attached. ignoring."
-                    );
-            }
-        };
-
-        // Calculate our base offset from the parent surface, if passed in
-        let base_pos = match base {
-            Some(b) => (b.s_rect.r_pos.0, b.s_rect.r_pos.1),
-            None => (0.0, 0.0),
-        };
-
-        let use_color = surf.s_color.is_some();
-        Window {
-            w_id: (image.get_id(), use_color as i32, 0, 0),
-            w_color: match surf.s_color {
-                Some((r, g, b, a)) => (r, g, b, a),
-                None => (0.0, 50.0, 100.0, 150.0),
-            },
-            w_dims: Rect::new(
-                (base_pos.0 + surf.s_rect.r_pos.0) as i32,
-                (base_pos.1 + surf.s_rect.r_pos.1) as i32,
-                surf.s_rect.r_size.0 as i32,
-                surf.s_rect.r_size.1 as i32,
-            ),
-            w_opaque: opaque_reg,
-        }
-    }
-
-    fn update_window_list(&mut self, surfaces: &SurfaceList) -> bool {
-        self.cp_winlist.clear();
-        for surf_rc in surfaces.iter() {
-            let surf = surf_rc.s_internal.borrow();
-            let opaque_reg = match surf_rc.get_opaque() {
-                Some(r) => r,
-                // If no opaque data was attached, place a -1 in the start.x component
-                // to tell the shader to ignore this
-                None => Rect::new(-1, 0, -1, 0),
-            };
-            let image = match surf.s_image.as_ref() {
-                Some(i) => i,
-                None => {
-                    log::debug!(
-                        "[thundr] warning: surface does not have image attached. Not drawing"
-                    );
-                    continue;
-                }
-            };
-
-            self.cp_winlist.push(Window {
-                w_id: (image.get_id(), 0, 0, 0),
-                w_color: match surf.s_color {
-                    Some((r, g, b, a)) => (r, g, b, a),
-                    None => (0.0, 50.0, 100.0, 150.0),
-                },
-                w_dims: Rect::new(
-                    surf.s_rect.r_pos.0 as i32,
-                    surf.s_rect.r_pos.1 as i32,
-                    surf.s_rect.r_size.0 as i32,
-                    surf.s_rect.r_size.1 as i32,
-                ),
-                w_opaque: opaque_reg,
-            });
-        }
-
-        // TODO: if surfaces hasn't changed update windows individually
-        return true;
-    }
 }
 
 impl Pipeline for CompPipeline {
@@ -814,7 +637,7 @@ impl Pipeline for CompPipeline {
         rend: &mut Renderer,
         _params: &RecordParams,
         _images: &[Image],
-        surfaces: &mut SurfaceList,
+        _surfaces: &mut SurfaceList,
     ) -> bool {
         unsafe {
             let mut stop = StopWatch::new();
@@ -838,33 +661,6 @@ impl Pipeline for CompPipeline {
             if self.cp_tiles.tiles.len() == 0 {
                 log::profiling!("No tiles damaged, not drawing anything");
                 return false;
-            }
-
-            // Only do this if the surface list has changed and the shader needs a new
-            // window ordering
-            // The surfacelist ordering didn't change, but the individual
-            // surfaces might have. We need to copy the new values for
-            // any changed
-            stop.start();
-            let winlist_needs_flush = self.update_window_list(surfaces);
-            stop.end();
-
-            log::debug!(
-                "Took {} ms to generate the window list",
-                stop.get_duration().as_millis()
-            );
-
-            // TODO: don't even use CPU copies of the datastructs and perform
-            // the tile/window updates in the mapped GPU memory
-            // (requires benchmark)
-            if winlist_needs_flush {
-                // Shader expects struct WindowList { int count; Window windows[] }
-                rend.update_memory(self.cp_winlist_mem, 0, &[self.cp_winlist.len()]);
-                rend.update_memory(
-                    self.cp_winlist_mem,
-                    WINDOW_LIST_GLSL_OFFSET,
-                    self.cp_winlist.as_slice(),
-                );
             }
 
             // We need to do this afterwards, since it depends on cp_image_infos
@@ -1020,20 +816,6 @@ impl Pipeline for CompPipeline {
         log::debug!("Compute Pipeline Debug Statistics:");
         log::debug!("---------------------------------");
         log::debug!("Number of tiles to be drawn: {}", self.cp_tiles.tiles.len());
-
-        log::debug!("Window list:");
-        for (i, w) in self.cp_winlist.iter().enumerate() {
-            log::debug!(
-                "[{}] Image={}, Pos={:?}, Size={:?}, Opaque(Pos={:?}, Size={:?})",
-                i,
-                w.w_id.0,
-                w.w_dims.r_pos,
-                w.w_dims.r_size,
-                w.w_opaque.r_pos,
-                w.w_opaque.r_size
-            );
-        }
-
         log::debug!("---------------------------------");
     }
 
@@ -1041,8 +823,6 @@ impl Pipeline for CompPipeline {
         unsafe {
             rend.dev.destroy_buffer(self.cp_tiles_buf, None);
             rend.free_memory(self.cp_tiles_mem);
-            rend.dev.destroy_buffer(self.cp_winlist_buf, None);
-            rend.free_memory(self.cp_winlist_mem);
             rend.dev.destroy_command_pool(self.cp_cbuf_pool, None);
 
             rend.dev.destroy_buffer(self.cp_vis_buf, None);
