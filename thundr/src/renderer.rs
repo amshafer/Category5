@@ -1154,14 +1154,22 @@ impl Renderer {
             vk::DescriptorSetLayoutBinding::builder()
                 .binding(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::FRAGMENT)
+                .stage_flags(
+                    vk::ShaderStageFlags::COMPUTE
+                        | vk::ShaderStageFlags::VERTEX
+                        | vk::ShaderStageFlags::FRAGMENT,
+                )
                 .descriptor_count(1)
                 .build(),
             // the variable image list
             vk::DescriptorSetLayoutBinding::builder()
                 .binding(1)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::FRAGMENT)
+                .stage_flags(
+                    vk::ShaderStageFlags::COMPUTE
+                        | vk::ShaderStageFlags::VERTEX
+                        | vk::ShaderStageFlags::FRAGMENT,
+                )
                 // This is the upper bound on the amount of descriptors that
                 // can be attached. The amount actually attached will be
                 // determined by the amount allocated using this layout.
@@ -1330,7 +1338,7 @@ impl Renderer {
             // we need to do multiple instanced draw calls of the largest
             // size supported. This will only be doable with geom I guess
             // On moltenvk this is 16
-            let (bindless_pool, bindless_layout) = Self::allocate_bindless_resources(&dev, 1024);
+            let (bindless_pool, bindless_layout) = Self::allocate_bindless_resources(&dev, 16);
             let bindless_desc =
                 Self::allocate_bindless_desc(&dev, bindless_pool, &[bindless_layout], 0);
 
