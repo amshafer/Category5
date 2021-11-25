@@ -275,8 +275,8 @@ impl GeomPipeline {
             let ubo_layout = GeomPipeline::create_ubo_layout(rend);
             // These are the layout recognized by the pipeline
             let descriptor_layouts = &[
-                ubo_layout,            // set 0
-                rend.desc_pool.layout, // set 1
+                ubo_layout, // set 0
+                rend.r_images_desc_layout,
             ];
 
             // make a push constant entry for the z ordering of a window
@@ -979,20 +979,14 @@ impl GeomPipeline {
             //
             // We need to bind both the uniform set, and the per-Image
             // set for the image sampler
-            match surf.s_image.as_ref() {
-                Some(i) => {
-                    let image = i.i_internal.borrow();
-                    rend.dev.cmd_bind_descriptor_sets(
-                        params.cbuf,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        self.pipeline_layout,
-                        0, // first set
-                        &[self.g_desc, image.i_sampler_descriptors[params.image_num]],
-                        &[], // dynamic offsets
-                    );
-                }
-                None => {}
-            }
+            rend.dev.cmd_bind_descriptor_sets(
+                params.cbuf,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.pipeline_layout,
+                0, // first set
+                &[self.g_desc, rend.r_images_desc],
+                &[], // dynamic offsets
+            );
             // Set the z-ordering of the window we want to render
             // (this sets the visible window ordering)
             rend.dev.cmd_push_constants(

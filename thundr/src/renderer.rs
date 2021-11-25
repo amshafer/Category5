@@ -1324,6 +1324,12 @@ impl Renderer {
 
             let damage_regs = std::iter::repeat(Vec::new()).take(images.len()).collect();
 
+            // TODO:
+            // We need to handle the case where the ISV doesn't support
+            // a large enough number of bound samplers. In that case, I guess
+            // we need to do multiple instanced draw calls of the largest
+            // size supported. This will only be doable with geom I guess
+            // On moltenvk this is 16
             let (bindless_pool, bindless_layout) = Self::allocate_bindless_resources(&dev, 1024);
             let bindless_desc =
                 Self::allocate_bindless_desc(&dev, bindless_pool, &[bindless_layout], 0);

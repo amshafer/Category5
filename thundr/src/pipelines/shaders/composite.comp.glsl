@@ -33,11 +33,11 @@ struct Rect {
 
 struct Window {
 	/* id.0 is the id. It is an ivec4 for alignment purposes */
-    /* id.0: id that's the offset into the unbound sampler array */
-    /* id.1: if we should use w_color instead of texturing */
+	/* id.0: id that's the offset into the unbound sampler array */
+	/* id.1: if we should use w_color instead of texturing */
 	ivec4 id;
-    /* the color used instead of texturing */
-    vec4 color;
+	/* the color used instead of texturing */
+	vec4 color;
 	Rect dims;
 	Rect opaque;
 };
