@@ -176,6 +176,12 @@ pub struct Renderer {
     pub r_winlist: Vec<Window>,
     pub r_winlist_buf: vk::Buffer,
     pub r_winlist_mem: vk::DeviceMemory,
+
+    /// Temporary image to bind to the image list when
+    /// no images are attached.
+    tmp_image: vk::Image,
+    tmp_image_view: vk::ImageView,
+    tmp_image_mem: vk::DeviceMemory,
 }
 
 /// This must match the definition of the Window struct in the
@@ -1340,9 +1346,23 @@ impl Renderer {
             // On moltenvk this is 16
             let (bindless_pool, bindless_layout) = Self::allocate_bindless_resources(&dev, 16);
             let bindless_desc =
-                Self::allocate_bindless_desc(&dev, bindless_pool, &[bindless_layout], 0);
+                Self::allocate_bindless_desc(&dev, bindless_pool, &[bindless_layout], 1);
 
             let winlist: Vec<Window> = Vec::with_capacity(64);
+
+            let (tmp, tmp_view, tmp_mem) = Self::create_image(
+                &dev,
+                &mem_props,
+                &vk::Extent2D {
+                    width: 2,
+                    height: 2,
+                },
+                surface_format.format,
+                vk::ImageUsageFlags::SAMPLED,
+                vk::ImageAspectFlags::COLOR,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                vk::ImageTiling::LINEAR,
+            );
 
             // you are now the proud owner of a half complete
             // rendering context
@@ -1396,6 +1416,9 @@ impl Renderer {
                 r_winlist: winlist,
                 r_winlist_buf: vk::Buffer::null(),
                 r_winlist_mem: vk::DeviceMemory::null(),
+                tmp_image: tmp,
+                tmp_image_view: tmp_view,
+                tmp_image_mem: tmp_mem,
             };
             rend.initialize_transfer_mem();
 
@@ -2131,7 +2154,7 @@ impl Renderer {
         // Construct a list of image views from the submitted surface list
         // this will be our unsized texture array that the composite shader will reference
         // TODO: make this a changed flag
-        if self.r_image_infos.len() != images.len() {
+        if self.r_image_infos.len() != images.len() && images.len() > 0 {
             // free the previous descriptor sets
             unsafe {
                 self.dev
@@ -2169,7 +2192,13 @@ impl Renderer {
         }
 
         if self.r_image_infos.len() == 0 {
-            return;
+            self.r_image_infos.push(
+                vk::DescriptorImageInfo::builder()
+                    .sampler(self.image_sampler)
+                    .image_view(self.tmp_image_view)
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .build(),
+            );
         }
 
         // Now write the new bindless descriptor
@@ -2359,6 +2388,10 @@ impl Drop for Renderer {
 
             self.dev.destroy_buffer(self.transfer_buf, None);
             self.dev.free_memory(self.transfer_mem, None);
+
+            self.dev.destroy_image(self.tmp_image, None);
+            self.dev.destroy_image_view(self.tmp_image_view, None);
+            self.free_memory(self.tmp_image_mem);
 
             self.dev.destroy_semaphore(self.present_sema, None);
             self.dev.destroy_semaphore(self.render_sema, None);

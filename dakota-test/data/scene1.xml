@@ -5,9 +5,9 @@
 			<name>samson</name>
 			<image>
 				<format type="ARGB8888"/>
-                <data>
-                    <relPath>images/brock.png</relPath>
-                </data>
+				<data>
+					<relPath>images/brick.png</relPath>
+				</data>
 			</image>
 			<hints>
 				<constant>true</constant>
