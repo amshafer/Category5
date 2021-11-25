@@ -2211,21 +2211,19 @@ impl Renderer {
         // The surfacelist ordering didn't change, but the individual
         // surfaces might have. We need to copy the new values for
         // any changed
-        let winlist_needs_flush = self.update_window_list(surfaces);
+        self.update_window_list(surfaces);
 
         // TODO: don't even use CPU copies of the datastructs and perform
         // the tile/window updates in the mapped GPU memory
         // (requires benchmark)
-        if winlist_needs_flush {
-            unsafe {
-                // Shader expects struct WindowList { int count; Window windows[] }
-                self.update_memory(self.r_winlist_mem, 0, &[self.r_winlist.len()]);
-                self.update_memory(
-                    self.r_winlist_mem,
-                    WINDOW_LIST_GLSL_OFFSET,
-                    self.r_winlist.as_slice(),
-                );
-            }
+        unsafe {
+            // Shader expects struct WindowList { int count; Window windows[] }
+            self.update_memory(self.r_winlist_mem, 0, &[self.r_winlist.len()]);
+            self.update_memory(
+                self.r_winlist_mem,
+                WINDOW_LIST_GLSL_OFFSET,
+                self.r_winlist.as_slice(),
+            );
         }
     }
 

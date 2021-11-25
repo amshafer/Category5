@@ -6,7 +6,7 @@ layout(location = 0) in vec2 loc;
 layout(location = 1) in vec2 coord;
 
 layout(location = 0) out vec2 fragcoord;
-layout(location = 1) out int window_index;
+layout(location = 1) flat out int window_index;
 
 layout(binding = 0) uniform ShaderConstants {
 mat4 model;
@@ -42,7 +42,8 @@ layout(set = 1, binding = 1) uniform sampler2D images[];
 
 void main() {
 	// Go in reverse order, so that alpha works correctly
-	int win = window_count - gl_InstanceIndex;
+	int win = (window_count - 1) - gl_InstanceIndex;
+	window_index = win;
 	// 1. loc should ALWAYS be 0,1 for the default quad.
 	// 2. multiply by two since the axis are over the range (-1,1).
 	// 3. multiply by the percentage of the screen that the window
@@ -57,7 +58,7 @@ void main() {
 
 	// The model transform will align x,y = (0, 0) with the top left of
 	// the screen. It should stubtract 1.0 from x and y.
-	float order = 1.0 - (float(win) * 0.0000001);
+	float order = 0.0 + (float(win) * 0.0000001);
 	gl_Position = ubo.model * vec4(adjusted, order, 1.0);
 
 	fragcoord = coord;

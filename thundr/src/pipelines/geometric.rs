@@ -16,7 +16,7 @@ use ash::{util, vk};
 
 use super::Pipeline;
 use crate::renderer::{RecordParams, Renderer};
-use crate::{Image, Surface, SurfaceList};
+use crate::{Image, SurfaceList};
 
 use utils::log;
 
@@ -146,38 +146,39 @@ impl Pipeline for GeomPipeline {
         surfaces: &mut SurfaceList,
     ) -> bool {
         self.begin_recording(rend, params);
-        let mut index = 0;
-
-        for surf in surfaces.iter().rev() {
-            // TODO: make a limit to the number of windows
-            // we have to call rev before enumerate, so we need
-            // to correct this by setting the depth of the earliest
-            // surfaces to the deepest
-            let depth = 1.0 - 0.000001 * index as f32;
-            self.record_surface_draw(rend, params, surf, &(0.0, 0.0), depth);
-            index += 1;
-
-            // Now do the subsurfaces for this surf, in reverse order too
-            let s = surf.s_internal.borrow();
-            for sub in s.s_subsurfaces.iter().rev() {
-                let depth = 1.0 - 0.000001 * index as f32;
-                assert!(
-                    sub.s_internal.borrow().s_subsurfaces.len() == 0,
-                    "ERROR: recursive subsurfaces not supported"
-                );
-                self.record_surface_draw(rend, params, sub, &surf.get_pos(), depth);
-
-                index += 1;
-            }
-        }
-
-        // make sure to end recording
         unsafe {
+            // Descriptor sets can be updated elsewhere, but
+            // they must be bound before drawing
+            //
+            // We need to bind both the uniform set, and the per-Image
+            // set for the image sampler
+            rend.dev.cmd_bind_descriptor_sets(
+                params.cbuf,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.pipeline_layout,
+                0, // first set
+                &[self.g_desc, rend.r_images_desc],
+                &[], // dynamic offsets
+            );
+
+            // Here is where everything is actually drawn
+            // technically 3 vertices are being drawn
+            // by the shader
+            rend.dev.cmd_draw_indexed(
+                params.cbuf,           // drawing command buffer
+                self.vert_count,       // number of verts
+                surfaces.len() as u32, // number of instances
+                0,                     // first vertex
+                0,                     // vertex offset
+                0,                     // first instance
+            );
+
+            // make sure to end recording
             rend.dev.cmd_end_render_pass(params.cbuf);
             rend.cbuf_end_recording(params.cbuf);
         }
 
-        // now start rendering
+        // now submit the cbuf
         self.begin_frame(rend);
         return true;
     }
@@ -932,86 +933,5 @@ impl GeomPipeline {
                 );
             },
         );
-    }
-
-    /// Generate draw calls for this image
-    ///
-    /// It is a very common operation to draw a image, this
-    /// helper draws itself at the locations passed by `push`
-    ///
-    /// First all descriptor sets and input assembly is bound
-    /// before the call to vkCmdDrawIndexed. The descriptor
-    /// sets should be updated whenever window contents are
-    /// changed, and then cbufs should be regenerated using this.
-    ///
-    /// Base, is the offset to add to the surface's position.
-    /// This is useful for subsurface offsets.
-    ///
-    /// Must be called while recording a cbuf
-    pub fn record_surface_draw(
-        &self,
-        rend: &Renderer,
-        params: &RecordParams,
-        thundr_surf: &Surface,
-        base: &(f32, f32),
-        depth: f32,
-    ) {
-        let surf = thundr_surf.s_internal.borrow();
-
-        let push = PushConstants {
-            order: depth,
-            x: base.0 + surf.s_rect.r_pos.0,
-            y: base.1 + surf.s_rect.r_pos.1,
-            width: surf.s_rect.r_size.0,
-            height: surf.s_rect.r_size.1,
-            use_color: surf.s_color.is_some() as u32,
-            color: match surf.s_color {
-                Some((r, g, b, a)) => (r, g, b, a),
-                None => (0.0, 50.0, 100.0, 150.0),
-            },
-        };
-        log::debug!("Using color = {}", push.use_color);
-        log::debug!("Using color = {:?}", push.color);
-
-        unsafe {
-            // Descriptor sets can be updated elsewhere, but
-            // they must be bound before drawing
-            //
-            // We need to bind both the uniform set, and the per-Image
-            // set for the image sampler
-            rend.dev.cmd_bind_descriptor_sets(
-                params.cbuf,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.pipeline_layout,
-                0, // first set
-                &[self.g_desc, rend.r_images_desc],
-                &[], // dynamic offsets
-            );
-            // Set the z-ordering of the window we want to render
-            // (this sets the visible window ordering)
-            rend.dev.cmd_push_constants(
-                params.cbuf,
-                self.pipeline_layout,
-                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                0, // offset
-                // get a &[u8] from our struct
-                // TODO: This should go. It is showing up as a noticeable
-                // hit in profiling. Idk if there is a safe way to
-                // replace it.
-                bincode::serialize(&push).unwrap().as_slice(),
-            );
-
-            // Here is where everything is actually drawn
-            // technically 3 vertices are being drawn
-            // by the shader
-            rend.dev.cmd_draw_indexed(
-                params.cbuf,     // drawing command buffer
-                self.vert_count, // number of verts
-                1,               // number of instances
-                0,               // first vertex
-                0,               // vertex offset
-                1,               // first instance
-            );
-        }
     }
 }

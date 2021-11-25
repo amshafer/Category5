@@ -8,16 +8,6 @@ layout(location = 0) out vec4 res;
 
 layout(set = 1, binding = 1) uniform sampler2D tex;
 
-layout(push_constant) uniform PushConstants {
-	vec4 color;
-	int  use_color;
-	float order;
-	float x;
-	float y;
-	float width;
-	float height;
-} push;
-
 struct Rect {
 	ivec2 start;
 	ivec2 size;
