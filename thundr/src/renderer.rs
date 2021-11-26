@@ -190,7 +190,7 @@ pub struct Renderer {
 /// This *MUST* be a power of two, as the layout of the shader ssbo
 /// is dependent on offsetting using the size of this.
 #[repr(C)]
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
 pub struct Window {
     /// The id of the image. This is the offset into the unbounded sampler array.
     /// w_id.0: id that's the offset into the unbound sampler array
@@ -1496,18 +1496,13 @@ impl Renderer {
                 // to tell the shader to ignore this
                 None => Rect::new(-1, 0, -1, 0),
             };
-            let image = match surf.s_image.as_ref() {
-                Some(i) => i,
-                None => {
-                    log::debug!(
-                        "[thundr] warning: surface does not have image attached. Not drawing"
-                    );
-                    continue;
-                }
+            let (image_id, use_color) = match surf.s_image.as_ref() {
+                Some(i) => (i.get_id(), false),
+                None => (-1, true),
             };
 
             self.r_winlist.push(Window {
-                w_id: (image.get_id(), 0, 0, 0),
+                w_id: (image_id, use_color as i32, 0, 0),
                 w_color: match surf.s_color {
                     Some((r, g, b, a)) => (r, g, b, a),
                     None => (0.0, 50.0, 100.0, 150.0),
@@ -2241,6 +2236,8 @@ impl Renderer {
         // surfaces might have. We need to copy the new values for
         // any changed
         self.update_window_list(surfaces);
+
+        log::info!("Window List: {:#?}", self.r_winlist);
 
         // TODO: don't even use CPU copies of the datastructs and perform
         // the tile/window updates in the mapped GPU memory

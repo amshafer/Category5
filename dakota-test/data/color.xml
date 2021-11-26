@@ -4,10 +4,10 @@
 		<resource>
 			<name>colored</name>
             <color>
-                <r>80</r>
-                <g>80</g>
-                <b>80</b>
-                <a>256</a>
+                <r>1</r>
+                <g>1</g>
+                <b>1</b>
+                <a>1</a>
             </color>
 			<hints>
 				<constant>true</constant>

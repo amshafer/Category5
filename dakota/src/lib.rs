@@ -178,12 +178,16 @@ impl Dakota {
     /// Get the minimum size that a resource wants.
     ///
     /// This is used to scale boxes larger than the requirements of the children.
-    pub fn get_resource_size(&mut self, res: &String) -> Result<dom::Size> {
+    pub fn get_resource_size(&mut self, res: &String) -> Option<dom::Size> {
         if let Some(rme) = self.d_resmap.get(res) {
-            Ok(rme.rme_size)
+            if rme.rme_color.is_some() {
+                None
+            } else {
+                Some(rme.rme_size)
+            }
         } else {
             // In this case color drawing is in use and there is no size
-            Ok(dom::Size::new(0, 0))
+            panic!("Color size should have be handled as the avail size");
         }
     }
 
@@ -282,10 +286,8 @@ impl Dakota {
                 // sized to the available space
                 // The default size is based on the resource's default size.
                 // No size + no resource + no bounds means we default to size 0
-                ret.l_size = match el.resource.as_ref() {
-                    Some(res) => self.get_resource_size(&res)?,
-                    // Try to use the bounds if available
-                    None => dom::Size {
+                let get_default_size = || -> dom::Size {
+                    dom::Size {
                         width: match available_width {
                             Some(aw) => aw,
                             None => 0,
@@ -294,7 +296,15 @@ impl Dakota {
                             Some(ah) => ah,
                             None => 0,
                         },
+                    }
+                };
+                ret.l_size = match el.resource.as_ref() {
+                    Some(res) => match self.get_resource_size(&res) {
+                        Some(size) => size,
+                        None => get_default_size(),
                     },
+                    // Try to use the bounds if available
+                    None => get_default_size(),
                 };
             }
 
