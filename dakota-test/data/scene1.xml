@@ -6,7 +6,7 @@
 			<image>
 				<format type="ARGB8888"/>
 				<data>
-					<relPath>images/brick.png</relPath>
+					<relPath>images/brock.png</relPath>
 				</data>
 			</image>
 			<hints>

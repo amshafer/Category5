@@ -16,7 +16,6 @@ pub mod xml;
 use std::collections::HashMap;
 
 struct ResMapEntry {
-    rme_size: dom::Size,
     rme_image: Option<th::Image>,
     rme_color: Option<dom::Color>,
 }
@@ -75,9 +74,8 @@ impl LayoutNode {
     pub fn resize_to_children(&mut self) -> Result<()> {
         for other in self.l_children.iter() {
             // add any offsets to our size
-            self.l_size.width += other.l_offset.x;
-            self.l_size.height += other.l_offset.y;
-            self.l_size.union(&other.l_size);
+            self.l_size.width += other.l_offset.x + other.l_size.width;
+            self.l_size.height += other.l_offset.y + other.l_size.height;
         }
 
         return Ok(());
@@ -154,7 +152,7 @@ impl Dakota {
         //
         // These get tracked in a resource map so they can be looked up during element creation
         for res in dom.resource_map.resources.iter() {
-            let (resolution, image) = match res.image.as_ref() {
+            let image = match res.image.as_ref() {
                 Some(image) => {
                     if image.format != dom::Format::ARGB8888 {
                         return Err(anyhow!("Invalid image format"));
@@ -179,44 +177,21 @@ impl Dakota {
                     );
 
                     // create a thundr image for each resource
-                    (
-                        resolution,
-                        Some(self.d_thund.create_image_from_bits(&mimg, None).unwrap()),
-                    )
+                    Some(self.d_thund.create_image_from_bits(&mimg, None).unwrap())
                 }
-                None => ((0, 0), None),
+                None => None,
             };
 
             // Add the new image to our resource map
             self.d_resmap.insert(
                 res.name.clone(),
                 ResMapEntry {
-                    rme_size: dom::Size {
-                        width: resolution.0 as u32,
-                        height: resolution.1 as u32,
-                    },
                     rme_image: image,
                     rme_color: res.color,
                 },
             );
         }
         Ok(())
-    }
-
-    /// Get the minimum size that a resource wants.
-    ///
-    /// This is used to scale boxes larger than the requirements of the children.
-    pub fn get_resource_size(&mut self, res: &String) -> Option<dom::Size> {
-        if let Some(rme) = self.d_resmap.get(res) {
-            if rme.rme_color.is_some() {
-                None
-            } else {
-                Some(rme.rme_size)
-            }
-        } else {
-            // In this case color drawing is in use and there is no size
-            panic!("Color size should have be handled as the avail size");
-        }
     }
 
     /// Create a layout tree of boxes.
@@ -340,10 +315,9 @@ impl Dakota {
         // 3. No size and no bounds means we are inside of a scrolling arena, and
         // we should grow this box to hold all of its children.
         ret.l_offset_specified = el.offset.is_some();
-        ret.l_offset = match el.offset {
-            Some(off) => off,
-            None => dom::Offset { x: 0, y: 0 },
-        };
+        if let Some(off) = el.offset {
+            ret.l_offset = off;
+        }
 
         if let Some(size) = el.size.as_ref() {
             ret.l_size = *size;
@@ -365,10 +339,6 @@ impl Dakota {
             // Then possibly clip the box by any available dimensions.
             // Add our offsets while calculating this to account for space
             // used by moving the box.
-            ret.l_offset = match el.offset {
-                Some(off) => off,
-                None => dom::Offset { x: 0, y: 0 },
-            };
 
             // TODO: don't clamp, add scrolling support
             ret.l_size.width = ret
@@ -399,8 +369,15 @@ impl Dakota {
     /// At this point the layout tree should have been constructed, aka
     /// Elements will have their sizes correctly (re)calculated and filled
     /// in by `calculate_sizes`.
-    fn create_thundr_surf_for_el(&mut self, layout: &LayoutNode) -> Result<Option<th::Surface>> {
-        let offset = layout.l_offset;
+    fn create_thundr_surf_for_el(
+        &mut self,
+        layout: &LayoutNode,
+        poffset: dom::Offset,
+    ) -> Result<Option<th::Surface>> {
+        let offset = dom::Offset {
+            x: layout.l_offset.x + poffset.x,
+            y: layout.l_offset.y + poffset.y,
+        };
         let size = layout.l_size;
 
         if let Some(resname) = layout.l_resource.as_ref() {
@@ -438,7 +415,7 @@ impl Dakota {
             // now iterate through all of it's children, and recursively do the same
             for child in layout.l_children.iter() {
                 // add the new child surface as a subsurface
-                let child_surf = self.create_thundr_surf_for_el(child)?;
+                let child_surf = self.create_thundr_surf_for_el(child, offset)?;
                 if let Some(csurf) = child_surf {
                     surf.add_subsurface(csurf);
                 }
@@ -452,7 +429,7 @@ impl Dakota {
         // children, and append them to the surfacelist.
         for child in layout.l_children.iter() {
             // add the new child surface as a subsurface
-            self.create_thundr_surf_for_el(child)?;
+            self.create_thundr_surf_for_el(child, offset)?;
         }
         return Ok(None);
     }
@@ -501,7 +478,7 @@ impl Dakota {
         // Create our thundr surface and add it to the list
         // one list with subsurfaces?
         let layout_tree = self.d_layout_tree.take().unwrap();
-        let result = self.create_thundr_surf_for_el(&layout_tree);
+        let result = self.create_thundr_surf_for_el(&layout_tree, dom::Offset { x: 0, y: 0 });
         self.d_layout_tree = Some(layout_tree);
 
         match result {

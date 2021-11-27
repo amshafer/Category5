@@ -48,6 +48,10 @@
 					<el>
 						<resource>blue</resource>
 					</el>
+					<size>
+						<width>340</width>
+						<height>340</height>
+					</size>
 				</el>
 			</content>
 		</el>
