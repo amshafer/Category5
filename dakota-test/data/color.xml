@@ -2,11 +2,11 @@
 	<version>0.0.0.1</version>
 	<resourceMap>
 		<resource>
-			<name>black</name>
+			<name>red</name>
 			<color>
-				<r>0</r>
-				<g>0</g>
-				<b>0</b>
+				<r>0.25</r>
+				<g>0.1</g>
+				<b>0.1</b>
 				<a>1</a>
 			</color>
 		</resource>
@@ -34,7 +34,7 @@
 						<resource>green</resource>
 					</el>
 					<el>
-						<resource>black</resource>
+						<resource>red</resource>
 					</el>
 				</el>
 			</content>

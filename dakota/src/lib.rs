@@ -86,8 +86,12 @@ impl LayoutNode {
 /// available size
 #[derive(Debug, Clone)]
 struct LayoutSpace {
+    /// This is essentially the width of the parent container
     avail_width: u32,
+    /// This is essentially the height of the parent container
     avail_height: u32,
+    /// This is the number of children the parent container has
+    children_at_this_level: u32,
 }
 
 impl Dakota {
@@ -228,8 +232,13 @@ impl Dakota {
         // if the box has children, then recurse through them and calculate our
         // box size based on the fill type.
         if el.children.len() > 0 {
+            let child_space = LayoutSpace {
+                avail_width: space.avail_width,
+                avail_height: space.avail_height,
+                children_at_this_level: el.children.len() as u32,
+            };
             for child in el.children.iter() {
-                let child_size = self.calculate_sizes(child, space.clone())?;
+                let child_size = self.calculate_sizes(child, child_space.clone())?;
                 ret.add_child(child_size);
             }
         } else if let Some(content) = el.content.as_ref() {
@@ -237,7 +246,12 @@ impl Dakota {
             // We should either recurse the child box or calculate the
             // size based on the centered resource.
             if let Some(mut child) = content.el.as_ref() {
-                let mut child_size = self.calculate_sizes(&mut child, space.clone())?;
+                let child_space = LayoutSpace {
+                    avail_width: space.avail_width,
+                    avail_height: space.avail_height,
+                    children_at_this_level: 0,
+                };
+                let mut child_size = self.calculate_sizes(&mut child, child_space)?;
                 // Centered content does not have offsets, it will be overwritten
                 // here. The only reason offset is not None is if we previously
                 // calculated it.
@@ -278,21 +292,12 @@ impl Dakota {
 
             if ret.l_size == dom::Size::new(0, 0) {
                 // if the size is still empty, there were no children. This should just be
-                // sized to the available space
-                // The default size is based on the resource's default size.
-                // No size + no resource + no bounds means we default to size 0
-                let default_size = dom::Size {
-                    width: space.avail_width,
-                    height: space.avail_height,
-                };
-                ret.l_size = match el.resource.as_ref() {
-                    Some(res) => match self.get_resource_size(&res) {
-                        Some(size) => size,
-                        None => default_size,
-                    },
-                    // Try to use the bounds if available
-                    None => default_size,
-                };
+                // sized to the available space divided by the number of
+                // children.
+                // Clamp to 1 to avoid dividing by zero
+                let num_children = std::cmp::max(1, space.children_at_this_level);
+                // TODO: add directional tiling of elements
+                ret.l_size = dom::Size::new(space.avail_width, space.avail_height / num_children);
             }
 
             // Then possibly clip the box by any available dimensions.
@@ -303,7 +308,10 @@ impl Dakota {
                 None => dom::Offset { x: 0, y: 0 },
             };
 
-            ret.l_size.width = std::cmp::min(space.avail_width + ret.l_offset.x, ret.l_size.width);
+            ret.l_size.width = ret
+                .l_size
+                .width
+                .clamp(0, space.avail_width - ret.l_offset.x);
             ret.l_size.height =
                 std::cmp::min(space.avail_height + ret.l_offset.y, ret.l_size.height);
         }
@@ -408,11 +416,13 @@ impl Dakota {
 
         // construct layout tree with sizes of all boxes
         // create our thundr surfaces while we are at it.
+        let num_children = dom.layout.root_element.children.len() as u32;
         let result = self.calculate_sizes(
             &mut dom.layout.root_element,
             LayoutSpace {
                 avail_width: self.d_window_dims.unwrap().0, // available width
                 avail_height: self.d_window_dims.unwrap().1, // available height
+                children_at_this_level: num_children,
             },
         );
 
