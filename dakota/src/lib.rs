@@ -42,6 +42,8 @@ pub struct Dakota {
 #[derive(Debug)]
 struct LayoutNode {
     l_resource: Option<String>,
+    /// True if the dakota file specified an offset for this el
+    l_offset_specified: bool,
     l_offset: dom::Offset,
     l_size: dom::Size,
     l_children: Vec<LayoutNode>,
@@ -51,6 +53,7 @@ impl LayoutNode {
     fn new(res: Option<String>, off: dom::Offset, size: dom::Size) -> Self {
         Self {
             l_resource: res,
+            l_offset_specified: false,
             l_offset: off,
             l_size: size,
             l_children: Vec::with_capacity(0),
@@ -79,6 +82,18 @@ impl LayoutNode {
 
         return Ok(());
     }
+}
+
+/// Used for tracking layout of children
+struct TileInfo {
+    /// The latest position we have marched horizontally
+    /// while laying children.
+    t_last_x: u32,
+    /// Same as last width, but in the Y axis.
+    t_last_y: u32,
+    /// The last known greatest height. This is what the next
+    /// height will be when a line overflows.
+    t_greatest_y: u32,
 }
 
 /// This is the available space for a layout calculation.
@@ -232,16 +247,61 @@ impl Dakota {
         // if the box has children, then recurse through them and calculate our
         // box size based on the fill type.
         if el.children.len() > 0 {
+            // ------------------------------------------
+            // CHILDREN
+            // ------------------------------------------
+            //
             let child_space = LayoutSpace {
                 avail_width: space.avail_width,
                 avail_height: space.avail_height,
                 children_at_this_level: el.children.len() as u32,
             };
+
+            // TODO: do vertical wrapping too
+            let mut tile_info = TileInfo {
+                t_last_x: 0,
+                t_last_y: 0,
+                t_greatest_y: 0,
+            };
+
             for child in el.children.iter() {
-                let child_size = self.calculate_sizes(child, child_space.clone())?;
+                let mut child_size = self.calculate_sizes(child, child_space.clone())?;
+
+                // now the child size has been made, but it still needs to find
+                // the proper position inside the parent container. If the child
+                // already had an offset specified, it is "out of the loop", and
+                // doesn't get used for pretty formatting, it just gets placed
+                // wherever.
+                if !child_size.l_offset_specified {
+                    // if this element exceeds the horizontal space, set it on a
+                    // new line
+                    if tile_info.t_last_x + child_size.l_size.width > space.avail_width {
+                        tile_info.t_last_x = 0;
+                        tile_info.t_last_y = tile_info.t_greatest_y;
+                    }
+
+                    child_size.l_offset = dom::Offset {
+                        x: tile_info.t_last_x,
+                        y: tile_info.t_last_y,
+                    };
+
+                    // now we need to update the space that we have seen children
+                    // occupy, so we know where to place the next children in the
+                    // tiling formation.
+                    tile_info.t_last_x += child_size.l_size.width;
+                    tile_info.t_greatest_y = std::cmp::max(
+                        tile_info.t_greatest_y,
+                        tile_info.t_last_y + child_size.l_size.height,
+                    );
+                }
+
                 ret.add_child(child_size);
             }
         } else if let Some(content) = el.content.as_ref() {
+            // ------------------------------------------
+            // CENTERED CONTENT
+            // ------------------------------------------
+            //
             // This box has centered content.
             // We should either recurse the child box or calculate the
             // size based on the centered resource.
@@ -252,10 +312,6 @@ impl Dakota {
                     children_at_this_level: 0,
                 };
                 let mut child_size = self.calculate_sizes(&mut child, child_space)?;
-                // Centered content does not have offsets, it will be overwritten
-                // here. The only reason offset is not None is if we previously
-                // calculated it.
-                //
                 // At this point the size of the is calculated
                 // and we can determine the offset. We want to center the
                 // box, so that's the center point of the parent minus
@@ -271,6 +327,10 @@ impl Dakota {
             }
         }
 
+        // ------------------------------------------
+        // HANDLE THIS ELEMENT
+        // ------------------------------------------
+        //
         // Now that we have calculated all the children, we can handle
         // this element.
         // 1. If it has a size assigned, that is the final size, all children
@@ -279,6 +339,7 @@ impl Dakota {
         // we have, then the size is available_space
         // 3. No size and no bounds means we are inside of a scrolling arena, and
         // we should grow this box to hold all of its children.
+        ret.l_offset_specified = el.offset.is_some();
         ret.l_offset = match el.offset {
             Some(off) => off,
             None => dom::Offset { x: 0, y: 0 },
@@ -297,6 +358,7 @@ impl Dakota {
                 // Clamp to 1 to avoid dividing by zero
                 let num_children = std::cmp::max(1, space.children_at_this_level);
                 // TODO: add directional tiling of elements
+                // for now just do vertical subdivision and fill horizontal
                 ret.l_size = dom::Size::new(space.avail_width, space.avail_height / num_children);
             }
 
@@ -308,6 +370,7 @@ impl Dakota {
                 None => dom::Offset { x: 0, y: 0 },
             };
 
+            // TODO: don't clamp, add scrolling support
             ret.l_size.width = ret
                 .l_size
                 .width

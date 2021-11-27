@@ -4,7 +4,7 @@
 		<resource>
 			<name>red</name>
 			<color>
-				<r>0.25</r>
+				<r>0.75</r>
 				<g>0.1</g>
 				<b>0.1</b>
 				<a>1</a>
@@ -14,8 +14,17 @@
 			<name>green</name>
 			<color>
 				<r>0.25</r>
-				<g>1</g>
+				<g>0.80</g>
 				<b>0.25</b>
+				<a>1</a>
+			</color>
+		</resource>
+		<resource>
+			<name>blue</name>
+			<color>
+				<r>0.05</r>
+				<g>0.35</g>
+				<b>0.95</b>
 				<a>1</a>
 			</color>
 		</resource>
@@ -31,10 +40,13 @@
 			<content>
 				<el>
 					<el>
+						<resource>red</resource>
+					</el>
+					<el>
 						<resource>green</resource>
 					</el>
 					<el>
-						<resource>red</resource>
+						<resource>blue</resource>
 					</el>
 				</el>
 			</content>
