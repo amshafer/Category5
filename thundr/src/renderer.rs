@@ -176,6 +176,8 @@ pub struct Renderer {
     pub r_winlist: Vec<Window>,
     pub r_winlist_buf: vk::Buffer,
     pub r_winlist_mem: vk::DeviceMemory,
+    /// The number of Windows that r_winlist_mem was allocate to hold
+    r_winlist_capacity: usize,
 
     /// Temporary image to bind to the image list when
     /// no images are attached.
@@ -1201,6 +1203,23 @@ impl Renderer {
         (bindless_pool, bindless_layout)
     }
 
+    unsafe fn reallocate_winlist_buf_with_cap(&mut self, capacity: usize) {
+        // create our data and a storage buffer for the window list
+        let (wl_storage, wl_storage_mem) = self.create_buffer_with_size(
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            vk::SharingMode::EXCLUSIVE,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL
+                | vk::MemoryPropertyFlags::HOST_VISIBLE
+                | vk::MemoryPropertyFlags::HOST_COHERENT,
+            (std::mem::size_of::<Window>() * capacity) as u64 + WINDOW_LIST_GLSL_OFFSET as u64,
+        );
+        self.dev
+            .bind_buffer_memory(wl_storage, wl_storage_mem, 0)
+            .unwrap();
+        self.r_winlist_buf = wl_storage;
+        self.r_winlist_mem = wl_storage_mem;
+    }
+
     /// Create a new Vulkan Renderer
     ///
     /// This renderer is very application specific. It is not meant to be
@@ -1416,26 +1435,13 @@ impl Renderer {
                 r_winlist: winlist,
                 r_winlist_buf: vk::Buffer::null(),
                 r_winlist_mem: vk::DeviceMemory::null(),
+                r_winlist_capacity: 8,
                 tmp_image: tmp,
                 tmp_image_view: tmp_view,
                 tmp_image_mem: tmp_mem,
             };
             rend.initialize_transfer_mem();
-
-            // create our data and a storage buffer for the window list
-            let (wl_storage, wl_storage_mem) = rend.create_buffer_with_size(
-                vk::BufferUsageFlags::STORAGE_BUFFER,
-                vk::SharingMode::EXCLUSIVE,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL
-                    | vk::MemoryPropertyFlags::HOST_VISIBLE
-                    | vk::MemoryPropertyFlags::HOST_COHERENT,
-                (std::mem::size_of::<Window>() * 2) as u64 + WINDOW_LIST_GLSL_OFFSET as u64,
-            );
-            rend.dev
-                .bind_buffer_memory(wl_storage, wl_storage_mem, 0)
-                .unwrap();
-            rend.r_winlist_buf = wl_storage;
-            rend.r_winlist_mem = wl_storage_mem;
+            rend.reallocate_winlist_buf_with_cap(rend.r_winlist_capacity);
 
             return Ok(rend);
         }
@@ -2243,6 +2249,11 @@ impl Renderer {
         // the tile/window updates in the mapped GPU memory
         // (requires benchmark)
         unsafe {
+            if self.r_winlist.len() >= self.r_winlist_capacity {
+                self.r_winlist_capacity *= 2;
+                self.reallocate_winlist_buf_with_cap(self.r_winlist_capacity);
+            }
+
             // Shader expects struct WindowList { int count; Window windows[] }
             self.update_memory(self.r_winlist_mem, 0, &[self.r_winlist.len()]);
             self.update_memory(
