@@ -97,7 +97,7 @@ void main() {
 		*/
         vec4 tex;
         /* id.1 is a flag telling us to use color */
-        if (windows[target_windows[i]].id.y != 0) {
+        if (windows[target_windows[i]].id.y == 0) {
 		    tex = texture(images[nonuniformEXT(windows[target_windows[i]].id.x)], win_uv);
         } else {
             tex = windows[target_windows[i]].color;
