@@ -45,9 +45,6 @@ pub(crate) struct ImageInternal {
     pub i_image_view: vk::ImageView,
     pub i_image_mem: vk::DeviceMemory,
     pub i_image_resolution: vk::Extent2D,
-    pub i_pool_handle: usize,
-    // TODO: move these into geometric pipeline
-    pub i_sampler_descriptors: Vec<vk::DescriptorSet>,
     /// specific to the type of image
     i_priv: ImagePrivate,
     /// Stuff to release when we are no longer using
@@ -137,8 +134,6 @@ impl fmt::Debug for Image {
             .field("Image View", &image.i_image_view)
             .field("Image mem", &image.i_image_mem)
             .field("Resolution", &image.i_image_resolution)
-            .field("Pool Handle", &image.i_pool_handle)
-            .field("Sampler Descriptors", &image.i_sampler_descriptors)
             .field("Image Private", &image.i_priv)
             .field("Release info", &"<release info omitted>".to_string())
             .finish()
@@ -497,26 +492,6 @@ impl Renderer {
         view: vk::ImageView,
         release: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
-        // each image holds a set of descriptors that it will
-        // bind before drawing itself. This set holds the
-        // image sampler.
-        //
-        // right now they only hold an image sampler
-        let (handle, descriptors) = self.desc_pool.allocate_samplers(&self.dev, self.fb_count);
-
-        for i in 0..self.fb_count {
-            unsafe {
-                // bind the texture for our window
-                self.update_sampler_descriptor_set(
-                    descriptors[i],
-                    1, //n binding
-                    0, // element
-                    self.image_sampler,
-                    view,
-                );
-            }
-        }
-
         return Some(Image {
             i_internal: Rc::new(RefCell::new(ImageInternal {
                 // The id will be filled in by thundr in lib.rs
@@ -526,8 +501,6 @@ impl Renderer {
                 i_image_view: view,
                 i_image_mem: image_mem,
                 i_image_resolution: *res,
-                i_pool_handle: handle,
-                i_sampler_descriptors: descriptors,
                 i_priv: private,
                 i_release_info: release,
                 i_damage: None,
@@ -592,19 +565,6 @@ impl Renderer {
                 // update our image's resolution
                 image.i_image_resolution.width = memimg.width as u32;
                 image.i_image_resolution.height = memimg.height as u32;
-
-                // The image samplers are bound to an image view. So once we
-                // have recreated the image view, update the sampler descs
-                for i in 0..self.fb_count {
-                    // bind the texture for our window
-                    self.update_sampler_descriptor_set(
-                        image.i_sampler_descriptors[i],
-                        1, //n binding
-                        0, // element
-                        self.image_sampler,
-                        image.i_image_view,
-                    );
-                }
             }
 
             // Perform the copy
@@ -711,12 +671,6 @@ impl Renderer {
                 ImagePrivate::Dmabuf(_) => {}
                 ImagePrivate::MemImage => {}
             }
-            // free our descriptors
-            self.desc_pool.destroy_samplers(
-                &self.dev,
-                image.i_pool_handle,
-                image.i_sampler_descriptors.as_slice(),
-            );
         }
     }
 }
