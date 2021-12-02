@@ -43,14 +43,14 @@ struct Window {
 };
 
 /* the position/size/damage of our windows */
-layout(binding = 3, std140) buffer window_list
+layout(set = 1, binding = 0, std140) buffer window_list
 {
 	layout(offset = 0) int window_count;
 	layout(offset = 16) Window windows[];
 };
 
 /* The array of textures that are the window contents */
-layout(set = 1, binding = 0) uniform sampler2D images[];
+layout(set = 1, binding = 1) uniform sampler2D images[];
 
 void main() {
 	ivec2 uv = get_location_for_wg();

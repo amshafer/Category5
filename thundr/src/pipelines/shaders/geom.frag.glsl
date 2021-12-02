@@ -6,8 +6,6 @@ layout(location = 0) in vec2 coord;
 layout(location = 1) flat in int window_index;
 layout(location = 0) out vec4 res;
 
-layout(set = 1, binding = 1) uniform sampler2D tex;
-
 struct Rect {
 	ivec2 start;
 	ivec2 size;

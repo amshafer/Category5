@@ -141,8 +141,10 @@ impl CompPipeline {
             CompPipeline::create_shader_stages(rend, program_entrypoint_name.as_ptr(), &mut curse)
         };
 
-        let layouts = &[layout];
-        let pipe_layout_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(layouts);
+        let layouts = &[layout, rend.r_images_desc_layout];
+        let pipe_layout_info = vk::PipelineLayoutCreateInfo::builder()
+            .set_layouts(layouts)
+            .build();
         let pipe_layout = unsafe {
             rend.dev
                 .create_pipeline_layout(&pipe_layout_info, None)
@@ -271,7 +273,9 @@ impl CompPipeline {
         };
 
         let layouts = &[layout, rend.r_images_desc_layout];
-        let pipe_layout_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(layouts);
+        let pipe_layout_info = vk::PipelineLayoutCreateInfo::builder()
+            .set_layouts(layouts)
+            .build();
         let pipe_layout = unsafe {
             rend.dev
                 .create_pipeline_layout(&pipe_layout_info, None)
@@ -711,7 +715,7 @@ impl Pipeline for CompPipeline {
                 vk::PipelineBindPoint::COMPUTE,
                 self.cp_visibility.p_pipeline_layout,
                 0, // first set
-                &[self.cp_visibility.p_descs],
+                &[self.cp_visibility.p_descs, rend.r_images_desc],
                 &[], // dynamic offsets
             );
 

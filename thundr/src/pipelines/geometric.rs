@@ -292,7 +292,8 @@ impl GeomPipeline {
             // still need to have a created layout for the pipeline
             let layout_info = vk::PipelineLayoutCreateInfo::builder()
                 .push_constant_ranges(constants)
-                .set_layouts(descriptor_layouts);
+                .set_layouts(descriptor_layouts)
+                .build();
             let layout = rend.dev.create_pipeline_layout(&layout_info, None).unwrap();
 
             let pipeline = GeomPipeline::create_pipeline(rend, layout, pass, &*shader_stages);

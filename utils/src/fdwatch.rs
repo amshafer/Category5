@@ -11,7 +11,6 @@ use nix::sys::time::{TimeVal, TimeValLike};
 
 #[cfg(target_os = "freebsd")]
 use nix::sys::event::*;
-#[cfg(target_os = "freebsd")]
 use std::os::unix::io::RawFd;
 
 // =============================================
@@ -106,7 +105,9 @@ impl FdWatch {
     // returns true if something is ready to be read
     pub fn wait_for_events(&mut self, timeout: usize) -> bool {
         let mut fdset = FdSet::new();
-        self.fdw_events.iter().map(|fd| fdset.insert(*fd));
+        for fd in self.fdw_events.iter() {
+            fdset.insert(*fd);
+        }
 
         // add all of our fds to the readfd list
         select(
