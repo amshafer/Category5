@@ -4,9 +4,9 @@
 // Austin Shafer - 2020
 extern crate nix;
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "freebsd"))]
 use nix::sys::select::*;
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "freebsd"))]
 use nix::sys::time::{TimeVal, TimeValLike};
 
 #[cfg(target_os = "freebsd")]
@@ -79,13 +79,13 @@ impl FdWatch {
 // =============================================
 
 // A file descriptor watcher
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "freebsd"))]
 pub struct FdWatch {
     // Events to watch
     fdw_events: Vec<RawFd>,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "freebsd"))]
 impl FdWatch {
     pub fn new() -> FdWatch {
         FdWatch {

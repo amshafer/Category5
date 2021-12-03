@@ -388,10 +388,11 @@ impl Renderer {
     ) -> Device {
         let dev_extension_names = dev_features.get_device_extensions();
 
-        let features = vk::PhysicalDeviceFeatures {
-            shader_clip_distance: 1,
-            ..Default::default()
-        };
+        let features = vk::PhysicalDeviceFeatures::builder()
+            .shader_clip_distance(true)
+            .vertex_pipeline_stores_and_atomics(true)
+            .fragment_stores_and_atomics(true)
+            .build();
 
         // for now we only have one graphics queue, so one priority
         let priorities = [1.0];
