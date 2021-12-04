@@ -76,6 +76,7 @@ pub enum PipelineType {
 impl PipelineType {
     /// Compute pipelines require storage images on the target swapchain
     /// so that the compute shaders can write to the framebuffer.
+    #[allow(dead_code)]
     pub fn requires_storage_images(&self) -> bool {
         match self {
             PipelineType::COMPUTE => true,

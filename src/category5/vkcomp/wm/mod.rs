@@ -143,7 +143,7 @@ impl WindowManager {
             "images/bar.png"
         ))
         .unwrap()
-        .to_rgba();
+        .to_bgra8();
         let pixels: Vec<u8> = img.into_vec();
 
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
@@ -158,7 +158,7 @@ impl WindowManager {
             "images/dot.png"
         ))
         .unwrap()
-        .to_rgba();
+        .to_bgra8();
         let pixels: Vec<u8> = img.into_vec();
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
         let mut dot = rend.create_image_from_bits(&mimg, None).unwrap();
@@ -174,7 +174,7 @@ impl WindowManager {
             "images/cursor.png"
         ))
         .unwrap()
-        .to_rgba();
+        .to_bgra8();
         let pixels: Vec<u8> = img.into_vec();
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
 
@@ -194,7 +194,7 @@ impl WindowManager {
     pub fn new(tx: Sender<Box<Hemisphere>>, rx: Receiver<Box<Hemisphere>>) -> WindowManager {
         //let doc = RenderDoc::new().unwrap();
         let info = th::CreateInfo::builder()
-            .enable_traditional_composition()
+            //.enable_traditional_composition()
             .build();
         let mut rend = th::Thundr::new(&info).unwrap();
         let mut list = th::SurfaceList::new();
@@ -684,7 +684,7 @@ impl WindowManager {
     /// The main event loop of the vkcomp thread
     pub fn worker_thread(&mut self) {
         // first set the background
-        let img = image::open("images/hurricane.png").unwrap().to_rgba();
+        let img = image::open("images/hurricane.png").unwrap().to_bgra8();
         let pixels: Vec<u8> = img.into_vec();
         self.set_background_from_mem(
             pixels.as_slice(),

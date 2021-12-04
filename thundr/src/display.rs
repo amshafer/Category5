@@ -16,7 +16,7 @@ use ash::vk;
 use ash::{Entry, Instance};
 
 use crate::pipelines::PipelineType;
-use crate::{CreateInfo, SurfaceType, ThundrError};
+use crate::{CreateInfo, SurfaceType};
 use utils::log;
 
 /// A display represents a physical screen
@@ -116,13 +116,13 @@ impl Display {
     pub unsafe fn select_surface_format(
         &self,
         pdev: vk::PhysicalDevice,
-        pipe_type: PipelineType,
+        _pipe_type: PipelineType,
     ) -> crate::Result<vk::SurfaceFormatKHR> {
         let formats = self
             .d_surface_loader
             .get_physical_device_surface_formats(pdev, self.d_surface)
             .unwrap();
-        log::debug!("Formats for this vulkan surface: {:#?}", formats);
+        log::error!("Formats for this vulkan surface: {:#?}", formats);
 
         match formats
             .iter()
@@ -147,16 +147,7 @@ impl Display {
             None => {}
         };
 
-        // If we are using a compute pipeline then we have to
-        // use the bgra format so the shaders know how to write to
-        // the correct format. If not, then we don't care about the
-        // format, so if we didn't find what we want we can just use
-        // whatever the driver requested.
-        // This is important on Nvidia, which doesn't render to bgra
-        match pipe_type.requires_storage_images() {
-            true => Err(ThundrError::VK_SURF_NOT_SUPPORTED),
-            false => Ok(formats[0]),
-        }
+        Ok(formats[0])
     }
 
     pub fn extension_names(info: &CreateInfo) -> Vec<*const i8> {

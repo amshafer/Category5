@@ -200,7 +200,9 @@ impl Renderer {
 
             // Now copy the bits into the image
             self.update_memory(img_mem, 0, img.as_slice());
+            self.wait_for_prev_submit();
             self.wait_for_copy();
+            self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
 
             // transition us into the appropriate memory layout for shaders
             self.cbuf_begin_recording(self.copy_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
@@ -520,6 +522,10 @@ impl Renderer {
         damage: Option<&Damage>,
         _release: Option<Box<dyn Drop>>,
     ) {
+        // Wait for any operations to complete before touching the buffer
+        self.wait_for_prev_submit();
+        self.wait_for_copy();
+
         // we have to take a mut ref to the dereferenced value, so that
         // we get a full mutable borrow of i_internal, which tells rust
         // that we can borrow individual fields later in this function
@@ -532,8 +538,6 @@ impl Renderer {
                 image.i_image_resolution
             );
 
-            // Wait for any operations to complete before touching the buffer
-            self.wait_for_prev_submit();
             // If the we are updating with a new size, then we need to recreate the
             // image
             if memimg.width != image.i_image_resolution.width as usize
@@ -588,6 +592,9 @@ impl Renderer {
         dmabuf: &Dmabuf,
         release: Option<Box<dyn Drop>>,
     ) {
+        self.wait_for_prev_submit();
+        self.wait_for_copy();
+
         let mut image = thundr_image.i_internal.borrow_mut();
         log::debug!("Updating image with dmabuf {:?}", dmabuf);
         if let ImagePrivate::Dmabuf(dp) = &mut image.i_priv {

@@ -518,7 +518,7 @@ impl Renderer {
         surface_format: vk::SurfaceFormatKHR,
         resolution: &vk::Extent2D,
         dev_features: &VKDeviceFeatures,
-        pipe_type: PipelineType,
+        _pipe_type: PipelineType,
     ) -> vk::SwapchainKHR {
         // how many images we want the swapchain to contain
         let mut desired_image_count = surface_caps.min_image_count + 1;
@@ -556,22 +556,22 @@ impl Renderer {
         // We should use a mutable swapchain to allow for rendering to
         // RGBA8888 if the swapchain doesn't suppport it and if the mutable
         // swapchain extensions are present. This is for intel
-        if surface_format.format == vk::Format::B8G8R8A8_UNORM
-            && surface_caps
-                .supported_usage_flags
-                .contains(vk::ImageUsageFlags::STORAGE)
+        if surface_caps
+            .supported_usage_flags
+            .contains(vk::ImageUsageFlags::STORAGE)
         {
             extra_usage |= vk::ImageUsageFlags::STORAGE;
+            log::error!("Format {:?} supports Storage usage", surface_format.format);
         } else {
-            use_mut_swapchain =
-                pipe_type.requires_storage_images() && dev_features.vkc_supports_mut_swapchain;
+            assert!(dev_features.vkc_supports_mut_swapchain);
+            log::error!(
+                "Format {:?} does not support Storage usage, using mutable swapchain",
+                surface_format.format
+            );
+            use_mut_swapchain = true;
 
-            if use_mut_swapchain {
-                extra_usage |= vk::ImageUsageFlags::STORAGE;
-                swap_flags |= vk::SwapchainCreateFlagsKHR::MUTABLE_FORMAT;
-            } else if pipe_type == PipelineType::COMPUTE {
-                unimplemented!("fallback to traditional composition?");
-            }
+            extra_usage |= vk::ImageUsageFlags::STORAGE;
+            swap_flags |= vk::SwapchainCreateFlagsKHR::MUTABLE_FORMAT;
         }
 
         // see this for how to get storage swapchain on intel:
@@ -608,7 +608,7 @@ impl Renderer {
             // the supported format + any new formats we select.
             let add_formats = vk::ImageFormatListCreateInfoKHR::builder()
                 // just add rgba32 because it's the most common.
-                .view_formats(&[vk::Format::B8G8R8A8_UNORM, surface_format.format])
+                .view_formats(&[surface_format.format])
                 .build();
             create_info.p_next = &add_formats as *const _ as *mut std::ffi::c_void;
         }
@@ -675,14 +675,14 @@ impl Renderer {
             .map(|&image| {
                 let format_props =
                     inst.get_physical_device_format_properties(pdev, surface_format.format);
-                log::debug!("format props: {:#?}", format_props);
+                log::error!("format props: {:#?}", format_props);
 
                 // we want to interact with this image as a 2D
                 // array of RGBA pixels (i.e. the "normal" way)
                 let mut create_info = vk::ImageViewCreateInfo::builder()
                     .view_type(vk::ImageViewType::TYPE_2D)
                     // see `create_swapchain` for why we don't use surface_format
-                    .format(vk::Format::B8G8R8A8_UNORM)
+                    .format(surface_format.format)
                     // select the normal RGBA type
                     // swap the R and B channels because we are mapping this
                     // to B8G8R8_SRGB using a mutable swapchain
@@ -1261,8 +1261,10 @@ impl Renderer {
 
             // TODO: allow for multiple pipes in use at once
             let pipe_type = if info.enable_traditional_composition {
+                log::error!("Using render pipeline");
                 PipelineType::GEOMETRIC
             } else {
+                log::error!("Using async compute pipeline");
                 PipelineType::COMPUTE
             };
             let enabled_pipelines = vec![pipe_type];
@@ -1583,28 +1585,28 @@ impl Renderer {
     }
 
     /// Wait for the submit_fence
-    pub unsafe fn wait_for_prev_submit(&self) {
-        self.dev
-            .wait_for_fences(
-                &[self.submit_fence, self.copy_cbuf_fence],
-                true,          // wait for all
-                std::u64::MAX, //timeout
-            )
-            .expect("Could not wait for the copy fence");
-        self.dev
-            .reset_fences(&[self.submit_fence, self.copy_cbuf_fence])
-            .unwrap();
+    pub fn wait_for_prev_submit(&self) {
+        unsafe {
+            self.dev
+                .wait_for_fences(
+                    &[self.submit_fence, self.copy_cbuf_fence],
+                    true,          // wait for all
+                    std::u64::MAX, //timeout
+                )
+                .expect("Could not wait for the copy fence");
+        }
     }
 
-    pub unsafe fn wait_for_copy(&self) {
-        self.dev
-            .wait_for_fences(
-                &[self.copy_cbuf_fence],
-                true,          // wait for all
-                std::u64::MAX, //timeout
-            )
-            .expect("Could not wait for the copy fence");
-        self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
+    pub fn wait_for_copy(&self) {
+        unsafe {
+            self.dev
+                .wait_for_fences(
+                    &[self.copy_cbuf_fence],
+                    true,          // wait for all
+                    std::u64::MAX, //timeout
+                )
+                .expect("Could not wait for the copy fence");
+        }
     }
 
     /// Records and submits a one-time command buffer.
