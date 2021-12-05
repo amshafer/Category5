@@ -46,7 +46,7 @@ use utils::{log, timing::*, WindowId};
 
 use input::event::keyboard::{KeyState, KeyboardEvent, KeyboardEventTrait};
 use input::event::pointer;
-use input::event::pointer::{ButtonState, PointerEvent};
+use input::event::pointer::{ButtonState, PointerEvent, PointerScrollEvent};
 use input::event::Event;
 use input::{Libinput, LibinputInterface};
 
@@ -251,16 +251,32 @@ impl Input {
                     pm_dy: m.dy(),
                 }));
             }
-            Some(Event::Pointer(PointerEvent::Axis(a))) => {
-                log::debug!(
+            // TODO: actually handle advanced scrolling/finger behavior
+            // We should track ScrollWheel using the v120 api, and handle
+            // high-res and wheel click behavior. For ScrollFinger we
+            // should handle kinetic scrolling
+            Some(Event::Pointer(PointerEvent::ScrollFinger(sf))) => {
+                log::error!(
                     "scrolling by ({}, {})",
-                    a.axis_value(pointer::Axis::Horizontal),
-                    a.axis_value(pointer::Axis::Vertical),
+                    sf.scroll_value(pointer::Axis::Horizontal),
+                    sf.scroll_value(pointer::Axis::Vertical),
                 );
 
                 return Some(InputEvent::axis(Axis {
-                    a_hori_val: a.axis_value(pointer::Axis::Horizontal),
-                    a_vert_val: a.axis_value(pointer::Axis::Vertical),
+                    a_hori_val: sf.scroll_value(pointer::Axis::Horizontal),
+                    a_vert_val: sf.scroll_value(pointer::Axis::Vertical),
+                }));
+            }
+            Some(Event::Pointer(PointerEvent::ScrollWheel(sw))) => {
+                log::error!(
+                    "scrolling by ({}, {})",
+                    sw.scroll_value(pointer::Axis::Horizontal),
+                    sw.scroll_value(pointer::Axis::Vertical),
+                );
+
+                return Some(InputEvent::axis(Axis {
+                    a_hori_val: sw.scroll_value(pointer::Axis::Horizontal),
+                    a_vert_val: sw.scroll_value(pointer::Axis::Vertical),
                 }));
             }
             Some(Event::Pointer(PointerEvent::Button(b))) => {
