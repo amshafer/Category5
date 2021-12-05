@@ -1,5 +1,5 @@
 use crate::dom;
-use crate::Result;
+use crate::{DakotaError, Result};
 
 #[cfg(feature = "wayland")]
 extern crate wayc;
@@ -9,7 +9,10 @@ use wayc::Wayc;
 #[cfg(any(unix, macos))]
 extern crate sdl2;
 #[cfg(any(unix, macos))]
-use sdl2::{event::Event, keyboard::Keycode};
+use sdl2::{
+    event::{Event, WindowEvent},
+    keyboard::Keycode,
+};
 
 pub trait Platform {
     fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType>;
@@ -17,7 +20,7 @@ pub trait Platform {
     fn set_output_params(&mut self, win: &dom::Window, dims: (u32, u32)) -> Result<()>;
 
     /// Returns true if we should terminate i.e. the window has been closed.
-    fn run<F: FnMut()>(&mut self, func: F) -> Result<bool>;
+    fn run<F: FnMut()>(&mut self, func: F) -> std::result::Result<bool, DakotaError>;
 }
 
 #[cfg(feature = "wayland")]
@@ -97,7 +100,7 @@ impl Platform for SDL2Plat {
         Ok(())
     }
 
-    fn run<F>(&mut self, mut func: F) -> Result<bool>
+    fn run<F>(&mut self, mut func: F) -> std::result::Result<bool, DakotaError>
     where
         F: FnMut(),
     {
@@ -109,6 +112,14 @@ impl Platform for SDL2Plat {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => return Ok(true),
+                Event::Window {
+                    timestamp: _,
+                    window_id: _,
+                    win_event,
+                } => match win_event {
+                    WindowEvent::Resized { .. } => return Err(DakotaError::OUT_OF_DATE),
+                    _ => {}
+                },
                 _ => {}
             }
         }

@@ -532,6 +532,19 @@ impl Dakota {
             Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
         };
 
-        self.d_plat.run(|| {})
+        match self.d_plat.run(|| {}) {
+            Ok(should_terminate) => return Ok(should_terminate),
+            Err(th::ThundrError::OUT_OF_DATE) => {
+                // This is a weird one
+                // So the above OUT_OF_DATEs are returned from thundr, where we
+                // can expect it will handle OOD itself. But here we have
+                // OUT_OF_DATE returned from our SDL2 backend, so we need
+                // to tell Thundr to do OOD itself
+                self.d_thund.handle_ood();
+                self.handle_ood()?;
+                return Err(Error::from(th::ThundrError::OUT_OF_DATE));
+            }
+            Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
+        };
     }
 }

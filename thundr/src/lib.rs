@@ -380,7 +380,7 @@ impl Thundr {
     ///
     /// We have to destroy and recreate our pipeline along the way since
     /// it depends on the swapchain.
-    fn handle_ood(&mut self) {
+    pub fn handle_ood(&mut self) {
         self.th_pipe.destroy(&mut self.th_rend);
         unsafe {
             self.th_rend.recreate_swapchain();

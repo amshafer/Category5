@@ -6,7 +6,10 @@ extern crate utils;
 use utils::timing::*;
 
 extern crate sdl2;
-use sdl2::{event::Event, keyboard::Keycode};
+use sdl2::{
+    event::{Event, WindowEvent},
+    keyboard::Keycode,
+};
 
 fn main() {
     // SDL goodies
@@ -69,7 +72,28 @@ fn main() {
 
     let mut stop = StopWatch::new();
 
-    let mut draw_func = move || {
+    // ----------- now wait for the app to exit
+
+    'running: loop {
+        for event in event_pump.poll_iter() {
+            match event {
+                Event::Window {
+                    timestamp: _,
+                    window_id: _,
+                    win_event,
+                } => match win_event {
+                    WindowEvent::Resized { .. } => thund.handle_ood(),
+                    _ => {}
+                },
+                Event::Quit { .. }
+                | Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    ..
+                } => break 'running,
+                _ => {}
+            }
+        }
+
         // ----------- update the location of the cursor
         let curpos = cursor_surf.get_pos();
         //println!("curpos = {:?}", curpos);
@@ -90,14 +114,14 @@ fn main() {
         // ----------- Perform draw calls
         match thund.draw_frame(&mut list) {
             Ok(_) => {}
-            Err(th::ThundrError::OUT_OF_DATE) => return,
+            Err(th::ThundrError::OUT_OF_DATE) => continue,
             Err(e) => panic!("failed to draw frame: {:?}", e),
         };
 
         // ----------- Present to screen
         match thund.present() {
             Ok(_) => {}
-            Err(th::ThundrError::OUT_OF_DATE) => return,
+            Err(th::ThundrError::OUT_OF_DATE) => continue,
             Err(e) => panic!("failed to draw frame: {:?}", e),
         };
         stop.end();
@@ -106,21 +130,5 @@ fn main() {
         //    "Thundr took {:?} ms this frame",
         //    stop.get_duration().as_millis()
         //);
-    };
-
-    // ----------- now wait for the app to exit
-
-    'running: loop {
-        draw_func();
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => break 'running,
-                _ => {}
-            }
-        }
     }
 }
