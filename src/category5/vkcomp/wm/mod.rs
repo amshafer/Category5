@@ -194,7 +194,7 @@ impl WindowManager {
     pub fn new(tx: Sender<Box<Hemisphere>>, rx: Receiver<Box<Hemisphere>>) -> WindowManager {
         //let doc = RenderDoc::new().unwrap();
         let info = th::CreateInfo::builder()
-            //.enable_traditional_composition()
+            .enable_traditional_composition()
             .build();
         let mut rend = th::Thundr::new(&info).unwrap();
         let mut list = th::SurfaceList::new();

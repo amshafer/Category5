@@ -10,8 +10,8 @@ edition = "2018"
 thundr={path="thundr"}
 wayland-server={version="0.29.1", features=["use_system_lib"]}
 wayland-commons="0.29.1"
-input="0.4.1"
-udev="0.2.0"
+input={path="../input.rs", features=["gen"]}
+udev="0.6"
 libc="0.2"
 image="0.23.14"
 nix="0.17"

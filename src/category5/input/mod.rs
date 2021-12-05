@@ -34,7 +34,6 @@ pub mod event;
 
 extern crate input;
 extern crate nix;
-extern crate udev;
 extern crate wayland_server as ws;
 extern crate xkbcommon;
 
@@ -50,7 +49,6 @@ use input::event::pointer;
 use input::event::pointer::{ButtonState, PointerEvent};
 use input::event::Event;
 use input::{Libinput, LibinputInterface};
-use udev::{Context, Enumerator};
 
 use xkbcommon::xkb;
 pub use xkbcommon::xkb::{keysyms, Keysym};
@@ -133,8 +131,6 @@ impl LibinputInterface for Inkit {
 /// will consult this before sending out keymaps/syms
 pub struct Input {
     pub i_atmos: Rc<RefCell<Atmosphere>>,
-    /// The udev context
-    uctx: Context,
     /// libinput context
     libin: Libinput,
     /// xkb goodies
@@ -172,22 +168,8 @@ impl Input {
     ///
     /// Setup the libinput library from a udev context
     pub fn new(atmos: Rc<RefCell<Atmosphere>>) -> Input {
-        // Make a new context for ourselves
-        let uctx = Context::new().unwrap();
-
-        // Here we want to get a list of all of the
-        // detected devices, which is what the enumerator
-        // does.
-        let mut udev_enum = Enumerator::new(&uctx).unwrap();
-        let devices = udev_enum.scan_devices().unwrap();
-
-        log::debug!("Printing all input devices:");
-        for dev in devices {
-            log::debug!(" - {:?}", dev.syspath());
-        }
-
         let kit: Inkit = Inkit { _inner: 0 };
-        let mut libin = Libinput::new_from_udev(kit, &uctx);
+        let mut libin = Libinput::new_with_udev(kit);
 
         // we need to choose a "seat" for udev to listen on
         // the default seat is seat0, which is all input devs
@@ -213,7 +195,6 @@ impl Input {
 
         Input {
             i_atmos: atmos,
-            uctx: uctx,
             libin: libin,
             i_xkb_ctx: context,
             i_xkb_keymap: keymap,
