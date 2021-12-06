@@ -268,6 +268,11 @@ impl Atmosphere {
                 let (wx, wy) = self.get_surface_pos(win);
 
                 if let Some(input_region) = surf.s_input.as_ref() {
+                    log::info!(
+                        "Checking input region {:?} against {:?}",
+                        input_region,
+                        ((x - wx) as i32, (y - wy) as i32)
+                    );
                     // Get the adjusted position of the input region
                     // based on the surface's position.
                     // The wl_region::Region doesn't track this, so
@@ -294,6 +299,7 @@ impl Atmosphere {
             return true;
         });
 
+        log::info!("Found window {:?}", ret);
         return ret;
     }
 

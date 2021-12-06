@@ -575,13 +575,25 @@ impl Input {
         {
             // If the surface's root window is not in focus, make it in focus
             if let Some(focus) = atmos.get_root_win_in_focus() {
-                if let Some(root) = atmos.get_root_window(id) {
-                    if root != focus && c.c_state == ButtonState::Pressed {
-                        // Tell atmos that this is the one in focus
-                        atmos.focus_on(Some(id));
-                        set_focus = true;
-                    }
+                // If this is a surface that is part of a subsurface stack,
+                // get the root id. Otherwise this is a root.
+                let root = match atmos.get_root_window(id) {
+                    Some(root) => root,
+                    None => id,
+                };
+
+                if root != focus && c.c_state == ButtonState::Pressed {
+                    set_focus = true;
                 }
+            } else {
+                // If no window is in focus, then we have just clicked on
+                // one and should focus on it
+                set_focus = true;
+            }
+
+            if set_focus {
+                // Tell atmos that this is the one in focus
+                atmos.focus_on(Some(id));
             }
 
             // do this first here so we don't do it more than once
