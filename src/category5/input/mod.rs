@@ -294,7 +294,7 @@ impl Input {
                     k_state: k.key_state(),
                 }));
             }
-            Some(e) => log::error!("Unhandled Input Event: {:?}", e),
+            Some(e) => log::debug!("Unhandled Input Event: {:?}", e),
             None => (),
         };
 
@@ -366,6 +366,7 @@ impl Input {
     /// Atmos is passed since this is called from `atmos.focus_on`,
     /// so atmos' rc may be held.
     pub fn keyboard_enter(atmos: &Atmosphere, id: WindowId) {
+        log::error!("Keyboard entered WindowId {:?}", id);
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
             let seat = cell.borrow_mut();
             // TODO: verify
@@ -391,6 +392,7 @@ impl Input {
     // Atmos is passed since this is called from `atmos.focus_on`,
     // so atmos' rc may be held.
     pub fn keyboard_leave(atmos: &Atmosphere, id: WindowId) {
+        log::error!("Keyboard left WindowId {:?}", id);
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
             let seat = cell.borrow_mut();
             // TODO: verify
@@ -412,6 +414,7 @@ impl Input {
     /// Atmos is passed since this may be called from `atmos.focus_on`,
     /// so atmos' rc may be held.
     pub fn pointer_enter(atmos: &Atmosphere, id: WindowId) {
+        log::error!("Pointer entered WindowId {:?}", id);
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
             if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                 let (cx, cy) = atmos.get_cursor_pos();
@@ -442,6 +445,7 @@ impl Input {
     /// Atmos is passed since this may be called from `atmos.focus_on`,
     /// so atmos' rc may be held.
     pub fn pointer_leave(atmos: &Atmosphere, id: WindowId) {
+        log::error!("Pointer left WindowId {:?}", id);
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
             let seat = cell.borrow_mut();
             // TODO: verify
@@ -470,6 +474,7 @@ impl Input {
         // If a resize is happening then collect the cursor changes
         // to send at the end of the frame
         if atmos.get_resizing().is_some() {
+            log::error!("Resizing in progress");
             self.i_resize_diff.0 += m.pm_dx;
             self.i_resize_diff.1 += m.pm_dy;
             return;

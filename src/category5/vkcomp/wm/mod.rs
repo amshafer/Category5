@@ -352,7 +352,7 @@ impl WindowManager {
     /// Copies the shm buffer into the app's image.
     /// Creates a new image if one doesn't exist yet.
     fn update_window_contents_from_mem(&mut self, info: &UpdateWindowContentsFromMem) {
-        log::error!("Updating window {:?} with {:#?}", info.id, info);
+        log::debug!("Updating window {:?} with {:#?}", info.id, info);
         // Find the app corresponding to that window id
         let mut app = match self.wm_apps[info.id.into()].as_mut() {
             Some(a) => a,

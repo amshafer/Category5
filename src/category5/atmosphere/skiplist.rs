@@ -207,7 +207,7 @@ impl Atmosphere {
 
     /// Adds the surface `win` as the top subsurface of `parent`.
     pub fn add_new_top_subsurf(&mut self, parent: WindowId, win: WindowId) {
-        log::debug!("Adding subsurface {:?} to {:?}", win, parent);
+        log::info!("Adding subsurface {:?} to {:?}", win, parent);
         // Add the immediate parent
         self.set_parent_window(win, Some(parent));
 
@@ -231,8 +231,11 @@ impl Atmosphere {
     ///
     /// This does not accound for any regions, just the surface size.
     pub fn surface_is_at_point(&self, win: WindowId, barsize: f32, x: f32, y: f32) -> bool {
+        log::info!("surface_is_at_point(win={:?}, x={}, y={})", win, x, y);
         let (wx, wy) = self.get_surface_pos(win);
         let (ww, wh) = self.get_surface_size(win);
+        log::info!("surface {:?} pos x={}, y={}", win, wx, wy);
+        log::info!("surface {:?} size x={}, y={}", win, ww, wh);
 
         // Ugly:
         // For the barsize to be included in our calculations,
@@ -253,16 +256,28 @@ impl Atmosphere {
     /// which window contains the point, we need to check if windows with an
     /// input region contain the point.
     pub fn find_window_with_input_at_point(&self, x: f32, y: f32) -> Option<WindowId> {
+        log::info!("find_window_with_input_at_point {},{}", x, y);
         let barsize = self.get_barsize();
         let mut ret = None;
 
         self.map_inorder_on_surfs(|win| {
+            log::info!("checking window {:?}", win);
             // We need to get t
             if let Some(surf_cell) = self.get_surface_from_id(win) {
                 let surf = surf_cell.borrow();
-                if let Some(in_reg) = surf.s_input.as_ref() {
-                    // Check against the input region's area.
-                    if in_reg.borrow().intersects(x as i32, y as i32) {
+                let (wx, wy) = self.get_surface_pos(win);
+
+                if let Some(input_region) = surf.s_input.as_ref() {
+                    // Get the adjusted position of the input region
+                    // based on the surface's position.
+                    // The wl_region::Region doesn't track this, so
+                    // our (ugly) hack for this is to reduce (x, y)
+                    // by the position of the window, instead of scaling
+                    // every Rect in the Region up by that amount
+                    if input_region
+                        .borrow()
+                        .intersects((x - wx) as i32, (y - wy) as i32)
+                    {
                         ret = Some(win);
                         return false;
                     }
