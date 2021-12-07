@@ -1,10 +1,10 @@
 // Input event representation
 //
 // Austin Shafer - 2020
-extern crate wayland_server as ws;
 extern crate input;
-use input::event::pointer::ButtonState;
+extern crate wayland_server as ws;
 use input::event::keyboard::KeyState;
+use input::event::pointer::ButtonState;
 
 use ws::protocol::wl_keyboard;
 
@@ -51,9 +51,7 @@ pub struct Key {
 // into a KeyState from wl_keyboard
 pub fn map_key_state(state: KeyState) -> wl_keyboard::KeyState {
     match state {
-        KeyState::Pressed =>
-            wl_keyboard::KeyState::Pressed,
-        KeyState::Released =>
-            wl_keyboard::KeyState::Released,
+        KeyState::Pressed => wl_keyboard::KeyState::Pressed,
+        KeyState::Released => wl_keyboard::KeyState::Released,
     }
 }

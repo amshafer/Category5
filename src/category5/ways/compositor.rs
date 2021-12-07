@@ -301,7 +301,7 @@ impl EventManager {
         let input_sys = self.em_input.clone();
 
         self.em_display.create_global::<wl_seat::WlSeat, _>(
-            5, // version
+            7, // version
             Filter::new(move |(res, _): (ws::Main<wl_seat::WlSeat>, u32), _, _| {
                 // as_ref turns the Main into a Resource
                 let client = res.as_ref().client().unwrap();

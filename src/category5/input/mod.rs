@@ -317,11 +317,11 @@ impl Input {
                     if let Some(pointer) = &si.si_pointer {
                         let time = get_current_millis();
                         // deliver the axis events, one for each direction
-                        if a.a_hori_val > 0.0 {
+                        if a.a_hori_val != 0.0 {
                             pointer.axis(time, wl_pointer::Axis::HorizontalScroll, a.a_hori_val);
                         }
 
-                        if a.a_vert_val > 0.0 {
+                        if a.a_vert_val != 0.0 {
                             pointer.axis(time, wl_pointer::Axis::VerticalScroll, a.a_vert_val);
                         }
                         pointer.frame();

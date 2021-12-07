@@ -78,6 +78,16 @@ impl SeatInstance {
             fd,
             input.i_xkb_keymap_name.as_bytes().len() as u32,
         );
+        // Advertise the server repeat capabilities. This is needed
+        // to make gtk apps not crash. They will check for this event
+        // and if it is not found will resort to checking the peripherals
+        // schema, which doesn't have a repeat key and causes an abort.
+        // That gross behavior aside, the spec does require us to send this.
+        // Send 0 to show we don't repeat.
+        // as_ref turns the Main into a Resource
+        if keyboard.as_ref().version() >= 4 {
+            keyboard.repeat_info(0, 0);
+        }
 
         // add the keyboard to this seat
         self.si_keyboard = Some(keyboard.clone());
