@@ -91,6 +91,19 @@ impl MemImage {
             height: height,
         }
     }
+
+    /// Performs a simple checksum of adding all the pixels
+    /// up in a gigantic int. Not perfect but should work for
+    /// comparisons.
+    pub fn checksum(&self) -> usize {
+        let mut ret: usize = 0;
+
+        for field in self.as_slice().iter() {
+            ret += *field as usize;
+        }
+
+        ret
+    }
 }
 
 // WARNING

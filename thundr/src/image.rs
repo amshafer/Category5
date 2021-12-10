@@ -178,6 +178,13 @@ impl Renderer {
                 height: img.height as u32,
             };
 
+            //log::error!(
+            //    "create_image_from_bits: Image {}x{} checksum {}",
+            //    img.width,
+            //    img.height,
+            //    img.checksum()
+            //);
+
             // At this point we can drop release. We have already copied from the
             // memimage so we are good to signal wayland
 
@@ -525,6 +532,13 @@ impl Renderer {
         // Wait for any operations to complete before touching the buffer
         self.wait_for_prev_submit();
         self.wait_for_copy();
+
+        //log::error!(
+        //    "update_image_from_bits: Image {}x{} checksum {}",
+        //    memimg.width,
+        //    memimg.height,
+        //    memimg.checksum()
+        //);
 
         // we have to take a mut ref to the dereferenced value, so that
         // we get a full mutable borrow of i_internal, which tells rust
