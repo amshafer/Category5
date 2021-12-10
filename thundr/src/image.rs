@@ -172,6 +172,9 @@ impl Renderer {
         img: &MemImage,
         _release: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
+        self.wait_for_prev_submit();
+        self.wait_for_copy();
+
         unsafe {
             let tex_res = vk::Extent2D {
                 width: img.width as u32,
@@ -207,8 +210,8 @@ impl Renderer {
 
             // Now copy the bits into the image
             self.update_memory(img_mem, 0, img.as_slice());
-            self.wait_for_prev_submit();
-            self.wait_for_copy();
+
+            // Reset the fences for our cbuf submission below
             self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
 
             // transition us into the appropriate memory layout for shaders
