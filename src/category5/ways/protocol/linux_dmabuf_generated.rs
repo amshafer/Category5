@@ -8,7 +8,7 @@ static mut types_null: [*const sys::common::wl_interface; 6] = [
     NULLPTR as *const sys::common::wl_interface,
     NULLPTR as *const sys::common::wl_interface,
 ];
-#[doc = "factory for creating dmabuf-based wl_buffers\n\nFollowing the interfaces from:\nhttps://www.khronos.org/registry/egl/extensions/EXT/EGL_EXT_image_dma_buf_import.txt\nhttps://www.khronos.org/registry/EGL/extensions/EXT/EGL_EXT_image_dma_buf_import_modifiers.txt\nand the Linux DRM sub-system's AddFb2 ioctl.\n\nThis interface offers ways to create generic dmabuf-based\nwl_buffers. Immediately after a client binds to this interface,\nthe set of supported formats and format modifiers is sent with\n'format' and 'modifier' events.\n\nThe following are required from clients:\n\n- Clients must ensure that either all data in the dma-buf is\ncoherent for all subsequent read access or that coherency is\ncorrectly handled by the underlying kernel-side dma-buf\nimplementation.\n\n- Don't make any more attachments after sending the buffer to the\ncompositor. Making more attachments later increases the risk of\nthe compositor not being able to use (re-import) an existing\ndmabuf-based wl_buffer.\n\nThe underlying graphics stack must ensure the following:\n\n- The dmabuf file descriptors relayed to the server will stay valid\nfor the whole lifetime of the wl_buffer. This means the server may\nat any time use those fds to import the dmabuf into any kernel\nsub-system that might accept it.\n\nHowever, when the underlying graphics stack fails to deliver the\npromise, because of e.g. a device hot-unplug which raises internal\nerrors, after the wl_buffer has been successfully created the\ncompositor must not raise protocol errors to the client when dmabuf\nimport later fails.\n\nTo create a wl_buffer from one or more dmabufs, a client creates a\nzwp_linux_dmabuf_params_v1 object with a zwp_linux_dmabuf_v1.create_params\nrequest. All planes required by the intended format are added with\nthe 'add' request. Finally, a 'create' or 'create_immed' request is\nissued, which has the following outcome depending on the import success.\n\nThe 'create' request,\n- on success, triggers a 'created' event which provides the final\nwl_buffer to the client.\n- on failure, triggers a 'failed' event to convey that the server\ncannot use the dmabufs received from the client.\n\nFor the 'create_immed' request,\n- on success, the server immediately imports the added dmabufs to\ncreate a wl_buffer. No event is sent from the server in this case.\n- on failure, the server can choose to either:\n- terminate the client by raising a fatal error.\n- mark the wl_buffer as failed, and send a 'failed' event to the\nclient. If the client uses a failed wl_buffer as an argument to any\nrequest, the behaviour is compositor implementation-defined.\n\nWarning! The protocol described in this file is experimental and\nbackward incompatible changes may be made. Backward compatible changes\nmay be added together with the corresponding interface version bump.\nBackward incompatible changes are done by bumping the version number in\nthe protocol and interface names and resetting the interface version.\nOnce the protocol is to be declared stable, the 'z' prefix and the\nversion number in the protocol and interface names are removed and the\ninterface version number is reset."]
+#[doc = "factory for creating dmabuf-based wl_buffers\n\nFollowing the interfaces from:\nhttps://www.khronos.org/registry/egl/extensions/EXT/EGL_EXT_image_dma_buf_import.txt\nhttps://www.khronos.org/registry/EGL/extensions/EXT/EGL_EXT_image_dma_buf_import_modifiers.txt\nand the Linux DRM sub-system's AddFb2 ioctl.\n\nThis interface offers ways to create generic dmabuf-based wl_buffers.\n\nClients can use the get_surface_feedback request to get dmabuf feedback\nfor a particular surface. If the client wants to retrieve feedback not\ntied to a surface, they can use the get_default_feedback request.\n\nThe following are required from clients:\n\n- Clients must ensure that either all data in the dma-buf is\ncoherent for all subsequent read access or that coherency is\ncorrectly handled by the underlying kernel-side dma-buf\nimplementation.\n\n- Don't make any more attachments after sending the buffer to the\ncompositor. Making more attachments later increases the risk of\nthe compositor not being able to use (re-import) an existing\ndmabuf-based wl_buffer.\n\nThe underlying graphics stack must ensure the following:\n\n- The dmabuf file descriptors relayed to the server will stay valid\nfor the whole lifetime of the wl_buffer. This means the server may\nat any time use those fds to import the dmabuf into any kernel\nsub-system that might accept it.\n\nHowever, when the underlying graphics stack fails to deliver the\npromise, because of e.g. a device hot-unplug which raises internal\nerrors, after the wl_buffer has been successfully created the\ncompositor must not raise protocol errors to the client when dmabuf\nimport later fails.\n\nTo create a wl_buffer from one or more dmabufs, a client creates a\nzwp_linux_dmabuf_params_v1 object with a zwp_linux_dmabuf_v1.create_params\nrequest. All planes required by the intended format are added with\nthe 'add' request. Finally, a 'create' or 'create_immed' request is\nissued, which has the following outcome depending on the import success.\n\nThe 'create' request,\n- on success, triggers a 'created' event which provides the final\nwl_buffer to the client.\n- on failure, triggers a 'failed' event to convey that the server\ncannot use the dmabufs received from the client.\n\nFor the 'create_immed' request,\n- on success, the server immediately imports the added dmabufs to\ncreate a wl_buffer. No event is sent from the server in this case.\n- on failure, the server can choose to either:\n- terminate the client by raising a fatal error.\n- mark the wl_buffer as failed, and send a 'failed' event to the\nclient. If the client uses a failed wl_buffer as an argument to any\nrequest, the behaviour is compositor implementation-defined.\n\nFor all DRM formats and unless specified in another protocol extension,\npre-multiplied alpha is used for pixel values.\n\nWarning! The protocol described in this file is experimental and\nbackward incompatible changes may be made. Backward compatible changes\nmay be added together with the corresponding interface version bump.\nBackward incompatible changes are done by bumping the version number in\nthe protocol and interface names and resetting the interface version.\nOnce the protocol is to be declared stable, the 'z' prefix and the\nversion number in the protocol and interface names are removed and the\ninterface version number is reset."]
 pub mod zwp_linux_dmabuf_v1 {
     use super::sys::common::{wl_argument, wl_array, wl_interface, wl_message};
     use super::sys::server::*;
@@ -26,6 +26,15 @@ pub mod zwp_linux_dmabuf_v1 {
         CreateParams {
             params_id: Main<super::zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1>,
         },
+        #[doc = "get default feedback\n\nThis request creates a new wp_linux_dmabuf_feedback object not bound\nto a particular surface. This object will deliver feedback about dmabuf\nparameters to use if the client doesn't support per-surface feedback\n(see get_surface_feedback).\n\nOnly available since version 4 of the interface"]
+        GetDefaultFeedback {
+            id: Main<super::zwp_linux_dmabuf_feedback_v1::ZwpLinuxDmabufFeedbackV1>,
+        },
+        #[doc = "get feedback for a surface\n\nThis request creates a new wp_linux_dmabuf_feedback object for the\nspecified wl_surface. This object will deliver feedback about dmabuf\nparameters to use for buffers attached to this surface.\n\nIf the surface is destroyed before the wp_linux_dmabuf_feedback object,\nthe feedback object becomes inert.\n\nOnly available since version 4 of the interface"]
+        GetSurfaceFeedback {
+            id: Main<super::zwp_linux_dmabuf_feedback_v1::ZwpLinuxDmabufFeedbackV1>,
+            surface: super::wl_surface::WlSurface,
+        },
     }
     impl super::MessageGroup for Request {
         const MESSAGES: &'static [super::MessageDesc] = &[
@@ -41,6 +50,18 @@ pub mod zwp_linux_dmabuf_v1 {
                 signature: &[super::ArgumentType::NewId],
                 destructor: false,
             },
+            super::MessageDesc {
+                name: "get_default_feedback",
+                since: 4,
+                signature: &[super::ArgumentType::NewId],
+                destructor: false,
+            },
+            super::MessageDesc {
+                name: "get_surface_feedback",
+                since: 4,
+                signature: &[super::ArgumentType::NewId, super::ArgumentType::Object],
+                destructor: false,
+            },
         ];
         type Map = super::ResourceMap;
         fn is_destructor(&self) -> bool {
@@ -53,12 +74,16 @@ pub mod zwp_linux_dmabuf_v1 {
             match *self {
                 Request::Destroy => 0,
                 Request::CreateParams { .. } => 1,
+                Request::GetDefaultFeedback { .. } => 2,
+                Request::GetSurfaceFeedback { .. } => 3,
             }
         }
         fn since(&self) -> u32 {
             match *self {
                 Request::Destroy => 1,
                 Request::CreateParams { .. } => 1,
+                Request::GetDefaultFeedback { .. } => 4,
+                Request::GetSurfaceFeedback { .. } => 4,
             }
         }
         fn child<Meta: ObjectMetadata>(
@@ -69,6 +94,12 @@ pub mod zwp_linux_dmabuf_v1 {
             match opcode {
                 1 => Some(Object::from_interface::<
                     super::zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1,
+                >(version, meta.child())),
+                2 => Some(Object::from_interface::<
+                    super::zwp_linux_dmabuf_feedback_v1::ZwpLinuxDmabufFeedbackV1,
+                >(version, meta.child())),
+                3 => Some(Object::from_interface::<
+                    super::zwp_linux_dmabuf_feedback_v1::ZwpLinuxDmabufFeedbackV1,
                 >(version, meta.child())),
                 _ => None,
             }
@@ -82,6 +113,37 @@ pub mod zwp_linux_dmabuf_v1 {
                         params_id: {
                             if let Some(Argument::NewId(val)) = args.next() {
                                 map.get_new(val).ok_or(())?
+                            } else {
+                                return Err(());
+                            }
+                        },
+                    })
+                }
+                2 => {
+                    let mut args = msg.args.into_iter();
+                    Ok(Request::GetDefaultFeedback {
+                        id: {
+                            if let Some(Argument::NewId(val)) = args.next() {
+                                map.get_new(val).ok_or(())?
+                            } else {
+                                return Err(());
+                            }
+                        },
+                    })
+                }
+                3 => {
+                    let mut args = msg.args.into_iter();
+                    Ok(Request::GetSurfaceFeedback {
+                        id: {
+                            if let Some(Argument::NewId(val)) = args.next() {
+                                map.get_new(val).ok_or(())?
+                            } else {
+                                return Err(());
+                            }
+                        },
+                        surface: {
+                            if let Some(Argument::Object(val)) = args.next() {
+                                map.get(val).ok_or(())?.into()
                             } else {
                                 return Err(());
                             }
@@ -110,6 +172,28 @@ pub mod zwp_linux_dmabuf_v1 {
                         },
                     })
                 }
+                2 => {
+                    let _args = ::std::slice::from_raw_parts(args, 1);
+                    Ok(Request::GetDefaultFeedback {
+                        id: {
+                            let me = Resource::<ZwpLinuxDmabufV1>::from_c_ptr(obj as *mut _);
+                            me . make_child_for :: < super :: zwp_linux_dmabuf_feedback_v1 :: ZwpLinuxDmabufFeedbackV1 > (_args [0] . n) . unwrap ()
+                        },
+                    })
+                }
+                3 => {
+                    let _args = ::std::slice::from_raw_parts(args, 2);
+                    Ok(Request::GetSurfaceFeedback {
+                        id: {
+                            let me = Resource::<ZwpLinuxDmabufV1>::from_c_ptr(obj as *mut _);
+                            me . make_child_for :: < super :: zwp_linux_dmabuf_feedback_v1 :: ZwpLinuxDmabufFeedbackV1 > (_args [0] . n) . unwrap ()
+                        },
+                        surface: Resource::<super::wl_surface::WlSurface>::from_c_ptr(
+                            _args[1].o as *mut _,
+                        )
+                        .into(),
+                    })
+                }
                 _ => return Err(()),
             }
         }
@@ -123,9 +207,9 @@ pub mod zwp_linux_dmabuf_v1 {
     #[derive(Debug)]
     #[non_exhaustive]
     pub enum Event {
-        #[doc = "supported buffer format\n\nThis event advertises one buffer format that the server supports.\nAll the supported formats are advertised once when the client\nbinds to this interface. A roundtrip after binding guarantees\nthat the client has received all supported formats.\n\nFor the definition of the format codes, see the\nzwp_linux_buffer_params_v1::create request.\n\nWarning: the 'format' event is likely to be deprecated and replaced\nwith the 'modifier' event introduced in zwp_linux_dmabuf_v1\nversion 3, described below. Please refrain from using the information\nreceived from this event."]
+        #[doc = "supported buffer format\n\nThis event advertises one buffer format that the server supports.\nAll the supported formats are advertised once when the client\nbinds to this interface. A roundtrip after binding guarantees\nthat the client has received all supported formats.\n\nFor the definition of the format codes, see the\nzwp_linux_buffer_params_v1::create request.\n\nStarting version 4, the format event is deprecated and must not be\nsent by compositors. Instead, use get_default_feedback or\nget_surface_feedback."]
         Format { format: u32 },
-        #[doc = "supported buffer format modifier\n\nThis event advertises the formats that the server supports, along with\nthe modifiers supported for each format. All the supported modifiers\nfor all the supported formats are advertised once when the client\nbinds to this interface. A roundtrip after binding guarantees that\nthe client has received all supported format-modifier pairs.\n\nFor legacy support, DRM_FORMAT_MOD_INVALID (that is, modifier_hi ==\n0x00ffffff and modifier_lo == 0xffffffff) is allowed in this event.\nIt indicates that the server can support the format with an implicit\nmodifier. When a plane has DRM_FORMAT_MOD_INVALID as its modifier, it\nis as if no explicit modifier is specified. The effective modifier\nwill be derived from the dmabuf.\n\nA compositor that sends valid modifiers and DRM_FORMAT_MOD_INVALID for\na given format supports both explicit modifiers and implicit modifiers.\n\nFor the definition of the format and modifier codes, see the\nzwp_linux_buffer_params_v1::create and zwp_linux_buffer_params_v1::add\nrequests.\n\nOnly available since version 3 of the interface"]
+        #[doc = "supported buffer format modifier\n\nThis event advertises the formats that the server supports, along with\nthe modifiers supported for each format. All the supported modifiers\nfor all the supported formats are advertised once when the client\nbinds to this interface. A roundtrip after binding guarantees that\nthe client has received all supported format-modifier pairs.\n\nFor legacy support, DRM_FORMAT_MOD_INVALID (that is, modifier_hi ==\n0x00ffffff and modifier_lo == 0xffffffff) is allowed in this event.\nIt indicates that the server can support the format with an implicit\nmodifier. When a plane has DRM_FORMAT_MOD_INVALID as its modifier, it\nis as if no explicit modifier is specified. The effective modifier\nwill be derived from the dmabuf.\n\nA compositor that sends valid modifiers and DRM_FORMAT_MOD_INVALID for\na given format supports both explicit modifiers and implicit modifiers.\n\nFor the definition of the format and modifier codes, see the\nzwp_linux_buffer_params_v1::create and zwp_linux_buffer_params_v1::add\nrequests.\n\nStarting version 4, the modifier event is deprecated and must not be\nsent by compositors. Instead, use get_default_feedback or\nget_surface_feedback.\n\nOnly available since version 3 of the interface"]
         Modifier {
             format: u32,
             modifier_hi: u32,
@@ -263,18 +347,18 @@ pub mod zwp_linux_dmabuf_v1 {
         type Request = Request;
         type Event = Event;
         const NAME: &'static str = "zwp_linux_dmabuf_v1";
-        const VERSION: u32 = 3;
+        const VERSION: u32 = 4;
         fn c_interface() -> *const wl_interface {
             unsafe { &zwp_linux_dmabuf_v1_interface }
         }
     }
     impl ZwpLinuxDmabufV1 {
-        #[doc = "supported buffer format\n\nThis event advertises one buffer format that the server supports.\nAll the supported formats are advertised once when the client\nbinds to this interface. A roundtrip after binding guarantees\nthat the client has received all supported formats.\n\nFor the definition of the format codes, see the\nzwp_linux_buffer_params_v1::create request.\n\nWarning: the 'format' event is likely to be deprecated and replaced\nwith the 'modifier' event introduced in zwp_linux_dmabuf_v1\nversion 3, described below. Please refrain from using the information\nreceived from this event."]
+        #[doc = "supported buffer format\n\nThis event advertises one buffer format that the server supports.\nAll the supported formats are advertised once when the client\nbinds to this interface. A roundtrip after binding guarantees\nthat the client has received all supported formats.\n\nFor the definition of the format codes, see the\nzwp_linux_buffer_params_v1::create request.\n\nStarting version 4, the format event is deprecated and must not be\nsent by compositors. Instead, use get_default_feedback or\nget_surface_feedback."]
         pub fn format(&self, format: u32) -> () {
             let msg = Event::Format { format: format };
             self.0.send(msg);
         }
-        #[doc = "supported buffer format modifier\n\nThis event advertises the formats that the server supports, along with\nthe modifiers supported for each format. All the supported modifiers\nfor all the supported formats are advertised once when the client\nbinds to this interface. A roundtrip after binding guarantees that\nthe client has received all supported format-modifier pairs.\n\nFor legacy support, DRM_FORMAT_MOD_INVALID (that is, modifier_hi ==\n0x00ffffff and modifier_lo == 0xffffffff) is allowed in this event.\nIt indicates that the server can support the format with an implicit\nmodifier. When a plane has DRM_FORMAT_MOD_INVALID as its modifier, it\nis as if no explicit modifier is specified. The effective modifier\nwill be derived from the dmabuf.\n\nA compositor that sends valid modifiers and DRM_FORMAT_MOD_INVALID for\na given format supports both explicit modifiers and implicit modifiers.\n\nFor the definition of the format and modifier codes, see the\nzwp_linux_buffer_params_v1::create and zwp_linux_buffer_params_v1::add\nrequests.\n\nOnly available since version 3 of the interface."]
+        #[doc = "supported buffer format modifier\n\nThis event advertises the formats that the server supports, along with\nthe modifiers supported for each format. All the supported modifiers\nfor all the supported formats are advertised once when the client\nbinds to this interface. A roundtrip after binding guarantees that\nthe client has received all supported format-modifier pairs.\n\nFor legacy support, DRM_FORMAT_MOD_INVALID (that is, modifier_hi ==\n0x00ffffff and modifier_lo == 0xffffffff) is allowed in this event.\nIt indicates that the server can support the format with an implicit\nmodifier. When a plane has DRM_FORMAT_MOD_INVALID as its modifier, it\nis as if no explicit modifier is specified. The effective modifier\nwill be derived from the dmabuf.\n\nA compositor that sends valid modifiers and DRM_FORMAT_MOD_INVALID for\na given format supports both explicit modifiers and implicit modifiers.\n\nFor the definition of the format and modifier codes, see the\nzwp_linux_buffer_params_v1::create and zwp_linux_buffer_params_v1::add\nrequests.\n\nStarting version 4, the modifier event is deprecated and must not be\nsent by compositors. Instead, use get_default_feedback or\nget_surface_feedback.\n\nOnly available since version 3 of the interface."]
         pub fn modifier(&self, format: u32, modifier_hi: u32, modifier_lo: u32) -> () {
             let msg = Event::Modifier {
                 format: format,
@@ -288,6 +372,10 @@ pub mod zwp_linux_dmabuf_v1 {
     pub const REQ_DESTROY_SINCE: u32 = 1u32;
     #[doc = r" The minimal object version supporting this request"]
     pub const REQ_CREATE_PARAMS_SINCE: u32 = 1u32;
+    #[doc = r" The minimal object version supporting this request"]
+    pub const REQ_GET_DEFAULT_FEEDBACK_SINCE: u32 = 4u32;
+    #[doc = r" The minimal object version supporting this request"]
+    pub const REQ_GET_SURFACE_FEEDBACK_SINCE: u32 = 4u32;
     #[doc = r" The minimal object version supporting this event"]
     pub const EVT_FORMAT_SINCE: u32 = 1u32;
     #[doc = r" The minimal object version supporting this event"]
@@ -297,8 +385,20 @@ pub mod zwp_linux_dmabuf_v1 {
             &super::zwp_linux_buffer_params_v1::zwp_linux_buffer_params_v1_interface
                 as *const wl_interface
         }];
+    static mut zwp_linux_dmabuf_v1_requests_get_default_feedback_types: [*const wl_interface; 1] =
+        [unsafe {
+            &super::zwp_linux_dmabuf_feedback_v1::zwp_linux_dmabuf_feedback_v1_interface
+                as *const wl_interface
+        }];
+    static mut zwp_linux_dmabuf_v1_requests_get_surface_feedback_types: [*const wl_interface; 2] = [
+        unsafe {
+            &super::zwp_linux_dmabuf_feedback_v1::zwp_linux_dmabuf_feedback_v1_interface
+                as *const wl_interface
+        },
+        unsafe { &super::wl_surface::wl_surface_interface as *const wl_interface },
+    ];
     #[doc = r" C-representation of the messages of this interface, for interop"]
-    pub static mut zwp_linux_dmabuf_v1_requests: [wl_message; 2] = [
+    pub static mut zwp_linux_dmabuf_v1_requests: [wl_message; 4] = [
         wl_message {
             name: b"destroy\0" as *const u8 as *const c_char,
             signature: b"\0" as *const u8 as *const c_char,
@@ -308,6 +408,16 @@ pub mod zwp_linux_dmabuf_v1 {
             name: b"create_params\0" as *const u8 as *const c_char,
             signature: b"n\0" as *const u8 as *const c_char,
             types: unsafe { &zwp_linux_dmabuf_v1_requests_create_params_types as *const _ },
+        },
+        wl_message {
+            name: b"get_default_feedback\0" as *const u8 as *const c_char,
+            signature: b"4n\0" as *const u8 as *const c_char,
+            types: unsafe { &zwp_linux_dmabuf_v1_requests_get_default_feedback_types as *const _ },
+        },
+        wl_message {
+            name: b"get_surface_feedback\0" as *const u8 as *const c_char,
+            signature: b"4no\0" as *const u8 as *const c_char,
+            types: unsafe { &zwp_linux_dmabuf_v1_requests_get_surface_feedback_types as *const _ },
         },
     ];
     #[doc = r" C-representation of the messages of this interface, for interop"]
@@ -326,8 +436,8 @@ pub mod zwp_linux_dmabuf_v1 {
     #[doc = r" C representation of this interface, for interop"]
     pub static mut zwp_linux_dmabuf_v1_interface: wl_interface = wl_interface {
         name: b"zwp_linux_dmabuf_v1\0" as *const u8 as *const c_char,
-        version: 3,
-        request_count: 2,
+        version: 4,
+        request_count: 4,
         requests: unsafe { &zwp_linux_dmabuf_v1_requests as *const _ },
         event_count: 2,
         events: unsafe { &zwp_linux_dmabuf_v1_events as *const _ },
@@ -395,7 +505,7 @@ pub mod zwp_linux_buffer_params_v1 {
     pub enum Request {
         #[doc = "delete this object, used or not\n\nCleans up the temporary data sent to the server for dmabuf-based\nwl_buffer creation.\n\nThis is a destructor, once received this object cannot be used any longer."]
         Destroy,
-        #[doc = "add a dmabuf to the temporary set\n\nThis request adds one dmabuf to the set in this\nzwp_linux_buffer_params_v1.\n\nThe 64-bit unsigned value combined from modifier_hi and modifier_lo\nis the dmabuf layout modifier. DRM AddFB2 ioctl calls this the\nfb modifier, which is defined in drm_mode.h of Linux UAPI.\nThis is an opaque token. Drivers use this token to express tiling,\ncompression, etc. driver-specific modifications to the base format\ndefined by the DRM fourcc code.\n\nWarning: It should be an error if the format/modifier pair was not\nadvertised with the modifier event. This is not enforced yet because\nsome implementations always accept DRM_FORMAT_MOD_INVALID. Also\nversion 2 of this protocol does not have the modifier event.\n\nThis request raises the PLANE_IDX error if plane_idx is too large.\nThe error PLANE_SET is raised if attempting to set a plane that\nwas already set."]
+        #[doc = "add a dmabuf to the temporary set\n\nThis request adds one dmabuf to the set in this\nzwp_linux_buffer_params_v1.\n\nThe 64-bit unsigned value combined from modifier_hi and modifier_lo\nis the dmabuf layout modifier. DRM AddFB2 ioctl calls this the\nfb modifier, which is defined in drm_mode.h of Linux UAPI.\nThis is an opaque token. Drivers use this token to express tiling,\ncompression, etc. driver-specific modifications to the base format\ndefined by the DRM fourcc code.\n\nStarting from version 4, the invalid_format protocol error is sent if\nthe format + modifier pair was not advertised as supported.\n\nThis request raises the PLANE_IDX error if plane_idx is too large.\nThe error PLANE_SET is raised if attempting to set a plane that\nwas already set."]
         Add {
             fd: ::std::os::unix::io::RawFd,
             plane_idx: u32,
@@ -807,7 +917,7 @@ pub mod zwp_linux_buffer_params_v1 {
         type Request = Request;
         type Event = Event;
         const NAME: &'static str = "zwp_linux_buffer_params_v1";
-        const VERSION: u32 = 3;
+        const VERSION: u32 = 4;
         fn c_interface() -> *const wl_interface {
             unsafe { &zwp_linux_buffer_params_v1_interface }
         }
@@ -886,10 +996,442 @@ pub mod zwp_linux_buffer_params_v1 {
     #[doc = r" C representation of this interface, for interop"]
     pub static mut zwp_linux_buffer_params_v1_interface: wl_interface = wl_interface {
         name: b"zwp_linux_buffer_params_v1\0" as *const u8 as *const c_char,
-        version: 3,
+        version: 4,
         request_count: 4,
         requests: unsafe { &zwp_linux_buffer_params_v1_requests as *const _ },
         event_count: 2,
         events: unsafe { &zwp_linux_buffer_params_v1_events as *const _ },
+    };
+}
+#[doc = "dmabuf feedback\n\nThis object advertises dmabuf parameters feedback. This includes the\npreferred devices and the supported formats/modifiers.\n\nThe parameters are sent once when this object is created and whenever they\nchange. The done event is always sent once after all parameters have been\nsent. When a single parameter changes, all parameters are re-sent by the\ncompositor.\n\nCompositors can re-send the parameters when the current client buffer\nallocations are sub-optimal. Compositors should not re-send the\nparameters if re-allocating the buffers would not result in a more optimal\nconfiguration. In particular, compositors should avoid sending the exact\nsame parameters multiple times in a row.\n\nThe tranche_target_device and tranche_modifier events are grouped by\ntranches of preference. For each tranche, a tranche_target_device, one\ntranche_flags and one or more tranche_modifier events are sent, followed\nby a tranche_done event finishing the list. The tranches are sent in\ndescending order of preference. All formats and modifiers in the same\ntranche have the same preference.\n\nTo send parameters, the compositor sends one main_device event, tranches\n(each consisting of one tranche_target_device event, one tranche_flags\nevent, tranche_modifier events and then a tranche_done event), then one\ndone event."]
+pub mod zwp_linux_dmabuf_feedback_v1 {
+    use super::sys::common::{wl_argument, wl_array, wl_interface, wl_message};
+    use super::sys::server::*;
+    use super::{
+        smallvec, types_null, AnonymousObject, Argument, ArgumentType, Interface, Main, Message,
+        MessageDesc, MessageGroup, Object, ObjectMetadata, Resource, NULLPTR,
+    };
+    use std::os::raw::c_char;
+    bitflags! { pub struct TrancheFlags : u32 { # [doc = "direct scan-out tranche"] const Scanout = 1 ; } }
+    impl TrancheFlags {
+        pub fn from_raw(n: u32) -> Option<TrancheFlags> {
+            Some(TrancheFlags::from_bits_truncate(n))
+        }
+        pub fn to_raw(&self) -> u32 {
+            self.bits()
+        }
+    }
+    #[derive(Debug)]
+    #[non_exhaustive]
+    pub enum Request {
+        #[doc = "destroy the feedback object\n\nUsing this request a client can tell the server that it is not going to\nuse the wp_linux_dmabuf_feedback object anymore.\n\nThis is a destructor, once received this object cannot be used any longer."]
+        Destroy,
+    }
+    impl super::MessageGroup for Request {
+        const MESSAGES: &'static [super::MessageDesc] = &[super::MessageDesc {
+            name: "destroy",
+            since: 1,
+            signature: &[],
+            destructor: true,
+        }];
+        type Map = super::ResourceMap;
+        fn is_destructor(&self) -> bool {
+            match *self {
+                Request::Destroy => true,
+            }
+        }
+        fn opcode(&self) -> u16 {
+            match *self {
+                Request::Destroy => 0,
+            }
+        }
+        fn since(&self) -> u32 {
+            match *self {
+                Request::Destroy => 1,
+            }
+        }
+        fn child<Meta: ObjectMetadata>(
+            opcode: u16,
+            version: u32,
+            meta: &Meta,
+        ) -> Option<Object<Meta>> {
+            match opcode {
+                _ => None,
+            }
+        }
+        fn from_raw(msg: Message, map: &mut Self::Map) -> Result<Self, ()> {
+            match msg.opcode {
+                0 => Ok(Request::Destroy),
+                _ => Err(()),
+            }
+        }
+        fn into_raw(self, sender_id: u32) -> Message {
+            panic!("Request::into_raw can not be used Server-side.")
+        }
+        unsafe fn from_raw_c(
+            obj: *mut ::std::os::raw::c_void,
+            opcode: u32,
+            args: *const wl_argument,
+        ) -> Result<Request, ()> {
+            match opcode {
+                0 => Ok(Request::Destroy),
+                _ => return Err(()),
+            }
+        }
+        fn as_raw_c_in<F, T>(self, f: F) -> T
+        where
+            F: FnOnce(u32, &mut [wl_argument]) -> T,
+        {
+            panic!("Request::as_raw_c_in can not be used Server-side.")
+        }
+    }
+    #[derive(Debug)]
+    #[non_exhaustive]
+    pub enum Event {
+        #[doc = "all feedback has been sent\n\nThis event is sent after all parameters of a wp_linux_dmabuf_feedback\nobject have been sent.\n\nThis allows changes to the wp_linux_dmabuf_feedback parameters to be\nseen as atomic, even if they happen via multiple events."]
+        Done,
+        #[doc = "format and modifier table\n\nThis event provides a file descriptor which can be memory-mapped to\naccess the format and modifier table.\n\nThe table contains a tightly packed array of consecutive format +\nmodifier pairs. Each pair is 16 bytes wide. It contains a format as a\n32-bit unsigned integer, followed by 4 bytes of unused padding, and a\nmodifier as a 64-bit unsigned integer. The native endianness is used.\n\nThe client must map the file descriptor in read-only private mode.\n\nCompositors are not allowed to mutate the table file contents once this\nevent has been sent. Instead, compositors must create a new, separate\ntable file and re-send feedback parameters. Compositors are allowed to\nstore duplicate format + modifier pairs in the table."]
+        FormatTable {
+            fd: ::std::os::unix::io::RawFd,
+            size: u32,
+        },
+        #[doc = "preferred main device\n\nThis event advertises the main device that the server prefers to use\nwhen direct scan-out to the target device isn't possible. The\nadvertised main device may be different for each\nwp_linux_dmabuf_feedback object, and may change over time.\n\nThere is exactly one main device. The compositor must send at least\none preference tranche with tranche_target_device equal to main_device.\n\nClients need to create buffers that the main device can import and\nread from, otherwise creating the dmabuf wl_buffer will fail (see the\nwp_linux_buffer_params.create and create_immed requests for details).\nThe main device will also likely be kept active by the compositor,\nso clients can use it instead of waking up another device for power\nsavings.\n\nIn general the device is a DRM node. The DRM node type (primary vs.\nrender) is unspecified. Clients must not rely on the compositor sending\na particular node type. Clients cannot check two devices for equality\nby comparing the dev_t value.\n\nIf explicit modifiers are not supported and the client performs buffer\nallocations on a different device than the main device, then the client\nmust force the buffer to have a linear layout."]
+        MainDevice { device: Vec<u8> },
+        #[doc = "a preference tranche has been sent\n\nThis event splits tranche_target_device and tranche_modifier events in\npreference tranches. It is sent after a set of tranche_target_device\nand tranche_modifier events; it represents the end of a tranche. The\nnext tranche will have a lower preference."]
+        TrancheDone,
+        #[doc = "target device\n\nThis event advertises the target device that the server prefers to use\nfor a buffer created given this tranche. The advertised target device\nmay be different for each preference tranche, and may change over time.\n\nThere is exactly one target device per tranche.\n\nThe target device may be a scan-out device, for example if the\ncompositor prefers to directly scan-out a buffer created given this\ntranche. The target device may be a rendering device, for example if\nthe compositor prefers to texture from said buffer.\n\nThe client can use this hint to allocate the buffer in a way that makes\nit accessible from the target device, ideally directly. The buffer must\nstill be accessible from the main device, either through direct import\nor through a potentially more expensive fallback path. If the buffer\ncan't be directly imported from the main device then clients must be\nprepared for the compositor changing the tranche priority or making\nwl_buffer creation fail (see the wp_linux_buffer_params.create and\ncreate_immed requests for details).\n\nIf the device is a DRM node, the DRM node type (primary vs. render) is\nunspecified. Clients must not rely on the compositor sending a\nparticular node type. Clients cannot check two devices for equality by\ncomparing the dev_t value.\n\nThis event is tied to a preference tranche, see the tranche_done event."]
+        TrancheTargetDevice { device: Vec<u8> },
+        #[doc = "supported buffer format modifier\n\nThis event advertises the format + modifier combinations that the\ncompositor supports.\n\nIt carries an array of indices, each referring to a format + modifier\npair in the last received format table (see the format_table event).\nEach index is a 16-bit unsigned integer in native endianness.\n\nFor legacy support, DRM_FORMAT_MOD_INVALID is an allowed modifier.\nIt indicates that the server can support the format with an implicit\nmodifier. When a buffer has DRM_FORMAT_MOD_INVALID as its modifier, it\nis as if no explicit modifier is specified. The effective modifier\nwill be derived from the dmabuf.\n\nA compositor that sends valid modifiers and DRM_FORMAT_MOD_INVALID for\na given format supports both explicit modifiers and implicit modifiers.\n\nCompositors must not send duplicate format + modifier pairs within the\nsame tranche or across two different tranches with the same target\ndevice and flags.\n\nThis event is tied to a preference tranche, see the tranche_done event.\n\nFor the definition of the format and modifier codes, see the\nwp_linux_buffer_params.create request."]
+        TrancheFormats { indices: Vec<u8> },
+        #[doc = "tranche flags\n\nThis event sets tranche-specific flags.\n\nThe scanout flag is a hint that direct scan-out may be attempted by the\ncompositor on the target device if the client appropriately allocates a\nbuffer. How to allocate a buffer that can be scanned out on the target\ndevice is implementation-defined.\n\nThis event is tied to a preference tranche, see the tranche_done event."]
+        TrancheFlags { flags: TrancheFlags },
+    }
+    impl super::MessageGroup for Event {
+        const MESSAGES: &'static [super::MessageDesc] = &[
+            super::MessageDesc {
+                name: "done",
+                since: 1,
+                signature: &[],
+                destructor: false,
+            },
+            super::MessageDesc {
+                name: "format_table",
+                since: 1,
+                signature: &[super::ArgumentType::Fd, super::ArgumentType::Uint],
+                destructor: false,
+            },
+            super::MessageDesc {
+                name: "main_device",
+                since: 1,
+                signature: &[super::ArgumentType::Array],
+                destructor: false,
+            },
+            super::MessageDesc {
+                name: "tranche_done",
+                since: 1,
+                signature: &[],
+                destructor: false,
+            },
+            super::MessageDesc {
+                name: "tranche_target_device",
+                since: 1,
+                signature: &[super::ArgumentType::Array],
+                destructor: false,
+            },
+            super::MessageDesc {
+                name: "tranche_formats",
+                since: 1,
+                signature: &[super::ArgumentType::Array],
+                destructor: false,
+            },
+            super::MessageDesc {
+                name: "tranche_flags",
+                since: 1,
+                signature: &[super::ArgumentType::Uint],
+                destructor: false,
+            },
+        ];
+        type Map = super::ResourceMap;
+        fn is_destructor(&self) -> bool {
+            match *self {
+                _ => false,
+            }
+        }
+        fn opcode(&self) -> u16 {
+            match *self {
+                Event::Done => 0,
+                Event::FormatTable { .. } => 1,
+                Event::MainDevice { .. } => 2,
+                Event::TrancheDone => 3,
+                Event::TrancheTargetDevice { .. } => 4,
+                Event::TrancheFormats { .. } => 5,
+                Event::TrancheFlags { .. } => 6,
+            }
+        }
+        fn since(&self) -> u32 {
+            match *self {
+                Event::Done => 1,
+                Event::FormatTable { .. } => 1,
+                Event::MainDevice { .. } => 1,
+                Event::TrancheDone => 1,
+                Event::TrancheTargetDevice { .. } => 1,
+                Event::TrancheFormats { .. } => 1,
+                Event::TrancheFlags { .. } => 1,
+            }
+        }
+        fn child<Meta: ObjectMetadata>(
+            opcode: u16,
+            version: u32,
+            meta: &Meta,
+        ) -> Option<Object<Meta>> {
+            match opcode {
+                _ => None,
+            }
+        }
+        fn from_raw(msg: Message, map: &mut Self::Map) -> Result<Self, ()> {
+            panic!("Event::from_raw can not be used Server-side.")
+        }
+        fn into_raw(self, sender_id: u32) -> Message {
+            match self {
+                Event::Done => Message {
+                    sender_id: sender_id,
+                    opcode: 0,
+                    args: smallvec![],
+                },
+                Event::FormatTable { fd, size } => Message {
+                    sender_id: sender_id,
+                    opcode: 1,
+                    args: smallvec![Argument::Fd(fd), Argument::Uint(size),],
+                },
+                Event::MainDevice { device } => Message {
+                    sender_id: sender_id,
+                    opcode: 2,
+                    args: smallvec![Argument::Array(Box::new(device)),],
+                },
+                Event::TrancheDone => Message {
+                    sender_id: sender_id,
+                    opcode: 3,
+                    args: smallvec![],
+                },
+                Event::TrancheTargetDevice { device } => Message {
+                    sender_id: sender_id,
+                    opcode: 4,
+                    args: smallvec![Argument::Array(Box::new(device)),],
+                },
+                Event::TrancheFormats { indices } => Message {
+                    sender_id: sender_id,
+                    opcode: 5,
+                    args: smallvec![Argument::Array(Box::new(indices)),],
+                },
+                Event::TrancheFlags { flags } => Message {
+                    sender_id: sender_id,
+                    opcode: 6,
+                    args: smallvec![Argument::Uint(flags.to_raw()),],
+                },
+            }
+        }
+        unsafe fn from_raw_c(
+            obj: *mut ::std::os::raw::c_void,
+            opcode: u32,
+            args: *const wl_argument,
+        ) -> Result<Event, ()> {
+            panic!("Event::from_raw_c can not be used Server-side.")
+        }
+        fn as_raw_c_in<F, T>(self, f: F) -> T
+        where
+            F: FnOnce(u32, &mut [wl_argument]) -> T,
+        {
+            match self {
+                Event::Done => {
+                    let mut _args_array: [wl_argument; 0] = unsafe { ::std::mem::zeroed() };
+                    f(0, &mut _args_array)
+                }
+                Event::FormatTable { fd, size } => {
+                    let mut _args_array: [wl_argument; 2] = unsafe { ::std::mem::zeroed() };
+                    _args_array[0].h = fd;
+                    _args_array[1].u = size;
+                    f(1, &mut _args_array)
+                }
+                Event::MainDevice { device } => {
+                    let mut _args_array: [wl_argument; 1] = unsafe { ::std::mem::zeroed() };
+                    let _arg_0 = wl_array {
+                        size: device.len(),
+                        alloc: device.capacity(),
+                        data: device.as_ptr() as *mut _,
+                    };
+                    _args_array[0].a = &_arg_0;
+                    f(2, &mut _args_array)
+                }
+                Event::TrancheDone => {
+                    let mut _args_array: [wl_argument; 0] = unsafe { ::std::mem::zeroed() };
+                    f(3, &mut _args_array)
+                }
+                Event::TrancheTargetDevice { device } => {
+                    let mut _args_array: [wl_argument; 1] = unsafe { ::std::mem::zeroed() };
+                    let _arg_0 = wl_array {
+                        size: device.len(),
+                        alloc: device.capacity(),
+                        data: device.as_ptr() as *mut _,
+                    };
+                    _args_array[0].a = &_arg_0;
+                    f(4, &mut _args_array)
+                }
+                Event::TrancheFormats { indices } => {
+                    let mut _args_array: [wl_argument; 1] = unsafe { ::std::mem::zeroed() };
+                    let _arg_0 = wl_array {
+                        size: indices.len(),
+                        alloc: indices.capacity(),
+                        data: indices.as_ptr() as *mut _,
+                    };
+                    _args_array[0].a = &_arg_0;
+                    f(5, &mut _args_array)
+                }
+                Event::TrancheFlags { flags } => {
+                    let mut _args_array: [wl_argument; 1] = unsafe { ::std::mem::zeroed() };
+                    _args_array[0].u = flags.to_raw();
+                    f(6, &mut _args_array)
+                }
+            }
+        }
+    }
+    #[derive(Clone, Eq, PartialEq)]
+    pub struct ZwpLinuxDmabufFeedbackV1(Resource<ZwpLinuxDmabufFeedbackV1>);
+    impl AsRef<Resource<ZwpLinuxDmabufFeedbackV1>> for ZwpLinuxDmabufFeedbackV1 {
+        #[inline]
+        fn as_ref(&self) -> &Resource<Self> {
+            &self.0
+        }
+    }
+    impl From<Resource<ZwpLinuxDmabufFeedbackV1>> for ZwpLinuxDmabufFeedbackV1 {
+        #[inline]
+        fn from(value: Resource<Self>) -> Self {
+            ZwpLinuxDmabufFeedbackV1(value)
+        }
+    }
+    impl From<ZwpLinuxDmabufFeedbackV1> for Resource<ZwpLinuxDmabufFeedbackV1> {
+        #[inline]
+        fn from(value: ZwpLinuxDmabufFeedbackV1) -> Self {
+            value.0
+        }
+    }
+    impl std::fmt::Debug for ZwpLinuxDmabufFeedbackV1 {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_fmt(format_args!("{:?}", self.0))
+        }
+    }
+    impl Interface for ZwpLinuxDmabufFeedbackV1 {
+        type Request = Request;
+        type Event = Event;
+        const NAME: &'static str = "zwp_linux_dmabuf_feedback_v1";
+        const VERSION: u32 = 4;
+        fn c_interface() -> *const wl_interface {
+            unsafe { &zwp_linux_dmabuf_feedback_v1_interface }
+        }
+    }
+    impl ZwpLinuxDmabufFeedbackV1 {
+        #[doc = "all feedback has been sent\n\nThis event is sent after all parameters of a wp_linux_dmabuf_feedback\nobject have been sent.\n\nThis allows changes to the wp_linux_dmabuf_feedback parameters to be\nseen as atomic, even if they happen via multiple events."]
+        pub fn done(&self) -> () {
+            let msg = Event::Done;
+            self.0.send(msg);
+        }
+        #[doc = "format and modifier table\n\nThis event provides a file descriptor which can be memory-mapped to\naccess the format and modifier table.\n\nThe table contains a tightly packed array of consecutive format +\nmodifier pairs. Each pair is 16 bytes wide. It contains a format as a\n32-bit unsigned integer, followed by 4 bytes of unused padding, and a\nmodifier as a 64-bit unsigned integer. The native endianness is used.\n\nThe client must map the file descriptor in read-only private mode.\n\nCompositors are not allowed to mutate the table file contents once this\nevent has been sent. Instead, compositors must create a new, separate\ntable file and re-send feedback parameters. Compositors are allowed to\nstore duplicate format + modifier pairs in the table."]
+        pub fn format_table(&self, fd: ::std::os::unix::io::RawFd, size: u32) -> () {
+            let msg = Event::FormatTable { fd: fd, size: size };
+            self.0.send(msg);
+        }
+        #[doc = "preferred main device\n\nThis event advertises the main device that the server prefers to use\nwhen direct scan-out to the target device isn't possible. The\nadvertised main device may be different for each\nwp_linux_dmabuf_feedback object, and may change over time.\n\nThere is exactly one main device. The compositor must send at least\none preference tranche with tranche_target_device equal to main_device.\n\nClients need to create buffers that the main device can import and\nread from, otherwise creating the dmabuf wl_buffer will fail (see the\nwp_linux_buffer_params.create and create_immed requests for details).\nThe main device will also likely be kept active by the compositor,\nso clients can use it instead of waking up another device for power\nsavings.\n\nIn general the device is a DRM node. The DRM node type (primary vs.\nrender) is unspecified. Clients must not rely on the compositor sending\na particular node type. Clients cannot check two devices for equality\nby comparing the dev_t value.\n\nIf explicit modifiers are not supported and the client performs buffer\nallocations on a different device than the main device, then the client\nmust force the buffer to have a linear layout."]
+        pub fn main_device(&self, device: Vec<u8>) -> () {
+            let msg = Event::MainDevice { device: device };
+            self.0.send(msg);
+        }
+        #[doc = "a preference tranche has been sent\n\nThis event splits tranche_target_device and tranche_modifier events in\npreference tranches. It is sent after a set of tranche_target_device\nand tranche_modifier events; it represents the end of a tranche. The\nnext tranche will have a lower preference."]
+        pub fn tranche_done(&self) -> () {
+            let msg = Event::TrancheDone;
+            self.0.send(msg);
+        }
+        #[doc = "target device\n\nThis event advertises the target device that the server prefers to use\nfor a buffer created given this tranche. The advertised target device\nmay be different for each preference tranche, and may change over time.\n\nThere is exactly one target device per tranche.\n\nThe target device may be a scan-out device, for example if the\ncompositor prefers to directly scan-out a buffer created given this\ntranche. The target device may be a rendering device, for example if\nthe compositor prefers to texture from said buffer.\n\nThe client can use this hint to allocate the buffer in a way that makes\nit accessible from the target device, ideally directly. The buffer must\nstill be accessible from the main device, either through direct import\nor through a potentially more expensive fallback path. If the buffer\ncan't be directly imported from the main device then clients must be\nprepared for the compositor changing the tranche priority or making\nwl_buffer creation fail (see the wp_linux_buffer_params.create and\ncreate_immed requests for details).\n\nIf the device is a DRM node, the DRM node type (primary vs. render) is\nunspecified. Clients must not rely on the compositor sending a\nparticular node type. Clients cannot check two devices for equality by\ncomparing the dev_t value.\n\nThis event is tied to a preference tranche, see the tranche_done event."]
+        pub fn tranche_target_device(&self, device: Vec<u8>) -> () {
+            let msg = Event::TrancheTargetDevice { device: device };
+            self.0.send(msg);
+        }
+        #[doc = "supported buffer format modifier\n\nThis event advertises the format + modifier combinations that the\ncompositor supports.\n\nIt carries an array of indices, each referring to a format + modifier\npair in the last received format table (see the format_table event).\nEach index is a 16-bit unsigned integer in native endianness.\n\nFor legacy support, DRM_FORMAT_MOD_INVALID is an allowed modifier.\nIt indicates that the server can support the format with an implicit\nmodifier. When a buffer has DRM_FORMAT_MOD_INVALID as its modifier, it\nis as if no explicit modifier is specified. The effective modifier\nwill be derived from the dmabuf.\n\nA compositor that sends valid modifiers and DRM_FORMAT_MOD_INVALID for\na given format supports both explicit modifiers and implicit modifiers.\n\nCompositors must not send duplicate format + modifier pairs within the\nsame tranche or across two different tranches with the same target\ndevice and flags.\n\nThis event is tied to a preference tranche, see the tranche_done event.\n\nFor the definition of the format and modifier codes, see the\nwp_linux_buffer_params.create request."]
+        pub fn tranche_formats(&self, indices: Vec<u8>) -> () {
+            let msg = Event::TrancheFormats { indices: indices };
+            self.0.send(msg);
+        }
+        #[doc = "tranche flags\n\nThis event sets tranche-specific flags.\n\nThe scanout flag is a hint that direct scan-out may be attempted by the\ncompositor on the target device if the client appropriately allocates a\nbuffer. How to allocate a buffer that can be scanned out on the target\ndevice is implementation-defined.\n\nThis event is tied to a preference tranche, see the tranche_done event."]
+        pub fn tranche_flags(&self, flags: TrancheFlags) -> () {
+            let msg = Event::TrancheFlags { flags: flags };
+            self.0.send(msg);
+        }
+    }
+    #[doc = r" The minimal object version supporting this request"]
+    pub const REQ_DESTROY_SINCE: u32 = 1u32;
+    #[doc = r" The minimal object version supporting this event"]
+    pub const EVT_DONE_SINCE: u32 = 1u32;
+    #[doc = r" The minimal object version supporting this event"]
+    pub const EVT_FORMAT_TABLE_SINCE: u32 = 1u32;
+    #[doc = r" The minimal object version supporting this event"]
+    pub const EVT_MAIN_DEVICE_SINCE: u32 = 1u32;
+    #[doc = r" The minimal object version supporting this event"]
+    pub const EVT_TRANCHE_DONE_SINCE: u32 = 1u32;
+    #[doc = r" The minimal object version supporting this event"]
+    pub const EVT_TRANCHE_TARGET_DEVICE_SINCE: u32 = 1u32;
+    #[doc = r" The minimal object version supporting this event"]
+    pub const EVT_TRANCHE_FORMATS_SINCE: u32 = 1u32;
+    #[doc = r" The minimal object version supporting this event"]
+    pub const EVT_TRANCHE_FLAGS_SINCE: u32 = 1u32;
+    #[doc = r" C-representation of the messages of this interface, for interop"]
+    pub static mut zwp_linux_dmabuf_feedback_v1_requests: [wl_message; 1] = [wl_message {
+        name: b"destroy\0" as *const u8 as *const c_char,
+        signature: b"\0" as *const u8 as *const c_char,
+        types: unsafe { &types_null as *const _ },
+    }];
+    #[doc = r" C-representation of the messages of this interface, for interop"]
+    pub static mut zwp_linux_dmabuf_feedback_v1_events: [wl_message; 7] = [
+        wl_message {
+            name: b"done\0" as *const u8 as *const c_char,
+            signature: b"\0" as *const u8 as *const c_char,
+            types: unsafe { &types_null as *const _ },
+        },
+        wl_message {
+            name: b"format_table\0" as *const u8 as *const c_char,
+            signature: b"hu\0" as *const u8 as *const c_char,
+            types: unsafe { &types_null as *const _ },
+        },
+        wl_message {
+            name: b"main_device\0" as *const u8 as *const c_char,
+            signature: b"a\0" as *const u8 as *const c_char,
+            types: unsafe { &types_null as *const _ },
+        },
+        wl_message {
+            name: b"tranche_done\0" as *const u8 as *const c_char,
+            signature: b"\0" as *const u8 as *const c_char,
+            types: unsafe { &types_null as *const _ },
+        },
+        wl_message {
+            name: b"tranche_target_device\0" as *const u8 as *const c_char,
+            signature: b"a\0" as *const u8 as *const c_char,
+            types: unsafe { &types_null as *const _ },
+        },
+        wl_message {
+            name: b"tranche_formats\0" as *const u8 as *const c_char,
+            signature: b"a\0" as *const u8 as *const c_char,
+            types: unsafe { &types_null as *const _ },
+        },
+        wl_message {
+            name: b"tranche_flags\0" as *const u8 as *const c_char,
+            signature: b"u\0" as *const u8 as *const c_char,
+            types: unsafe { &types_null as *const _ },
+        },
+    ];
+    #[doc = r" C representation of this interface, for interop"]
+    pub static mut zwp_linux_dmabuf_feedback_v1_interface: wl_interface = wl_interface {
+        name: b"zwp_linux_dmabuf_feedback_v1\0" as *const u8 as *const c_char,
+        version: 4,
+        request_count: 1,
+        requests: unsafe { &zwp_linux_dmabuf_feedback_v1_requests as *const _ },
+        event_count: 7,
+        events: unsafe { &zwp_linux_dmabuf_feedback_v1_events as *const _ },
     };
 }

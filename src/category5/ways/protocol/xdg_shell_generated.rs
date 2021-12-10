@@ -1552,13 +1552,13 @@ pub mod xdg_toplevel {
         Resizing = 3,
         #[doc = "the surface is now activated\n\nClient window decorations should be painted as if the window is\nactive. Do not assume this means that the window actually has\nkeyboard or pointer focus."]
         Activated = 4,
-        #[doc = "the surface is tiled\n\nThe window is currently in a tiled layout and the left edge is\nconsidered to be adjacent to another part of the tiling grid."]
+        #[doc = "the surface’s left edge is tiled\n\nThe window is currently in a tiled layout and the left edge is\nconsidered to be adjacent to another part of the tiling grid."]
         TiledLeft = 5,
-        #[doc = "the surface is tiled\n\nThe window is currently in a tiled layout and the right edge is\nconsidered to be adjacent to another part of the tiling grid."]
+        #[doc = "the surface’s right edge is tiled\n\nThe window is currently in a tiled layout and the right edge is\nconsidered to be adjacent to another part of the tiling grid."]
         TiledRight = 6,
-        #[doc = "the surface is tiled\n\nThe window is currently in a tiled layout and the top edge is\nconsidered to be adjacent to another part of the tiling grid."]
+        #[doc = "the surface’s top edge is tiled\n\nThe window is currently in a tiled layout and the top edge is\nconsidered to be adjacent to another part of the tiling grid."]
         TiledTop = 7,
-        #[doc = "the surface is tiled\n\nThe window is currently in a tiled layout and the bottom edge is\nconsidered to be adjacent to another part of the tiling grid."]
+        #[doc = "the surface’s bottom edge is tiled\n\nThe window is currently in a tiled layout and the bottom edge is\nconsidered to be adjacent to another part of the tiling grid."]
         TiledBottom = 8,
     }
     impl State {

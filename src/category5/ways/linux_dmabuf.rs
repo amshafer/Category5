@@ -58,7 +58,7 @@ pub fn linux_dmabuf_handle_request(req: zldv1::Request, _dma: Main<zldv1::ZwpLin
                 params.handle_request(r, p);
             });
         }
-        zldv1::Request::Destroy => {}
+        _ => {}
     };
 }
 
