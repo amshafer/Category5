@@ -53,7 +53,6 @@ use task::*;
 use std::sync::mpsc::{Receiver, Sender};
 
 extern crate renderdoc;
-use renderdoc::RenderDoc;
 
 /// This consolidates the multiple resources needed
 /// to represent a titlebar
@@ -128,7 +127,7 @@ pub struct WindowManager {
     wm_cursor: Option<th::Surface>,
     /// Title bar to draw above the windows
     wm_titlebar: Titlebar,
-    wm_renderdoc: RenderDoc<renderdoc::V141>,
+    //wm_renderdoc: RenderDoc<renderdoc::V141>,
 }
 
 impl WindowManager {
@@ -193,7 +192,7 @@ impl WindowManager {
     /// the compositor. The WindowManager will create and own
     /// the Thundr, thereby readying the display to draw.
     pub fn new(tx: Sender<Box<Hemisphere>>, rx: Receiver<Box<Hemisphere>>) -> WindowManager {
-        let doc = RenderDoc::new().unwrap();
+        //let doc = RenderDoc::new().unwrap();
         let info = th::CreateInfo::builder()
             .enable_traditional_composition()
             .build();
@@ -214,7 +213,7 @@ impl WindowManager {
             wm_surface_ids: Vec::new(),
             wm_atmos_ids: Vec::new(),
             wm_background: None,
-            wm_renderdoc: doc,
+            //wm_renderdoc: doc,
         };
 
         // Tell the atmosphere rend's resolution
@@ -711,8 +710,8 @@ impl WindowManager {
             self.wm_atmos.flip_hemispheres();
 
             if self.wm_atmos.get_renderdoc_recording() {
-                self.wm_renderdoc
-                    .start_frame_capture(std::ptr::null(), std::ptr::null());
+                //self.wm_renderdoc
+                //    .start_frame_capture(std::ptr::null(), std::ptr::null());
             }
 
             // iterate through all the tasks that ways left
@@ -746,8 +745,8 @@ impl WindowManager {
             );
 
             if self.wm_atmos.get_renderdoc_recording() {
-                self.wm_renderdoc
-                    .end_frame_capture(std::ptr::null(), std::ptr::null());
+                //self.wm_renderdoc
+                //    .end_frame_capture(std::ptr::null(), std::ptr::null());
             }
             self.reap_dead_windows();
             self.wm_atmos.release_consumables();
