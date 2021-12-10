@@ -43,7 +43,6 @@ layout(set = 1, binding = 1, std140) buffer order_list
 	layout(offset = 16) int ordered_windows[];
 };
 
-
 /* The array of textures that are the window contents */
 layout(set = 1, binding = 2) uniform sampler2D images[];
 

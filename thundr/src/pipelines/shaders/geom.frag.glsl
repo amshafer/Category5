@@ -25,8 +25,14 @@ struct Window {
 /* the position/size/damage of our windows */
 layout(set = 1, binding = 0, std140) buffer window_list
 {
-	layout(offset = 0) int window_count;
+	layout(offset = 0) int total_window_count;
 	layout(offset = 16) Window windows[];
+};
+
+layout(set = 1, binding = 1, std140) buffer order_list
+{
+	layout(offset = 0) int window_count;
+	layout(offset = 16) int ordered_windows[];
 };
 
 /* The array of textures that are the window contents */

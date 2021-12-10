@@ -341,7 +341,9 @@ impl Renderer {
     ///
     /// return is drm (renderMajor, renderMinor).
     pub unsafe fn get_drm_dev(&self) -> (i64, i64) {
-        assert!(self.dev_features.vkc_supports_phys_dev_drm);
+        if !self.dev_features.vkc_supports_phys_dev_drm {
+            log::error!("Using drm Vulkan extensions but the underlying vulkan library doesn't support them. This will cause problems");
+        }
         let mut drm_info = vk::PhysicalDeviceDrmPropertiesEXT::builder().build();
 
         let mut info = vk::PhysicalDeviceProperties2::builder().build();
