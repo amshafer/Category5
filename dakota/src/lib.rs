@@ -98,13 +98,13 @@ struct TileInfo {
 /// this handles the number of children sharing the space, the
 /// available size
 #[derive(Debug, Clone)]
-struct LayoutSpace {
+pub struct LayoutSpace {
     /// This is essentially the width of the parent container
-    avail_width: u32,
+    pub avail_width: u32,
     /// This is essentially the height of the parent container
-    avail_height: u32,
+    pub avail_height: u32,
     /// This is the number of children the parent container has
-    children_at_this_level: u32,
+    pub children_at_this_level: u32,
 }
 
 impl Dakota {
@@ -205,18 +205,26 @@ impl Dakota {
     /// created, and can set its final size accordingly. This should prevent
     /// us from having to do more recursion later since everything is calculated
     /// now.
-    fn calculate_sizes(&mut self, el: &dom::Element, mut space: LayoutSpace) -> Result<LayoutNode> {
+    fn calculate_sizes(&mut self, el: &dom::Element, space: &LayoutSpace) -> Result<LayoutNode> {
         let mut ret = LayoutNode::new(
             el.resource.clone(),
             dom::Offset::new(0, 0),
             dom::Size::new(0, 0),
         );
 
+        // This space is what the children/content will use
+        // it is restricted in size to this element (their parent)
+        let mut child_space = LayoutSpace {
+            avail_width: space.avail_width,
+            avail_height: space.avail_height,
+            children_at_this_level: 0,
+        };
+
         // check if this element has its size set, shrink the available space
         // to match.
         if let Some(size) = el.size.as_ref() {
-            space.avail_width = size.width;
-            space.avail_height = size.height;
+            child_space.avail_width = size.width;
+            child_space.avail_height = size.height;
         }
 
         // if the box has children, then recurse through them and calculate our
@@ -226,11 +234,9 @@ impl Dakota {
             // CHILDREN
             // ------------------------------------------
             //
-            let child_space = LayoutSpace {
-                avail_width: space.avail_width,
-                avail_height: space.avail_height,
-                children_at_this_level: el.children.len() as u32,
-            };
+
+            // update our child count
+            child_space.children_at_this_level = el.children.len() as u32;
 
             // TODO: do vertical wrapping too
             let mut tile_info = TileInfo {
@@ -240,7 +246,7 @@ impl Dakota {
             };
 
             for child in el.children.iter() {
-                let mut child_size = self.calculate_sizes(child, child_space.clone())?;
+                let mut child_size = self.calculate_sizes(child, &child_space)?;
 
                 // now the child size has been made, but it still needs to find
                 // the proper position inside the parent container. If the child
@@ -250,7 +256,7 @@ impl Dakota {
                 if !child_size.l_offset_specified {
                     // if this element exceeds the horizontal space, set it on a
                     // new line
-                    if tile_info.t_last_x + child_size.l_size.width > space.avail_width {
+                    if tile_info.t_last_x + child_size.l_size.width > child_space.avail_width {
                         tile_info.t_last_x = 0;
                         tile_info.t_last_y = tile_info.t_greatest_y;
                     }
@@ -281,12 +287,9 @@ impl Dakota {
             // We should either recurse the child box or calculate the
             // size based on the centered resource.
             if let Some(mut child) = content.el.as_ref() {
-                let child_space = LayoutSpace {
-                    avail_width: space.avail_width,
-                    avail_height: space.avail_height,
-                    children_at_this_level: 0,
-                };
-                let mut child_size = self.calculate_sizes(&mut child, child_space)?;
+                // num_children_at_this_level was set earlier to 0 when we
+                // created the common child space
+                let mut child_size = self.calculate_sizes(&mut child, &child_space)?;
                 // At this point the size of the is calculated
                 // and we can determine the offset. We want to center the
                 // box, so that's the center point of the parent minus
@@ -314,8 +317,11 @@ impl Dakota {
         // we have, then the size is available_space
         // 3. No size and no bounds means we are inside of a scrolling arena, and
         // we should grow this box to hold all of its children.
-        ret.l_offset_specified = el.offset.is_some();
-        if let Some(off) = el.offset {
+        if let Some(off) = el.get_final_offset(&space).context(format!(
+            "Failed to calculate offset size of Element {:#?}",
+            el
+        ))? {
+            ret.l_offset_specified = true;
             ret.l_offset = off;
         }
 
@@ -459,7 +465,7 @@ impl Dakota {
         let num_children = dom.layout.root_element.children.len() as u32;
         let result = self.calculate_sizes(
             &mut dom.layout.root_element,
-            LayoutSpace {
+            &LayoutSpace {
                 avail_width: self.d_window_dims.unwrap().0, // available width
                 avail_height: self.d_window_dims.unwrap().1, // available height
                 children_at_this_level: num_children,

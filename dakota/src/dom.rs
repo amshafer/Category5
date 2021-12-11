@@ -1,5 +1,6 @@
 use crate::serde::{Deserialize, Serialize};
 use crate::utils::{anyhow, Result};
+use crate::LayoutSpace;
 
 use std::cmp::{Ord, PartialOrd};
 
@@ -73,6 +74,21 @@ pub struct ResourceMap {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Content {
     pub el: Option<std::boxed::Box<Element>>,
+}
+
+/// This is a relative offset that offsets an element
+/// by a percentage of the size of the available space.
+#[derive(Debug, PartialEq, PartialOrd, Copy, Clone, Serialize, Deserialize)]
+pub struct RelativeOffset {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl RelativeOffset {
+    pub fn new(w: f32, h: f32) -> Self {
+        assert!((w >= 0.0 && w < 1.0) && (h >= 0.0 && h < 1.0));
+        Self { x: w, y: h }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Serialize, Deserialize)]
@@ -157,11 +173,40 @@ pub struct Element {
     pub resource: Option<String>,
     pub content: Option<Content>,
     pub offset: Option<Offset>,
+    #[serde(rename = "relativeOffset", default)]
+    pub rel_offset: Option<RelativeOffset>,
     pub size: Option<Size>,
     #[serde(rename = "scrolling", default)]
     pub bounds: Option<Edges>,
     #[serde(rename = "el", default)]
     pub children: Vec<Element>,
+}
+
+impl Element {
+    /// Get the final size to use as an offset into the
+    /// parent space. This takes care of handling the relative
+    /// proportional offset size
+    pub fn get_final_offset(&self, space: &LayoutSpace) -> Result<Option<Offset>> {
+        if self.offset.is_some() && self.rel_offset.is_some() {
+            return Err(anyhow!(
+                "Element.offset and Element.relativeOffset cannot both be defined"
+            ));
+        }
+
+        if let Some(rel) = self.rel_offset.as_ref() {
+            if !((rel.x >= 0.0 && rel.x < 1.0) && (rel.y >= 0.0 && rel.y < 1.0)) {
+                return Err(anyhow!(
+                    "Element.relativeOffset should use values in the range (0.0, 1.0)"
+                ));
+            }
+            return Ok(Some(Offset::new(
+                (space.avail_width as f32 * rel.x) as u32,
+                (space.avail_height as f32 * rel.y) as u32,
+            )));
+        }
+
+        Ok(self.offset)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
