@@ -498,6 +498,7 @@ impl Dakota {
         self.clear_thundr();
         self.refresh_resource_map()?;
         self.refresh_elements()
+        // mark needs redraw
     }
 
     /// Handle vulkan swapchain out of date. This is probably because the
@@ -506,6 +507,7 @@ impl Dakota {
     fn handle_ood(&mut self) -> Result<()> {
         self.d_window_dims = Some(self.d_thund.get_resolution());
         self.refresh_elements()
+        // mark needs redraw
     }
 
     /// run the dakota thread.
@@ -520,7 +522,30 @@ impl Dakota {
     where
         F: FnMut(),
     {
+        let terminate;
         func();
+
+        // First run our window system code. This will check if wayland/X11
+        // notified us of a resize, closure, or need to redraw
+        match self.d_plat.run(|| {}) {
+            Ok(should_terminate) => terminate = should_terminate,
+            Err(th::ThundrError::OUT_OF_DATE) => {
+                // This is a weird one
+                // So the above OUT_OF_DATEs are returned from thundr, where we
+                // can expect it will handle OOD itself. But here we have
+                // OUT_OF_DATE returned from our SDL2 backend, so we need
+                // to tell Thundr to do OOD itself
+                self.d_thund.handle_ood();
+                self.handle_ood()?;
+                return Err(Error::from(th::ThundrError::OUT_OF_DATE));
+            }
+            Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
+        };
+
+        // if needs redraw, then tell thundr to draw and present a frame
+        // At every step of the way we check if the drawable has been resized
+        // and will return that to the dakota user so they have a chance to resize
+        // anything they want
         match self.d_thund.draw_frame(&mut self.d_surfaces) {
             Ok(()) => {}
             Err(th::ThundrError::OUT_OF_DATE) => {
@@ -538,19 +563,6 @@ impl Dakota {
             Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
         };
 
-        match self.d_plat.run(|| {}) {
-            Ok(should_terminate) => return Ok(should_terminate),
-            Err(th::ThundrError::OUT_OF_DATE) => {
-                // This is a weird one
-                // So the above OUT_OF_DATEs are returned from thundr, where we
-                // can expect it will handle OOD itself. But here we have
-                // OUT_OF_DATE returned from our SDL2 backend, so we need
-                // to tell Thundr to do OOD itself
-                self.d_thund.handle_ood();
-                self.handle_ood()?;
-                return Err(Error::from(th::ThundrError::OUT_OF_DATE));
-            }
-            Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
-        };
+        return Ok(terminate);
     }
 }

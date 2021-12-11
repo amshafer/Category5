@@ -117,6 +117,7 @@ impl Platform for SDL2Plat {
                     window_id: _,
                     win_event,
                 } => match win_event {
+                    // check redraw requested?
                     WindowEvent::Resized { .. } => return Err(DakotaError::OUT_OF_DATE),
                     _ => {}
                 },
