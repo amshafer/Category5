@@ -327,8 +327,8 @@ impl Dakota {
             ret.l_offset = off;
         }
 
-        if let Some(size) = el.size.as_ref() {
-            ret.l_size = *size;
+        if let Some(size) = el.get_final_size(space)? {
+            ret.l_size = size;
         } else {
             // first grow this box to fit its children.
             ret.resize_to_children()?;

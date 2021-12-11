@@ -52,10 +52,10 @@
 				<relativeOffset>
 					<x>0.65</x><y>0.5</y>
 				</relativeOffset>
-				<size>
-					<width>120</width>
-					<height>186</height>
-				</size>
+				<relativeSize>
+					<width>0.25</width>
+					<height>0.18</height>
+				</relativeSize>
 			</el>
 			<el>
 				<resource>blue</resource>

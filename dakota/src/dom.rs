@@ -128,6 +128,24 @@ impl Size {
     }
 }
 
+/// This is a relative size that sizes an element
+/// by a percentage of the size of the available space.
+#[derive(Debug, PartialEq, PartialOrd, Copy, Clone, Serialize, Deserialize)]
+pub struct RelativeSize {
+    pub width: f32,
+    pub height: f32,
+}
+
+impl RelativeSize {
+    pub fn new(w: f32, h: f32) -> Self {
+        assert!((w >= 0.0 && w < 1.0) && (h >= 0.0 && h < 1.0));
+        Self {
+            width: w,
+            height: h,
+        }
+    }
+}
+
 /// The boundary behavior of the edges of a box. True
 /// if scrolling is allowed on that axis in this box.
 #[derive(Serialize, Deserialize, Debug)]
@@ -176,6 +194,8 @@ pub struct Element {
     #[serde(rename = "relativeOffset", default)]
     pub rel_offset: Option<RelativeOffset>,
     pub size: Option<Size>,
+    #[serde(rename = "relativeSize", default)]
+    pub rel_size: Option<RelativeSize>,
     #[serde(rename = "scrolling", default)]
     pub bounds: Option<Edges>,
     #[serde(rename = "el", default)]
@@ -206,6 +226,31 @@ impl Element {
         }
 
         Ok(self.offset)
+    }
+
+    /// Get the final size to use within the parent space.
+    /// This takes care of handling the relative
+    /// proportional size.
+    pub fn get_final_size(&self, space: &LayoutSpace) -> Result<Option<Size>> {
+        if self.size.is_some() && self.rel_size.is_some() {
+            return Err(anyhow!(
+                "Element.size and Element.relativeSize cannot both be defined"
+            ));
+        }
+
+        if let Some(rel) = self.rel_size.as_ref() {
+            if !((rel.width >= 0.0 && rel.width < 1.0) && (rel.height >= 0.0 && rel.height < 1.0)) {
+                return Err(anyhow!(
+                    "Element.relativeSize should use values in the range (0.0, 1.0)"
+                ));
+            }
+            return Ok(Some(Size::new(
+                (space.avail_width as f32 * rel.width) as u32,
+                (space.avail_height as f32 * rel.height) as u32,
+            )));
+        }
+
+        Ok(self.size)
     }
 }
 
