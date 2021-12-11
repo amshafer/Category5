@@ -23,7 +23,7 @@ fn main() {
         // Pass errors through to a big panic below
         // Continue normally if everything is Ok or if out of date
         // and the window needs redrawn
-        let err = match dak.dispatch(|| {}) {
+        let err = match dak.dispatch(None) {
             // Dispatch was successful. If Dakota says the window was
             // closed then we can exit here.
             Ok(should_exit) => {

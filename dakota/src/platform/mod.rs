@@ -20,7 +20,7 @@ pub trait Platform {
     fn set_output_params(&mut self, win: &dom::Window, dims: (u32, u32)) -> Result<()>;
 
     /// Returns true if we should terminate i.e. the window has been closed.
-    fn run<F: FnMut()>(&mut self, func: F) -> std::result::Result<bool, DakotaError>;
+    fn run(&mut self, timeout: Option<u32>) -> std::result::Result<bool, DakotaError>;
 }
 
 #[cfg(feature = "wayland")]
@@ -100,12 +100,11 @@ impl Platform for SDL2Plat {
         Ok(())
     }
 
-    fn run<F>(&mut self, mut func: F) -> std::result::Result<bool, DakotaError>
-    where
-        F: FnMut(),
-    {
-        func();
-        for event in self.sdl_event_pump.poll_iter() {
+    /// Block and handle all available events from SDL2. If timeout
+    /// is specified it will be passed to SDL's wait_event_timeout function.
+    fn run(&mut self, timeout: Option<u32>) -> std::result::Result<bool, DakotaError> {
+        // Returns Result<bool, DakotaError>, true if we should terminate
+        let handle_event = |event| {
             match event {
                 Event::Quit { .. }
                 | Event::KeyDown {
@@ -122,6 +121,31 @@ impl Platform for SDL2Plat {
                     _ => {}
                 },
                 _ => {}
+            };
+
+            return Ok(false);
+        };
+
+        // First block for the next event
+        if handle_event(match timeout {
+            // If we are waiting a certain amount of time, tell SDL. If
+            // it returns an event, great, handle it.
+            // If not, then just return without handling.
+            Some(timeout) => match self.sdl_event_pump.wait_event_timeout(timeout) {
+                Some(event) => event,
+                None => return Ok(false),
+            },
+            // No timeout was given, so we wait indefinitely
+            None => self.sdl_event_pump.wait_event(),
+        })? {
+            return Ok(true);
+        }
+
+        // Now drain the available events before returning
+        // control to the main dakota dispatch loop.
+        for event in self.sdl_event_pump.poll_iter() {
+            if handle_event(event)? {
+                return Ok(true);
             }
         }
         Ok(false)

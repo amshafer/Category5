@@ -34,6 +34,7 @@ pub struct Dakota {
     d_dom: Option<DakotaDOM>,
     d_layout_tree: Option<LayoutNode>,
     d_window_dims: Option<(u32, u32)>,
+    d_needs_redraw: bool,
 }
 
 /// The elements of the layout tree.
@@ -134,6 +135,7 @@ impl Dakota {
             d_dom: None,
             d_layout_tree: None,
             d_window_dims: None,
+            d_needs_redraw: false,
         })
     }
 
@@ -495,19 +497,19 @@ impl Dakota {
 
     /// Completely flush the thundr surfaces/images and recreate the scene
     pub fn refresh_full(&mut self) -> Result<()> {
+        self.d_needs_redraw = true;
         self.clear_thundr();
         self.refresh_resource_map()?;
         self.refresh_elements()
-        // mark needs redraw
     }
 
     /// Handle vulkan swapchain out of date. This is probably because the
     /// window's size has changed. This will requery the window size and
     /// refresh the layout tree.
     fn handle_ood(&mut self) -> Result<()> {
+        self.d_needs_redraw = true;
         self.d_window_dims = Some(self.d_thund.get_resolution());
         self.refresh_elements()
-        // mark needs redraw
     }
 
     /// run the dakota thread.
@@ -517,17 +519,20 @@ impl Dakota {
     /// called before the next frame is drawn, it is the winsys event handler
     /// for the app.
     ///
+    /// This will (under construction):
+    /// * wait for new sdl events (blocking)
+    /// * handle events (input, etc)
+    /// * tell thundr to render if needed
+    ///
     /// Returns true if we should terminate i.e. the window was closed.
-    pub fn dispatch<F>(&mut self, mut func: F) -> Result<bool>
-    where
-        F: FnMut(),
-    {
+    /// Timeout is in milliseconds, and is the timeout to wait for
+    /// window system events.
+    pub fn dispatch(&mut self, timeout: Option<u32>) -> Result<bool> {
         let terminate;
-        func();
 
         // First run our window system code. This will check if wayland/X11
         // notified us of a resize, closure, or need to redraw
-        match self.d_plat.run(|| {}) {
+        match self.d_plat.run(timeout) {
             Ok(should_terminate) => terminate = should_terminate,
             Err(th::ThundrError::OUT_OF_DATE) => {
                 // This is a weird one
@@ -546,22 +551,25 @@ impl Dakota {
         // At every step of the way we check if the drawable has been resized
         // and will return that to the dakota user so they have a chance to resize
         // anything they want
-        match self.d_thund.draw_frame(&mut self.d_surfaces) {
-            Ok(()) => {}
-            Err(th::ThundrError::OUT_OF_DATE) => {
-                self.handle_ood()?;
-                return Err(Error::from(th::ThundrError::OUT_OF_DATE));
-            }
-            Err(e) => return Err(Error::from(e).context("Thundr: drawing failed with error")),
-        };
-        match self.d_thund.present() {
-            Ok(()) => {}
-            Err(th::ThundrError::OUT_OF_DATE) => {
-                self.handle_ood()?;
-                return Err(Error::from(th::ThundrError::OUT_OF_DATE));
-            }
-            Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
-        };
+        if self.d_needs_redraw {
+            match self.d_thund.draw_frame(&mut self.d_surfaces) {
+                Ok(()) => {}
+                Err(th::ThundrError::OUT_OF_DATE) => {
+                    self.handle_ood()?;
+                    return Err(Error::from(th::ThundrError::OUT_OF_DATE));
+                }
+                Err(e) => return Err(Error::from(e).context("Thundr: drawing failed with error")),
+            };
+            match self.d_thund.present() {
+                Ok(()) => {}
+                Err(th::ThundrError::OUT_OF_DATE) => {
+                    self.handle_ood()?;
+                    return Err(Error::from(th::ThundrError::OUT_OF_DATE));
+                }
+                Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
+            };
+            self.d_needs_redraw = false;
+        }
 
         return Ok(terminate);
     }
