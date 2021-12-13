@@ -15,15 +15,16 @@ fn main() {
     let reader = BufReader::new(f);
 
     let mut dak = Dakota::new().expect("Could not create dakota instance");
-    dak.load_xml_reader(reader)
+    let dom = dak
+        .load_xml_reader(reader)
         .expect("Could not parse XML dakota file");
-    dak.refresh_full().unwrap();
+    dak.refresh_full(&dom).unwrap();
 
     loop {
         // Pass errors through to a big panic below
         // Continue normally if everything is Ok or if out of date
         // and the window needs redrawn
-        let err = match dak.dispatch(None) {
+        let err = match dak.dispatch(&dom, None) {
             // Dispatch was successful. If Dakota says the window was
             // closed then we can exit here.
             Ok(should_exit) => {

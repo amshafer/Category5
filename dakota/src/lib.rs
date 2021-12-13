@@ -31,7 +31,6 @@ pub struct Dakota {
     d_plat: platform::SDL2Plat,
     d_resmap: HashMap<String, ResMapEntry>,
     d_surfaces: th::SurfaceList,
-    d_dom: Option<DakotaDOM>,
     d_layout_tree: Option<LayoutNode>,
     d_window_dims: Option<(u32, u32)>,
     d_needs_redraw: bool,
@@ -132,22 +131,13 @@ impl Dakota {
             d_thund: thundr,
             d_surfaces: th::SurfaceList::new(),
             d_resmap: HashMap::new(),
-            d_dom: None,
             d_layout_tree: None,
             d_window_dims: None,
             d_needs_redraw: false,
         })
     }
 
-    pub fn refresh_resource_map(&mut self) -> Result<()> {
-        let dom = match &mut self.d_dom {
-            Some(dom) => dom,
-            None => {
-                return Err(anyhow!(
-                    "A scene is not loaded in Dakota. Please load one from xml",
-                ))
-            }
-        };
+    pub fn refresh_resource_map(&mut self, dom: &DakotaDOM) -> Result<()> {
         self.d_thund.clear_all();
 
         // Load our resources
@@ -444,12 +434,7 @@ impl Dakota {
 
     /// This refreshes the entire scene, and regenerates
     /// the Thundr surface list.
-    pub fn refresh_elements(&mut self) -> Result<()> {
-        if self.d_dom.is_none() {
-            return Ok(());
-        }
-        let mut dom = self.d_dom.take().unwrap();
-
+    pub fn refresh_elements(&mut self, dom: &DakotaDOM) -> Result<()> {
         // check if the window size is set. If it is not, this is the
         // first iteration and we need to populate the dimensions
         // from the DOM
@@ -466,7 +451,7 @@ impl Dakota {
         // create our thundr surfaces while we are at it.
         let num_children = dom.layout.root_element.children.len() as u32;
         let result = self.calculate_sizes(
-            &mut dom.layout.root_element,
+            &dom.layout.root_element,
             &LayoutSpace {
                 avail_width: self.d_window_dims.unwrap().0, // available width
                 avail_height: self.d_window_dims.unwrap().1, // available height
@@ -476,7 +461,6 @@ impl Dakota {
 
         // now handle the error from our layout tree recursive call after
         // we have put the dom back
-        self.d_dom = Some(dom);
         self.d_layout_tree = Some(result?);
 
         // reset our thundr surface list. If the set of resources has
@@ -496,20 +480,20 @@ impl Dakota {
     }
 
     /// Completely flush the thundr surfaces/images and recreate the scene
-    pub fn refresh_full(&mut self) -> Result<()> {
+    pub fn refresh_full(&mut self, dom: &DakotaDOM) -> Result<()> {
         self.d_needs_redraw = true;
         self.clear_thundr();
-        self.refresh_resource_map()?;
-        self.refresh_elements()
+        self.refresh_resource_map(dom)?;
+        self.refresh_elements(dom)
     }
 
     /// Handle vulkan swapchain out of date. This is probably because the
     /// window's size has changed. This will requery the window size and
     /// refresh the layout tree.
-    fn handle_ood(&mut self) -> Result<()> {
+    fn handle_ood(&mut self, dom: &DakotaDOM) -> Result<()> {
         self.d_needs_redraw = true;
         self.d_window_dims = Some(self.d_thund.get_resolution());
-        self.refresh_elements()
+        self.refresh_elements(dom)
     }
 
     /// run the dakota thread.
@@ -527,7 +511,7 @@ impl Dakota {
     /// Returns true if we should terminate i.e. the window was closed.
     /// Timeout is in milliseconds, and is the timeout to wait for
     /// window system events.
-    pub fn dispatch(&mut self, timeout: Option<u32>) -> Result<bool> {
+    pub fn dispatch(&mut self, dom: &DakotaDOM, timeout: Option<u32>) -> Result<bool> {
         let terminate;
 
         // First run our window system code. This will check if wayland/X11
@@ -541,7 +525,7 @@ impl Dakota {
                 // OUT_OF_DATE returned from our SDL2 backend, so we need
                 // to tell Thundr to do OOD itself
                 self.d_thund.handle_ood();
-                self.handle_ood()?;
+                self.handle_ood(dom)?;
                 return Err(Error::from(th::ThundrError::OUT_OF_DATE));
             }
             Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
@@ -555,7 +539,7 @@ impl Dakota {
             match self.d_thund.draw_frame(&mut self.d_surfaces) {
                 Ok(()) => {}
                 Err(th::ThundrError::OUT_OF_DATE) => {
-                    self.handle_ood()?;
+                    self.handle_ood(dom)?;
                     return Err(Error::from(th::ThundrError::OUT_OF_DATE));
                 }
                 Err(e) => return Err(Error::from(e).context("Thundr: drawing failed with error")),
@@ -563,7 +547,7 @@ impl Dakota {
             match self.d_thund.present() {
                 Ok(()) => {}
                 Err(th::ThundrError::OUT_OF_DATE) => {
-                    self.handle_ood()?;
+                    self.handle_ood(dom)?;
                     return Err(Error::from(th::ThundrError::OUT_OF_DATE));
                 }
                 Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
