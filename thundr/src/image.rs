@@ -24,7 +24,7 @@ use nix::errno::Errno;
 use nix::unistd::dup;
 use nix::Error;
 
-use crate::{Damage, PipelineType};
+use crate::Damage;
 
 /// A image buffer containing contents to be composited.
 ///
@@ -166,15 +166,31 @@ struct DmabufPrivate {
 }
 
 impl Renderer {
+    /// Helper that unifies the call for allocating a bgra image
+    unsafe fn alloc_bgra8_image(
+        &self,
+        resolution: &vk::Extent2D,
+    ) -> (vk::Image, vk::ImageView, vk::DeviceMemory) {
+        Renderer::create_image(
+            &self.dev,
+            &self.mem_props,
+            resolution,
+            vk::Format::B8G8R8A8_UNORM,
+            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            vk::ImageAspectFlags::COLOR,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL
+                | vk::MemoryPropertyFlags::HOST_COHERENT
+                | vk::MemoryPropertyFlags::HOST_VISIBLE,
+            vk::ImageTiling::LINEAR,
+        )
+    }
+
     /// Create a new image from a shm buffer
     pub fn create_image_from_bits(
         &mut self,
         img: &MemImage,
         _release: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
-        self.wait_for_prev_submit();
-        self.wait_for_copy();
-
         unsafe {
             let tex_res = vk::Extent2D {
                 width: img.width as u32,
@@ -193,70 +209,9 @@ impl Renderer {
 
             // This image will back the contents of the on-screen
             // client window.
-            // TODO: this should eventually just use the image reported from
-            // wayland.
-            let (image, view, img_mem) = Renderer::create_image(
-                &self.dev,
-                &self.mem_props,
-                &tex_res,
-                vk::Format::B8G8R8A8_UNORM,
-                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-                vk::ImageAspectFlags::COLOR,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL
-                    | vk::MemoryPropertyFlags::HOST_COHERENT
-                    | vk::MemoryPropertyFlags::HOST_VISIBLE,
-                vk::ImageTiling::LINEAR,
-            );
+            let (image, view, img_mem) = self.alloc_bgra8_image(&tex_res);
 
-            // Now copy the bits into the image
-            self.update_memory(img_mem, 0, img.as_slice());
-
-            // Reset the fences for our cbuf submission below
-            self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
-
-            // transition us into the appropriate memory layout for shaders
-            self.cbuf_begin_recording(self.copy_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-            let src_stage = vk::PipelineStageFlags::TRANSFER;
-            let dst_stage = match self.r_pipe_type {
-                PipelineType::GEOMETRIC => vk::PipelineStageFlags::FRAGMENT_SHADER,
-                PipelineType::COMPUTE => vk::PipelineStageFlags::COMPUTE_SHADER,
-                PipelineType::ALL => {
-                    vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::COMPUTE_SHADER
-                }
-            };
-            let layout_barrier = vk::ImageMemoryBarrier::builder()
-                .image(image)
-                .src_access_mask(vk::AccessFlags::TRANSFER_READ)
-                .dst_access_mask(vk::AccessFlags::SHADER_READ)
-                .old_layout(vk::ImageLayout::UNDEFINED)
-                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .subresource_range(
-                    vk::ImageSubresourceRange::builder()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .layer_count(1)
-                        .level_count(1)
-                        .build(),
-                )
-                .build();
-            self.dev.cmd_pipeline_barrier(
-                self.copy_cbuf,
-                src_stage,
-                dst_stage,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[layout_barrier],
-            );
-            self.cbuf_end_recording(self.copy_cbuf);
-
-            self.cbuf_submit_async(
-                self.copy_cbuf,
-                self.present_queue,
-                &[], // wait_stages
-                &[], // wait_semas
-                &[], // signal_semas
-                self.copy_cbuf_fence,
-            );
+            self.update_image_from_memimg(image, img);
 
             return self.create_image_common(
                 ImagePrivate::MemImage,
@@ -529,10 +484,9 @@ impl Renderer {
         &mut self,
         thundr_image: &mut Image,
         memimg: &MemImage,
-        damage: Option<&Damage>,
+        _damage: Option<&Damage>,
         _release: Option<Box<dyn Drop>>,
     ) {
-        // Wait for any operations to complete before touching the buffer
         self.wait_for_prev_submit();
         self.wait_for_copy();
 
@@ -547,52 +501,41 @@ impl Renderer {
         // we get a full mutable borrow of i_internal, which tells rust
         // that we can borrow individual fields later in this function
         let mut image = &mut *thundr_image.i_internal.borrow_mut();
-        unsafe {
-            log::debug!(
-                "update_fr_mem_img: new img is {}x{} and old image_resolution is {:?}",
-                memimg.width,
-                memimg.height,
-                image.i_image_resolution
-            );
+        log::debug!(
+            "update_fr_mem_img: new img is {}x{} and old image_resolution is {:?}",
+            memimg.width,
+            memimg.height,
+            image.i_image_resolution
+        );
 
+        unsafe {
             // If the we are updating with a new size, then we need to recreate the
             // image
             if memimg.width != image.i_image_resolution.width as usize
                 || memimg.height != image.i_image_resolution.height as usize
             {
+                let tex_res = vk::Extent2D {
+                    width: memimg.width as u32,
+                    height: memimg.height as u32,
+                };
+
                 self.dev.free_memory(image.i_image_mem, None);
                 self.dev.destroy_image_view(image.i_image_view, None);
                 self.dev.destroy_image(image.i_image, None);
                 // we need to re-create & resize the image since we changed
                 // the resolution
-                let (vkimage, view, img_mem) = Renderer::create_image(
-                    &self.dev,
-                    &self.mem_props,
-                    &vk::Extent2D {
-                        width: memimg.width as u32,
-                        height: memimg.height as u32,
-                    },
-                    vk::Format::B8G8R8A8_UNORM,
-                    vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-                    vk::ImageAspectFlags::COLOR,
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL
-                        | vk::MemoryPropertyFlags::HOST_COHERENT
-                        | vk::MemoryPropertyFlags::HOST_VISIBLE,
-                    vk::ImageTiling::LINEAR,
-                );
+                let (vkimage, view, img_mem) = self.alloc_bgra8_image(&tex_res);
+
                 image.i_image = vkimage;
                 image.i_image_view = view;
                 image.i_image_mem = img_mem;
                 // update our image's resolution
-                image.i_image_resolution.width = memimg.width as u32;
-                image.i_image_resolution.height = memimg.height as u32;
+                image.i_image_resolution.width = tex_res.width;
+                image.i_image_resolution.height = tex_res.height;
             }
 
             // Perform the copy
-            match damage {
-                None => self.update_memory(image.i_image_mem, 0, memimg.as_slice()),
-                Some(_) => self.update_memory(image.i_image_mem, 0, memimg.as_slice()),
-            }
+            self.update_image_from_memimg(image.i_image, memimg);
         }
 
         // We already copied the image, so silently drop the release info

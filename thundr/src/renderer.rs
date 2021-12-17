@@ -864,7 +864,7 @@ impl Renderer {
     ///
     /// It is assumed this is for textures referenced from the fragment
     /// shader, and so it is a bit specific.
-    unsafe fn transition_image_layout(
+    pub unsafe fn transition_image_layout(
         &self,
         image: vk::Image,
         cbuf: vk::CommandBuffer,
@@ -1034,18 +1034,6 @@ impl Renderer {
         self.update_image_contents_from_buf_common(buffer, image, || regions.as_slice());
     }
 
-    /// Waits for the fence of the latest submitted copy operation to
-    /// signal.
-    pub(crate) unsafe fn wait_for_copy_operation(&self) {
-        self.dev
-            .wait_for_fences(
-                &[self.copy_cbuf_fence],
-                true,          // wait for all
-                std::u64::MAX, //timeout
-            )
-            .unwrap();
-    }
-
     /// This function performs common setup, completion for update functions.
     ///
     /// It handles fence waiting and cbuf recording.
@@ -1058,7 +1046,7 @@ impl Renderer {
         F: FnOnce() -> &'a [vk::BufferImageCopy],
     {
         self.wait_for_prev_submit();
-        self.wait_for_copy_operation();
+        self.wait_for_copy();
         // unsignal it, may be extraneous
         self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
 
@@ -1093,6 +1081,106 @@ impl Renderer {
         );
 
         self.cbuf_end_recording(self.copy_cbuf);
+        self.cbuf_submit_async(
+            self.copy_cbuf,
+            self.present_queue,
+            &[], // wait_stages
+            &[], // wait_semas
+            &[], // signal_semas
+            self.copy_cbuf_fence,
+        );
+    }
+
+    /// Update a Vulkan image from a raw memory region
+    ///
+    /// This will upload the MemImage to the tansfer buffer, copy it to the image,
+    /// and perform any needed layout conversions along the way
+    pub unsafe fn update_image_from_memimg(&mut self, image: vk::Image, memimg: &MemImage) {
+        self.wait_for_prev_submit();
+        self.wait_for_copy();
+
+        // Now copy the bits into the image
+        self.upload_memimage_to_transfer(memimg);
+
+        // Reset the fences for our cbuf submission below
+        self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
+
+        // transition us into the appropriate memory layout for shaders
+        self.cbuf_begin_recording(self.copy_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+        // First thing to do here is to copy the transfer memory into the image
+        self.transition_image_layout(
+            image,
+            self.copy_cbuf,
+            vk::ImageLayout::UNDEFINED,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        );
+
+        self.dev.cmd_copy_buffer_to_image(
+            self.copy_cbuf,
+            self.transfer_buf,
+            image,
+            // this is the layout the image is currently using
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            // Region to copy
+            &[vk::BufferImageCopy::builder()
+                // 0 specifies that the pixels are tightly packed
+                .buffer_offset(0)
+                // TODO: add stride
+                .buffer_row_length(0)
+                .buffer_image_height(0)
+                .image_subresource(
+                    vk::ImageSubresourceLayers::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .mip_level(0)
+                        .base_array_layer(0)
+                        .layer_count(1)
+                        .build(),
+                )
+                .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+                .image_extent(vk::Extent3D {
+                    width: memimg.width as u32,
+                    height: memimg.height as u32,
+                    depth: 1,
+                })
+                .build()],
+        );
+
+        // Now we need to turn this image's format back into the optimal
+        // shader layout
+        let src_stage = vk::PipelineStageFlags::TRANSFER;
+        let dst_stage = match self.r_pipe_type {
+            PipelineType::GEOMETRIC => vk::PipelineStageFlags::FRAGMENT_SHADER,
+            PipelineType::COMPUTE => vk::PipelineStageFlags::COMPUTE_SHADER,
+            PipelineType::ALL => {
+                vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::COMPUTE_SHADER
+            }
+        };
+        let layout_barrier = vk::ImageMemoryBarrier::builder()
+            .image(image)
+            .src_access_mask(vk::AccessFlags::TRANSFER_READ)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .subresource_range(
+                vk::ImageSubresourceRange::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .layer_count(1)
+                    .level_count(1)
+                    .build(),
+            )
+            .build();
+        self.dev.cmd_pipeline_barrier(
+            self.copy_cbuf,
+            src_stage,
+            dst_stage,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[layout_barrier],
+        );
+        self.cbuf_end_recording(self.copy_cbuf);
+
         self.cbuf_submit_async(
             self.copy_cbuf,
             self.present_queue,
@@ -1546,18 +1634,12 @@ impl Renderer {
         self.transfer_mem = buf_mem;
     }
 
-    pub(crate) fn upload_memimage_to_transfer(&mut self, memimg: &MemImage) {
+    pub fn upload_memimage_to_transfer(&mut self, memimg: &MemImage) {
         unsafe {
             // We might be in the middle of copying the transfer buf to an image
             // wait for that if its the case
             self.wait_for_prev_submit();
-            self.wait_for_copy_operation();
-            //let garbage: Vec<u32> = std::iter::repeat(4282712064)
-            //    .take(self.transfer_buf_len / 4)
-            //    .collect();
-            //self.update_memory(self.transfer_mem, 0, garbage.as_slice());
-            // resize the transfer mem if needed
-            // TODO: make the staging buffer owned by Renderer
+            self.wait_for_copy();
             if memimg.as_slice().len() > self.transfer_buf_len {
                 // Out with the old TODO: make this a drop impl
                 self.dev.destroy_buffer(self.transfer_buf, None);
@@ -1572,11 +1654,6 @@ impl Renderer {
                 self.transfer_buf = buffer;
                 self.transfer_mem = buf_mem;
                 self.transfer_buf_len = memimg.as_slice().len();
-            //let garbage: Vec<u32> = std::iter::repeat(4282712064)
-            //    .take(self.transfer_buf_len / 4)
-            //    .collect();
-            //self.update_memory(self.transfer_mem, 0, garbage.as_slice());
-            //self.update_memory(self.transfer_mem, 0, memimg.as_slice());
             } else {
                 // copy the data into the staging buffer
                 self.update_memory(self.transfer_mem, 0, memimg.as_slice());
