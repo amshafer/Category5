@@ -1096,9 +1096,6 @@ impl Renderer {
     /// This will upload the MemImage to the tansfer buffer, copy it to the image,
     /// and perform any needed layout conversions along the way
     pub unsafe fn update_image_from_memimg(&mut self, image: vk::Image, memimg: &MemImage) {
-        self.wait_for_prev_submit();
-        self.wait_for_copy();
-
         // Now copy the bits into the image
         self.upload_memimage_to_transfer(memimg);
 
@@ -1109,11 +1106,30 @@ impl Renderer {
         self.cbuf_begin_recording(self.copy_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
         // First thing to do here is to copy the transfer memory into the image
-        self.transition_image_layout(
-            image,
+        let layout_barrier = vk::ImageMemoryBarrier::builder()
+            .image(image)
+            .src_access_mask(vk::AccessFlags::default())
+            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .subresource_range(
+                vk::ImageSubresourceRange::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .layer_count(1)
+                    .level_count(1)
+                    .build(),
+            )
+            .build();
+        self.dev.cmd_pipeline_barrier(
             self.copy_cbuf,
-            vk::ImageLayout::UNDEFINED,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[layout_barrier],
         );
 
         self.dev.cmd_copy_buffer_to_image(
@@ -1148,7 +1164,6 @@ impl Renderer {
 
         // Now we need to turn this image's format back into the optimal
         // shader layout
-        let src_stage = vk::PipelineStageFlags::TRANSFER;
         let dst_stage = match self.r_pipe_type {
             PipelineType::GEOMETRIC => vk::PipelineStageFlags::FRAGMENT_SHADER,
             PipelineType::COMPUTE => vk::PipelineStageFlags::COMPUTE_SHADER,
@@ -1158,7 +1173,7 @@ impl Renderer {
         };
         let layout_barrier = vk::ImageMemoryBarrier::builder()
             .image(image)
-            .src_access_mask(vk::AccessFlags::TRANSFER_READ)
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
             .dst_access_mask(vk::AccessFlags::SHADER_READ)
             .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
             .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
@@ -1172,7 +1187,7 @@ impl Renderer {
             .build();
         self.dev.cmd_pipeline_barrier(
             self.copy_cbuf,
-            src_stage,
+            vk::PipelineStageFlags::TRANSFER,
             dst_stage,
             vk::DependencyFlags::empty(),
             &[],
@@ -1531,7 +1546,6 @@ impl Renderer {
                 tmp_image_view: tmp_view,
                 tmp_image_mem: tmp_mem,
             };
-            rend.initialize_transfer_mem();
             rend.reallocate_winlist_buf_with_cap(rend.r_winlist_capacity);
 
             return Ok(rend);
@@ -1638,13 +1652,11 @@ impl Renderer {
         unsafe {
             // We might be in the middle of copying the transfer buf to an image
             // wait for that if its the case
-            self.wait_for_prev_submit();
             self.wait_for_copy();
             if memimg.as_slice().len() > self.transfer_buf_len {
-                // Out with the old TODO: make this a drop impl
-                self.dev.destroy_buffer(self.transfer_buf, None);
+                // WHY DOES COMMENTING THESE OUT FIX THINGS??
                 self.free_memory(self.transfer_mem);
-                // in with the new
+                self.dev.destroy_buffer(self.transfer_buf, None);
                 let (buffer, buf_mem) = self.create_buffer(
                     vk::BufferUsageFlags::TRANSFER_SRC,
                     vk::SharingMode::EXCLUSIVE,
@@ -1936,6 +1948,8 @@ impl Renderer {
         &mut self,
         surfaces: &mut SurfaceList,
     ) -> Result<RecordParams> {
+        // At least wait for any image copies to complete
+        self.wait_for_copy();
         // get the next frame to draw into
         self.get_next_swapchain_image()?;
 
