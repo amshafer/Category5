@@ -1096,6 +1096,8 @@ impl Renderer {
     /// This will upload the MemImage to the tansfer buffer, copy it to the image,
     /// and perform any needed layout conversions along the way
     pub unsafe fn update_image_from_memimg(&mut self, image: vk::Image, memimg: &MemImage) {
+        self.wait_for_prev_submit();
+
         // Now copy the bits into the image
         self.upload_memimage_to_transfer(memimg);
 
@@ -1142,8 +1144,10 @@ impl Renderer {
             &[vk::BufferImageCopy::builder()
                 // 0 specifies that the pixels are tightly packed
                 .buffer_offset(0)
-                // TODO: add stride
-                .buffer_row_length(0)
+                // add stride
+                // This will have been set in the memimg, defaulting to
+                // 0 which means tightly packed.
+                .buffer_row_length(memimg.stride)
                 .buffer_image_height(0)
                 .image_subresource(
                     vk::ImageSubresourceLayers::builder()

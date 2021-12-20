@@ -146,7 +146,7 @@ impl ShmBuffer {
     // the correct offset into the region and return
     // it as a MemImage
     pub fn get_mem_image(&self) -> MemImage {
-        MemImage::new(
+        let mut ret = MemImage::new(
             unsafe {
                 self.sb_reg
                     .borrow()
@@ -156,7 +156,12 @@ impl ShmBuffer {
             4, // 4 bytes per pixel hardcoded
             self.sb_width as usize,
             self.sb_height as usize,
-        )
+        );
+        // Need to convert from size in bytes to size
+        // in texels as per Vulkan
+        ret.set_stride((self.sb_stride / 4) as u32);
+
+        return ret;
     }
 }
 

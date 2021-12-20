@@ -66,6 +66,11 @@ pub struct MemImage {
     pub element_size: usize,
     pub width: usize,
     pub height: usize,
+    /// The number of pixels between the start of one row and the
+    /// next. If no stride was specifid, this will default to 0,
+    /// which is what vulkan uses to indicate pixels are tightly
+    /// packed.
+    pub stride: u32,
 }
 
 #[allow(dead_code)]
@@ -89,7 +94,13 @@ impl MemImage {
             element_size: element_size,
             width: width,
             height: height,
+            stride: 0,
         }
+    }
+
+    /// Sets the stride of this image to something besides the default 0
+    pub fn set_stride(&mut self, stride: u32) {
+        self.stride = stride;
     }
 
     /// Performs a simple checksum of adding all the pixels
