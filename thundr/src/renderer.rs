@@ -305,6 +305,26 @@ impl Renderer {
                 .unwrap()
     }
 
+    /// Get the major/minor of the DRM node in use
+    ///
+    /// This uses VK_EXT_physical_device_drm, and will fail an assert
+    /// if it is not in use.
+    ///
+    /// return is drm (renderMajor, renderMinor).
+    unsafe fn get_drm_dev(&self) -> (i64, i64) {
+        assert!(self.dev_features.vkc_supports_phys_dev_drm);
+        let mut drm_info = vk::PhysicalDeviceDrmPropertiesEXT::builder().build();
+
+        let mut info = vk::PhysicalDeviceProperties2::builder().build();
+        info.p_next = &mut drm_info as *mut _ as *mut std::ffi::c_void;
+
+        self.inst
+            .get_physical_device_properties2(self.pdev, &mut info);
+        assert!(drm_info.has_render != 0);
+
+        (drm_info.render_major, drm_info.render_minor)
+    }
+
     /// Choose a vkPhysicalDevice and queue family index.
     ///
     /// selects a physical device and a queue family

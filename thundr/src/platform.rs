@@ -28,6 +28,8 @@ pub struct VKDeviceFeatures {
     /// Does this device allow import/export using drm modifiers
     pub vkc_supports_drm_modifiers: bool,
     pub vkc_supports_incremental_present: bool,
+    /// Does this device support telling us the DRM major/minor numbers in use?
+    pub vkc_supports_phys_dev_drm: bool,
 
     // The following are the lists of extensions that map to the above features
     vkc_ext_mem_exts: [*const i8; 1],
@@ -36,6 +38,7 @@ pub struct VKDeviceFeatures {
     vkc_desc_indexing_exts: [*const i8; 2],
     vkc_drm_modifiers_exts: [*const i8; 1],
     vkc_incremental_present_exts: [*const i8; 1],
+    vkc_phys_dev_drm_exts: [*const i8; 1],
 }
 
 fn contains_extensions(exts: &[vk::ExtensionProperties], req: &[*const i8]) -> bool {
@@ -70,6 +73,7 @@ impl VKDeviceFeatures {
             vkc_supports_desc_indexing: false,
             vkc_supports_drm_modifiers: false,
             vkc_supports_incremental_present: false,
+            vkc_supports_phys_dev_drm: false,
             vkc_ext_mem_exts: [khr::ExternalMemoryFd::name().as_ptr()],
             vkc_dmabuf_exts: [khr::ExternalMemoryFd::name().as_ptr()],
             vkc_mut_swapchain_exts: [
@@ -83,6 +87,7 @@ impl VKDeviceFeatures {
             ],
             vkc_drm_modifiers_exts: [vk::ExtImageDrmFormatModifierFn::name().as_ptr()],
             vkc_incremental_present_exts: [vk::KhrIncrementalPresentFn::name().as_ptr()],
+            vkc_phys_dev_drm_exts: [vk::ExtPhysicalDeviceDrmFn::name().as_ptr()],
         };
 
         let exts = unsafe { inst.enumerate_device_extension_properties(pdev).unwrap() };
@@ -140,6 +145,11 @@ impl VKDeviceFeatures {
             && index_features.descriptor_binding_storage_buffer_update_after_bind > 0
             && index_features.descriptor_binding_sampled_image_update_after_bind > 0;
 
+        match contains_extensions(exts.as_slice(), &ret.vkc_phys_dev_drm_exts) {
+            true => ret.vkc_supports_phys_dev_drm = true,
+            false => log::error!("This vulkan device does not support VK_EXT_physical_device_drm"),
+        }
+
         return ret;
     }
 
@@ -173,6 +183,11 @@ impl VKDeviceFeatures {
         }
         if self.vkc_supports_incremental_present {
             for e in self.vkc_incremental_present_exts.iter() {
+                ret.push(*e)
+            }
+        }
+        if self.vkc_supports_phys_dev_drm {
+            for e in self.vkc_phys_dev_drm_exts.iter() {
                 ret.push(*e)
             }
         }
