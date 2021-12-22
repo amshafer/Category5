@@ -16,10 +16,17 @@
 
 /* The number of windows to blend */
 #define BLEND_COUNT 4
+/*
+ * We MUST mark this storage image as write only (aka NonReadable) or else
+ * Intel decides to be big stupid and ignore writes completely. Apparently this
+ * is spec compliant, but it's such a mystifying experience
+ *
+ * https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/10624
+ */
 layout (local_size_x = TILESIZE, local_size_y = TILESIZE, local_size_z = 1) in;
 
 /* our render target: the swapchain frame to render into */
-layout(binding = 0, rgba8) uniform image2D frame;
+layout(binding = 0, rgba8) writeonly uniform image2D frame;
 
 layout(binding = 2) buffer visibility_buffer
 {
