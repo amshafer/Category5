@@ -165,6 +165,9 @@ enum GlobalProperty {
     /// This is used for debugging. input will trigger this, which tells vkcomp
     /// to record frames.
     renderdoc_recording(bool),
+    /// The name of the DRM node in use. This will be filled in by vkcomp
+    /// and populated from VK_EXT_physical_device_drm
+    drm_dev(i64, i64),
 }
 
 // These are indexed by ClientId

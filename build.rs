@@ -18,16 +18,18 @@ fn main() {
     //
     // These paths are relative to protocols_base.
     let protocols = vec![
-        "unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml",
-        "stable/xdg-shell/xdg-shell.xml",
+        format!(
+            "{}{}",
+            protocols_base, "unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml"
+        ),
+        format!("{}{}", protocols_base, "stable/xdg-shell/xdg-shell.xml"),
+        "src/category5/ways/protocol/wayland-drm.xml".to_string(),
     ];
     // These are the names to be used when generating
     // binding files.
-    let protocol_names = vec!["linux_dmabuf", "xdg_shell"];
+    let protocol_names = vec!["linux_dmabuf", "xdg_shell", "wl_drm"];
 
-    for (i, p) in protocols.iter().enumerate() {
-        let protocol_file = format!("{}{}", protocols_base, p);
-
+    for (i, protocol_file) in protocols.iter().enumerate() {
         // Target directory for the generate files
         let out_dir = Path::new(&out_dir_str);
 

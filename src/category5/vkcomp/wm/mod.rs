@@ -219,6 +219,8 @@ impl WindowManager {
         // Tell the atmosphere rend's resolution
         let res = wm.wm_thundr.get_resolution();
         wm.wm_atmos.set_resolution(res.0, res.1);
+        let (major, minor) = wm.wm_thundr.get_drm_dev();
+        wm.wm_atmos.set_drm_dev(major, minor);
         return wm;
     }
 

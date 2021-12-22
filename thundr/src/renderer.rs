@@ -311,7 +311,7 @@ impl Renderer {
     /// if it is not in use.
     ///
     /// return is drm (renderMajor, renderMinor).
-    unsafe fn get_drm_dev(&self) -> (i64, i64) {
+    pub unsafe fn get_drm_dev(&self) -> (i64, i64) {
         assert!(self.dev_features.vkc_supports_phys_dev_drm);
         let mut drm_info = vk::PhysicalDeviceDrmPropertiesEXT::builder().build();
 

@@ -15,11 +15,13 @@ use ws::protocol::{
 };
 
 extern crate utils as cat5_utils;
-use super::protocol::{linux_dmabuf::zwp_linux_dmabuf_v1 as zldv1, xdg_shell::xdg_wm_base};
+use super::protocol::{
+    linux_dmabuf::zwp_linux_dmabuf_v1 as zldv1, wl_drm::wl_drm, xdg_shell::xdg_wm_base,
+};
 use super::seat::Seat;
 use super::utils;
 use super::{
-    linux_dmabuf::*, shm::*, surface::*, wl_output::wl_output_broadcast, wl_region,
+    linux_dmabuf::*, shm::*, surface::*, wl_drm::*, wl_output::wl_output_broadcast, wl_region,
     wl_shell::wl_shell_handle_request, wl_subcompositor::wl_subcompositor_handle_request,
     xdg_shell::xdg_wm_base_handle_request,
 };
@@ -171,6 +173,7 @@ impl EventManager {
         evman.create_wl_output_global();
         evman.create_wl_subcompositor_global();
         evman.create_wl_data_device_manager_global();
+        evman.create_wl_drm_global();
 
         return evman;
     }
@@ -284,6 +287,28 @@ impl EventManager {
                     // now we can handle the event
                     res.quick_assign(move |l, r, _| {
                         linux_dmabuf_handle_request(r, l);
+                    });
+                },
+            ),
+        );
+    }
+
+    /// Initializes the wl_drm interface
+    ///
+    /// This is only partially implemented, it only gives the name of
+    /// the drm node.
+    fn create_wl_drm_global(&mut self) {
+        self.em_display.create_global::<wl_drm::WlDrm, _>(
+            2, // version
+            Filter::new(
+                // This filter is called when xdg_shell_interface is bound
+                move |(res, _): (ws::Main<wl_drm::WlDrm>, u32), _, _| {
+                    // We need to broadcast supported formats
+                    wl_drm_setup(res.clone());
+
+                    // now we can handle the event
+                    res.quick_assign(move |l, r, _| {
+                        wl_drm_handle_request(r, l);
                     });
                 },
             ),

@@ -392,6 +392,10 @@ impl Thundr {
         };
     }
 
+    pub fn get_drm_dev(&self) -> (i64, i64) {
+        unsafe { self.th_rend.get_drm_dev() }
+    }
+
     // draw_frame
     pub fn draw_frame(&mut self, surfaces: &mut SurfaceList) -> Result<()> {
         // record rendering commands

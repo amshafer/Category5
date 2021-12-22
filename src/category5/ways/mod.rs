@@ -59,6 +59,7 @@ mod pointer;
 pub mod seat;
 mod shm;
 pub mod surface;
+mod wl_drm;
 mod wl_output;
 mod wl_region;
 mod wl_shell;
