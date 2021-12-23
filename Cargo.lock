@@ -72,7 +72,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9b39be18770d11421cdb1b9947a45dd3f37e93092cbf377614828a319d5fee8"
 dependencies = [
  "hermit-abi",
- "libc",
+ "libc 0.2.107",
  "winapi",
 ]
 
@@ -147,7 +147,7 @@ dependencies = [
  "bitflags",
  "image",
  "input",
- "libc",
+ "libc 0.2.112",
  "nix 0.17.0",
  "renderdoc",
  "thundr",
@@ -204,7 +204,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fa66045b9cb23c2e9c1520732030608b02ee07e5cfaa5a521ec15ded7fa24c90"
 dependencies = [
  "glob",
- "libc",
+ "libc 0.2.107",
  "libloading",
 ]
 
@@ -375,7 +375,7 @@ version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1010591b26bbfe835e9faeabeb11866061cc7dcebffd56ad7d0942d0e61aefd8"
 dependencies = [
- "libc",
+ "libc 0.2.107",
 ]
 
 [[package]]
@@ -409,7 +409,7 @@ version = "0.7.0"
 dependencies = [
  "bitflags",
  "input-sys",
- "libc",
+ "libc 0.2.107",
  "log",
  "udev",
 ]
@@ -419,7 +419,7 @@ name = "input-sys"
 version = "1.16.0"
 dependencies = [
  "bindgen",
- "libc",
+ "libc 0.2.107",
 ]
 
 [[package]]
@@ -459,6 +459,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fbe5e23404da5b4f555ef85ebed98fb4083e55a00c317800bc2a50ede9f3d219"
 
 [[package]]
+name = "libc"
+version = "0.2.112"
+
+[[package]]
 name = "libloading"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -474,7 +478,7 @@ version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c8469b4a23b962c1396b9b451dda50ef5b283e8dd309d69033475fa9b334324"
 dependencies = [
- "libc",
+ "libc 0.2.107",
  "pkg-config",
 ]
 
@@ -554,7 +558,7 @@ dependencies = [
  "bitflags",
  "cc",
  "cfg-if 0.1.10",
- "libc",
+ "libc 0.2.107",
  "void",
 ]
 
@@ -567,7 +571,7 @@ dependencies = [
  "bitflags",
  "cc",
  "cfg-if 1.0.0",
- "libc",
+ "libc 0.2.107",
  "memoffset 0.6.4",
 ]
 
@@ -629,7 +633,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46203554f085ff89c235cd12f7075f3233af9b11ed7c9e16dfe2560d03313ce6"
 dependencies = [
  "hermit-abi",
- "libc",
+ "libc 0.2.107",
 ]
 
 [[package]]
@@ -657,7 +661,7 @@ checksum = "d76e8e1493bcac0d2766c42737f34458f1c8c50c0d23bcb24ea953affb273216"
 dependencies = [
  "cfg-if 1.0.0",
  "instant",
- "libc",
+ "libc 0.2.107",
  "redox_syscall",
  "smallvec",
  "winapi",
@@ -712,7 +716,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d71dacdc3c88c1fde3885a3be3fbab9f35724e6ce99467f7d9c5026132184ca"
 dependencies = [
  "autocfg 0.1.7",
- "libc",
+ "libc 0.2.107",
  "rand_chacha",
  "rand_core 0.4.2",
  "rand_hc",
@@ -773,7 +777,7 @@ version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1166d5c91dc97b88d1decc3285bb0a99ed84b05cfd0bc2341bdf2d43fc41e39b"
 dependencies = [
- "libc",
+ "libc 0.2.107",
  "rand_core 0.4.2",
  "winapi",
 ]
@@ -786,7 +790,7 @@ checksum = "7b75f676a1e053fc562eafbb47838d67c84801e38fc1ba459e8f180deabd5071"
 dependencies = [
  "cloudabi",
  "fuchsia-cprng",
- "libc",
+ "libc 0.2.107",
  "rand_core 0.4.2",
  "rdrand",
  "winapi",
@@ -1035,7 +1039,7 @@ version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3193363f52bb34c6708ac2ffedcb5f7e5874f0329ef68e1315f27d8d768eb568"
 dependencies = [
- "libc",
+ "libc 0.2.107",
  "libudev-sys",
  "pkg-config",
 ]
@@ -1112,7 +1116,7 @@ dependencies = [
  "bitflags",
  "downcast-rs",
  "lazy_static",
- "libc",
+ "libc 0.2.107",
  "nix 0.22.0",
  "parking_lot",
  "scoped-tls",
@@ -1128,7 +1132,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba9e06acb775b3007f8d3094438306979e572d1d3b844d7a71557a84b055d959"
 dependencies = [
  "dlib",
- "libc",
+ "libc 0.2.107",
  "memoffset 0.6.4",
  "pkg-config",
 ]
@@ -1145,7 +1149,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d011071ae14a2f6671d0b74080ae0cd8ebf3a6f8c9589a2cd45f23126fe29724"
 dependencies = [
- "libc",
+ "libc 0.2.107",
 ]
 
 [[package]]
@@ -1194,7 +1198,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fda0ea5f7ddabd51deeeda7799bee06274112f577da7dd3d954b8eda731b2fce"
 dependencies = [
- "libc",
+ "libc 0.2.107",
 ]
 
 [[package]]

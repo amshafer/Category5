@@ -298,13 +298,14 @@ impl EventManager {
     /// This is only partially implemented, it only gives the name of
     /// the drm node.
     fn create_wl_drm_global(&mut self) {
+        let atmos = self.em_atmos.clone();
         self.em_display.create_global::<wl_drm::WlDrm, _>(
             2, // version
             Filter::new(
                 // This filter is called when xdg_shell_interface is bound
                 move |(res, _): (ws::Main<wl_drm::WlDrm>, u32), _, _| {
                     // We need to broadcast supported formats
-                    wl_drm_setup(res.clone());
+                    wl_drm_setup(atmos.clone(), res.clone());
 
                     // now we can handle the event
                     res.quick_assign(move |l, r, _| {
