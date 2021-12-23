@@ -20,9 +20,7 @@ use std::rc::Rc;
 use std::{fmt, iter, mem};
 
 use ash::vk;
-use nix::errno::Errno;
 use nix::unistd::dup;
-use nix::Error;
 
 use crate::Damage;
 
@@ -163,6 +161,7 @@ struct DmabufPrivate {
     dp_mem_reqs: vk::MemoryRequirements,
     /// the type of memory to use
     dp_memtype_index: u32,
+    dp_target_format: vk::Format,
 }
 
 impl Renderer {
@@ -251,6 +250,124 @@ impl Renderer {
         return None;
     }
 
+    unsafe fn create_dmabuf_image(
+        &mut self,
+        dmabuf: &Dmabuf,
+        dmabuf_priv: &mut DmabufPrivate,
+    ) -> (vk::Image, vk::ImageView, vk::DeviceMemory) {
+        // Allocate an external image
+        // -------------------------------------------------------
+        // we create the image now, but will have to bind
+        // some memory to it later.
+        let mut image_info = vk::ImageCreateInfo::builder()
+            .image_type(vk::ImageType::TYPE_2D)
+            // TODO: add other formats
+            .format(dmabuf_priv.dp_target_format)
+            .extent(vk::Extent3D {
+                width: dmabuf.db_width as u32,
+                height: dmabuf.db_height as u32,
+                depth: 1,
+            })
+            .mip_levels(1)
+            .array_layers(1)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            // we are only doing the linear format for now
+            .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
+            .usage(vk::ImageUsageFlags::SAMPLED)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let mut ext_mem_info = vk::ExternalMemoryImageCreateInfo::builder()
+            .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
+            .build();
+
+        let drm_create_info = vk::ImageDrmFormatModifierListCreateInfoEXT::builder()
+            .drm_format_modifiers(&[dmabuf.db_mods])
+            .build();
+        ext_mem_info.p_next = &drm_create_info as *const _ as *mut std::ffi::c_void;
+        image_info.p_next = &ext_mem_info as *const _ as *mut std::ffi::c_void;
+        let image = self.dev.create_image(&image_info, None).unwrap();
+
+        //
+        // -------------------------------------------------------
+        // TODO: use some of these to verify dmabuf imports:
+        //
+        // VkPhysicalDeviceExternalBufferInfo
+        // VkPhysicalDeviceExternalImageInfo
+
+        // We need to import from the dmabuf fd, so we will
+        // add a VkImportMemoryFdInfoKHR struct to the next ptr
+        // here to tell vulkan that we should import mem
+        // instead of allocating it.
+        let mut alloc_info = vk::MemoryAllocateInfo::builder()
+            .allocation_size(dmabuf_priv.dp_mem_reqs.size)
+            .memory_type_index(dmabuf_priv.dp_memtype_index);
+
+        // Since we are VERY async/threading friendly here, it is
+        // possible that the fd may be bad since the program that
+        // owns it was killed. If that is the case just return and
+        // don't update the texture.
+        // let fd = match dup(dmabuf.db_fd) {
+        //     Ok(f) => f,
+        //     Err(Error::Sys(Errno::EBADF)) => return,
+        //     Err(e) => {
+        //         log::debug!("could not dup fd {:?}", e);
+        //         return;
+        //     }
+        // };
+        alloc_info.p_next = &vk::ImportMemoryFdInfoKHR::builder()
+            .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
+            // need to dup the fd since it seems the implementation will
+            // internally free it
+            .fd(dup(dmabuf.db_fd).expect("Could not dup dmabuf fd"))
+            as *const _ as *const std::ffi::c_void;
+
+        // perform the import
+        let image_memory = self.dev.allocate_memory(&alloc_info, None).unwrap();
+        self.dev
+            .bind_image_memory(image, image_memory, 0)
+            .expect("Unable to bind device memory to image");
+
+        // finally make a view to wrap the image
+        let view_info = vk::ImageViewCreateInfo::builder()
+            .subresource_range(
+                vk::ImageSubresourceRange::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .level_count(1)
+                    .layer_count(1)
+                    .build(),
+            )
+            .image(image)
+            .format(image_info.format)
+            .view_type(vk::ImageViewType::TYPE_2D);
+
+        let view = self.dev.create_image_view(&view_info, None).unwrap();
+
+        // Update the private tracker with memory info
+        // -------------------------------------------------------
+        // we need to find a memory type that matches the type our
+        // new image needs
+        dmabuf_priv.dp_mem_reqs = self.dev.get_image_memory_requirements(image);
+        let mem_props = Renderer::get_pdev_mem_properties(&self.inst, self.pdev);
+        // supported types we can import as
+        let dmabuf_type_bits = self
+            .external_mem_fd_loader
+            .get_memory_fd_properties_khr(
+                vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT,
+                dmabuf.db_fd,
+            )
+            .expect("Could not get memory fd properties")
+            // bitmask set for each supported memory type
+            .memory_type_bits;
+
+        dmabuf_priv.dp_memtype_index = Renderer::find_memtype_for_dmabuf(
+            dmabuf_type_bits,
+            &mem_props,
+            &dmabuf_priv.dp_mem_reqs,
+        )
+        .expect("Could not find a memtype for the dmabuf");
+
+        (image, view, image_memory)
+    }
+
     /// Create a new image from a dmabuf
     ///
     /// This is used during the first update of window
@@ -264,6 +381,9 @@ impl Renderer {
         log::debug!("Creating image from dmabuf {:?}", dmabuf);
         // A lot of this is duplicated from Renderer::create_image
         unsafe {
+            // Check validity of dmabuf format and print info
+            // -------------------------------------------------------
+
             // According to the mesa source, this supports all modifiers
             let target_format = vk::Format::B8G8R8A8_UNORM;
             // get_physical_device_format_properties2
@@ -315,6 +435,7 @@ impl Renderer {
                     &mut img_fmt_props,
                 )
                 .unwrap();
+            // -------------------------------------------------------
             log::debug!(
                 "dmabuf {} image format properties {:#?} {:#?}",
                 dmabuf.db_fd,
@@ -322,117 +443,20 @@ impl Renderer {
                 drm_img_props
             );
 
-            // we create the image now, but will have to bind
-            // some memory to it later.
-            let mut image_info = vk::ImageCreateInfo::builder()
-                .image_type(vk::ImageType::TYPE_2D)
-                // TODO: add other formats
-                .format(target_format)
-                .extent(vk::Extent3D {
-                    width: dmabuf.db_width as u32,
-                    height: dmabuf.db_height as u32,
-                    depth: 1,
-                })
-                .mip_levels(1)
-                .array_layers(1)
-                .samples(vk::SampleCountFlags::TYPE_1)
-                // we are only doing the linear format for now
-                .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
-                .usage(vk::ImageUsageFlags::SAMPLED)
-                .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            let mut ext_mem_info = vk::ExternalMemoryImageCreateInfo::builder()
-                .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
-                .build();
-            // ???: Mesa doesn't use this one?
-            // let drm_create_info =
-            //     vk::ImageDrmFormatModifierExplicitCreateInfoEXT::builder()
-            //     .drm_format_modifier(dmabuf.db_mods)
-            //     .plane_layouts(&[
-            //         vk::SubresourceLayout::builder()
-            //             .size(
-            //                 (dmabuf.db_stride * dmabuf.db_height as u32) as u64
-            //             )
-            //             .row_pitch(
-            //                 dmabuf.db_stride as u64
-            //                     - (dmabuf.db_width * 4) as u64
-            //             )
-            //             .build()
-            //     ])
-            //     .build();
-            let drm_create_info = vk::ImageDrmFormatModifierListCreateInfoEXT::builder()
-                .drm_format_modifiers(&[dmabuf.db_mods])
-                .build();
-            ext_mem_info.p_next = &drm_create_info as *const _ as *mut std::ffi::c_void;
-            image_info.p_next = &ext_mem_info as *const _ as *mut std::ffi::c_void;
-            let image = self.dev.create_image(&image_info, None).unwrap();
-
-            // we need to find a memory type that matches the type our
-            // new image needs
-            let mem_reqs = self.dev.get_image_memory_requirements(image);
-            let mem_props = Renderer::get_pdev_mem_properties(&self.inst, self.pdev);
-            // supported types we can import as
-            let dmabuf_type_bits = self
-                .external_mem_fd_loader
-                .get_memory_fd_properties_khr(
-                    vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT,
-                    dmabuf.db_fd,
-                )
-                .expect("Could not get memory fd properties")
-                // bitmask set for each supported memory type
-                .memory_type_bits;
-
-            let memtype_index =
-                Renderer::find_memtype_for_dmabuf(dmabuf_type_bits, &mem_props, &mem_reqs)
-                    .expect("Could not find a memtype for the dmabuf");
-
-            // use some of these to verify dmabuf imports:
-            //
-            // VkPhysicalDeviceExternalBufferInfo
-            // VkPhysicalDeviceExternalImageInfo
-
-            // This is where we differ from create_image
-            //
-            // We need to import from the dmabuf fd, so we will
-            // add a VkImportMemoryFdInfoKHR struct to the next ptr
-            // here to tell vulkan that we should import mem
-            // instead of allocating it.
-            let mut alloc_info = vk::MemoryAllocateInfo::builder()
-                .allocation_size(mem_reqs.size)
-                .memory_type_index(memtype_index);
-
-            alloc_info.p_next = &vk::ImportMemoryFdInfoKHR::builder()
-                .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
-                // need to dup the fd since it seems the implementation will
-                // internally free it
-                .fd(dup(dmabuf.db_fd).unwrap()) as *const _
-                as *const std::ffi::c_void;
-
-            // perform the import
-            let image_memory = self.dev.allocate_memory(&alloc_info, None).unwrap();
-            self.dev
-                .bind_image_memory(image, image_memory, 0)
-                .expect("Unable to bind device memory to image");
-
-            // finally make a view to wrap the image
-            let view_info = vk::ImageViewCreateInfo::builder()
-                .subresource_range(
-                    vk::ImageSubresourceRange::builder()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .level_count(1)
-                        .layer_count(1)
-                        .build(),
-                )
-                .image(image)
-                .format(image_info.format)
-                .view_type(vk::ImageViewType::TYPE_2D);
-
-            let view = self.dev.create_image_view(&view_info, None).unwrap();
+            // Make Dmabuf private struct
+            // -------------------------------------------------------
+            // This will be updated by create_dmabuf_image
+            let mut dmabuf_priv = DmabufPrivate {
+                dp_mem_reqs: vk::MemoryRequirements::builder().build(),
+                dp_memtype_index: 0,
+                dp_target_format: target_format,
+            };
+            // Import the dmabuf
+            // -------------------------------------------------------
+            let (image, view, image_memory) = self.create_dmabuf_image(&dmabuf, &mut dmabuf_priv);
 
             return self.create_image_common(
-                ImagePrivate::Dmabuf(DmabufPrivate {
-                    dp_mem_reqs: mem_reqs,
-                    dp_memtype_index: memtype_index,
-                }),
+                ImagePrivate::Dmabuf(dmabuf_priv),
                 &vk::Extent2D {
                     width: dmabuf.db_width as u32,
                     height: dmabuf.db_height as u32,
@@ -557,52 +581,24 @@ impl Renderer {
 
         let mut image = thundr_image.i_internal.borrow_mut();
         log::debug!("Updating image with dmabuf {:?}", dmabuf);
-        if let ImagePrivate::Dmabuf(dp) = &mut image.i_priv {
-            // Since we are VERY async/threading friendly here, it is
-            // possible that the fd may be bad since the program that
-            // owns it was killed. If that is the case just return and
-            // don't update the texture.
-            let fd = match dup(dmabuf.db_fd) {
-                Ok(f) => f,
-                Err(Error::Sys(Errno::EBADF)) => return,
-                Err(e) => {
-                    log::debug!("could not dup fd {:?}", e);
-                    return;
-                }
-            };
+        unsafe {
+            // Release the old frame's resources
+            //
+            // Free the old memory and replace it with the new one
+            self.free_memory(image.i_image_mem);
+            self.dev.destroy_image(image.i_image, None);
+            self.dev.destroy_image_view(image.i_image_view, None);
+        }
 
+        if let ImagePrivate::Dmabuf(ref mut dp) = &mut image.i_priv {
             unsafe {
-                // We need to update and rebind the memory
-                // for image
-                //
-                // see from_dmabuf for a complete example
-                let mut alloc_info = vk::MemoryAllocateInfo::builder()
-                    .allocation_size(dp.dp_mem_reqs.size)
-                    .memory_type_index(dp.dp_memtype_index)
-                    .build();
+                // Import the dmabuf
+                // -------------------------------------------------------
+                let (vkimage, view, vkimage_memory) = self.create_dmabuf_image(&dmabuf, dp);
 
-                let import_info = vk::ImportMemoryFdInfoKHR::builder()
-                    .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
-                    // Need to dup the fd, since I think the implementation
-                    // will internally free whatever we give it
-                    .fd(fd)
-                    .build();
-
-                alloc_info.p_next = &import_info as *const _ as *const std::ffi::c_void;
-
-                // perform the import
-                let image_memory = self.dev.allocate_memory(&alloc_info, None).unwrap();
-
-                // Release the old frame's resources
-                //
-                // Free the old memory and replace it with the new one
-                self.free_memory(image.i_image_mem);
-                image.i_image_mem = image_memory;
-
-                // update the image header with the new import
-                self.dev
-                    .bind_image_memory(image.i_image, image.i_image_mem, 0)
-                    .expect("Unable to rebind device memory to image");
+                image.i_image = vkimage;
+                image.i_image_view = view;
+                image.i_image_mem = vkimage_memory;
             }
         } else {
             panic!("Updating non-memimg Image with MemImg");

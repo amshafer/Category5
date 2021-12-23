@@ -306,7 +306,7 @@ impl WindowManager {
     /// level calls to import a dmabuf and update a image.
     /// Creates a new image if one doesn't exist yet.
     fn update_window_contents_from_dmabuf(&mut self, info: &UpdateWindowContentsFromDmabuf) {
-        log::error!("Updating window {:?} with {:#?}", info.ufd_id, info);
+        log::debug!("Updating window {:?} with {:#?}", info.ufd_id, info);
         // Find the app corresponding to that window id
         let mut app = match self.wm_apps[info.ufd_id.into()].as_mut() {
             Some(a) => a,
