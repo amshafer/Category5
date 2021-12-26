@@ -20,7 +20,9 @@ use std::rc::Rc;
 use std::{fmt, iter, mem};
 
 use ash::vk;
+use nix::errno::Errno;
 use nix::unistd::dup;
+use nix::Error;
 
 use crate::Damage;
 
@@ -254,7 +256,7 @@ impl Renderer {
         &mut self,
         dmabuf: &Dmabuf,
         dmabuf_priv: &mut DmabufPrivate,
-    ) -> (vk::Image, vk::ImageView, vk::DeviceMemory) {
+    ) -> Result<(vk::Image, vk::ImageView, vk::DeviceMemory), Error> {
         // Allocate an external image
         // -------------------------------------------------------
         // we create the image now, but will have to bind
@@ -305,20 +307,19 @@ impl Renderer {
         // possible that the fd may be bad since the program that
         // owns it was killed. If that is the case just return and
         // don't update the texture.
-        // let fd = match dup(dmabuf.db_fd) {
-        //     Ok(f) => f,
-        //     Err(Error::Sys(Errno::EBADF)) => return,
-        //     Err(e) => {
-        //         log::debug!("could not dup fd {:?}", e);
-        //         return;
-        //     }
-        // };
+        let fd = match dup(dmabuf.db_fd) {
+            Ok(f) => f,
+            Err(Error::Sys(Errno::EBADF)) => return Err(Error::Sys(Errno::EBADF)),
+            Err(e) => {
+                log::debug!("could not dup fd {:?}", e);
+                return Err(e);
+            }
+        };
         alloc_info.p_next = &vk::ImportMemoryFdInfoKHR::builder()
             .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
             // need to dup the fd since it seems the implementation will
             // internally free it
-            .fd(dup(dmabuf.db_fd).expect("Could not dup dmabuf fd"))
-            as *const _ as *const std::ffi::c_void;
+            .fd(fd) as *const _ as *const std::ffi::c_void;
 
         // perform the import
         let image_memory = self.dev.allocate_memory(&alloc_info, None).unwrap();
@@ -365,7 +366,7 @@ impl Renderer {
         )
         .expect("Could not find a memtype for the dmabuf");
 
-        (image, view, image_memory)
+        Ok((image, view, image_memory))
     }
 
     /// Create a new image from a dmabuf
@@ -453,7 +454,11 @@ impl Renderer {
             };
             // Import the dmabuf
             // -------------------------------------------------------
-            let (image, view, image_memory) = self.create_dmabuf_image(&dmabuf, &mut dmabuf_priv);
+            let (image, view, image_memory) =
+                match self.create_dmabuf_image(&dmabuf, &mut dmabuf_priv) {
+                    Ok((i, v, im)) => (i, v, im),
+                    Err(_) => return None,
+                };
 
             return self.create_image_common(
                 ImagePrivate::Dmabuf(dmabuf_priv),
@@ -581,20 +586,21 @@ impl Renderer {
 
         let mut image = thundr_image.i_internal.borrow_mut();
         log::debug!("Updating image with dmabuf {:?}", dmabuf);
-        unsafe {
-            // Release the old frame's resources
-            //
-            // Free the old memory and replace it with the new one
-            self.free_memory(image.i_image_mem);
-            self.dev.destroy_image(image.i_image, None);
-            self.dev.destroy_image_view(image.i_image_view, None);
-        }
-
         if let ImagePrivate::Dmabuf(ref mut dp) = &mut image.i_priv {
             unsafe {
                 // Import the dmabuf
                 // -------------------------------------------------------
-                let (vkimage, view, vkimage_memory) = self.create_dmabuf_image(&dmabuf, dp);
+                let (vkimage, view, vkimage_memory) = match self.create_dmabuf_image(&dmabuf, dp) {
+                    Ok((i, v, im)) => (i, v, im),
+                    Err(_) => return,
+                };
+                // Release the old frame's resources
+                //
+                // Free the old memory and replace it with the new one. Do this
+                // after in case the previous import failed.
+                self.free_memory(image.i_image_mem);
+                self.dev.destroy_image(image.i_image, None);
+                self.dev.destroy_image_view(image.i_image_view, None);
 
                 image.i_image = vkimage;
                 image.i_image_view = view;
