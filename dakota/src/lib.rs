@@ -238,7 +238,7 @@ impl Dakota {
             };
 
             for child in el.children.iter() {
-                let mut child_size = self.calculate_sizes(child, &child_space)?;
+                let mut child_size = self.calculate_sizes(&child.borrow(), &child_space)?;
 
                 // now the child size has been made, but it still needs to find
                 // the proper position inside the parent container. If the child
@@ -278,10 +278,10 @@ impl Dakota {
             // This box has centered content.
             // We should either recurse the child box or calculate the
             // size based on the centered resource.
-            if let Some(mut child) = content.el.as_ref() {
+            if let Some(child) = content.el.as_ref() {
                 // num_children_at_this_level was set earlier to 0 when we
                 // created the common child space
-                let mut child_size = self.calculate_sizes(&mut child, &child_space)?;
+                let mut child_size = self.calculate_sizes(&child.borrow(), &child_space)?;
                 // At this point the size of the is calculated
                 // and we can determine the offset. We want to center the
                 // box, so that's the center point of the parent minus
@@ -449,9 +449,9 @@ impl Dakota {
 
         // construct layout tree with sizes of all boxes
         // create our thundr surfaces while we are at it.
-        let num_children = dom.layout.root_element.children.len() as u32;
+        let num_children = dom.layout.root_element.borrow().children.len() as u32;
         let result = self.calculate_sizes(
-            &dom.layout.root_element,
+            &dom.layout.root_element.borrow(),
             &LayoutSpace {
                 avail_width: self.d_window_dims.unwrap().0, // available width
                 avail_height: self.d_window_dims.unwrap().1, // available height

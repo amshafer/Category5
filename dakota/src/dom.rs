@@ -2,7 +2,9 @@ use crate::serde::{Deserialize, Serialize};
 use crate::utils::{anyhow, Result};
 use crate::LayoutSpace;
 
+use std::cell::RefCell;
 use std::cmp::{Ord, PartialOrd};
+use std::rc::Rc;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(tag = "type")]
@@ -73,7 +75,7 @@ pub struct ResourceMap {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Content {
-    pub el: Option<std::boxed::Box<Element>>,
+    pub el: Option<Rc<RefCell<Element>>>,
 }
 
 /// This is a relative offset that offsets an element
@@ -199,7 +201,7 @@ pub struct Element {
     #[serde(rename = "scrolling", default)]
     pub bounds: Option<Edges>,
     #[serde(rename = "el", default)]
-    pub children: Vec<Element>,
+    pub children: Vec<Rc<RefCell<Element>>>,
 }
 
 impl Element {
@@ -257,7 +259,7 @@ impl Element {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Layout {
     #[serde(rename = "el")]
-    pub root_element: Element,
+    pub root_element: Rc<RefCell<Element>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
