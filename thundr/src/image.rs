@@ -26,6 +26,10 @@ use nix::Error;
 
 use crate::Damage;
 
+// For now we only support one format.
+// According to the mesa source, this supports all modifiers.
+const TARGET_FORMAT: vk::Format = vk::Format::B8G8R8A8_UNORM;
+
 /// A image buffer containing contents to be composited.
 ///
 /// An Image will be created from a data source and attached to
@@ -163,7 +167,6 @@ struct DmabufPrivate {
     dp_mem_reqs: vk::MemoryRequirements,
     /// the type of memory to use
     dp_memtype_index: u32,
-    dp_target_format: vk::Format,
 }
 
 impl Renderer {
@@ -176,7 +179,7 @@ impl Renderer {
             &self.dev,
             &self.mem_props,
             resolution,
-            vk::Format::B8G8R8A8_UNORM,
+            TARGET_FORMAT,
             vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
             vk::ImageAspectFlags::COLOR,
             vk::MemoryPropertyFlags::DEVICE_LOCAL
@@ -197,6 +200,8 @@ impl Renderer {
                 width: img.width as u32,
                 height: img.height as u32,
             };
+
+            log::debug!("create_image_from_bits: Image {}x{}", img.width, img.height,);
 
             //log::error!(
             //    "create_image_from_bits: Image {}x{} checksum {}",
@@ -264,7 +269,7 @@ impl Renderer {
         let mut image_info = vk::ImageCreateInfo::builder()
             .image_type(vk::ImageType::TYPE_2D)
             // TODO: add other formats
-            .format(dmabuf_priv.dp_target_format)
+            .format(TARGET_FORMAT)
             .extent(vk::Extent3D {
                 width: dmabuf.db_width as u32,
                 height: dmabuf.db_height as u32,
@@ -287,6 +292,13 @@ impl Renderer {
         ext_mem_info.p_next = &drm_create_info as *const _ as *mut std::ffi::c_void;
         image_info.p_next = &ext_mem_info as *const _ as *mut std::ffi::c_void;
         let image = self.dev.create_image(&image_info, None).unwrap();
+
+        // Update the private tracker with memory info
+        // -------------------------------------------------------
+        // we need to find a memory type that matches the type our
+        // new image needs
+        dmabuf_priv.dp_mem_reqs = self.dev.get_image_memory_requirements(image);
+        let mem_props = Renderer::get_pdev_mem_properties(&self.inst, self.pdev);
 
         //
         // -------------------------------------------------------
@@ -342,12 +354,6 @@ impl Renderer {
 
         let view = self.dev.create_image_view(&view_info, None).unwrap();
 
-        // Update the private tracker with memory info
-        // -------------------------------------------------------
-        // we need to find a memory type that matches the type our
-        // new image needs
-        dmabuf_priv.dp_mem_reqs = self.dev.get_image_memory_requirements(image);
-        let mem_props = Renderer::get_pdev_mem_properties(&self.inst, self.pdev);
         // supported types we can import as
         let dmabuf_type_bits = self
             .external_mem_fd_loader
@@ -379,14 +385,12 @@ impl Renderer {
         dmabuf: &Dmabuf,
         release: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
-        log::debug!("Creating image from dmabuf {:?}", dmabuf);
+        log::debug!("Updating new image with dmabuf {:?}", dmabuf);
         // A lot of this is duplicated from Renderer::create_image
         unsafe {
             // Check validity of dmabuf format and print info
             // -------------------------------------------------------
 
-            // According to the mesa source, this supports all modifiers
-            let target_format = vk::Format::B8G8R8A8_UNORM;
             // get_physical_device_format_properties2
             let mut format_props = vk::FormatProperties2::builder().build();
             let mut drm_fmt_props = vk::DrmFormatModifierPropertiesListEXT::builder().build();
@@ -395,7 +399,7 @@ impl Renderer {
             // get the number of drm format mods props
             self.inst.get_physical_device_format_properties2(
                 self.pdev,
-                target_format,
+                TARGET_FORMAT,
                 &mut format_props,
             );
             let mut mods: Vec<_> = iter::repeat(vk::DrmFormatModifierPropertiesEXT::default())
@@ -405,7 +409,7 @@ impl Renderer {
             drm_fmt_props.p_drm_format_modifier_properties = mods.as_mut_ptr();
             self.inst.get_physical_device_format_properties2(
                 self.pdev,
-                target_format,
+                TARGET_FORMAT,
                 &mut format_props,
             );
 
@@ -415,7 +419,7 @@ impl Renderer {
 
             // the parameters to use for image creation
             let mut img_fmt_info = vk::PhysicalDeviceImageFormatInfo2::builder()
-                .format(target_format)
+                .format(TARGET_FORMAT)
                 .ty(vk::ImageType::TYPE_2D)
                 .usage(vk::ImageUsageFlags::SAMPLED)
                 .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
@@ -450,14 +454,16 @@ impl Renderer {
             let mut dmabuf_priv = DmabufPrivate {
                 dp_mem_reqs: vk::MemoryRequirements::builder().build(),
                 dp_memtype_index: 0,
-                dp_target_format: target_format,
             };
             // Import the dmabuf
             // -------------------------------------------------------
             let (image, view, image_memory) =
                 match self.create_dmabuf_image(&dmabuf, &mut dmabuf_priv) {
                     Ok((i, v, im)) => (i, v, im),
-                    Err(_) => return None,
+                    Err(e) => {
+                        log::debug!("Could not update dmabuf image: {:?}", e);
+                        return None;
+                    }
                 };
 
             return self.create_image_common(
@@ -531,7 +537,8 @@ impl Renderer {
         // that we can borrow individual fields later in this function
         let mut image = &mut *thundr_image.i_internal.borrow_mut();
         log::debug!(
-            "update_fr_mem_img: new img is {}x{} and old image_resolution is {:?}",
+            "update_fr_mem_img: update img {}: new is {}x{} and old image_resolution is {:?}",
+            image.i_id,
             memimg.width,
             memimg.height,
             image.i_image_resolution
@@ -540,7 +547,10 @@ impl Renderer {
         unsafe {
             // If the we are updating with a new size, then we need to recreate the
             // image
-            if memimg.width != image.i_image_resolution.width as usize
+            // This also needs to recreate the image if it is not currently backed
+            // by shared memory
+            if !matches!(image.i_priv, ImagePrivate::MemImage)
+                || memimg.width != image.i_image_resolution.width as usize
                 || memimg.height != image.i_image_resolution.height as usize
             {
                 let tex_res = vk::Extent2D {
@@ -561,6 +571,10 @@ impl Renderer {
                 // update our image's resolution
                 image.i_image_resolution.width = tex_res.width;
                 image.i_image_resolution.height = tex_res.height;
+
+                // Update the type, in case this image was previously created
+                // from a dmabuf
+                image.i_priv = ImagePrivate::MemImage;
             }
 
             // Perform the copy
@@ -585,14 +599,26 @@ impl Renderer {
         self.wait_for_copy();
 
         let mut image = thundr_image.i_internal.borrow_mut();
-        log::debug!("Updating image with dmabuf {:?}", dmabuf);
+        log::debug!("Updating image {:?} with dmabuf {:?}", image.i_id, dmabuf);
+
+        // Update our image type. This may have changed since the last time
+        // update was called. I.e. if we updated this Thundr Image from a
+        // shared memory buffer, the current type may be ImagePrivate::MemImage
+        image.i_priv = ImagePrivate::Dmabuf(DmabufPrivate {
+            dp_mem_reqs: vk::MemoryRequirements::builder().build(),
+            dp_memtype_index: 0,
+        });
+
         if let ImagePrivate::Dmabuf(ref mut dp) = &mut image.i_priv {
             unsafe {
                 // Import the dmabuf
                 // -------------------------------------------------------
                 let (vkimage, view, vkimage_memory) = match self.create_dmabuf_image(&dmabuf, dp) {
                     Ok((i, v, im)) => (i, v, im),
-                    Err(_) => return,
+                    Err(e) => {
+                        log::debug!("Could not update dmabuf image: {:?}", e);
+                        return;
+                    }
                 };
                 // Release the old frame's resources
                 //
@@ -607,8 +633,9 @@ impl Renderer {
                 image.i_image_mem = vkimage_memory;
             }
         } else {
-            panic!("Updating non-memimg Image with MemImg");
+            panic!("The ImagePrivate dmabuf type should have been assigned");
         }
+
         self.update_common(&mut image, release);
     }
 
