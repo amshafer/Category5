@@ -72,7 +72,7 @@ impl Params {
     fn handle_request(
         &mut self,
         req: zlbpv1::Request,
-        _params: Main<zlbpv1::ZwpLinuxBufferParamsV1>,
+        params: Main<zlbpv1::ZwpLinuxBufferParamsV1>,
     ) {
         match req {
             zlbpv1::Request::CreateImmed {
@@ -82,8 +82,11 @@ impl Params {
                 format,
                 flags,
             } => {
-                log::debug!("linux_dmabuf_params: Creating a new wl_buffer");
-                log::debug!("                     of size {}x{}", width, height);
+                log::debug!(
+                    "linux_dmabuf_params: Creating a new wl_buffer of size {}x{}",
+                    width,
+                    height
+                );
 
                 // TODO
                 // for now just only assign the first dmabuf
@@ -97,15 +100,13 @@ impl Params {
                 buffer_id.assign_destructor(Filter::new(
                     move |r: Resource<wl_buffer::WlBuffer>, _, _| {
                         let ud = r.user_data().get::<Dmabuf>().unwrap();
-                        log::profiling!(
-                            "Destroying wl_buffer: closing dmabuf with fd {}",
-                            ud.db_fd
-                        );
+                        log::debug!("Destroying wl_buffer: closing dmabuf with fd {}", ud.db_fd);
                         close(ud.db_fd).unwrap();
                     },
                 ));
 
                 buffer_id.as_ref().user_data().set(move || dmabuf);
+                params.created(&buffer_id);
             }
             zlbpv1::Request::Add {
                 fd,
@@ -115,7 +116,7 @@ impl Params {
                 modifier_hi,
                 modifier_lo,
             } => self.add(fd, plane_idx, offset, stride, modifier_hi, modifier_lo),
-            zlbpv1::Request::Destroy => {}
+            zlbpv1::Request::Destroy => log::debug!("Destroying Dmabuf params"),
             _ => unimplemented!(),
         };
     }
@@ -136,7 +137,7 @@ impl Params {
             stride,
             (mod_hi as u64) << 32 | (mod_low as u64),
         );
-        log::profiling!("linux_dmabuf_params:Adding {:#?}", d);
+        log::debug!("linux_dmabuf_params: Adding {:#?}", d);
         self.p_bufs.push(d);
     }
 }

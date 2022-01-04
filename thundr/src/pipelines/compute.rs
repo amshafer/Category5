@@ -662,10 +662,10 @@ impl Pipeline for CompPipeline {
             }
 
             // If no tiles were damaged, then we have nothing to render
-            if self.cp_tiles.tiles.len() == 0 {
-                log::profiling!("No tiles damaged, not drawing anything");
-                return false;
-            }
+            //if self.cp_tiles.tiles.len() == 0 {
+            //    log::profiling!("No tiles damaged, not drawing anything");
+            //    return false;
+            //}
 
             // We need to do this afterwards, since it depends on cp_image_infos
             // This always needs to be done, since we are binding the latest swapchain image
