@@ -288,10 +288,14 @@ impl Dakota {
                 // half the size of the child.
                 //
                 // The child size should have already been clipped to the available space
-                child_size.l_offset.x =
-                    std::cmp::max((space.avail_width / 2) - (child_size.l_size.width / 2), 0);
-                child_size.l_offset.y =
-                    std::cmp::max((space.avail_height / 2) - (child_size.l_size.height / 2), 0);
+                child_size.l_offset.x = std::cmp::max(
+                    (space.avail_width / 2).saturating_sub(child_size.l_size.width / 2),
+                    0,
+                );
+                child_size.l_offset.y = std::cmp::max(
+                    (space.avail_height / 2).saturating_sub(child_size.l_size.height / 2),
+                    0,
+                );
 
                 ret.add_child(child_size);
             }
