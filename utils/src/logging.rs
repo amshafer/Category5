@@ -4,6 +4,7 @@
 // to be stateless
 //
 // Austin Shafer - 2020
+
 #[allow(dead_code, non_camel_case_types)]
 pub enum LogLevel {
     // in order of highest priority
@@ -72,13 +73,30 @@ macro_rules! log_internal{
         //
         // Currently set to the debug level (2)
         if $loglevel.get_level() <= crate::utils::logging::LogLevel::error.get_level() {
-            println!("[{:?}]<{}> {}:{} - {}",
+            let fmtstr = format!("[{:?}]<{}> {}:{} - {}",
                      log::get_current_millis(),
                      $loglevel.get_name(),
                      file!(),
                      line!(),
                      format!($($format_args)+)
             );
+
+            println!("{}", fmtstr);
+
+            // Append to a log file
+            use std::fs::OpenOptions;
+            use std::io::prelude::*;
+
+            let mut file = OpenOptions::new()
+                .write(true)
+                .append(true)
+                .create(true)
+                .open("/tmp/cat5_debug_log.txt")
+                .unwrap();
+
+            if let Err(e) = writeln!(file, "{}", fmtstr) {
+                eprintln!("Couldn't write to debug file: {}", e);
+            }
         }
     })
 }
