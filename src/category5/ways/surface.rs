@@ -20,6 +20,7 @@ use crate::category5::vkcomp::wm;
 use utils::{log, Dmabuf, WindowId};
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 /// Private structure for a wayland surface
@@ -42,8 +43,8 @@ pub struct Surface {
     /// Frame callback
     /// This is a power saving feature, we will signal this when the
     /// client should redraw this surface
-    pub s_attached_frame_callbacks: Vec<Main<wl_callback::WlCallback>>,
-    pub s_frame_callbacks: Vec<Main<wl_callback::WlCallback>>,
+    pub s_attached_frame_callbacks: VecDeque<Main<wl_callback::WlCallback>>,
+    pub s_frame_callbacks: VecDeque<Main<wl_callback::WlCallback>>,
     /// How this surface is being used
     pub s_role: Option<Role>,
     /// Are we currently committing this surface?
@@ -75,8 +76,8 @@ impl Surface {
             s_id: id,
             s_attached_buffer: None,
             s_committed_buffer: None,
-            s_attached_frame_callbacks: Vec::new(),
-            s_frame_callbacks: Vec::new(),
+            s_attached_frame_callbacks: VecDeque::new(),
+            s_frame_callbacks: VecDeque::new(),
             s_role: None,
             s_opaque: None,
             s_input: None,
@@ -282,8 +283,7 @@ impl Surface {
         // Commit our frame callbacks
         // move the callback list from attached to the current callback list
         self.s_frame_callbacks
-            .extend_from_slice(self.s_attached_frame_callbacks.as_slice());
-        self.s_attached_frame_callbacks.clear();
+            .append(&mut self.s_attached_frame_callbacks);
 
         // update the surface size of this id so that vkcomp knows what
         // size of buffer it is compositing
@@ -324,7 +324,7 @@ impl Surface {
     fn frame(&mut self, callback: Main<wl_callback::WlCallback>) {
         // Add this call to our current state, which will
         // be called at the appropriate time
-        self.s_attached_frame_callbacks.push(callback);
+        self.s_attached_frame_callbacks.push_back(callback);
     }
 
     // Destroy this surface

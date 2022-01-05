@@ -872,7 +872,7 @@ impl Atmosphere {
                 if surf.s_frame_callbacks.len() > 0 {
                     // frame callbacks are signaled in the order that they
                     // were submitted in
-                    for callback in surf.s_frame_callbacks.iter() {
+                    if let Some(callback) = surf.s_frame_callbacks.pop_front() {
                         log::debug!("Firing frame callback {:?}", callback);
                         // frame callbacks return the current time
                         // in milliseconds.
@@ -883,8 +883,6 @@ impl Atmosphere {
                                 .as_millis() as u32,
                         );
                     }
-
-                    surf.s_frame_callbacks.clear();
                 }
             }
         }
