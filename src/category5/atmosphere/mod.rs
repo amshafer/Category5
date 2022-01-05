@@ -873,6 +873,7 @@ impl Atmosphere {
                     // frame callbacks are signaled in the order that they
                     // were submitted in
                     for callback in surf.s_frame_callbacks.iter() {
+                        log::debug!("Firing frame callback {:?}", callback);
                         // frame callbacks return the current time
                         // in milliseconds.
                         callback.done(
