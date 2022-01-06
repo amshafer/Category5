@@ -434,9 +434,6 @@ impl EventManager {
         // now register the fds we added
         fdw.register_events();
 
-        // do we need to send frame callbacks
-        let mut needs_frame = true;
-
         // reset the timer before we start
         tm.reset();
         while fdw.wait_for_events(tm.time_remaining()) {
@@ -456,13 +453,6 @@ impl EventManager {
                 // due to resizing, we need to send those changes now
                 self.em_input.borrow_mut().update_from_eventloop();
 
-                if needs_frame {
-                    needs_frame = false;
-                    // it has been roughly one frame, so fire the frame callbacks
-                    // so clients can draw
-                    self.em_atmos.borrow_mut().signal_frame_callbacks();
-                }
-
                 // Try to flip hemispheres to push our updates to vkcomp
                 // If we can't recieve it, vkcomp isn't ready, and we should
                 // continue processing wayland updates so the system
@@ -474,12 +464,10 @@ impl EventManager {
                         log::debug!("[ways]_____________________________ SENT HEMI");
                         // reset our timer
                         tm.reset();
-                        needs_frame = true;
+                        // it has been roughly one frame, so fire the frame callbacks
+                        // so clients can draw
+                        self.em_atmos.borrow_mut().signal_frame_callbacks();
                     }
-                } else {
-                    // The atmosphere was not changed,
-                    tm.reset();
-                    needs_frame = true;
                 }
             }
 

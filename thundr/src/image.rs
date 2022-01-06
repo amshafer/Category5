@@ -20,8 +20,7 @@ use std::rc::Rc;
 use std::{fmt, iter, mem};
 
 use ash::vk;
-use nix::errno::Errno;
-use nix::unistd::dup;
+use nix::fcntl::{fcntl, FcntlArg};
 use nix::Error;
 
 use crate::Damage;
@@ -286,8 +285,13 @@ impl Renderer {
             .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
             .build();
 
-        let drm_create_info = vk::ImageDrmFormatModifierListCreateInfoEXT::builder()
-            .drm_format_modifiers(&[dmabuf.db_mods])
+        let drm_create_info = vk::ImageDrmFormatModifierExplicitCreateInfoEXT::builder()
+            .drm_format_modifier(dmabuf.db_mods)
+            .plane_layouts(&[vk::SubresourceLayout::builder()
+                .offset(dmabuf.db_offset as u64)
+                .row_pitch(dmabuf.db_stride as u64)
+                .size(0)
+                .build()])
             .build();
         ext_mem_info.p_next = &drm_create_info as *const _ as *mut std::ffi::c_void;
         image_info.p_next = &ext_mem_info as *const _ as *mut std::ffi::c_void;
@@ -295,10 +299,27 @@ impl Renderer {
 
         // Update the private tracker with memory info
         // -------------------------------------------------------
+        // supported types we can import as
+        let dmabuf_type_bits = self
+            .external_mem_fd_loader
+            .get_memory_fd_properties_khr(
+                vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT,
+                dmabuf.db_fd,
+            )
+            .expect("Could not get memory fd properties")
+            // bitmask set for each supported memory type
+            .memory_type_bits;
         // we need to find a memory type that matches the type our
         // new image needs
         dmabuf_priv.dp_mem_reqs = self.dev.get_image_memory_requirements(image);
         let mem_props = Renderer::get_pdev_mem_properties(&self.inst, self.pdev);
+
+        dmabuf_priv.dp_memtype_index = Renderer::find_memtype_for_dmabuf(
+            dmabuf_type_bits,
+            &mem_props,
+            &dmabuf_priv.dp_mem_reqs,
+        )
+        .expect("Could not find a memtype for the dmabuf");
 
         //
         // -------------------------------------------------------
@@ -319,9 +340,8 @@ impl Renderer {
         // possible that the fd may be bad since the program that
         // owns it was killed. If that is the case just return and
         // don't update the texture.
-        let fd = match dup(dmabuf.db_fd) {
+        let fd = match fcntl(dmabuf.db_fd, FcntlArg::F_DUPFD_CLOEXEC(0)) {
             Ok(f) => f,
-            Err(Error::Sys(Errno::EBADF)) => return Err(Error::Sys(Errno::EBADF)),
             Err(e) => {
                 log::debug!("could not dup fd {:?}", e);
                 return Err(e);
@@ -354,24 +374,6 @@ impl Renderer {
 
         let view = self.dev.create_image_view(&view_info, None).unwrap();
 
-        // supported types we can import as
-        let dmabuf_type_bits = self
-            .external_mem_fd_loader
-            .get_memory_fd_properties_khr(
-                vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT,
-                dmabuf.db_fd,
-            )
-            .expect("Could not get memory fd properties")
-            // bitmask set for each supported memory type
-            .memory_type_bits;
-
-        dmabuf_priv.dp_memtype_index = Renderer::find_memtype_for_dmabuf(
-            dmabuf_type_bits,
-            &mem_props,
-            &dmabuf_priv.dp_mem_reqs,
-        )
-        .expect("Could not find a memtype for the dmabuf");
-
         Ok((image, view, image_memory))
     }
 
@@ -385,6 +387,9 @@ impl Renderer {
         dmabuf: &Dmabuf,
         release: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
+        self.wait_for_prev_submit();
+        self.wait_for_copy();
+
         log::debug!("Updating new image with dmabuf {:?}", dmabuf);
         // A lot of this is duplicated from Renderer::create_image
         unsafe {
@@ -648,6 +653,80 @@ impl Renderer {
         mem::swap(&mut image.i_release_info, &mut old_release);
         if let Some(old) = old_release {
             self.register_for_release(old);
+        }
+    }
+
+    /// Add a Cmd full of image barriers for all images that need it.
+    /// This should be called before cbuf_end_recording in the renderer's
+    /// big cbuf.
+    pub unsafe fn add_image_barriers_for_dmabuf_images(
+        &mut self,
+        cbuf: vk::CommandBuffer,
+        images: &[Image],
+    ) {
+        self.r_acquire_barriers.clear();
+        self.r_release_barriers.clear();
+
+        for img_rc in images.iter() {
+            let img = img_rc.i_internal.borrow();
+
+            self.r_acquire_barriers.push(
+                vk::ImageMemoryBarrier::builder()
+                    .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
+                    .dst_queue_family_index(self.graphics_family_index)
+                    .image(img.i_image)
+                    .old_layout(vk::ImageLayout::GENERAL)
+                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .src_access_mask(vk::AccessFlags::empty())
+                    .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                    .subresource_range(
+                        vk::ImageSubresourceRange::builder()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .layer_count(1)
+                            .level_count(1)
+                            .build(),
+                    )
+                    .build(),
+            );
+            self.dev.cmd_pipeline_barrier(
+                cbuf,
+                vk::PipelineStageFlags::TOP_OF_PIPE, // src
+                vk::PipelineStageFlags::FRAGMENT_SHADER
+                    | vk::PipelineStageFlags::VERTEX_SHADER
+                    | vk::PipelineStageFlags::COMPUTE_SHADER, // dst
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                self.r_acquire_barriers.as_slice(),
+            );
+
+            self.r_release_barriers.push(
+                vk::ImageMemoryBarrier::builder()
+                    .src_queue_family_index(self.graphics_family_index)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
+                    .image(img.i_image)
+                    .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .new_layout(vk::ImageLayout::GENERAL)
+                    .src_access_mask(vk::AccessFlags::SHADER_READ)
+                    .dst_access_mask(vk::AccessFlags::empty())
+                    .subresource_range(
+                        vk::ImageSubresourceRange::builder()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .layer_count(1)
+                            .level_count(1)
+                            .build(),
+                    )
+                    .build(),
+            );
+            self.dev.cmd_pipeline_barrier(
+                cbuf,
+                vk::PipelineStageFlags::ALL_GRAPHICS | vk::PipelineStageFlags::COMPUTE_SHADER, // src
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE, // dst
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                self.r_release_barriers.as_slice(),
+            );
         }
     }
 

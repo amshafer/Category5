@@ -640,7 +640,7 @@ impl Pipeline for CompPipeline {
         &mut self,
         rend: &mut Renderer,
         _params: &RecordParams,
-        _images: &[Image],
+        images: &[Image],
         _surfaces: &mut SurfaceList,
     ) -> bool {
         unsafe {
@@ -795,6 +795,7 @@ impl Pipeline for CompPipeline {
                 &[image_barrier],
             );
 
+            rend.add_image_barriers_for_dmabuf_images(self.cp_cbuf, images);
             rend.cbuf_end_recording(self.cp_cbuf);
             stop.end();
             log::debug!(

@@ -184,6 +184,13 @@ pub struct Renderer {
     tmp_image: vk::Image,
     tmp_image_view: vk::ImageView,
     tmp_image_mem: vk::DeviceMemory,
+
+    /// Dmabuf import usage barrier list. Will be regenerated
+    /// during every draw
+    pub r_acquire_barriers: Vec<vk::ImageMemoryBarrier>,
+    /// Dmabuf import release barriers. These let drm know vulkan
+    /// is done using them.
+    pub r_release_barriers: Vec<vk::ImageMemoryBarrier>,
 }
 
 /// This must match the definition of the Window struct in the
@@ -1569,6 +1576,8 @@ impl Renderer {
                 tmp_image: tmp,
                 tmp_image_view: tmp_view,
                 tmp_image_mem: tmp_mem,
+                r_acquire_barriers: Vec::new(),
+                r_release_barriers: Vec::new(),
             };
             rend.reallocate_winlist_buf_with_cap(rend.r_winlist_capacity);
 

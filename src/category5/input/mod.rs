@@ -256,7 +256,7 @@ impl Input {
             // high-res and wheel click behavior. For ScrollFinger we
             // should handle kinetic scrolling
             Some(Event::Pointer(PointerEvent::ScrollFinger(sf))) => {
-                log::error!(
+                log::debug!(
                     "scrolling by ({}, {})",
                     sf.scroll_value(pointer::Axis::Horizontal),
                     sf.scroll_value(pointer::Axis::Vertical),
@@ -268,7 +268,7 @@ impl Input {
                 }));
             }
             Some(Event::Pointer(PointerEvent::ScrollWheel(sw))) => {
-                log::error!(
+                log::debug!(
                     "scrolling by ({}, {})",
                     sw.scroll_value(pointer::Axis::Horizontal),
                     sw.scroll_value(pointer::Axis::Vertical),
