@@ -48,6 +48,7 @@ pub(crate) struct ImageInternal {
     pub i_image_view: vk::ImageView,
     pub i_image_mem: vk::DeviceMemory,
     pub i_image_resolution: vk::Extent2D,
+    i_general_layout: bool,
     /// specific to the type of image
     i_priv: ImagePrivate,
     /// Stuff to release when we are no longer using
@@ -256,6 +257,54 @@ impl Renderer {
         return None;
     }
 
+    unsafe fn acquire_dmabuf_image_from_external_queue(&mut self, image: vk::Image) {
+        self.wait_for_copy();
+        self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
+
+        // now perform the copy
+        self.cbuf_begin_recording(self.copy_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+        let acquire_barrier = vk::ImageMemoryBarrier::builder()
+            .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
+            .dst_queue_family_index(self.graphics_family_index)
+            .image(image)
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .subresource_range(
+                vk::ImageSubresourceRange::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .layer_count(1)
+                    .level_count(1)
+                    .build(),
+            )
+            .build();
+
+        self.dev.cmd_pipeline_barrier(
+            self.copy_cbuf,
+            vk::PipelineStageFlags::TOP_OF_PIPE, // src
+            vk::PipelineStageFlags::FRAGMENT_SHADER
+                | vk::PipelineStageFlags::VERTEX_SHADER
+                | vk::PipelineStageFlags::COMPUTE_SHADER, // dst
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[acquire_barrier],
+        );
+
+        self.cbuf_end_recording(self.copy_cbuf);
+        self.cbuf_submit_async(
+            self.copy_cbuf,
+            self.present_queue,
+            &[], // wait_stages
+            &[], // wait_semas
+            &[], // signal_semas
+            self.copy_cbuf_fence,
+        );
+        self.wait_for_copy();
+    }
+
     unsafe fn create_dmabuf_image(
         &mut self,
         dmabuf: &Dmabuf,
@@ -280,7 +329,8 @@ impl Renderer {
             // we are only doing the linear format for now
             .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
             .usage(vk::ImageUsageFlags::SAMPLED)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .build();
         let mut ext_mem_info = vk::ExternalMemoryImageCreateInfo::builder()
             .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
             .build();
@@ -347,11 +397,18 @@ impl Renderer {
                 return Err(e);
             }
         };
-        alloc_info.p_next = &vk::ImportMemoryFdInfoKHR::builder()
+        let mut import_fd_info = vk::ImportMemoryFdInfoKHR::builder()
             .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
             // need to dup the fd since it seems the implementation will
             // internally free it
-            .fd(fd) as *const _ as *const std::ffi::c_void;
+            .fd(fd);
+
+        let dedicated_alloc_info = vk::MemoryDedicatedAllocateInfo::builder()
+            .image(image)
+            .build();
+
+        import_fd_info.p_next = &dedicated_alloc_info as *const _ as *const std::ffi::c_void;
+        alloc_info.p_next = &import_fd_info as *const _ as *const std::ffi::c_void;
 
         // perform the import
         let image_memory = self.dev.allocate_memory(&alloc_info, None).unwrap();
@@ -374,6 +431,13 @@ impl Renderer {
 
         let view = self.dev.create_image_view(&view_info, None).unwrap();
 
+        //self.acquire_dmabuf_image_from_external_queue(image);
+
+        log::error!(
+            "Created Vulkan image {:?} from dmabuf {}",
+            image,
+            dmabuf.db_fd
+        );
         Ok((image, view, image_memory))
     }
 
@@ -508,6 +572,7 @@ impl Renderer {
                 i_image_view: view,
                 i_image_mem: image_mem,
                 i_image_resolution: *res,
+                i_general_layout: false,
                 i_priv: private,
                 i_release_info: release,
                 i_damage: None,
@@ -668,14 +733,20 @@ impl Renderer {
         self.r_release_barriers.clear();
 
         for img_rc in images.iter() {
-            let img = img_rc.i_internal.borrow();
+            let mut img = img_rc.i_internal.borrow_mut();
+
+            let src_layout = match img.i_general_layout {
+                true => vk::ImageLayout::GENERAL,
+                false => vk::ImageLayout::UNDEFINED,
+            };
+            img.i_general_layout = true;
 
             self.r_acquire_barriers.push(
                 vk::ImageMemoryBarrier::builder()
                     .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
                     .dst_queue_family_index(self.graphics_family_index)
                     .image(img.i_image)
-                    .old_layout(vk::ImageLayout::GENERAL)
+                    .old_layout(src_layout)
                     .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .src_access_mask(vk::AccessFlags::empty())
                     .dst_access_mask(vk::AccessFlags::SHADER_READ)

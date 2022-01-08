@@ -443,9 +443,9 @@ impl Thundr {
         log::debug!("--------------------------------");
         for (i, img) in self.th_image_list.iter().enumerate() {
             log::debug!(
-                "[{}] Id={}, Size={:?}",
+                "[{}] Id={:?}, Size={:?}",
                 i,
-                img.get_id(),
+                img.i_internal.borrow().i_image,
                 img.get_resolution()
             );
         }
