@@ -628,11 +628,9 @@ impl Renderer {
                     height: memimg.height as u32,
                 };
 
-                self.r_destroyed_images.push((
-                    image.i_image,
-                    image.i_image_view,
-                    image.i_image_mem,
-                ));
+                self.free_memory(image.i_image_mem);
+                self.dev.destroy_image(image.i_image, None);
+                self.dev.destroy_image_view(image.i_image_view, None);
                 // we need to re-create & resize the image since we changed
                 // the resolution
                 let (vkimage, view, img_mem) = self.alloc_bgra8_image(&tex_res);
@@ -692,6 +690,7 @@ impl Renderer {
                         return;
                     }
                 };
+
                 // Release the old frame's resources
                 //
                 // Free the old memory and replace it with the new one. Do this

@@ -147,7 +147,6 @@ pub struct Renderer {
     /// for rendering that should now be released
     /// See WindowManger's worker_thread for more
     pub(crate) r_release: Vec<Box<dyn Drop>>,
-    pub r_destroyed_images: Vec<(vk::Image, vk::ImageView, vk::DeviceMemory)>,
     /// command buffer for copying shm images
     pub(crate) copy_cbuf: vk::CommandBuffer,
     pub(crate) copy_cbuf_fence: vk::Fence,
@@ -968,15 +967,6 @@ impl Renderer {
         // This is the previous frames's pending release list
         // We will clear it, therefore dropping all the relinfos
         self.r_release.clear();
-
-        unsafe {
-            for data in self.r_destroyed_images.iter() {
-                self.dev.free_memory(data.2, None);
-                self.dev.destroy_image_view(data.1, None);
-                self.dev.destroy_image(data.0, None);
-            }
-        }
-        self.r_destroyed_images.clear();
     }
 
     /// Add a ReleaseInfo to the list of resources to be
@@ -1567,7 +1557,6 @@ impl Renderer {
                 submit_fence: fence,
                 external_mem_fd_loader: ext_mem_loader,
                 r_release: Vec::new(),
-                r_destroyed_images: Vec::new(),
                 copy_cbuf: copy_cbuf,
                 copy_cbuf_fence: copy_fence,
                 desc_pool: descpool,
