@@ -628,9 +628,11 @@ impl Renderer {
                     height: memimg.height as u32,
                 };
 
-                self.dev.free_memory(image.i_image_mem, None);
-                self.dev.destroy_image_view(image.i_image_view, None);
-                self.dev.destroy_image(image.i_image, None);
+                self.r_destroyed_images.push((
+                    image.i_image,
+                    image.i_image_view,
+                    image.i_image_mem,
+                ));
                 // we need to re-create & resize the image since we changed
                 // the resolution
                 let (vkimage, view, img_mem) = self.alloc_bgra8_image(&tex_res);
@@ -804,6 +806,7 @@ impl Renderer {
     /// A simple teardown function. The renderer is needed since
     /// it allocated all these objects.
     pub fn destroy_image(&mut self, thundr_image: &Image) {
+        self.wait_for_prev_submit();
         thundr_image.assert_valid();
         let mut image = thundr_image.i_internal.borrow_mut();
         unsafe {

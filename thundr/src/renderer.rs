@@ -147,6 +147,7 @@ pub struct Renderer {
     /// for rendering that should now be released
     /// See WindowManger's worker_thread for more
     pub(crate) r_release: Vec<Box<dyn Drop>>,
+    pub r_destroyed_images: Vec<(vk::Image, vk::ImageView, vk::DeviceMemory)>,
     /// command buffer for copying shm images
     pub(crate) copy_cbuf: vk::CommandBuffer,
     pub(crate) copy_cbuf_fence: vk::Fence,
@@ -967,6 +968,15 @@ impl Renderer {
         // This is the previous frames's pending release list
         // We will clear it, therefore dropping all the relinfos
         self.r_release.clear();
+
+        unsafe {
+            for data in self.r_destroyed_images.iter() {
+                self.dev.free_memory(data.2, None);
+                self.dev.destroy_image_view(data.1, None);
+                self.dev.destroy_image(data.0, None);
+            }
+        }
+        self.r_destroyed_images.clear();
     }
 
     /// Add a ReleaseInfo to the list of resources to be
@@ -1557,6 +1567,7 @@ impl Renderer {
                 submit_fence: fence,
                 external_mem_fd_loader: ext_mem_loader,
                 r_release: Vec::new(),
+                r_destroyed_images: Vec::new(),
                 copy_cbuf: copy_cbuf,
                 copy_cbuf_fence: copy_fence,
                 desc_pool: descpool,
@@ -1813,35 +1824,18 @@ impl Renderer {
         signal_semas: &[vk::Semaphore],
     ) {
         unsafe {
-            // once the one-time buffer has been recorded we can submit
-            // it for execution.
-            let submit_info = vk::SubmitInfo::builder()
-                .wait_semaphores(wait_semas)
-                .wait_dst_stage_mask(wait_stages)
-                .command_buffers(&[cbuf])
-                .signal_semaphores(signal_semas)
-                .build();
+            self.wait_for_prev_submit();
+            self.dev.reset_fences(&[self.submit_fence]).unwrap();
 
-            let fence = self
-                .dev
-                .create_fence(&vk::FenceCreateInfo::default(), None)
-                .expect("Could not create fence");
-
-            // create a fence to be notified when the commands have finished
-            // executing. Wait immediately for the fence.
-            self.dev
-                .queue_submit(queue, &[submit_info], fence)
-                .expect("Could not submit buffer to queue");
-
-            self.dev
-                .wait_for_fences(
-                    &[fence],
-                    true,          // wait for all
-                    std::u64::MAX, //timeout
-                )
-                .expect("Could not wait for the submit fence");
-            // the commands are now executed
-            self.dev.destroy_fence(fence, None);
+            self.cbuf_submit_async(
+                cbuf,
+                queue,
+                // wait_stages
+                wait_stages,
+                wait_semas,
+                signal_semas,
+                self.submit_fence,
+            );
         }
     }
 
@@ -2279,6 +2273,8 @@ impl Renderer {
     }
 
     pub fn refresh_window_resources(&mut self, images: &[Image], surfaces: &mut SurfaceList) {
+        self.wait_for_prev_submit();
+
         // Construct a list of image views from the submitted surface list
         // this will be our unsized texture array that the composite shader will reference
         // TODO: make this a changed flag
