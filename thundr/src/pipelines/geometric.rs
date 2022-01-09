@@ -142,7 +142,7 @@ impl Pipeline for GeomPipeline {
         &mut self,
         rend: &mut Renderer,
         params: &RecordParams,
-        images: &[Image],
+        _images: &[Image],
         surfaces: &mut SurfaceList,
     ) -> bool {
         self.begin_recording(rend, params);
@@ -176,7 +176,7 @@ impl Pipeline for GeomPipeline {
             // make sure to end recording
             rend.dev.cmd_end_render_pass(params.cbuf);
             // Sync our dmabuf images
-            rend.add_image_barriers_for_dmabuf_images(params.cbuf, images);
+            //rend.add_image_barriers_for_dmabuf_images(params.cbuf, images);
             rend.cbuf_end_recording(params.cbuf);
         }
 

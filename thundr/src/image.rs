@@ -258,8 +258,10 @@ impl Renderer {
     }
 
     unsafe fn acquire_dmabuf_image_from_external_queue(&mut self, image: vk::Image) {
+        self.wait_for_prev_submit();
         self.wait_for_copy();
-        self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
+
+        self.dev.reset_fences(&[self.submit_fence]).unwrap();
 
         // now perform the copy
         self.cbuf_begin_recording(self.copy_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
@@ -300,9 +302,9 @@ impl Renderer {
             &[], // wait_stages
             &[], // wait_semas
             &[], // signal_semas
-            self.copy_cbuf_fence,
+            self.submit_fence,
         );
-        self.wait_for_copy();
+        self.wait_for_prev_submit();
     }
 
     unsafe fn create_dmabuf_image(
@@ -431,7 +433,7 @@ impl Renderer {
 
         let view = self.dev.create_image_view(&view_info, None).unwrap();
 
-        //self.acquire_dmabuf_image_from_external_queue(image);
+        self.acquire_dmabuf_image_from_external_queue(image);
 
         log::error!(
             "Created Vulkan image {:?} from dmabuf {}",
