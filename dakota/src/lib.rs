@@ -3,6 +3,7 @@ extern crate serde;
 extern crate thundr as th;
 pub use th::ThundrError as DakotaError;
 
+extern crate lazy_static;
 extern crate utils;
 use utils::log;
 pub use utils::{anyhow, region::Rect, Context, Error, MemImage, Result};

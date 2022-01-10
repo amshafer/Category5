@@ -63,6 +63,8 @@
 //! * VK_KHR_external_memory
 #![allow(dyn_drop)]
 
+extern crate lazy_static;
+
 // Austin Shafer - 2020
 use std::marker::PhantomData;
 
@@ -422,53 +424,56 @@ impl Thundr {
         self.clear_damage_on_all_images();
 
         // Debugging stats
-        log::debug!("Thundr rendering frame:");
-        log::debug!(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
-        log::debug!("Surface List:");
-        log::debug!("--------------------------------");
-        for (i, s) in surfaces.iter().enumerate() {
-            let img = s.get_image();
-            log::debug!(
-                "[{}] Image={}, Pos={:?}, Size={:?}",
-                i,
-                match img {
-                    Some(img) => img.get_id(),
-                    None => -1,
-                },
-                s.get_pos(),
-                s.get_size()
-            );
-        }
-        log::debug!("Images List:");
-        log::debug!("--------------------------------");
-        for (i, img) in self.th_image_list.iter().enumerate() {
-            log::debug!(
-                "[{}] Id={:?}, Size={:?}",
-                i,
-                img.i_internal.borrow().i_image,
-                img.get_resolution()
-            );
-        }
-
-        if self.th_rend.dev_features.vkc_supports_incremental_present {
-            log::debug!("Damaged vkPresentRegions:");
+        #[cfg(debug_assertions)]
+        {
+            log::debug!("Thundr rendering frame:");
+            log::debug!(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+            log::debug!("Surface List:");
             log::debug!("--------------------------------");
-            for (i, pr) in self.th_rend.current_damage.iter().enumerate() {
-                log::debug!("[{}] Base={:?}, Size={:?}", i, pr.offset, pr.extent);
+            for (i, s) in surfaces.iter().enumerate() {
+                let img = s.get_image();
+                log::debug!(
+                    "[{}] Image={}, Pos={:?}, Size={:?}",
+                    i,
+                    match img {
+                        Some(img) => img.get_id(),
+                        None => -1,
+                    },
+                    s.get_pos(),
+                    s.get_size()
+                );
             }
-        }
+            log::debug!("Images List:");
+            log::debug!("--------------------------------");
+            for (i, img) in self.th_image_list.iter().enumerate() {
+                log::debug!(
+                    "[{}] Id={:?}, Size={:?}",
+                    i,
+                    img.i_internal.borrow().i_image,
+                    img.get_resolution()
+                );
+            }
 
-        log::debug!("Window list:");
-        for (i, w) in self.th_rend.r_winlist.iter().enumerate() {
-            log::debug!(
-                "[{}] Image={}, Pos={:?}, Size={:?}, Opaque(Pos={:?}, Size={:?})",
-                i,
-                w.w_id.0,
-                w.w_dims.r_pos,
-                w.w_dims.r_size,
-                w.w_opaque.r_pos,
-                w.w_opaque.r_size
-            );
+            if self.th_rend.dev_features.vkc_supports_incremental_present {
+                log::debug!("Damaged vkPresentRegions:");
+                log::debug!("--------------------------------");
+                for (i, pr) in self.th_rend.current_damage.iter().enumerate() {
+                    log::debug!("[{}] Base={:?}, Size={:?}", i, pr.offset, pr.extent);
+                }
+            }
+
+            log::debug!("Window list:");
+            for (i, w) in self.th_rend.r_winlist.iter().enumerate() {
+                log::debug!(
+                    "[{}] Image={}, Pos={:?}, Size={:?}, Opaque(Pos={:?}, Size={:?})",
+                    i,
+                    w.w_id.0,
+                    w.w_dims.r_pos,
+                    w.w_dims.r_size,
+                    w.w_opaque.r_pos,
+                    w.w_opaque.r_size
+                );
+            }
         }
 
         self.th_pipe.debug_frame_print();

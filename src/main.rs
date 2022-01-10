@@ -18,6 +18,8 @@
 extern crate atmos_gen;
 #[macro_use]
 extern crate bitflags;
+
+extern crate lazy_static;
 extern crate utils;
 
 mod category5;

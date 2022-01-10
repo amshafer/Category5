@@ -294,7 +294,7 @@ impl Input {
                     k_state: k.key_state(),
                 }));
             }
-            Some(e) => log::debug!("Unhandled Input Event: {:?}", e),
+            Some(_e) => log::debug!("Unhandled Input Event: {:?}", _e),
             None => (),
         };
 
@@ -532,10 +532,10 @@ impl Input {
         let mut set_focus = false;
 
         // first check if we are releasing a grab
-        if let Some(id) = atmos.get_grabbed() {
+        if let Some(_id) = atmos.get_grabbed() {
             match c.c_state {
                 ButtonState::Released => {
-                    log::debug!("Ungrabbing window {:?}", id);
+                    log::debug!("Ungrabbing window {:?}", _id);
                     atmos.set_grabbed(None);
                     return;
                 }

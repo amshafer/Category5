@@ -17,7 +17,7 @@ use utils::{Dmabuf, MemImage};
 use std::cell::RefCell;
 use std::ops::Drop;
 use std::rc::Rc;
-use std::{fmt, iter, mem};
+use std::{fmt, mem};
 
 use ash::vk;
 use nix::fcntl::{fcntl, FcntlArg};
@@ -435,7 +435,7 @@ impl Renderer {
 
         self.acquire_dmabuf_image_from_external_queue(image);
 
-        log::error!(
+        log::debug!(
             "Created Vulkan image {:?} from dmabuf {}",
             image,
             dmabuf.db_fd
@@ -462,30 +462,35 @@ impl Renderer {
             // Check validity of dmabuf format and print info
             // -------------------------------------------------------
 
-            // get_physical_device_format_properties2
-            let mut format_props = vk::FormatProperties2::builder().build();
-            let mut drm_fmt_props = vk::DrmFormatModifierPropertiesListEXT::builder().build();
-            format_props.p_next = &drm_fmt_props as *const _ as *mut std::ffi::c_void;
+            #[cfg(debug_assertions)]
+            {
+                use std::iter;
 
-            // get the number of drm format mods props
-            self.inst.get_physical_device_format_properties2(
-                self.pdev,
-                TARGET_FORMAT,
-                &mut format_props,
-            );
-            let mut mods: Vec<_> = iter::repeat(vk::DrmFormatModifierPropertiesEXT::default())
-                .take(drm_fmt_props.drm_format_modifier_count as usize)
-                .collect();
+                // get_physical_device_format_properties2
+                let mut format_props = vk::FormatProperties2::builder().build();
+                let mut drm_fmt_props = vk::DrmFormatModifierPropertiesListEXT::builder().build();
+                format_props.p_next = &drm_fmt_props as *const _ as *mut std::ffi::c_void;
 
-            drm_fmt_props.p_drm_format_modifier_properties = mods.as_mut_ptr();
-            self.inst.get_physical_device_format_properties2(
-                self.pdev,
-                TARGET_FORMAT,
-                &mut format_props,
-            );
+                // get the number of drm format mods props
+                self.inst.get_physical_device_format_properties2(
+                    self.pdev,
+                    TARGET_FORMAT,
+                    &mut format_props,
+                );
+                let mut mods: Vec<_> = iter::repeat(vk::DrmFormatModifierPropertiesEXT::default())
+                    .take(drm_fmt_props.drm_format_modifier_count as usize)
+                    .collect();
 
-            for m in mods.iter() {
-                log::debug!("dmabuf {} found mod {:#?}", dmabuf.db_fd, m);
+                drm_fmt_props.p_drm_format_modifier_properties = mods.as_mut_ptr();
+                self.inst.get_physical_device_format_properties2(
+                    self.pdev,
+                    TARGET_FORMAT,
+                    &mut format_props,
+                );
+
+                for m in mods.iter() {
+                    log::debug!("dmabuf {} found mod {:#?}", dmabuf.db_fd, m);
+                }
             }
 
             // the parameters to use for image creation
@@ -531,8 +536,8 @@ impl Renderer {
             let (image, view, image_memory) =
                 match self.create_dmabuf_image(&dmabuf, &mut dmabuf_priv) {
                     Ok((i, v, im)) => (i, v, im),
-                    Err(e) => {
-                        log::debug!("Could not update dmabuf image: {:?}", e);
+                    Err(_e) => {
+                        log::debug!("Could not update dmabuf image: {:?}", _e);
                         return None;
                     }
                 };
@@ -687,8 +692,8 @@ impl Renderer {
                 // -------------------------------------------------------
                 let (vkimage, view, vkimage_memory) = match self.create_dmabuf_image(&dmabuf, dp) {
                     Ok((i, v, im)) => (i, v, im),
-                    Err(e) => {
-                        log::debug!("Could not update dmabuf image: {:?}", e);
+                    Err(_e) => {
+                        log::debug!("Could not update dmabuf image: {:?}", _e);
                         return;
                     }
                 };

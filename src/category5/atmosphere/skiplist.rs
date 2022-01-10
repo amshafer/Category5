@@ -457,14 +457,14 @@ impl Atmosphere {
 
     pub fn print_surface_tree(&self) {
         log::debug!("Dumping surface tree (front to back):");
-        self.map_inorder_on_surfs(|win| {
+        self.map_inorder_on_surfs(|_win| {
             log::debug!(
                 " - {:?}   windims at {:?} size {:?} surfdims at {:?} size {:?}",
-                win,
-                self.get_window_pos(win),
-                self.get_surface_pos(win),
-                self.get_window_size(win),
-                self.get_surface_size(win),
+                _win,
+                self.get_window_pos(_win),
+                self.get_surface_pos(_win),
+                self.get_window_size(_win),
+                self.get_surface_size(_win),
             );
             // Return true to tell map_on_surfs to continue
             return true;

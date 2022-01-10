@@ -40,6 +40,7 @@ impl LogLevel {
 #[macro_export]
 macro_rules! debug {
     ($($format_args:tt)+) => {{
+        #[cfg(debug_assertions)]
         log::log_internal!(log::LogLevel::debug, $($format_args)+)
     }};
 }
@@ -47,6 +48,7 @@ macro_rules! debug {
 #[macro_export]
 macro_rules! profiling {
     ($($format_args:tt)+) => {{
+        #[cfg(debug_assertions)]
         log::log_internal!(log::LogLevel::profiling, $($format_args)+)
     }};
 }
@@ -54,6 +56,7 @@ macro_rules! profiling {
 #[macro_export]
 macro_rules! info {
     ($($format_args:tt)+) => {{
+        #[cfg(debug_assertions)]
         log::log_internal!(log::LogLevel::info, $($format_args)+)
     }};
 }
@@ -69,33 +72,49 @@ macro_rules! error {
 #[macro_export]
 macro_rules! log_internal{
     ($loglevel:expr, $($format_args:tt)+) => ({
+
+        lazy_static::lazy_static! {
+            static ref DEFAULT_LEVEL: u32 = crate::utils::logging::LogLevel::error.get_level();
+
+            static ref LOG_LEVEL_RAW: u32 = match std::env::var("CATEGORY5_LOG") {
+                Ok(val) => match val.as_str() {
+                    "DEBUG" => crate::utils::logging::LogLevel::debug.get_level(),
+                    _ => *DEFAULT_LEVEL,
+                },
+                Err(_) => *DEFAULT_LEVEL,
+            };
+        }
+
         // !! NOTE: current log level set here !!
         //
         // Currently set to the debug level (2)
-        if $loglevel.get_level() <= crate::utils::logging::LogLevel::error.get_level() {
+        if $loglevel.get_level() <= *LOG_LEVEL_RAW {
             let fmtstr = format!("[{:?}]<{}> {}:{} - {}",
-                     log::get_current_millis(),
-                     $loglevel.get_name(),
-                     file!(),
-                     line!(),
-                     format!($($format_args)+)
+                log::get_current_millis(),
+                $loglevel.get_name(),
+                file!(),
+                line!(),
+                format!($($format_args)+)
             );
 
             println!("{}", fmtstr);
 
-            // Append to a log file
-            use std::fs::OpenOptions;
-            use std::io::prelude::*;
+            #[cfg(debug_assertions)]
+            {
+                // Append to a log file
+                use std::fs::OpenOptions;
+                use std::io::prelude::*;
 
-            let mut file = OpenOptions::new()
-                .write(true)
-                .append(true)
-                .create(true)
-                .open("/tmp/cat5_debug_log.txt")
-                .unwrap();
+                let mut file = OpenOptions::new()
+                    .write(true)
+                    .append(true)
+                    .create(true)
+                    .open("/tmp/cat5_debug_log.txt")
+                    .unwrap();
 
-            if let Err(e) = writeln!(file, "{}", fmtstr) {
-                eprintln!("Couldn't write to debug file: {}", e);
+                if let Err(e) = writeln!(file, "{}", fmtstr) {
+                    eprintln!("Couldn't write to debug file: {}", e);
+                }
             }
         }
     })
