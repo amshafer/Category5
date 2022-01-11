@@ -38,6 +38,7 @@ extern crate wayland_server as ws;
 extern crate xkbcommon;
 
 use ws::protocol::wl_pointer;
+use ws::Main;
 
 use crate::category5::atmosphere::Atmosphere;
 use crate::category5::ways::{role::Role, xdg_shell::xdg_toplevel::ResizeEdge};
@@ -301,6 +302,12 @@ impl Input {
         return None;
     }
 
+    fn send_pointer_frame(pointer: &Main<wl_pointer::WlPointer>) {
+        if pointer.as_ref().version() >= 5 {
+            pointer.frame();
+        }
+    }
+
     /// Perform a scrolling motion.
     ///
     /// Generates the wl_pointer.axis event.
@@ -324,7 +331,7 @@ impl Input {
                         if a.a_vert_val != 0.0 {
                             pointer.axis(time, wl_pointer::Axis::VerticalScroll, a.a_vert_val);
                         }
-                        pointer.frame();
+                        Self::send_pointer_frame(pointer);
                     }
                 }
             }
@@ -431,7 +438,7 @@ impl Input {
                                 sx as f64,
                                 sy, // surface local coordinates
                             );
-                            pointer.frame();
+                            Self::send_pointer_frame(pointer);
                         }
                     }
                 }
@@ -455,7 +462,7 @@ impl Input {
                 if let Some(pointer) = &si.si_pointer {
                     if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                         pointer.leave(seat.s_serial, &surf);
-                        pointer.frame();
+                        Self::send_pointer_frame(pointer);
                     }
                 }
             }
@@ -508,7 +515,7 @@ impl Input {
                         if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
                             // deliver the motion event
                             pointer.motion(get_current_millis(), sx, sy);
-                            pointer.frame();
+                            Self::send_pointer_frame(pointer);
                         }
                     }
                 }
@@ -652,7 +659,7 @@ impl Input {
                                     ButtonState::Released => wl_pointer::ButtonState::Released,
                                 },
                             );
-                            pointer.frame();
+                            Self::send_pointer_frame(pointer);
                         }
                     }
                 }
