@@ -78,7 +78,7 @@ macro_rules! log_internal{
 
             static ref LOG_LEVEL_RAW: u32 = match std::env::var("CATEGORY5_LOG") {
                 Ok(val) => match val.as_str() {
-                    "DEBUG" => crate::utils::logging::LogLevel::debug.get_level(),
+                    "debug" => crate::utils::logging::LogLevel::debug.get_level(),
                     _ => *DEFAULT_LEVEL,
                 },
                 Err(_) => *DEFAULT_LEVEL,
