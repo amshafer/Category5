@@ -219,6 +219,11 @@ enum WindowProperty {
     // If this is a subsurface of another window
     // aka not a toplevel
     parent_window(Option<WindowId>),
+    // The wl_subsurface.set_sync property. This tells use if we should
+    // commit when the parent does or whenever this surface is
+    // committed.
+    // Will be None if this is not a subsurface.
+    subsurface_sync(Option<bool>),
     // This is the root of the window tree that this window
     // is a part of. When this surface is in focus, this will
     // be the value of the `win_focus` global prop.
@@ -664,6 +669,7 @@ impl Atmosphere {
         self.set_skiplist_skip(id, None);
         self.set_top_child(id, None);
         self.set_parent_window(id, None);
+        self.set_subsurface_sync(id, None);
         self.set_root_window(id, None);
 
         // Add a new priv entry
