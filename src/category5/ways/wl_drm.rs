@@ -51,12 +51,18 @@ fn get_drm_dev_name(atmos: &Atmosphere) -> String {
         )
     };
 
-    // Buffer was too small (weird issue with the size of buffer) or the device could not be named.
     assert!(!buf.is_null());
 
     // SAFETY: The buffer written to by devname_r is guaranteed to be NUL terminated.
     let cstr = unsafe { CStr::from_ptr(buf) };
-    format!("/dev/{}", cstr.to_string_lossy().into_owned())
+    // This will be of form /dev/drm/128
+    let full_drm_name = format!("/dev/{}", cstr.to_string_lossy().into_owned());
+    assert!(full_drm_name.starts_with("/dev/drm/"));
+
+    // Turn this in to /dev/dri/renderD128
+    // 9 characters in /dev/drm/
+    let drm_number_in_name = &full_drm_name[9..];
+    format!("/dev/dri/renderD{}", drm_number_in_name)
 }
 
 pub fn wl_drm_setup(atmos_rc: Rc<RefCell<Atmosphere>>, wl_drm: Main<wl_drm::WlDrm>) {
