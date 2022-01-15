@@ -4,6 +4,7 @@
 pub mod timing;
 #[macro_use]
 pub mod logging;
+pub mod ecs;
 pub mod fdwatch;
 pub mod log;
 pub mod region;
