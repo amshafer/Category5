@@ -383,6 +383,8 @@ impl Thundr {
     /// We have to destroy and recreate our pipeline along the way since
     /// it depends on the swapchain.
     pub fn handle_ood(&mut self) {
+        self.th_rend.wait_for_prev_submit();
+        self.th_rend.wait_for_copy();
         self.th_pipe.destroy(&mut self.th_rend);
         unsafe {
             self.th_rend.recreate_swapchain();
@@ -491,6 +493,8 @@ impl Thundr {
 impl Drop for Thundr {
     fn drop(&mut self) {
         // first destroy the pipeline specific resources
+        self.th_rend.wait_for_prev_submit();
+        self.th_rend.wait_for_copy();
         self.th_pipe.destroy(&mut self.th_rend);
         self.clear_all();
         // th_rend will now be dropped
