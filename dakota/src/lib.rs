@@ -6,7 +6,7 @@ pub use th::ThundrError as DakotaError;
 extern crate lazy_static;
 extern crate utils;
 use utils::log;
-pub use utils::{anyhow, region::Rect, Context, Error, MemImage, Result};
+pub use utils::{anyhow, ecs::*, region::Rect, Context, Error, MemImage, Result};
 
 pub mod dom;
 use dom::DakotaDOM;
@@ -21,6 +21,8 @@ struct ResMapEntry {
     rme_color: Option<dom::Color>,
 }
 
+type LayoutId = ECSId;
+
 pub struct Dakota {
     // GROSS: we need thund to be before plat so that it gets dropped first
     // It might reference the window inside plat, and will segfault if
@@ -32,7 +34,12 @@ pub struct Dakota {
     d_plat: platform::SDL2Plat,
     d_resmap: HashMap<String, ResMapEntry>,
     d_surfaces: th::SurfaceList,
-    d_layout_tree: Option<LayoutNode>,
+    /// This is one ECS that is composed of multiple tables
+    d_ecs_inst: ECSInstance,
+    /// This is one such ECS table, that holds all the layout nodes
+    d_layout_nodes: ECSTable<LayoutNode>,
+    /// This is the root node in the scene tree
+    d_layout_tree_root: Option<LayoutId>,
     d_window_dims: Option<(u32, u32)>,
     d_needs_redraw: bool,
 }
@@ -46,7 +53,20 @@ struct LayoutNode {
     l_offset_specified: bool,
     l_offset: dom::Offset,
     l_size: dom::Size,
-    l_children: Vec<LayoutNode>,
+    /// Ids of the children that this layout node has
+    l_children: Vec<LayoutId>,
+}
+
+impl Default for LayoutNode {
+    fn default() -> Self {
+        Self {
+            l_resource: None,
+            l_offset_specified: false,
+            l_offset: dom::Offset::new(0, 0),
+            l_size: dom::Size::new(0, 0),
+            l_children: Vec::with_capacity(0),
+        }
+    }
 }
 
 impl LayoutNode {
@@ -60,7 +80,7 @@ impl LayoutNode {
         }
     }
 
-    fn add_child(&mut self, other: LayoutNode) {
+    fn add_child(&mut self, other: ECSId) {
         self.l_children.push(other);
     }
 
@@ -72,8 +92,10 @@ impl LayoutNode {
     /// We don't need to worry about bounding by an available size, this is
     /// to be used when there are no bounds (such as in a scrolling arena) and
     /// we just want to grow this element to fit everything.
-    pub fn resize_to_children(&mut self) -> Result<()> {
-        for other in self.l_children.iter() {
+    pub fn resize_to_children(&mut self, dakota: &Dakota) -> Result<()> {
+        for child_id in self.l_children.iter() {
+            let other = &dakota.d_layout_nodes[child_id];
+
             // add any offsets to our size
             self.l_size.width += other.l_offset.x + other.l_size.width;
             self.l_size.height += other.l_offset.y + other.l_size.height;
@@ -127,12 +149,17 @@ impl Dakota {
 
         let thundr = th::Thundr::new(&info).context("Failed to initialize Thundr")?;
 
+        let ecs = ECSInstance::new();
+        let table = ECSTable::new(ecs.clone());
+
         Ok(Self {
             d_plat: plat,
             d_thund: thundr,
             d_surfaces: th::SurfaceList::new(),
             d_resmap: HashMap::new(),
-            d_layout_tree: None,
+            d_ecs_inst: ecs,
+            d_layout_nodes: table,
+            d_layout_tree_root: None,
             d_window_dims: None,
             d_needs_redraw: false,
         })
@@ -198,7 +225,8 @@ impl Dakota {
     /// created, and can set its final size accordingly. This should prevent
     /// us from having to do more recursion later since everything is calculated
     /// now.
-    fn calculate_sizes(&mut self, el: &dom::Element, space: &LayoutSpace) -> Result<LayoutNode> {
+    fn calculate_sizes(&mut self, el: &dom::Element, space: &LayoutSpace) -> Result<LayoutId> {
+        let new_id = self.d_ecs_inst.mint_new_id();
         let mut ret = LayoutNode::new(
             el.resource.clone(),
             dom::Offset::new(0, 0),
@@ -239,7 +267,8 @@ impl Dakota {
             };
 
             for child in el.children.iter() {
-                let mut child_size = self.calculate_sizes(&child.borrow(), &child_space)?;
+                let child_id = self.calculate_sizes(&child.borrow(), &child_space)?;
+                let mut child_size = &mut self.d_layout_nodes[&child_id];
 
                 // now the child size has been made, but it still needs to find
                 // the proper position inside the parent container. If the child
@@ -269,7 +298,7 @@ impl Dakota {
                     );
                 }
 
-                ret.add_child(child_size);
+                ret.add_child(child_id.clone());
             }
         } else if let Some(content) = el.content.as_ref() {
             // ------------------------------------------
@@ -282,7 +311,8 @@ impl Dakota {
             if let Some(child) = content.el.as_ref() {
                 // num_children_at_this_level was set earlier to 0 when we
                 // created the common child space
-                let mut child_size = self.calculate_sizes(&child.borrow(), &child_space)?;
+                let child_id = self.calculate_sizes(&child.borrow(), &child_space)?;
+                let mut child_size = &mut self.d_layout_nodes[&child_id];
                 // At this point the size of the is calculated
                 // and we can determine the offset. We want to center the
                 // box, so that's the center point of the parent minus
@@ -298,7 +328,7 @@ impl Dakota {
                     0,
                 );
 
-                ret.add_child(child_size);
+                ret.add_child(child_id.clone());
             }
         }
 
@@ -326,7 +356,7 @@ impl Dakota {
             ret.l_size = size;
         } else {
             // first grow this box to fit its children.
-            ret.resize_to_children()?;
+            ret.resize_to_children(self)?;
 
             if ret.l_size == dom::Size::new(0, 0) {
                 // if the size is still empty, there were no children. This should just be
@@ -353,8 +383,9 @@ impl Dakota {
         }
 
         log::debug!("Final size of element is {:?}", ret);
+        self.d_layout_nodes[&new_id] = ret;
 
-        return Ok(ret);
+        return Ok(new_id);
     }
 
     /// This takes care of freeing all of our Thundr Images and such.
@@ -374,9 +405,15 @@ impl Dakota {
     /// in by `calculate_sizes`.
     fn create_thundr_surf_for_el(
         &mut self,
-        layout: &LayoutNode,
+        node: LayoutId,
         poffset: dom::Offset,
     ) -> Result<Option<th::Surface>> {
+        let layout = &self.d_layout_nodes[&node];
+        // TODO: optimize
+        // this is gross but we have to do it for the borrow checker to be happy
+        // Otherwise calling the &mut self functions throws errors
+        let layout_children = layout.l_children.clone();
+
         let offset = dom::Offset {
             x: layout.l_offset.x + poffset.x,
             y: layout.l_offset.y + poffset.y,
@@ -416,9 +453,9 @@ impl Dakota {
             self.d_surfaces.push(surf.clone());
 
             // now iterate through all of it's children, and recursively do the same
-            for child in layout.l_children.iter() {
+            for child_id in layout_children.iter() {
                 // add the new child surface as a subsurface
-                let child_surf = self.create_thundr_surf_for_el(child, offset)?;
+                let child_surf = self.create_thundr_surf_for_el(child_id.clone(), offset)?;
                 if let Some(csurf) = child_surf {
                     surf.add_subsurface(csurf);
                 }
@@ -430,9 +467,9 @@ impl Dakota {
         // if we are here, then the current element does not have content.
         // Instead what we do is recursively call this function on the
         // children, and append them to the surfacelist.
-        for child in layout.l_children.iter() {
+        for child_id in layout_children.iter() {
             // add the new child surface as a subsurface
-            self.create_thundr_surf_for_el(child, offset)?;
+            self.create_thundr_surf_for_el(child_id.clone(), offset)?;
         }
         return Ok(None);
     }
@@ -455,18 +492,14 @@ impl Dakota {
         // construct layout tree with sizes of all boxes
         // create our thundr surfaces while we are at it.
         let num_children = dom.layout.root_element.borrow().children.len() as u32;
-        let result = self.calculate_sizes(
+        self.d_layout_tree_root = Some(self.calculate_sizes(
             &dom.layout.root_element.borrow(),
             &LayoutSpace {
                 avail_width: self.d_window_dims.unwrap().0, // available width
                 avail_height: self.d_window_dims.unwrap().1, // available height
                 children_at_this_level: num_children,
             },
-        );
-
-        // now handle the error from our layout tree recursive call after
-        // we have put the dom back
-        self.d_layout_tree = Some(result?);
+        )?);
 
         // reset our thundr surface list. If the set of resources has
         // changed, then we should have called clear_thundr to do so by now.
@@ -474,14 +507,11 @@ impl Dakota {
 
         // Create our thundr surface and add it to the list
         // one list with subsurfaces?
-        let layout_tree = self.d_layout_tree.take().unwrap();
-        let result = self.create_thundr_surf_for_el(&layout_tree, dom::Offset { x: 0, y: 0 });
-        self.d_layout_tree = Some(layout_tree);
+        let root_node_id = self.d_layout_tree_root.as_ref().unwrap().clone();
+        self.create_thundr_surf_for_el(root_node_id, dom::Offset { x: 0, y: 0 })
+            .context("Could not construct Thundr surface tree")?;
 
-        match result {
-            Ok(_) => Ok(()),
-            Err(e) => Err(e.context("Could not construct Thundr surface tree")),
-        }
+        Ok(())
     }
 
     /// Completely flush the thundr surfaces/images and recreate the scene
