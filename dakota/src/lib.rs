@@ -21,7 +21,7 @@ struct ResMapEntry {
     rme_color: Option<dom::Color>,
 }
 
-type LayoutId = ECSId;
+pub type LayoutId = ECSId;
 
 pub struct Dakota {
     // GROSS: we need thund to be before plat so that it gets dropped first
@@ -225,8 +225,9 @@ impl Dakota {
     /// created, and can set its final size accordingly. This should prevent
     /// us from having to do more recursion later since everything is calculated
     /// now.
-    fn calculate_sizes(&mut self, el: &dom::Element, space: &LayoutSpace) -> Result<LayoutId> {
+    fn calculate_sizes(&mut self, el: &mut dom::Element, space: &LayoutSpace) -> Result<LayoutId> {
         let new_id = self.d_ecs_inst.mint_new_id();
+        el.layout_id = Some(new_id.clone());
         let mut ret = LayoutNode::new(
             el.resource.clone(),
             dom::Offset::new(0, 0),
@@ -267,7 +268,7 @@ impl Dakota {
             };
 
             for child in el.children.iter() {
-                let child_id = self.calculate_sizes(&child.borrow(), &child_space)?;
+                let child_id = self.calculate_sizes(&mut child.borrow_mut(), &child_space)?;
                 let mut child_size = &mut self.d_layout_nodes[&child_id];
 
                 // now the child size has been made, but it still needs to find
@@ -311,7 +312,7 @@ impl Dakota {
             if let Some(child) = content.el.as_ref() {
                 // num_children_at_this_level was set earlier to 0 when we
                 // created the common child space
-                let child_id = self.calculate_sizes(&child.borrow(), &child_space)?;
+                let child_id = self.calculate_sizes(&mut child.borrow_mut(), &child_space)?;
                 let mut child_size = &mut self.d_layout_nodes[&child_id];
                 // At this point the size of the is calculated
                 // and we can determine the offset. We want to center the
@@ -493,7 +494,7 @@ impl Dakota {
         // create our thundr surfaces while we are at it.
         let num_children = dom.layout.root_element.borrow().children.len() as u32;
         self.d_layout_tree_root = Some(self.calculate_sizes(
-            &dom.layout.root_element.borrow(),
+            &mut dom.layout.root_element.borrow_mut(),
             &LayoutSpace {
                 avail_width: self.d_window_dims.unwrap().0, // available width
                 avail_height: self.d_window_dims.unwrap().1, // available height
