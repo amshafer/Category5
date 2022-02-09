@@ -24,14 +24,13 @@ fn main() {
         // Pass errors through to a big panic below
         // Continue normally if everything is Ok or if out of date
         // and the window needs redrawn
-        let err = match dak.dispatch(&dom, None) {
+        match dak.dispatch(&dom, None) {
             // Dispatch was successful. If Dakota says the window was
             // closed then we can exit here.
             Ok(should_exit) => {
                 if should_exit {
                     break;
                 }
-                continue;
             }
             // If things were not successful there can be two reasons:
             // 1. there was a legitimate failure and we should bail
@@ -41,12 +40,15 @@ fn main() {
             // the app can update anything it wants before re-dispatching.
             Err(e) => match e.downcast::<DakotaError>() {
                 Ok(e) => match e {
-                    DakotaError::OUT_OF_DATE => continue,
-                    e => dakota::Error::from(e),
+                    DakotaError::OUT_OF_DATE => {}
+                    _ => panic!("Dakota returned error: {:?}", e),
                 },
-                Err(e) => e,
+                Err(e) => panic!("Dakota returned error: {:?}", e),
             },
         };
-        panic!("Error while dispatching dakota for drawing {:?}", err)
+
+        for event in dak.get_events().iter() {
+            println!("Dakota Event: {:?}", event);
+        }
     }
 }

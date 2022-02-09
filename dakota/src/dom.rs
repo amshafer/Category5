@@ -1,5 +1,5 @@
 use crate::serde::{Deserialize, Serialize};
-use crate::utils::{anyhow, Result};
+use crate::utils::{anyhow, ecs::ECSId, Result};
 use crate::{LayoutId, LayoutSpace};
 
 use std::cell::RefCell;
@@ -165,6 +165,41 @@ impl Default for Edges {
     }
 }
 
+/// This DOM node defines a named EventHandler
+/// to call, along with a set of arguments to pass
+/// to the handler when it is run. This is a generic
+/// callback definition, and may be attached to many
+/// locations in a scene.
+///
+/// The name field references the named callback that
+/// the application will define. The application creates
+/// a list of name/EventHandler pairs that it hands to Dakota
+/// during initialization that will have their `handle` methods
+/// called when the event's condition is met.
+///
+/// This node is really just a instance of an event handler.
+/// It describes what handler to call and a set of arguments
+/// to pass.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Event {
+    #[serde(rename = "group", default)]
+    pub groups: Vec<String>,
+    #[serde(skip)]
+    pub id: Option<ECSId>,
+    #[serde(rename = "arg", default)]
+    pub args: Vec<String>,
+}
+
+/// These are global window events that will be defined once. Events
+/// taking places on Elements may have Element granularity, but this
+/// set of events handles global changes like window resizing, redraw,
+/// fullscreen, etc.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WindowEvents {
+    #[serde(rename = "windowResize")]
+    pub window_resize: Option<Event>,
+}
+
 /// Only one of content or children may be defined,
 /// they are mutually exclusive.
 ///
@@ -272,6 +307,8 @@ pub struct Window {
     pub title: String,
     pub width: u32,
     pub height: u32,
+    #[serde(rename = "windowEvents")]
+    pub events: Option<WindowEvents>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

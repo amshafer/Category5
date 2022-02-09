@@ -14,6 +14,9 @@ mod platform;
 use platform::Platform;
 pub mod xml;
 
+pub mod event;
+use event::Event;
+
 use std::collections::HashMap;
 
 struct ResMapEntry {
@@ -35,13 +38,23 @@ pub struct Dakota {
     d_resmap: HashMap<String, ResMapEntry>,
     d_surfaces: th::SurfaceList,
     /// This is one ECS that is composed of multiple tables
-    d_ecs_inst: ECSInstance,
+    d_layout_ecs_inst: ECSInstance,
     /// This is one such ECS table, that holds all the layout nodes
     d_layout_nodes: ECSTable<LayoutNode>,
     /// This is the root node in the scene tree
     d_layout_tree_root: Option<LayoutId>,
     d_window_dims: Option<(u32, u32)>,
     d_needs_redraw: bool,
+    /// The compiled set of event handlers.
+    d_handler_ecs_inst: ECSInstance,
+    /// Ties a string name to a handler id
+    /// (name, Id)
+    d_name_to_handler_map: Vec<(String, ECSId)>,
+    /// The global event queue
+    /// This will be iterable after dispatching, and
+    /// must be cleared (all events handled) before the
+    /// next dispatch
+    d_global_event_queue: Vec<Event>,
 }
 
 /// The elements of the layout tree.
@@ -149,19 +162,24 @@ impl Dakota {
 
         let thundr = th::Thundr::new(&info).context("Failed to initialize Thundr")?;
 
-        let ecs = ECSInstance::new();
-        let table = ECSTable::new(ecs.clone());
+        let layout_ecs = ECSInstance::new();
+        let layout_table = ECSTable::new(layout_ecs.clone());
+
+        let handler_ecs = ECSInstance::new();
 
         Ok(Self {
             d_plat: plat,
             d_thund: thundr,
             d_surfaces: th::SurfaceList::new(),
             d_resmap: HashMap::new(),
-            d_ecs_inst: ecs,
-            d_layout_nodes: table,
+            d_layout_ecs_inst: layout_ecs,
+            d_layout_nodes: layout_table,
             d_layout_tree_root: None,
             d_window_dims: None,
             d_needs_redraw: false,
+            d_handler_ecs_inst: handler_ecs,
+            d_name_to_handler_map: Vec::new(),
+            d_global_event_queue: Vec::new(),
         })
     }
 
@@ -226,7 +244,7 @@ impl Dakota {
     /// us from having to do more recursion later since everything is calculated
     /// now.
     fn calculate_sizes(&mut self, el: &mut dom::Element, space: &LayoutSpace) -> Result<LayoutId> {
-        let new_id = self.d_ecs_inst.mint_new_id();
+        let new_id = self.d_layout_ecs_inst.mint_new_id();
         el.layout_id = Some(new_id.clone());
         let mut ret = LayoutNode::new(
             el.resource.clone(),
@@ -527,8 +545,17 @@ impl Dakota {
     /// window's size has changed. This will requery the window size and
     /// refresh the layout tree.
     fn handle_ood(&mut self, dom: &DakotaDOM) -> Result<()> {
+        let new_res = self.d_thund.get_resolution();
+        self.add_event_window_resized(
+            dom,
+            dom::Size {
+                width: new_res.0,
+                height: new_res.1,
+            },
+        );
+
         self.d_needs_redraw = true;
-        self.d_window_dims = Some(self.d_thund.get_resolution());
+        self.d_window_dims = Some(new_res);
         self.refresh_elements(dom)
     }
 
@@ -549,6 +576,10 @@ impl Dakota {
     /// window system events.
     pub fn dispatch(&mut self, dom: &DakotaDOM, timeout: Option<u32>) -> Result<bool> {
         let terminate;
+
+        // first clear the event queue, the app already had a chance to
+        // handle them
+        self.d_global_event_queue.clear();
 
         // First run our window system code. This will check if wayland/X11
         // notified us of a resize, closure, or need to redraw
