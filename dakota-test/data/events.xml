@@ -35,10 +35,11 @@
 		<width>512</width>
 		<height>512</height>
 		<windowEvents>
-			<windowResize>
+			<redrawComplete></redrawComplete>
+			<resize>
 				<group>"Redraw Handler"</group>
 				<arg>"Hello event handler!"</arg>
-			</windowResize>
+			</resize>
 		</windowEvents>
 	</window>
 	<layout>

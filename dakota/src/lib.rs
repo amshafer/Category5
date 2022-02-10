@@ -574,9 +574,7 @@ impl Dakota {
     /// Returns true if we should terminate i.e. the window was closed.
     /// Timeout is in milliseconds, and is the timeout to wait for
     /// window system events.
-    pub fn dispatch(&mut self, dom: &DakotaDOM, timeout: Option<u32>) -> Result<bool> {
-        let terminate;
-
+    pub fn dispatch(&mut self, dom: &DakotaDOM, timeout: Option<u32>) -> Result<()> {
         // first clear the event queue, the app already had a chance to
         // handle them
         self.d_global_event_queue.clear();
@@ -584,7 +582,11 @@ impl Dakota {
         // First run our window system code. This will check if wayland/X11
         // notified us of a resize, closure, or need to redraw
         match self.d_plat.run(timeout) {
-            Ok(should_terminate) => terminate = should_terminate,
+            Ok(should_terminate) => {
+                if should_terminate {
+                    self.add_event_window_closed(dom);
+                }
+            }
             Err(th::ThundrError::OUT_OF_DATE) => {
                 // This is a weird one
                 // So the above OUT_OF_DATEs are returned from thundr, where we
@@ -593,7 +595,7 @@ impl Dakota {
                 // to tell Thundr to do OOD itself
                 self.d_thund.handle_ood();
                 self.handle_ood(dom)?;
-                return Err(Error::from(th::ThundrError::OUT_OF_DATE));
+                return Ok(());
             }
             Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
         };
@@ -607,7 +609,7 @@ impl Dakota {
                 Ok(()) => {}
                 Err(th::ThundrError::OUT_OF_DATE) => {
                     self.handle_ood(dom)?;
-                    return Err(Error::from(th::ThundrError::OUT_OF_DATE));
+                    return Ok(());
                 }
                 Err(e) => return Err(Error::from(e).context("Thundr: drawing failed with error")),
             };
@@ -615,13 +617,16 @@ impl Dakota {
                 Ok(()) => {}
                 Err(th::ThundrError::OUT_OF_DATE) => {
                     self.handle_ood(dom)?;
-                    return Err(Error::from(th::ThundrError::OUT_OF_DATE));
+                    return Ok(());
                 }
                 Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
             };
             self.d_needs_redraw = false;
+
+            // Notify the app that we just drew a frame and it should prepare the next one
+            self.add_event_window_redraw_complete(dom);
         }
 
-        return Ok(terminate);
+        return Ok(());
     }
 }

@@ -187,7 +187,7 @@ pub struct Event {
     #[serde(skip)]
     pub id: Option<ECSId>,
     #[serde(rename = "arg", default)]
-    pub args: Vec<String>,
+    pub args: Rc<Vec<String>>,
 }
 
 /// These are global window events that will be defined once. Events
@@ -196,8 +196,12 @@ pub struct Event {
 /// fullscreen, etc.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WindowEvents {
-    #[serde(rename = "windowResize")]
-    pub window_resize: Option<Event>,
+    #[serde(rename = "resize")]
+    pub resize: Option<Event>,
+    #[serde(rename = "redrawComplete")]
+    pub redraw_complete: Option<Event>,
+    #[serde(rename = "closed")]
+    pub closed: Option<Event>,
 }
 
 /// Only one of content or children may be defined,
