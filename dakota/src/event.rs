@@ -4,7 +4,7 @@
 
 use crate::dom;
 use crate::dom::DakotaDOM;
-use crate::input::{Keycode, Mods};
+use crate::input::{Keycode, Mods, MouseButton};
 use std::rc::Rc;
 use utils::ecs::{ECSId, ECSInstance};
 
@@ -37,11 +37,13 @@ pub type HandlerArgs = Rc<Vec<String>>;
 
 #[derive(Debug)]
 pub enum Event {
-    WindowResized(HandlerArgs, dom::Size),
-    WindowClosed(HandlerArgs),
-    WindowRedrawComplete(HandlerArgs),
-    InputKeyDown(Keycode, Mods),
-    InputKeyUp(Keycode, Mods),
+    WindowResized { args: HandlerArgs, size: dom::Size },
+    WindowClosed { args: HandlerArgs },
+    WindowRedrawComplete { args: HandlerArgs },
+    InputKeyDown { key: Keycode, modifiers: Mods },
+    InputKeyUp { key: Keycode, modifiers: Mods },
+    InputMouseButtonDown { button: MouseButton, x: i32, y: i32 },
+    InputMouseButtonUp { button: MouseButton, x: i32, y: i32 },
 }
 
 impl EventSystem {
@@ -75,8 +77,10 @@ impl EventSystem {
     pub fn add_event_window_resized(&mut self, dom: &DakotaDOM, new_size: dom::Size) {
         if let Some(events) = dom.window.events.as_ref() {
             if let Some(handler) = events.resize.as_ref() {
-                self.es_global_event_queue
-                    .push(Event::WindowResized(handler.args.clone(), new_size));
+                self.es_global_event_queue.push(Event::WindowResized {
+                    args: handler.args.clone(),
+                    size: new_size,
+                });
             }
         }
     }
@@ -96,7 +100,9 @@ impl EventSystem {
         if let Some(events) = dom.window.events.as_ref() {
             if let Some(handler) = events.redraw_complete.as_ref() {
                 self.es_global_event_queue
-                    .push(Event::WindowRedrawComplete(handler.args.clone()));
+                    .push(Event::WindowRedrawComplete {
+                        args: handler.args.clone(),
+                    });
             }
         }
     }
@@ -108,25 +114,59 @@ impl EventSystem {
     pub fn add_event_window_closed(&mut self, dom: &DakotaDOM) {
         if let Some(events) = dom.window.events.as_ref() {
             if let Some(handler) = events.closed.as_ref() {
-                self.es_global_event_queue
-                    .push(Event::WindowClosed(handler.args.clone()));
+                self.es_global_event_queue.push(Event::WindowClosed {
+                    args: handler.args.clone(),
+                });
                 return;
             }
         }
 
         // If we couldn't get the arg array from the tree, then
         // just create an empty one
-        self.es_global_event_queue
-            .push(Event::WindowClosed(Rc::new(Vec::with_capacity(0))));
+        self.es_global_event_queue.push(Event::WindowClosed {
+            args: Rc::new(Vec::with_capacity(0)),
+        });
     }
 
     pub fn add_event_key_down(&mut self, _dom: &DakotaDOM, key: Keycode, mods: Mods) {
-        self.es_global_event_queue
-            .push(Event::InputKeyDown(key, mods));
+        self.es_global_event_queue.push(Event::InputKeyDown {
+            key: key,
+            modifiers: mods,
+        });
     }
     pub fn add_event_key_up(&mut self, _dom: &DakotaDOM, key: Keycode, mods: Mods) {
+        self.es_global_event_queue.push(Event::InputKeyUp {
+            key: key,
+            modifiers: mods,
+        });
+    }
+
+    pub fn add_event_mouse_button_down(
+        &mut self,
+        _dom: &DakotaDOM,
+        button: MouseButton,
+        x: i32,
+        y: i32,
+    ) {
         self.es_global_event_queue
-            .push(Event::InputKeyUp(key, mods));
+            .push(Event::InputMouseButtonDown {
+                button: button,
+                x: x,
+                y: y,
+            });
+    }
+    pub fn add_event_mouse_button_up(
+        &mut self,
+        _dom: &DakotaDOM,
+        button: MouseButton,
+        x: i32,
+        y: i32,
+    ) {
+        self.es_global_event_queue.push(Event::InputMouseButtonUp {
+            button: button,
+            x: x,
+            y: y,
+        });
     }
 
     /// Get the slice of currently unhandled events

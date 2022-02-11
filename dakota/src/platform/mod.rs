@@ -9,7 +9,7 @@ use wayc::Wayc;
 
 #[cfg(any(unix, macos))]
 extern crate sdl2;
-use crate::input::{convert_sdl_keycode_to_dakota, convert_sdl_mods_to_dakota};
+use crate::input::*;
 #[cfg(any(unix, macos))]
 use sdl2::event::{Event, WindowEvent};
 
@@ -136,6 +136,20 @@ impl Platform for SDL2Plat {
                     let mods = convert_sdl_mods_to_dakota(keymod);
                     evsys.add_event_key_up(dom, key, mods);
                 }
+                // handle pointer inputs. This just looks like the above keyboard
+                Event::MouseButtonDown {
+                    mouse_btn, x, y, ..
+                } => {
+                    let button = convert_sdl_mouse_to_dakota(mouse_btn);
+                    evsys.add_event_mouse_button_down(dom, button, x, y);
+                }
+                Event::MouseButtonUp {
+                    mouse_btn, x, y, ..
+                } => {
+                    let button = convert_sdl_mouse_to_dakota(mouse_btn);
+                    evsys.add_event_mouse_button_up(dom, button, x, y);
+                }
+
                 // Now we have window events. There's really only one we need to
                 // pay attention to here, and it's the resize event. Thundr is
                 // going to check for OUT_OF_DATE, but it's possible that the toolkit

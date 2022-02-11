@@ -29,7 +29,7 @@ fn main() {
 
             // Exit if the window is closed, else do nothing
             match event {
-                Event::WindowClosed(_) => return,
+                Event::WindowClosed { .. } => return,
                 _ => (),
             }
         }
