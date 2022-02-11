@@ -4,9 +4,33 @@
 
 use crate::dom;
 use crate::dom::DakotaDOM;
-use crate::Dakota;
 use std::rc::Rc;
-use utils::ecs::ECSId;
+use utils::ecs::{ECSId, ECSInstance};
+
+pub struct EventSystem {
+    /// The global event queue
+    /// This will be iterable after dispatching, and
+    /// must be cleared (all events handled) before the
+    /// next dispatch
+    es_global_event_queue: Vec<Event>,
+    /// The compiled set of event handlers.
+    es_handler_ecs_inst: ECSInstance,
+    /// Ties a string name to a handler id
+    /// (name, Id)
+    es_name_to_handler_map: Vec<(String, ECSId)>,
+}
+
+impl EventSystem {
+    pub fn new() -> Self {
+        let handler_ecs = ECSInstance::new();
+
+        Self {
+            es_global_event_queue: Vec::new(),
+            es_handler_ecs_inst: handler_ecs,
+            es_name_to_handler_map: Vec::new(),
+        }
+    }
+}
 
 pub type HandlerArgs = Rc<Vec<String>>;
 
@@ -17,7 +41,11 @@ pub enum Event {
     WindowRedrawComplete(HandlerArgs),
 }
 
-impl Dakota {
+impl EventSystem {
+    pub fn clear_event_queue(&mut self) {
+        self.es_global_event_queue.clear();
+    }
+
     /// Look up the ECS Id of an Event Handler given its string name
     ///
     /// This is used to go from the human name the app gave the handler to
@@ -25,12 +53,12 @@ impl Dakota {
     pub fn get_handler_id_from_name(&mut self, name: String) -> ECSId {
         // first, get the ECS id for this name
         // check if this event handler has already been defined
-        match self.d_name_to_handler_map.iter().find(|(n, _)| *n == name) {
+        match self.es_name_to_handler_map.iter().find(|(n, _)| *n == name) {
             Some((_, ecs_id)) => ecs_id.clone(),
             // otherwise make a new id for it, it's a new name
             None => {
-                let ecs_id = self.d_handler_ecs_inst.mint_new_id();
-                self.d_name_to_handler_map
+                let ecs_id = self.es_handler_ecs_inst.mint_new_id();
+                self.es_name_to_handler_map
                     .push((name.clone(), ecs_id.clone()));
                 ecs_id
             }
@@ -44,7 +72,7 @@ impl Dakota {
     pub fn add_event_window_resized(&mut self, dom: &DakotaDOM, new_size: dom::Size) {
         if let Some(events) = dom.window.events.as_ref() {
             if let Some(handler) = events.resize.as_ref() {
-                self.d_global_event_queue
+                self.es_global_event_queue
                     .push(Event::WindowResized(handler.args.clone(), new_size));
             }
         }
@@ -64,7 +92,7 @@ impl Dakota {
     pub fn add_event_window_redraw_complete(&mut self, dom: &DakotaDOM) {
         if let Some(events) = dom.window.events.as_ref() {
             if let Some(handler) = events.redraw_complete.as_ref() {
-                self.d_global_event_queue
+                self.es_global_event_queue
                     .push(Event::WindowRedrawComplete(handler.args.clone()));
             }
         }
@@ -77,7 +105,7 @@ impl Dakota {
     pub fn add_event_window_closed(&mut self, dom: &DakotaDOM) {
         if let Some(events) = dom.window.events.as_ref() {
             if let Some(handler) = events.closed.as_ref() {
-                self.d_global_event_queue
+                self.es_global_event_queue
                     .push(Event::WindowClosed(handler.args.clone()));
                 return;
             }
@@ -85,7 +113,7 @@ impl Dakota {
 
         // If we couldn't get the arg array from the tree, then
         // just create an empty one
-        self.d_global_event_queue
+        self.es_global_event_queue
             .push(Event::WindowClosed(Rc::new(Vec::with_capacity(0))));
     }
 
@@ -94,6 +122,6 @@ impl Dakota {
     /// The app should do this in its main loop after dispatching.
     /// These will be cleared during each dispatch.
     pub fn get_events<'a>(&'a self) -> &'a [Event] {
-        self.d_global_event_queue.as_slice()
+        self.es_global_event_queue.as_slice()
     }
 }

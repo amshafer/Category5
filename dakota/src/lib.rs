@@ -15,7 +15,7 @@ use platform::Platform;
 pub mod xml;
 
 pub mod event;
-use event::Event;
+use event::{Event, EventSystem};
 
 use std::collections::HashMap;
 
@@ -45,16 +45,7 @@ pub struct Dakota {
     d_layout_tree_root: Option<LayoutId>,
     d_window_dims: Option<(u32, u32)>,
     d_needs_redraw: bool,
-    /// The compiled set of event handlers.
-    d_handler_ecs_inst: ECSInstance,
-    /// Ties a string name to a handler id
-    /// (name, Id)
-    d_name_to_handler_map: Vec<(String, ECSId)>,
-    /// The global event queue
-    /// This will be iterable after dispatching, and
-    /// must be cleared (all events handled) before the
-    /// next dispatch
-    d_global_event_queue: Vec<Event>,
+    d_event_sys: EventSystem,
 }
 
 /// The elements of the layout tree.
@@ -165,8 +156,6 @@ impl Dakota {
         let layout_ecs = ECSInstance::new();
         let layout_table = ECSTable::new(layout_ecs.clone());
 
-        let handler_ecs = ECSInstance::new();
-
         Ok(Self {
             d_plat: plat,
             d_thund: thundr,
@@ -177,9 +166,7 @@ impl Dakota {
             d_layout_tree_root: None,
             d_window_dims: None,
             d_needs_redraw: false,
-            d_handler_ecs_inst: handler_ecs,
-            d_name_to_handler_map: Vec::new(),
-            d_global_event_queue: Vec::new(),
+            d_event_sys: EventSystem::new(),
         })
     }
 
@@ -546,7 +533,7 @@ impl Dakota {
     /// refresh the layout tree.
     fn handle_ood(&mut self, dom: &DakotaDOM) -> Result<()> {
         let new_res = self.d_thund.get_resolution();
-        self.add_event_window_resized(
+        self.d_event_sys.add_event_window_resized(
             dom,
             dom::Size {
                 width: new_res.0,
@@ -557,6 +544,14 @@ impl Dakota {
         self.d_needs_redraw = true;
         self.d_window_dims = Some(new_res);
         self.refresh_elements(dom)
+    }
+
+    /// Get the slice of currently unhandled events
+    ///
+    /// The app should do this in its main loop after dispatching.
+    /// These will be cleared during each dispatch.
+    pub fn get_events<'a>(&'a self) -> &'a [Event] {
+        self.d_event_sys.get_events()
     }
 
     /// run the dakota thread.
@@ -577,16 +572,12 @@ impl Dakota {
     pub fn dispatch(&mut self, dom: &DakotaDOM, timeout: Option<u32>) -> Result<()> {
         // first clear the event queue, the app already had a chance to
         // handle them
-        self.d_global_event_queue.clear();
+        self.d_event_sys.clear_event_queue();
 
         // First run our window system code. This will check if wayland/X11
         // notified us of a resize, closure, or need to redraw
-        match self.d_plat.run(timeout) {
-            Ok(should_terminate) => {
-                if should_terminate {
-                    self.add_event_window_closed(dom);
-                }
-            }
+        match self.d_plat.run(&mut self.d_event_sys, dom, timeout) {
+            Ok(()) => {}
             Err(th::ThundrError::OUT_OF_DATE) => {
                 // This is a weird one
                 // So the above OUT_OF_DATEs are returned from thundr, where we
@@ -624,7 +615,7 @@ impl Dakota {
             self.d_needs_redraw = false;
 
             // Notify the app that we just drew a frame and it should prepare the next one
-            self.add_event_window_redraw_complete(dom);
+            self.d_event_sys.add_event_window_redraw_complete(dom);
         }
 
         return Ok(());

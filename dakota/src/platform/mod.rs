@@ -1,5 +1,6 @@
 use crate::dom;
-use crate::{DakotaError, Result};
+use crate::dom::DakotaDOM;
+use crate::{event::EventSystem, DakotaError, Result};
 
 #[cfg(feature = "wayland")]
 extern crate wayc;
@@ -9,10 +10,7 @@ use wayc::Wayc;
 #[cfg(any(unix, macos))]
 extern crate sdl2;
 #[cfg(any(unix, macos))]
-use sdl2::{
-    event::{Event, WindowEvent},
-    keyboard::Keycode,
-};
+use sdl2::event::{Event, WindowEvent};
 
 pub trait Platform {
     fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType>;
@@ -20,7 +18,12 @@ pub trait Platform {
     fn set_output_params(&mut self, win: &dom::Window, dims: (u32, u32)) -> Result<()>;
 
     /// Returns true if we should terminate i.e. the window has been closed.
-    fn run(&mut self, timeout: Option<u32>) -> std::result::Result<bool, DakotaError>;
+    fn run(
+        &mut self,
+        evsys: &mut EventSystem,
+        dom: &DakotaDOM,
+        timeout: Option<u32>,
+    ) -> std::result::Result<(), DakotaError>;
 }
 
 #[cfg(feature = "wayland")]
@@ -102,15 +105,17 @@ impl Platform for SDL2Plat {
 
     /// Block and handle all available events from SDL2. If timeout
     /// is specified it will be passed to SDL's wait_event_timeout function.
-    fn run(&mut self, timeout: Option<u32>) -> std::result::Result<bool, DakotaError> {
+    fn run(
+        &mut self,
+        evsys: &mut EventSystem,
+        dom: &DakotaDOM,
+        timeout: Option<u32>,
+    ) -> std::result::Result<(), DakotaError> {
         // Returns Result<bool, DakotaError>, true if we should terminate
-        let handle_event = |event| {
+        let mut handle_event = |event| {
             match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => return Ok(true),
+                Event::Quit { .. } => evsys.add_event_window_closed(dom),
+                Event::KeyDown { keycode, .. } => {}
                 Event::Window {
                     timestamp: _,
                     window_id: _,
@@ -123,31 +128,27 @@ impl Platform for SDL2Plat {
                 _ => {}
             };
 
-            return Ok(false);
+            Ok(())
         };
 
         // First block for the next event
-        if handle_event(match timeout {
+        handle_event(match timeout {
             // If we are waiting a certain amount of time, tell SDL. If
             // it returns an event, great, handle it.
             // If not, then just return without handling.
             Some(timeout) => match self.sdl_event_pump.wait_event_timeout(timeout) {
                 Some(event) => event,
-                None => return Ok(false),
+                None => return Ok(()),
             },
             // No timeout was given, so we wait indefinitely
             None => self.sdl_event_pump.wait_event(),
-        })? {
-            return Ok(true);
-        }
+        })?;
 
         // Now drain the available events before returning
         // control to the main dakota dispatch loop.
         for event in self.sdl_event_pump.poll_iter() {
-            if handle_event(event)? {
-                return Ok(true);
-            }
+            handle_event(event)?
         }
-        Ok(false)
+        Ok(())
     }
 }
