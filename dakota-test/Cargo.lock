@@ -178,6 +178,7 @@ dependencies = [
 name = "dakota"
 version = "0.1.0"
 dependencies = [
+ "bitflags",
  "image",
  "lazy_static",
  "quick-xml",

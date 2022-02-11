@@ -9,6 +9,7 @@ use wayc::Wayc;
 
 #[cfg(any(unix, macos))]
 extern crate sdl2;
+use crate::input::{convert_sdl_keycode_to_dakota, convert_sdl_mods_to_dakota};
 #[cfg(any(unix, macos))]
 use sdl2::event::{Event, WindowEvent};
 
@@ -114,8 +115,32 @@ impl Platform for SDL2Plat {
         // Returns Result<bool, DakotaError>, true if we should terminate
         let mut handle_event = |event| {
             match event {
+                // Tell the window to exit if the user closed it
                 Event::Quit { .. } => evsys.add_event_window_closed(dom),
-                Event::KeyDown { keycode, .. } => {}
+                // Here we record events for our keystrokes
+                //
+                // This requires converting the raw keycodes from sdl2 into an
+                // enum that we control. See input.rs for how this is done. We
+                // also wrap the Keyboard Modifiercodes in a similar way
+                Event::KeyDown {
+                    keycode, keymod, ..
+                } => {
+                    let key = convert_sdl_keycode_to_dakota(keycode.unwrap());
+                    let mods = convert_sdl_mods_to_dakota(keymod);
+                    evsys.add_event_key_down(dom, key, mods);
+                }
+                Event::KeyUp {
+                    keycode, keymod, ..
+                } => {
+                    let key = convert_sdl_keycode_to_dakota(keycode.unwrap());
+                    let mods = convert_sdl_mods_to_dakota(keymod);
+                    evsys.add_event_key_up(dom, key, mods);
+                }
+                // Now we have window events. There's really only one we need to
+                // pay attention to here, and it's the resize event. Thundr is
+                // going to check for OUT_OF_DATE, but it's possible that the toolkit
+                // (SDL) might need refreshing while libvulkan doesn't yet know about
+                // it.
                 Event::Window {
                     timestamp: _,
                     window_id: _,

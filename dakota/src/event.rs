@@ -4,6 +4,7 @@
 
 use crate::dom;
 use crate::dom::DakotaDOM;
+use crate::input::{Keycode, Mods};
 use std::rc::Rc;
 use utils::ecs::{ECSId, ECSInstance};
 
@@ -39,6 +40,8 @@ pub enum Event {
     WindowResized(HandlerArgs, dom::Size),
     WindowClosed(HandlerArgs),
     WindowRedrawComplete(HandlerArgs),
+    InputKeyDown(Keycode, Mods),
+    InputKeyUp(Keycode, Mods),
 }
 
 impl EventSystem {
@@ -115,6 +118,15 @@ impl EventSystem {
         // just create an empty one
         self.es_global_event_queue
             .push(Event::WindowClosed(Rc::new(Vec::with_capacity(0))));
+    }
+
+    pub fn add_event_key_down(&mut self, _dom: &DakotaDOM, key: Keycode, mods: Mods) {
+        self.es_global_event_queue
+            .push(Event::InputKeyDown(key, mods));
+    }
+    pub fn add_event_key_up(&mut self, _dom: &DakotaDOM, key: Keycode, mods: Mods) {
+        self.es_global_event_queue
+            .push(Event::InputKeyUp(key, mods));
     }
 
     /// Get the slice of currently unhandled events

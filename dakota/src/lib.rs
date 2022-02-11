@@ -3,12 +3,15 @@ extern crate serde;
 extern crate thundr as th;
 pub use th::ThundrError as DakotaError;
 
+extern crate bitflags;
+
 extern crate lazy_static;
 extern crate utils;
 use utils::log;
 pub use utils::{anyhow, ecs::*, region::Rect, Context, Error, MemImage, Result};
 
 pub mod dom;
+pub mod input;
 use dom::DakotaDOM;
 mod platform;
 use platform::Platform;
