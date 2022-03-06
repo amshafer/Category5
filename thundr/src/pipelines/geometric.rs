@@ -165,12 +165,12 @@ impl Pipeline for GeomPipeline {
             // technically 3 vertices are being drawn
             // by the shader
             rend.dev.cmd_draw_indexed(
-                params.cbuf,           // drawing command buffer
-                self.vert_count,       // number of verts
-                surfaces.len() as u32, // number of instances
-                0,                     // first vertex
-                0,                     // vertex offset
-                0,                     // first instance
+                params.cbuf,                            // drawing command buffer
+                self.vert_count,                        // number of verts
+                surfaces.len_with_subsurfaces() as u32, // number of instances
+                0,                                      // first vertex
+                0,                                      // vertex offset
+                0,                                      // first instance
             );
 
             // make sure to end recording

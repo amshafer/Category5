@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::category5::input::Input;
+use crate::category5::vkcomp::wm::task::Task;
 use utils::{log, ClientId, WindowId};
 
 // A skiplist is an entry in a linked list designed to be
@@ -95,6 +96,7 @@ impl Atmosphere {
         // Now point id to the target and its neighbor
         self.set_skiplist_prev(id, prev);
         self.set_skiplist_next(id, Some(target));
+        // generate add above event
     }
 
     /// Add a window below another
@@ -114,6 +116,7 @@ impl Atmosphere {
         // Now point id to the target and its neighbor
         self.set_skiplist_prev(id, Some(target));
         self.set_skiplist_next(id, next);
+        // generate add below event
     }
 
     /// Get the client in focus.
@@ -183,6 +186,16 @@ impl Atmosphere {
                 self.set_skiplist_next(id, prev_win_focus);
                 self.set_skiplist_prev(id, None);
                 self.set_win_focus(win);
+                // Tell vkcomp to reorder its surface list. This is tricky,
+                // since we want to keep a separation between the two subsystems,
+                // and we want to avoid having to scan the skiplist to calculate
+                // which ids need updating. It gets gross, particularly when
+                // subsurfaces are involved. So we feed vkcomp an event stream
+                // telling it to update thundr's surfacelist like we did the
+                // skiplist.
+                if let Some(id) = win {
+                    self.add_wm_task(Task::move_to_front(id));
+                }
             }
             // When focus changes between subsurfaces, we don't change the order. Only
             // wl_subsurface changes the order
@@ -192,10 +205,6 @@ impl Atmosphere {
             // spec says this MUST be done after the leave events are sent
             Input::keyboard_enter(self, id);
         } else {
-            // Clear the previous window focus from the skiplist
-            if let Some(prev) = self.get_win_focus() {
-                self.skiplist_remove_window(prev);
-            }
             // Otherwise we have unselected any surfaces, so clear both focus types
             self.set_win_focus(None);
             self.set_surf_focus(None);
@@ -225,6 +234,11 @@ impl Atmosphere {
         }
 
         self.set_top_child(parent, Some(win));
+        // generate NewSubsurface event
+        self.add_wm_task(Task::new_subsurface {
+            id: win,
+            parent: parent,
+        });
     }
 
     /// Checks if the point (x, y) overlaps with the window surface.

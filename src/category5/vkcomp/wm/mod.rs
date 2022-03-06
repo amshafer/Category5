@@ -109,16 +109,11 @@ pub struct WindowManager {
     /// This is the thundr surface list constructed from the resources that
     /// ways notified us of. Our job is to keep this up to date and call Thundr.
     wm_surfaces: th::SurfaceList,
-    /// This is the same window order as wm_surfaces, but tracks windo ids instead.
-    wm_surface_ids: Vec<WindowId>,
     wm_atmos_ids: Vec<WindowId>,
     /// These are the surfaces that have been removed, and need their resources
     /// torn down. We keep this in a separate array so that we don't have to
     /// rescan the entire surface list every time we check for dead windows.
     wm_will_die: Vec<WindowId>,
-    /// This is a list of surfaces that have been reordered for the current frame.
-    /// This is in WM because we don't want to be reallocating this every time.
-    wm_reordered: Vec<WindowId>,
     /// This is the set of applications in this scene
     wm_apps: PropertyList<App>,
     /// The background picture of the desktop
@@ -209,8 +204,6 @@ impl WindowManager {
             wm_surfaces: list,
             wm_apps: PropertyList::new(),
             wm_will_die: Vec::new(),
-            wm_reordered: Vec::new(),
-            wm_surface_ids: Vec::new(),
             wm_atmos_ids: Vec::new(),
             wm_background: None,
             //wm_renderdoc: doc,
@@ -444,7 +437,6 @@ impl WindowManager {
         // Each app should have one or more windows,
         // all of which we need to draw.
         // ----------------------------------------------------------------
-        self.wm_reordered.clear();
         self.wm_atmos_ids.clear();
 
         // Cache the inorder surface list from atmos
@@ -455,78 +447,6 @@ impl WindowManager {
             aids.push(id);
             return true;
         });
-        log::debug!("Surfacelist from atmos: {:?}", self.wm_atmos_ids);
-        log::debug!("Current surface list: {:?}", self.wm_surface_ids);
-
-        // Let's begin our stupidly weird reordering code!
-        // Update our th::SurfaceList based on the atmosphere list
-        //
-        // This exists because I hate myself and I split category5 in half. Ways is updating
-        // the surface positions and ordering, but vkcomp won't know about them until now.
-        // We need to get our thundr surface list up to speed on what's happened since we
-        // last used it, and so we need to do some reordering. We reorder instead of completely
-        // regenerating because a thundr surface list accumulates damage based on changes
-        // in surface order/insertion/removal.
-        // ----------------------------------------------------------------
-        // This weird while loop exists because we need to iterate fully through both
-        // the atmos ids and our outdated surface ids
-        let mut i = 0;
-        while i < std::cmp::max(self.wm_atmos_ids.len(), self.wm_surface_ids.len()) {
-            // This means that we are past the end of the correct surface list from atmos
-            // and we should just remove everything remaining
-            if i >= self.wm_atmos_ids.len() && i < self.wm_surface_ids.len() {
-                // Even more gross. Because of our nasty while loop the wm_surface_ids len
-                // will be shrinking, so we have to cash it and do it all here
-                for _ in i..self.wm_surface_ids.len() {
-                    // Again, use i because everything will be shifted in wm_surfaces
-                    // while we are removing things
-                    self.wm_surfaces.remove(i + 1);
-                }
-                self.wm_surface_ids.truncate(self.wm_atmos_ids.len());
-                break;
-            } else {
-                // This is the id for this window in atmos's surface list
-                let aid = self.wm_atmos_ids[i];
-                // 1) if it has been reordered, that means we have already processed
-                //    it and inserted it previously. We should remove it now
-                // 2) else if the current id doesn't match our surfacelist, then
-                //   2.1) insert it
-                //   2.2) mark it as reordered
-                // 3) else do nothing. It is already correct
-                let cloned_surf = self.wm_apps[aid.into()].as_ref().unwrap().a_surf.clone();
-
-                if i >= self.wm_surface_ids.len() {
-                    // If our index is larger than the arrays, we just push new surfaces
-                    self.wm_surface_ids.push(aid);
-                    self.wm_reordered.push(aid);
-                    // len - 1 since the last entry of the surfaceslist is always the
-                    // desktop background.
-                    self.wm_surfaces
-                        .insert(self.wm_surfaces.len() as usize - 1, cloned_surf);
-                } else if self.wm_surface_ids[i] != aid {
-                    // Atmos did not match the id for the window at position i in our (outdated) list
-                    // exclude based on 1)
-                    if !self.wm_reordered.contains(&aid) {
-                        // 2.*
-                        // we add 1 since the 0th surf will always be the cursor
-                        self.wm_surfaces.insert(i + 1, cloned_surf);
-                        self.wm_surface_ids.insert(i, aid);
-                        self.wm_reordered.push(aid);
-                    } else {
-                        // This window has been reordered, so as per 1) remove it
-                        self.wm_surface_ids.remove(i);
-                        self.wm_surfaces.remove(i + 1);
-                    }
-                }
-            }
-
-            i += 1;
-        }
-        log::debug!("New surface list: {:?}", self.wm_surface_ids);
-
-        for (i, sid) in self.wm_surface_ids.iter().enumerate() {
-            assert!(*sid == self.wm_atmos_ids[i]);
-        }
 
         // do the draw call separately due to the borrow checker
         // throwing a fit if it is in the loop above.
@@ -535,7 +455,7 @@ impl WindowManager {
         // surfaces. They should already have images attached, and damage will
         // be calculated from the result.
         // ----------------------------------------------------------------
-        for r_id in self.wm_surface_ids.iter() {
+        for r_id in self.wm_atmos_ids.iter() {
             let id = *r_id;
             // Now render the windows
             let a = match self.wm_apps[id.into()].as_mut() {
@@ -598,7 +518,7 @@ impl WindowManager {
         // Remove the surface. The surfacelist will damage the region that the
         // window occupied
         // This is haneld in the reordering bits
-        //self.wm_surfaces.remove_surface(app.a_surf.clone());
+        self.wm_surfaces.remove_surface(app.a_surf.clone());
     }
 
     /// Remove any apps marked for death. Usually we can't remove
@@ -658,6 +578,52 @@ impl WindowManager {
         };
     }
 
+    /// Move the window to the front of the th::SurfaceList
+    ///
+    /// There is really only one toplevel window movement
+    /// event: moving something to the top of the window stack
+    /// when the user clicks on it and puts it into focus.
+    fn move_to_front(&mut self, win: WindowId) {
+        let app = match self.wm_apps[win.into()].as_mut() {
+            Some(a) => a,
+            // app must have been closed
+            None => {
+                log::error!("Could not find id {:?} to record for drawing", win);
+                return;
+            }
+        };
+
+        self.wm_surfaces.remove_surface(app.a_surf.clone());
+        // Move to front really only moves to the second to front,
+        // since we always have a cursor surface at the front
+        self.wm_surfaces.insert(1, app.a_surf.clone());
+    }
+
+    /// Adds a new subsurface to the parent.
+    ///
+    /// The new subsurface will be moved to the top of the subsurface
+    /// stack, as this is the default. The position may later be changed
+    /// through the wl_subsurface interface.
+    fn new_subsurface(&mut self, win: WindowId, parent: WindowId) {
+        let surf = match self.wm_apps[win.into()].as_ref() {
+            Some(a) => a.a_surf.clone(),
+            // app must have been closed
+            None => {
+                log::error!("Could not find id {:?} to record for drawing", win);
+                return;
+            }
+        };
+        let mut parent_surf = match self.wm_apps[parent.into()].as_ref() {
+            Some(a) => a.a_surf.clone(),
+            None => {
+                log::error!("Could not find id {:?} to record for drawing", win);
+                return;
+            }
+        };
+
+        parent_surf.add_subsurface(surf);
+    }
+
     pub fn process_task(&mut self, task: &Task) {
         log::info!("wm: got task {:?}", task);
         match task {
@@ -671,6 +637,8 @@ impl WindowManager {
             Task::create_window(id) => {
                 self.create_window(*id);
             }
+            Task::move_to_front(id) => self.move_to_front(*id),
+            Task::new_subsurface { id, parent } => self.new_subsurface(*id, *parent),
             Task::close_window(id) => self.close_window(*id),
             // update window from gpu buffer
             Task::uwcfd(uw) => {

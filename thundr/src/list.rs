@@ -70,8 +70,7 @@ impl SurfaceList {
 
     /// This is the generic map implementation, entrypoint to the recursive
     /// surface evaluation.
-    #[allow(dead_code)]
-    fn map_on_all_surfaces<F>(&self, mut func: F)
+    pub fn map_on_all_surfaces<F>(&self, mut func: F)
     where
         F: FnMut(&Surface) -> bool,
     {
@@ -103,8 +102,20 @@ impl SurfaceList {
         }
     }
 
+    /// The length only considering immediate surfaces in the list
     pub fn len(&self) -> u32 {
         self.l_vec.len() as u32
+    }
+
+    /// The length accounting for subsurfaces
+    pub fn len_with_subsurfaces(&self) -> u32 {
+        let mut count = 0;
+        self.map_on_all_surfaces(|_| {
+            count += 1;
+            return true;
+        });
+
+        count
     }
 }
 

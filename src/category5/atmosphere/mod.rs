@@ -711,6 +711,7 @@ impl Atmosphere {
         self.skiplist_remove_surf_focus(id);
         // remove this id from the heirarchy
         self.skiplist_remove_window(id);
+        // TODO: generate RemoveWindow event?
 
         // remove this window from the clients list
         // TODO: This is a bit too expensive atm

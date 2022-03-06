@@ -1634,9 +1634,12 @@ impl Renderer {
         }
     }
 
+    /// Extract information for shaders from a surface list
+    ///
+    /// This includes dimensions, the image bound, etc.
     fn update_window_list(&mut self, surfaces: &SurfaceList) -> bool {
         self.r_winlist.clear();
-        for surf_rc in surfaces.iter() {
+        surfaces.map_on_all_surfaces(|surf_rc| {
             let surf = surf_rc.s_internal.borrow();
             let opaque_reg = match surf_rc.get_opaque() {
                 Some(r) => r,
@@ -1653,6 +1656,7 @@ impl Renderer {
                 w_id: (image_id, use_color as i32, 0, 0),
                 w_color: match surf.s_color {
                     Some((r, g, b, a)) => (r, g, b, a),
+                    // magic value so it's easy to debug
                     None => (0.0, 50.0, 100.0, 150.0),
                 },
                 w_dims: Rect::new(
@@ -1663,7 +1667,10 @@ impl Renderer {
                 ),
                 w_opaque: opaque_reg,
             });
-        }
+
+            // Return true to tell the iter to continue
+            true
+        });
 
         // TODO: if surfaces hasn't changed update windows individually
         return true;
