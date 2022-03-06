@@ -90,6 +90,8 @@ pub enum Task {
     close_window(WindowId),
     move_to_front(WindowId),
     new_subsurface { id: WindowId, parent: WindowId },
+    place_subsurface_above { id: WindowId, other: WindowId },
+    place_subsurface_below { id: WindowId, other: WindowId },
     sbfm(SetBackgroundFromMem),
     uwcfd(UpdateWindowContentsFromDmabuf),
     uwcfm(UpdateWindowContentsFromMem),

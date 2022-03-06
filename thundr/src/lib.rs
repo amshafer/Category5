@@ -82,7 +82,7 @@ pub use self::image::Image;
 pub use damage::Damage;
 pub use list::SurfaceList;
 pub use renderer::Renderer;
-pub use surface::Surface;
+pub use surface::{SubsurfaceOrder, Surface};
 
 // Re-export some things from utils so clients
 // can use them
@@ -124,6 +124,8 @@ pub enum ThundrError {
     VK_NOT_ALL_EXTENSIONS_AVAILABLE,
     #[error("Please select a composition type in the thundr CreateInfo")]
     COMPOSITION_TYPE_NOT_SPECIFIED,
+    #[error("Vulkan surface or subsurface could not be found")]
+    SURFACE_NOT_FOUND,
 }
 
 pub struct Thundr {

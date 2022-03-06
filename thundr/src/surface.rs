@@ -7,7 +7,7 @@
 // Austin Shafer - 2020
 #![allow(dead_code)]
 extern crate nix;
-use crate::Damage;
+use crate::{Damage, Result, ThundrError};
 
 use super::image::Image;
 use utils::region::Rect;
@@ -315,10 +315,47 @@ impl Surface {
         self.s_internal.borrow_mut().s_subsurfaces.push(surf);
     }
 
+    /// Move subsurface in front or behind of the other
+    pub fn reorder_subsurface(
+        &mut self,
+        order: SubsurfaceOrder,
+        surf: Surface,
+        other: Surface,
+    ) -> Result<()> {
+        let mut internal = self.s_internal.borrow_mut();
+        // The index of other within the subsurf list
+        let pos = internal
+            .s_subsurfaces
+            .iter()
+            .position(|s| *s == surf)
+            .ok_or(ThundrError::SURFACE_NOT_FOUND)?;
+        let other_pos = internal
+            .s_subsurfaces
+            .iter()
+            .position(|s| *s == other)
+            .ok_or(ThundrError::SURFACE_NOT_FOUND)?;
+
+        internal.s_subsurfaces.remove(pos);
+        internal.s_subsurfaces.insert(
+            match order {
+                SubsurfaceOrder::Above => other_pos,
+                SubsurfaceOrder::Below => other_pos + 1,
+            },
+            surf,
+        );
+
+        Ok(())
+    }
+
     pub fn get_subsurface(&self, i: usize) -> Surface {
         let internal = self.s_internal.borrow();
         assert!(internal.s_subsurfaces.len() > i);
 
         internal.s_subsurfaces[i].clone()
     }
+}
+
+pub enum SubsurfaceOrder {
+    Above,
+    Below,
 }

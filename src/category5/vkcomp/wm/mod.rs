@@ -44,6 +44,7 @@ use thundr as th;
 use crate::category5::atmosphere::property_list::PropertyList;
 use crate::category5::atmosphere::*;
 
+pub use crate::utils::{anyhow, Result};
 use utils::{log, timing::*, *};
 
 pub mod task;
@@ -221,7 +222,12 @@ impl WindowManager {
     ///
     /// This basically just creates a image with the max
     /// depth that takes up the entire screen.
-    fn set_background_from_mem(&mut self, texture: &[u8], tex_width: u32, tex_height: u32) {
+    fn set_background_from_mem(
+        &mut self,
+        texture: &[u8],
+        tex_width: u32,
+        tex_height: u32,
+    ) -> Result<()> {
         let mimg = MemImage::new(
             texture.as_ptr() as *mut u8,
             4,
@@ -239,6 +245,7 @@ impl WindowManager {
         self.wm_surfaces
             .insert(self.wm_surfaces.len() as usize, surf.clone());
         self.wm_background = Some(surf);
+        Ok(())
     }
 
     /// Add a image to the renderer to be displayed.
@@ -250,7 +257,7 @@ impl WindowManager {
     ///
     /// tex_res is the resolution of `texture`
     /// window_res is the size of the on screen window
-    fn create_window(&mut self, id: WindowId) {
+    fn create_window(&mut self, id: WindowId) -> Result<()> {
         log::info!("wm: Creating new window {:?}", id);
         // This surface will have its dimensions updated during recording
         let mut surf = self.wm_thundr.create_surface(0.0, 0.0, 8.0, 8.0);
@@ -291,6 +298,7 @@ impl WindowManager {
                 a_ssd: None,
             },
         );
+        Ok(())
     }
 
     /// Handles an update from dmabuf task
@@ -298,16 +306,17 @@ impl WindowManager {
     /// Translates the task update structure into lower
     /// level calls to import a dmabuf and update a image.
     /// Creates a new image if one doesn't exist yet.
-    fn update_window_contents_from_dmabuf(&mut self, info: &UpdateWindowContentsFromDmabuf) {
+    fn update_window_contents_from_dmabuf(
+        &mut self,
+        info: &UpdateWindowContentsFromDmabuf,
+    ) -> Result<()> {
         log::debug!("Updating window {:?} with {:#?}", info.ufd_id, info);
         // Find the app corresponding to that window id
+        // don't use a helper here because of the borrow checker
         let mut app = match self.wm_apps[info.ufd_id.into()].as_mut() {
             Some(a) => a,
             // If the id is not found, then don't update anything
-            None => {
-                log::error!("Could not find id {:?}", info.ufd_id);
-                return;
-            }
+            None => return Err(anyhow!("Could not find id {:?}", info.ufd_id)),
         };
 
         if let Some(image) = app.a_image.as_mut() {
@@ -340,23 +349,27 @@ impl WindowManager {
         }
         self.wm_thundr
             .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
+
+        Ok(())
     }
 
     /// Handle update from memimage task
     ///
     /// Copies the shm buffer into the app's image.
     /// Creates a new image if one doesn't exist yet.
-    fn update_window_contents_from_mem(&mut self, info: &UpdateWindowContentsFromMem) {
+    fn update_window_contents_from_mem(
+        &mut self,
+        info: &UpdateWindowContentsFromMem,
+    ) -> Result<()> {
         log::debug!("Updating window {:?} with {:#?}", info.id, info);
         // Find the app corresponding to that window id
+        // don't use a helper here because of the borrow checker
         let mut app = match self.wm_apps[info.id.into()].as_mut() {
             Some(a) => a,
             // If the id is not found, then don't update anything
-            None => {
-                log::error!("Could not find id {:?}", info.id);
-                return;
-            }
+            None => return Err(anyhow!("Could not find id {:?}", info.id)),
         };
+
         let buffer_damage = self.wm_atmos.take_buffer_damage(info.id);
         let surface_damage = self.wm_atmos.take_surface_damage(info.id);
         // Damage the image
@@ -384,6 +397,8 @@ impl WindowManager {
 
         self.wm_thundr
             .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
+
+        Ok(())
     }
 
     /// We have to pass in the barsize to get around some annoying borrow checker stuff
@@ -508,7 +523,7 @@ impl WindowManager {
     ///
     /// This adds it to our death list, which will be reaped next frame after
     /// we are done using its resources.
-    fn close_window(&mut self, id: WindowId) {
+    fn close_window(&mut self, id: WindowId) -> Result<()> {
         assert!(self.wm_apps.id_exists(id.into()));
 
         let mut app = self.wm_apps[id.into()].as_mut().unwrap();
@@ -519,6 +534,7 @@ impl WindowManager {
         // window occupied
         // This is haneld in the reordering bits
         self.wm_surfaces.remove_surface(app.a_surf.clone());
+        Ok(())
     }
 
     /// Remove any apps marked for death. Usually we can't remove
@@ -552,13 +568,14 @@ impl WindowManager {
     ///
     /// The frame is not presented to the display until
     /// WindowManager::end_frame is called.
-    fn begin_frame(&mut self) {
+    fn begin_frame(&mut self) -> Result<()> {
         self.record_draw();
         match self.wm_thundr.draw_frame(&mut self.wm_surfaces) {
             Ok(_) => {}
-            Err(th::ThundrError::OUT_OF_DATE) => return,
+            Err(th::ThundrError::OUT_OF_DATE) => {}
             Err(e) => panic!("Failed to draw frame: {:?}", e),
         };
+        Ok(())
     }
 
     /// End a frame
@@ -570,12 +587,32 @@ impl WindowManager {
     /// operations between submission of the frame and when that
     /// frame is presented, which is why begin/end frame is split
     /// into two methods.
-    fn end_frame(&mut self) {
+    fn end_frame(&mut self) -> Result<()> {
         match self.wm_thundr.present() {
             Ok(_) => {}
-            Err(th::ThundrError::OUT_OF_DATE) => return,
+            Err(th::ThundrError::OUT_OF_DATE) => {}
             Err(e) => panic!("Failed to draw frame: {:?}", e),
         };
+        Ok(())
+    }
+
+    /// A helper that uses a window id to do a static lookup of
+    /// vkcomp's App structure. The index for the App structure matches
+    /// the window id number
+    fn lookup_app_from_id<'a>(&'a self, id: WindowId) -> Result<&'a App> {
+        match self.wm_apps[id.into()].as_ref() {
+            Some(a) => Ok(a),
+            // app must have been closed
+            None => Err(anyhow!("Could not find id {:?} in app list", id)),
+        }
+    }
+
+    fn lookup_app_from_id_mut<'a>(&'a mut self, id: WindowId) -> Result<&'a mut App> {
+        match self.wm_apps[id.into()].as_mut() {
+            Some(a) => Ok(a),
+            // app must have been closed
+            None => Err(anyhow!("Could not find id {:?} in app list", id)),
+        }
     }
 
     /// Move the window to the front of the th::SurfaceList
@@ -583,20 +620,14 @@ impl WindowManager {
     /// There is really only one toplevel window movement
     /// event: moving something to the top of the window stack
     /// when the user clicks on it and puts it into focus.
-    fn move_to_front(&mut self, win: WindowId) {
-        let app = match self.wm_apps[win.into()].as_mut() {
-            Some(a) => a,
-            // app must have been closed
-            None => {
-                log::error!("Could not find id {:?} to record for drawing", win);
-                return;
-            }
-        };
+    fn move_to_front(&mut self, win: WindowId) -> Result<()> {
+        let surf = self.lookup_app_from_id(win)?.a_surf.clone();
 
-        self.wm_surfaces.remove_surface(app.a_surf.clone());
+        self.wm_surfaces.remove_surface(surf.clone());
         // Move to front really only moves to the second to front,
         // since we always have a cursor surface at the front
-        self.wm_surfaces.insert(1, app.a_surf.clone());
+        self.wm_surfaces.insert(1, surf);
+        Ok(())
     }
 
     /// Adds a new subsurface to the parent.
@@ -604,51 +635,70 @@ impl WindowManager {
     /// The new subsurface will be moved to the top of the subsurface
     /// stack, as this is the default. The position may later be changed
     /// through the wl_subsurface interface.
-    fn new_subsurface(&mut self, win: WindowId, parent: WindowId) {
-        let surf = match self.wm_apps[win.into()].as_ref() {
-            Some(a) => a.a_surf.clone(),
-            // app must have been closed
-            None => {
-                log::error!("Could not find id {:?} to record for drawing", win);
-                return;
-            }
-        };
-        let mut parent_surf = match self.wm_apps[parent.into()].as_ref() {
-            Some(a) => a.a_surf.clone(),
-            None => {
-                log::error!("Could not find id {:?} to record for drawing", win);
-                return;
-            }
-        };
+    fn new_subsurface(&mut self, win: WindowId, parent: WindowId) -> Result<()> {
+        let surf = self.lookup_app_from_id(win)?.a_surf.clone();
+        let mut parent_surf = self.lookup_app_from_id(parent)?.a_surf.clone();
 
         parent_surf.add_subsurface(surf);
+        Ok(())
+    }
+
+    /// Look up and place a surface above another in the subsurface list
+    ///
+    /// win will be placed above other. The parent will be looked up by
+    /// searching the root window from atmos.
+    fn subsurf_place_above(&mut self, win: WindowId, other: WindowId) -> Result<()> {
+        self.subsurf_reorder_common(th::SubsurfaceOrder::Above, win, other)
+    }
+
+    /// Same as above, but place the subsurface below other.
+    fn subsurf_place_below(&mut self, win: WindowId, other: WindowId) -> Result<()> {
+        self.subsurf_reorder_common(th::SubsurfaceOrder::Below, win, other)
+    }
+
+    fn subsurf_reorder_common(
+        &mut self,
+        order: th::SubsurfaceOrder,
+        win: WindowId,
+        other: WindowId,
+    ) -> Result<()> {
+        let surf = self.lookup_app_from_id(win)?.a_surf.clone();
+        let other_surf = self.lookup_app_from_id(other)?.a_surf.clone();
+        let root = self
+            .wm_atmos
+            .get_root_window(win)
+            .expect("The window should have a root since it is a subsurface");
+        let mut root_surf = self.lookup_app_from_id(root)?.a_surf.clone();
+
+        root_surf.reorder_subsurface(order, surf, other_surf)?;
+
+        Ok(())
     }
 
     pub fn process_task(&mut self, task: &Task) {
         log::info!("wm: got task {:?}", task);
-        match task {
+        let err = match task {
             Task::begin_frame => self.begin_frame(),
             Task::end_frame => self.end_frame(),
             // set background from mem
-            Task::sbfm(sb) => {
-                self.set_background_from_mem(sb.pixels.as_ref(), sb.width, sb.height);
-            }
+            Task::sbfm(sb) => self.set_background_from_mem(sb.pixels.as_ref(), sb.width, sb.height),
             // create new window
-            Task::create_window(id) => {
-                self.create_window(*id);
-            }
+            Task::create_window(id) => self.create_window(*id),
             Task::move_to_front(id) => self.move_to_front(*id),
             Task::new_subsurface { id, parent } => self.new_subsurface(*id, *parent),
+            Task::place_subsurface_above { id, other } => self.subsurf_place_above(*id, *other),
+            Task::place_subsurface_below { id, other } => self.subsurf_place_below(*id, *other),
             Task::close_window(id) => self.close_window(*id),
             // update window from gpu buffer
-            Task::uwcfd(uw) => {
-                self.update_window_contents_from_dmabuf(uw);
-            }
+            Task::uwcfd(uw) => self.update_window_contents_from_dmabuf(uw),
             // update window from shm
-            Task::uwcfm(uw) => {
-                self.update_window_contents_from_mem(uw);
-            }
+            Task::uwcfm(uw) => self.update_window_contents_from_mem(uw),
         };
+
+        match err {
+            Ok(()) => {}
+            Err(e) => log::error!("vkcomp: Task handler had error: {:?}", e),
+        }
     }
 
     /// The main event loop of the vkcomp thread
@@ -661,7 +711,8 @@ impl WindowManager {
             // dimensions of the texture
             512,
             512,
-        );
+        )
+        .unwrap();
 
         // how much time is spent drawing/presenting
         let mut draw_stop = StopWatch::new();
@@ -695,7 +746,7 @@ impl WindowManager {
             log::debug!("_____________________________ FRAME BEGIN");
             // Create a frame out of the hemisphere we got from ways
             draw_stop.start();
-            self.begin_frame();
+            self.begin_frame().unwrap();
             draw_stop.end();
             log::debug!(
                 "spent {} ms drawing this frame",
@@ -706,7 +757,7 @@ impl WindowManager {
 
             // present our frame
             draw_stop.start();
-            self.end_frame();
+            self.end_frame().unwrap();
             draw_stop.end();
 
             log::debug!(
