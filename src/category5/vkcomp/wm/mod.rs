@@ -260,32 +260,33 @@ impl WindowManager {
     fn create_window(&mut self, id: WindowId) -> Result<()> {
         log::info!("wm: Creating new window {:?}", id);
         // This surface will have its dimensions updated during recording
-        let mut surf = self.wm_thundr.create_surface(0.0, 0.0, 8.0, 8.0);
+        let surf = self.wm_thundr.create_surface(0.0, 0.0, 8.0, 8.0);
         // The bar should be a percentage of the screen height
-        let barsize = self.wm_atmos.get_barsize();
+        //let barsize = self.wm_atmos.get_barsize();
 
+        // TODO: Server side decorations
         // draw buttons on the titlebar
         // ----------------------------------------------------------------
-        let dims = Self::get_dot_dims(barsize, &(8.0, 8.0));
-        let mut dot = self
-            .wm_thundr
-            .create_surface(dims.0, dims.1, dims.2, dims.3);
-        self.wm_thundr
-            .bind_image(&mut dot, self.wm_titlebar.dot.clone());
-        // add the dot as a subsurface above the window
-        surf.add_subsurface(dot);
-        // ----------------------------------------------------------------
+        //let dims = Self::get_dot_dims(barsize, &(8.0, 8.0));
+        //let mut dot = self
+        //    .wm_thundr
+        //    .create_surface(dims.0, dims.1, dims.2, dims.3);
+        //self.wm_thundr
+        //    .bind_image(&mut dot, self.wm_titlebar.dot.clone());
+        //// add the dot as a subsurface above the window
+        //surf.add_subsurface(dot);
+        //// ----------------------------------------------------------------
 
-        // now render the bar itself, as wide as the window
-        // the bar needs to be behind the dots
-        // ----------------------------------------------------------------
-        let dims = Self::get_bar_dims(barsize, &(8.0, 8.0));
-        let mut bar = self
-            .wm_thundr
-            .create_surface(dims.0, dims.1, dims.2, dims.3);
-        self.wm_thundr
-            .bind_image(&mut bar, self.wm_titlebar.bar.clone());
-        surf.add_subsurface(bar);
+        //// now render the bar itself, as wide as the window
+        //// the bar needs to be behind the dots
+        //// ----------------------------------------------------------------
+        //let dims = Self::get_bar_dims(barsize, &(8.0, 8.0));
+        //let mut bar = self
+        //    .wm_thundr
+        //    .create_surface(dims.0, dims.1, dims.2, dims.3);
+        //self.wm_thundr
+        //    .bind_image(&mut bar, self.wm_titlebar.bar.clone());
+        //surf.add_subsurface(bar);
         // ----------------------------------------------------------------
 
         self.wm_apps.update_or_create(
@@ -499,23 +500,23 @@ impl WindowManager {
 
             // Only display the bar for toplevel surfaces
             // i.e. don't for popups
-            if self.wm_atmos.get_toplevel(id) {
-                // The bar should be a percentage of the screen height
-                let barsize = self.wm_atmos.get_barsize();
+            //if self.wm_atmos.get_toplevel(id) {
+            //    // The bar should be a percentage of the screen height
+            //    let barsize = self.wm_atmos.get_barsize();
 
-                // Each toplevel window has two subsurfaces (in thundr): the
-                // window bar and the window dot. If it's toplevel we are drawing SSD,
-                // so we need to update the positions of these as well.
-                let mut sub = a.a_surf.get_subsurface(0);
-                let dims = Self::get_dot_dims(barsize, &surface_size);
-                sub.set_pos(dims.0, dims.1);
-                sub.set_size(dims.2, dims.3);
+            //    // Each toplevel window has two subsurfaces (in thundr): the
+            //    // window bar and the window dot. If it's toplevel we are drawing SSD,
+            //    // so we need to update the positions of these as well.
+            //    let mut sub = a.a_surf.get_subsurface(0);
+            //    let dims = Self::get_dot_dims(barsize, &surface_size);
+            //    sub.set_pos(dims.0, dims.1);
+            //    sub.set_size(dims.2, dims.3);
 
-                let dims = Self::get_bar_dims(barsize, &surface_size);
-                let mut sub = a.a_surf.get_subsurface(0);
-                sub.set_pos(dims.0, dims.1);
-                sub.set_size(dims.2, dims.3);
-            }
+            //    let dims = Self::get_bar_dims(barsize, &surface_size);
+            //    let mut sub = a.a_surf.get_subsurface(0);
+            //    sub.set_pos(dims.0, dims.1);
+            //    sub.set_size(dims.2, dims.3);
+            //}
         }
     }
 
@@ -533,7 +534,7 @@ impl WindowManager {
         // Remove the surface. The surfacelist will damage the region that the
         // window occupied
         // This is haneld in the reordering bits
-        self.wm_surfaces.remove_surface(app.a_surf.clone());
+        self.wm_surfaces.remove_surface(app.a_surf.clone())?;
         Ok(())
     }
 
@@ -623,7 +624,20 @@ impl WindowManager {
     fn move_to_front(&mut self, win: WindowId) -> Result<()> {
         let surf = self.lookup_app_from_id(win)?.a_surf.clone();
 
-        self.wm_surfaces.remove_surface(surf.clone());
+        match self.wm_surfaces.remove_surface(surf.clone()) {
+            Ok(()) => {}
+            // If the surface wasn't found, it's because this is
+            // the first time it's been placed in the surface list,
+            // so we can ignore this
+            Err(th::ThundrError::SURFACE_NOT_FOUND) => {}
+            Err(e) => {
+                return Err(anyhow!(e)).context(format!(
+                    "Failed to remove window {:?} from the surface list",
+                    win
+                ))
+            }
+        };
+
         // Move to front really only moves to the second to front,
         // since we always have a cursor surface at the front
         self.wm_surfaces.insert(1, surf);

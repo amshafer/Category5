@@ -45,6 +45,9 @@ pub(crate) struct SurfaceInternal {
     /// is really at the back of the list. This prevents us from having to shift
     /// so many elements when doing switches.
     pub s_subsurfaces: Vec<Surface>,
+    /// If this is a subsurface, this will point to the parent we need to
+    /// remove it from.
+    pub s_parent: Option<Surface>,
 }
 
 impl SurfaceInternal {
@@ -92,9 +95,15 @@ impl SurfaceInternal {
 /// Surfaces are placed into `SurfaceLists`, which are proccessed and rendered
 /// by Thundr. A surface should only ever be used with one `SurfaceList`. If you would
 /// like to show the same image on multiple lists, then create multiple surfaces per-list.
-#[derive(PartialEq, Clone)]
+#[derive(Clone)]
 pub struct Surface {
     pub(crate) s_internal: Rc<RefCell<SurfaceInternal>>,
+}
+
+impl PartialEq for Surface {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.s_internal, &other.s_internal)
+    }
 }
 
 impl Surface {
@@ -108,6 +117,7 @@ impl Surface {
                 s_surf_damage: None,
                 s_was_damaged: false,
                 s_subsurfaces: Vec::with_capacity(0), // this keeps us from allocating
+                s_parent: None,
             })),
         }
     }
@@ -316,8 +326,44 @@ impl Surface {
 
     /// This appends `surf` to the end of the subsurface list
     pub fn add_subsurface(&mut self, surf: Surface) {
+        {
+            let mut internal = surf.s_internal.borrow_mut();
+            // only one parent may be set at a time
+            assert!(internal.s_parent.is_none());
+            internal.s_parent = Some(self.clone());
+        }
+
         // Push since we are reverse order
         self.s_internal.borrow_mut().s_subsurfaces.push(surf);
+    }
+
+    /// This appends `surf` to the end of the subsurface list
+    pub fn remove_subsurface(&mut self, surf: Surface) -> Result<()> {
+        {
+            let mut surf_internal = surf.s_internal.borrow_mut();
+            // make sure this is a subsurface
+            if surf_internal.s_parent.as_ref().unwrap().clone() != *self {
+                return Err(ThundrError::SURFACE_NOT_FOUND);
+            }
+            surf_internal.s_parent = None;
+        }
+
+        let mut internal = self.s_internal.borrow_mut();
+        let pos = internal
+            .s_subsurfaces
+            .iter()
+            .position(|s| *s == surf)
+            .ok_or(ThundrError::SURFACE_NOT_FOUND)?;
+        internal.s_subsurfaces.remove(pos);
+        Ok(())
+    }
+
+    pub fn get_parent(&self) -> Option<Surface> {
+        self.s_internal
+            .borrow()
+            .s_parent
+            .as_ref()
+            .map(|p| p.clone())
     }
 
     /// Move subsurface in front or behind of the other

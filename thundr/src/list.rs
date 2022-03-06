@@ -3,7 +3,7 @@
 // Austin Shafer - 2020
 
 use super::surface::Surface;
-use crate::Damage;
+use crate::{Damage, Result, ThundrError};
 use std::iter::DoubleEndedIterator;
 use std::ops::Index;
 
@@ -38,12 +38,20 @@ impl SurfaceList {
         self.damage_removed_surf(surf);
     }
 
-    pub fn remove_surface(&mut self, surf: Surface) {
-        let index = match self.l_vec.iter().enumerate().find(|(_, s)| **s == surf) {
-            Some((i, _)) => i,
-            None => return,
-        };
+    pub fn remove_surface(&mut self, surf: Surface) -> Result<()> {
+        let (index, _) = self
+            .l_vec
+            .iter()
+            .enumerate()
+            .find(|(_, s)| **s == surf)
+            .ok_or(ThundrError::SURFACE_NOT_FOUND)?;
         self.remove(index);
+
+        if let Some(mut parent) = surf.get_parent() {
+            parent.remove_subsurface(surf)?;
+        }
+
+        Ok(())
     }
 
     pub fn insert(&mut self, order: usize, mut surf: Surface) {
