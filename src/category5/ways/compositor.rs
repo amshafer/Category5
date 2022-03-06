@@ -462,13 +462,13 @@ impl EventManager {
                     if self.em_atmos.borrow_mut().try_flip_hemispheres() {
                         log::debug!("[ways]_____________________________ RECV HEMI");
                         log::debug!("[ways]_____________________________ SENT HEMI");
-                        // reset our timer
-                        tm.reset();
-                        // it has been roughly one frame, so fire the frame callbacks
-                        // so clients can draw
-                        self.em_atmos.borrow_mut().signal_frame_callbacks();
                     }
                 }
+                // reset our timer
+                tm.reset();
+                // it has been roughly one frame, so fire the frame callbacks
+                // so clients can draw
+                self.em_atmos.borrow_mut().signal_frame_callbacks();
             }
 
             // wait for the next event
