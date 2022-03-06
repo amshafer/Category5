@@ -68,19 +68,33 @@ impl SurfaceList {
         self.l_damage.iter()
     }
 
+    fn map_per_surf_recurse<F>(&self, func: &mut F, surf: &Surface, x: i32, y: i32) -> bool
+    where
+        F: FnMut(&Surface, i32, i32) -> bool,
+    {
+        let internal = surf.s_internal.borrow();
+        let surf_pos = &internal.s_rect.r_pos;
+
+        // Note that the subsurface list is "reversed", with the front subsurface
+        // being at the end of the array
+        for sub in internal.s_subsurfaces.iter().rev() {
+            // Add this surfaces offset to the subdsurface calculations.
+            if !self.map_per_surf_recurse(func, sub, x + surf_pos.0 as i32, y + surf_pos.1 as i32) {
+                return false;
+            }
+        }
+        func(surf, x, y)
+    }
+
     /// This is the generic map implementation, entrypoint to the recursive
     /// surface evaluation.
     pub fn map_on_all_surfaces<F>(&self, mut func: F)
     where
-        F: FnMut(&Surface) -> bool,
+        F: FnMut(&Surface, i32, i32) -> bool,
     {
         for surf in self.l_vec.iter() {
-            for sub in surf.s_internal.borrow().s_subsurfaces.iter() {
-                if !func(sub) {
-                    return;
-                }
-            }
-            if !func(surf) {
+            // Start here at no offset
+            if !self.map_per_surf_recurse(&mut func, surf, 0, 0) {
                 return;
             }
         }
@@ -110,7 +124,7 @@ impl SurfaceList {
     /// The length accounting for subsurfaces
     pub fn len_with_subsurfaces(&self) -> u32 {
         let mut count = 0;
-        self.map_on_all_surfaces(|_| {
+        self.map_on_all_surfaces(|_, _, _| {
             count += 1;
             return true;
         });

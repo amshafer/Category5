@@ -1639,7 +1639,10 @@ impl Renderer {
     /// This includes dimensions, the image bound, etc.
     fn update_window_list(&mut self, surfaces: &SurfaceList) -> bool {
         self.r_winlist.clear();
-        surfaces.map_on_all_surfaces(|surf_rc| {
+        // Our iterator is going to take into account the dimensions of the
+        // parent surface(s), and give us the offset from which we should start
+        // doing our calculations. Basically off_x is the parent surfaces X position.
+        surfaces.map_on_all_surfaces(|surf_rc, off_x, off_y| {
             let surf = surf_rc.s_internal.borrow();
             let opaque_reg = match surf_rc.get_opaque() {
                 Some(r) => r,
@@ -1660,8 +1663,8 @@ impl Renderer {
                     None => (0.0, 50.0, 100.0, 150.0),
                 },
                 w_dims: Rect::new(
-                    surf.s_rect.r_pos.0 as i32,
-                    surf.s_rect.r_pos.1 as i32,
+                    off_x + surf.s_rect.r_pos.0 as i32,
+                    off_y + surf.s_rect.r_pos.1 as i32,
                     surf.s_rect.r_size.0 as i32,
                     surf.s_rect.r_size.1 as i32,
                 ),

@@ -40,6 +40,10 @@ pub(crate) struct SurfaceInternal {
     /// Surfaces may be layered above one another. This allows us to model wayland
     /// subsurfaces. The surfaces here will be drawn in-order on top of the base
     /// surface.
+    ///
+    /// This list is reversed of what you think the order is. The "front" subsurface
+    /// is really at the back of the list. This prevents us from having to shift
+    /// so many elements when doing switches.
     pub s_subsurfaces: Vec<Surface>,
 }
 
@@ -312,6 +316,7 @@ impl Surface {
 
     /// This appends `surf` to the end of the subsurface list
     pub fn add_subsurface(&mut self, surf: Surface) {
+        // Push since we are reverse order
         self.s_internal.borrow_mut().s_subsurfaces.push(surf);
     }
 
