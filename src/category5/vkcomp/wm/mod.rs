@@ -534,7 +534,19 @@ impl WindowManager {
         // Remove the surface. The surfacelist will damage the region that the
         // window occupied
         // This is haneld in the reordering bits
-        self.wm_surfaces.remove_surface(app.a_surf.clone())?;
+        match self.wm_surfaces.remove_surface(app.a_surf.clone()) {
+            Ok(()) => {}
+            // If the surface wasn't found, it's because this is
+            // the first time it's been placed in the surface list,
+            // so we can ignore this
+            Err(th::ThundrError::SURFACE_NOT_FOUND) => {}
+            Err(e) => {
+                return Err(anyhow!(e)).context(format!(
+                    "Failed to remove window {:?} from the surface list",
+                    id
+                ))
+            }
+        };
         Ok(())
     }
 
@@ -692,21 +704,32 @@ impl WindowManager {
     pub fn process_task(&mut self, task: &Task) {
         log::info!("wm: got task {:?}", task);
         let err = match task {
-            Task::begin_frame => self.begin_frame(),
-            Task::end_frame => self.end_frame(),
+            Task::begin_frame => self.begin_frame().context("Task: Starting a frame"),
+            Task::end_frame => self.end_frame().context("Task: Ending a frame"),
             // set background from mem
             Task::sbfm(sb) => self.set_background_from_mem(sb.pixels.as_ref(), sb.width, sb.height),
             // create new window
-            Task::create_window(id) => self.create_window(*id),
-            Task::move_to_front(id) => self.move_to_front(*id),
-            Task::new_subsurface { id, parent } => self.new_subsurface(*id, *parent),
-            Task::place_subsurface_above { id, other } => self.subsurf_place_above(*id, *other),
-            Task::place_subsurface_below { id, other } => self.subsurf_place_below(*id, *other),
-            Task::close_window(id) => self.close_window(*id),
+            Task::create_window(id) => self.create_window(*id).context("Task: create_window"),
+            Task::move_to_front(id) => self.move_to_front(*id).context("Task: close_window"),
+            Task::new_subsurface { id, parent } => self
+                .new_subsurface(*id, *parent)
+                .context("Task: new_subsurface"),
+            Task::place_subsurface_above { id, other } => self
+                .subsurf_place_above(*id, *other)
+                .context("Task: place_subsurface_above"),
+            Task::place_subsurface_below { id, other } => self
+                .subsurf_place_below(*id, *other)
+                .context("Task: place_subsurface_below"),
+            Task::close_window(id) => self.close_window(*id).context("Task: close_window"),
             // update window from gpu buffer
-            Task::uwcfd(uw) => self.update_window_contents_from_dmabuf(uw),
+            Task::uwcfd(uw) => self
+                .update_window_contents_from_dmabuf(uw)
+                .context(format!("Task: Updating window {:?} from dmabuf", uw.ufd_id)),
             // update window from shm
-            Task::uwcfm(uw) => self.update_window_contents_from_mem(uw),
+            Task::uwcfm(uw) => self.update_window_contents_from_mem(uw).context(format!(
+                "Task: Updating window {:?} from shared memory",
+                uw.id
+            )),
         };
 
         match err {
