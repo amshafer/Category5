@@ -19,7 +19,7 @@ fn main() {
 
     let q_glyph: Glyph = font
         .glyph_id('G')
-        .with_scale_and_position(50.0, point(0.0, 0.0));
+        .with_scale_and_position(150.0, point(0.0, 0.0));
     let outline = font.outline_glyph(q_glyph).unwrap();
     let bounds = outline.px_bounds();
 
@@ -52,7 +52,7 @@ fn main() {
     // ----------- unused surface
     let mimg = MemImage::new(img.as_ptr() as *mut u8, 4, width, height);
     let bg_image = thund.create_image_from_bits(&mimg, None).unwrap();
-    let scale = 10.0;
+    let scale = 1.0;
     let mut bg_surf = thund.create_surface(0.0, 0.0, width as f32 * scale, height as f32 * scale);
     thund.bind_image(&mut bg_surf, bg_image);
 

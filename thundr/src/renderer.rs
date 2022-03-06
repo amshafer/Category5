@@ -866,10 +866,14 @@ impl Renderer {
             .mag_filter(vk::Filter::LINEAR)
             // filter for minified (undersampled) pixels
             .min_filter(vk::Filter::LINEAR)
-            // repeat the texture on wraparound
-            .address_mode_u(vk::SamplerAddressMode::REPEAT)
-            .address_mode_v(vk::SamplerAddressMode::REPEAT)
-            .address_mode_w(vk::SamplerAddressMode::REPEAT)
+            // don't repeat the texture on wraparound
+            // There is some weird thing where one/two pixels on each border
+            // will repeat, which makes text rendering borked. Idk why this
+            // is the case, but given that it only affects the very edges just
+            // turn off repeat since we will never be doing it anyway)
+            .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_BORDER)
+            .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_BORDER)
+            .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_BORDER)
             // disable this for performance
             .anisotropy_enable(false)
             .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
