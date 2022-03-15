@@ -19,7 +19,6 @@ use crate::display::Display;
 use crate::list::SurfaceList;
 use crate::pipelines::PipelineType;
 use crate::platform::VKDeviceFeatures;
-use crate::surface::SurfaceInternal;
 use crate::Image;
 
 use serde::{Deserialize, Serialize};
@@ -1589,51 +1588,6 @@ impl Renderer {
         }
     }
 
-    /// This updates the winlist entry for surf, which should be stored
-    /// at `index`.
-    fn get_winlist_entry_for_surf(
-        &mut self,
-        base: Option<&SurfaceInternal>,
-        surf: &SurfaceInternal,
-    ) -> Window {
-        let opaque_reg = match surf.get_opaque() {
-            Some(r) => r,
-            // If no opaque data was attached, place a -1 in the start.x component
-            // to tell the shader to ignore this
-            None => Rect::new(-1, 0, -1, 0),
-        };
-        let image = match surf.s_image.as_ref() {
-            Some(i) => i,
-            None => {
-                panic!(
-                        "[thundr] warning: surface was changed bug does not have image attached. ignoring."
-                    );
-            }
-        };
-
-        // Calculate our base offset from the parent surface, if passed in
-        let base_pos = match base {
-            Some(b) => (b.s_rect.r_pos.0, b.s_rect.r_pos.1),
-            None => (0.0, 0.0),
-        };
-
-        let use_color = surf.s_color.is_some();
-        Window {
-            w_id: (image.get_id(), use_color as i32, 0, 0),
-            w_color: match surf.s_color {
-                Some((r, g, b, a)) => (r, g, b, a),
-                None => (0.0, 50.0, 100.0, 150.0),
-            },
-            w_dims: Rect::new(
-                (base_pos.0 + surf.s_rect.r_pos.0) as i32,
-                (base_pos.1 + surf.s_rect.r_pos.1) as i32,
-                surf.s_rect.r_size.0 as i32,
-                surf.s_rect.r_size.1 as i32,
-            ),
-            w_opaque: opaque_reg,
-        }
-    }
-
     /// Extract information for shaders from a surface list
     ///
     /// This includes dimensions, the image bound, etc.
@@ -1660,7 +1614,10 @@ impl Renderer {
                 w_color: match surf.s_color {
                     Some((r, g, b, a)) => (r, g, b, a),
                     // magic value so it's easy to debug
-                    None => (0.0, 50.0, 100.0, 150.0),
+                    // this is clear, since we don't have a color
+                    // assigned and we may not have an image bound.
+                    // In that case, we want this surface to be clear.
+                    None => (0.0, 50.0, 100.0, 0.0),
                 },
                 w_dims: Rect::new(
                     off_x + surf.s_rect.r_pos.0 as i32,
