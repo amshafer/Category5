@@ -39,6 +39,9 @@ pub struct VKDeviceFeatures {
     vkc_drm_modifiers_exts: [*const i8; 1],
     vkc_incremental_present_exts: [*const i8; 1],
     vkc_phys_dev_drm_exts: [*const i8; 1],
+
+    // Capabilities
+    pub max_sampler_count: u32,
 }
 
 fn contains_extensions(exts: &[vk::ExtensionProperties], req: &[*const i8]) -> bool {
@@ -66,6 +69,11 @@ fn contains_extensions(exts: &[vk::ExtensionProperties], req: &[*const i8]) -> b
 
 impl VKDeviceFeatures {
     pub fn new(_info: &CreateInfo, inst: &Instance, pdev: vk::PhysicalDevice) -> Self {
+        let mut pdev_props = vk::PhysicalDeviceProperties2::builder().build();
+        unsafe {
+            inst.get_physical_device_properties2(pdev, &mut pdev_props);
+        }
+
         let mut ret = Self {
             vkc_supports_ext_mem: false,
             vkc_supports_dmabuf: false,
@@ -91,6 +99,10 @@ impl VKDeviceFeatures {
             vkc_drm_modifiers_exts: [vk::ExtImageDrmFormatModifierFn::name().as_ptr()],
             vkc_incremental_present_exts: [vk::KhrIncrementalPresentFn::name().as_ptr()],
             vkc_phys_dev_drm_exts: [vk::ExtPhysicalDeviceDrmFn::name().as_ptr()],
+            max_sampler_count: pdev_props
+                .properties
+                .limits
+                .max_descriptor_set_sampled_images,
         };
 
         let exts = unsafe { inst.enumerate_device_extension_properties(pdev).unwrap() };

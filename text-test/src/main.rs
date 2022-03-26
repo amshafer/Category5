@@ -138,18 +138,26 @@ fn main() {
         f_glyphs: HashMap::new(),
         f_scale: 150.0,
     };
-    let text = "Hello world.";
+    let text = "Hello world. Testing larger messages that wrap";
 
     // ----------- create list of surfaces
     let mut list = thundr::SurfaceList::new();
     let mut offset = (0.0, 0.0);
     let hor_spacing = inst.f_scale / 16.0;
+    let mut line_count = 1;
 
     for c in text.chars() {
         let glyph_size = inst.get_glyph_bounds(&mut thund, c);
-        offset.1 = inst.f_scale - glyph_size.1;
+        offset.1 = (line_count as f32 * inst.f_scale) - glyph_size.1;
         let bg_surf = inst.create_surface_for_char(&mut thund, c, offset);
-        offset.0 += hor_spacing + glyph_size.0;
+
+        if offset.0 >= 775.0 {
+            offset.0 = 0.0;
+            line_count += 1;
+        } else {
+            offset.0 += hor_spacing + glyph_size.0;
+        }
+
         list.push(bg_surf.clone());
     }
 

@@ -1342,6 +1342,9 @@ impl Renderer {
     }
 
     unsafe fn reallocate_winlist_buf_with_cap(&mut self, capacity: usize) {
+        self.dev.destroy_buffer(self.r_winlist_buf, None);
+        self.free_memory(self.r_winlist_mem);
+
         // create our data and a storage buffer for the window list
         let (wl_storage, wl_storage_mem) = self.create_buffer_with_size(
             vk::BufferUsageFlags::STORAGE_BUFFER,
@@ -1502,8 +1505,9 @@ impl Renderer {
             // a large enough number of bound samplers. In that case, I guess
             // we need to do multiple instanced draw calls of the largest
             // size supported. This will only be doable with geom I guess
-            // On moltenvk this is 16
-            let (bindless_pool, bindless_layout) = Self::allocate_bindless_resources(&dev, 16);
+            // On moltenvk this is like 128, so that's bad
+            let (bindless_pool, bindless_layout) =
+                Self::allocate_bindless_resources(&dev, dev_features.max_sampler_count);
             let bindless_desc =
                 Self::allocate_bindless_desc(&dev, bindless_pool, &[bindless_layout], 1);
 
@@ -2204,8 +2208,6 @@ impl Renderer {
     /// bound (aka we aren't populating the full MAX_IMAGE_LIMIT)
     pub fn get_bindless_desc_flags() -> vk::DescriptorBindingFlags {
         vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
-            | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-            | vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING
             | vk::DescriptorBindingFlags::PARTIALLY_BOUND
     }
 
@@ -2332,8 +2334,12 @@ impl Renderer {
         // the tile/window updates in the mapped GPU memory
         // (requires benchmark)
         unsafe {
-            if self.r_winlist.len() >= self.r_winlist_capacity {
+            if self.r_winlist.len() > self.r_winlist_capacity {
                 self.r_winlist_capacity *= 2;
+                // If doubling was not enough, then just make it the size
+                if self.r_winlist.len() > self.r_winlist_capacity {
+                    self.r_winlist_capacity = self.r_winlist.len();
+                }
                 self.reallocate_winlist_buf_with_cap(self.r_winlist_capacity);
             }
 
