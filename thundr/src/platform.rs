@@ -102,7 +102,7 @@ impl VKDeviceFeatures {
             max_sampler_count: pdev_props
                 .properties
                 .limits
-                .max_descriptor_set_sampled_images,
+                .max_per_stage_descriptor_samplers,
         };
 
         let exts = unsafe { inst.enumerate_device_extension_properties(pdev).unwrap() };

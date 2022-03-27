@@ -444,8 +444,6 @@ impl Renderer {
                 .runtime_descriptor_array(true)
                 .descriptor_binding_variable_descriptor_count(true)
                 .descriptor_binding_partially_bound(true)
-                .descriptor_binding_sampled_image_update_after_bind(true)
-                .descriptor_binding_storage_buffer_update_after_bind(true)
                 .descriptor_binding_update_unused_while_pending(true)
                 .build();
 
@@ -1290,7 +1288,6 @@ impl Renderer {
                 .build(),
         ];
         let info = vk::DescriptorPoolCreateInfo::builder()
-            .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
             .pool_sizes(&size)
             .max_sets(1);
         let bindless_pool = dev.create_descriptor_pool(&info, None).unwrap();
@@ -1322,9 +1319,7 @@ impl Renderer {
                 .descriptor_count(max_image_count)
                 .build(),
         ];
-        let mut info = vk::DescriptorSetLayoutCreateInfo::builder()
-            .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
-            .bindings(&bindings);
+        let mut info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
 
         // We need to attach some binding flags stating that we intend
         // to use the storage image as an unsized array
