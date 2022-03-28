@@ -1,5 +1,5 @@
 extern crate ab_glyph as ab;
-use ab::Font;
+use ab::{Font, ScaleFont};
 extern crate thundr as th;
 use thundr::{CreateInfo, MemImage, SurfaceType, Thundr};
 extern crate rustybuzz as rb;
@@ -12,6 +12,19 @@ use sdl2::{
 
 use std::mem::MaybeUninit;
 use std::ptr::{addr_of, addr_of_mut};
+
+/// From ab_glyph: https://docs.rs/ab_glyph/latest/ab_glyph/trait.Font.html
+/// See the "Unit" section there for details.
+fn pt_size_to_px_scale<F: ab::Font>(
+    font: &F,
+    pt_size: f32,
+    screen_scale_factor: f32,
+) -> ab::PxScale {
+    let px_per_em = pt_size * screen_scale_factor * (96.0 / 72.0);
+    let units_per_em = font.units_per_em().unwrap();
+    let height = font.height_unscaled();
+    ab::PxScale::from(px_per_em * height / units_per_em)
+}
 
 struct Glyph {
     /// The thundr image backing this glyph.
@@ -33,11 +46,12 @@ struct FontInstance<'a> {
     /// The ab::GlyphId is really just an index into this. That's all
     /// glyph ids are, is the index of the glyph in the font.
     f_glyphs: Vec<Glyph>,
-    f_scale: f32,
+    f_scale: ab::PxScale,
+    f_point_size: f32,
 }
 
 impl<'a> FontInstance<'a> {
-    fn new(font_path: &str, thund: &mut Thundr, scale: f32) -> Self {
+    fn new(font_path: &str, thund: &mut Thundr, point_size: f32) -> Self {
         let font_data = std::fs::read(font_path).unwrap();
 
         // See the uninit doc page
@@ -59,11 +73,18 @@ impl<'a> FontInstance<'a> {
             );
             // Now initialize the boring correct ones
             addr_of_mut!((*ptr).f_glyphs).write(Vec::new());
-            addr_of_mut!((*ptr).f_scale).write(scale);
+            addr_of_mut!((*ptr).f_point_size).write(point_size);
+            addr_of_mut!((*ptr).f_scale).write(ab::PxScale::from(0.0));
             // Finally tell the compiler it can go back to sane rules for
             // borrow tracking.
             inst.assume_init()
         };
+
+        // set our font size
+        inst.f_face.set_points_per_em(Some(point_size));
+
+        // Convert our point size into a pixel scale for our font
+        inst.f_scale = pt_size_to_px_scale(&inst.f_font, point_size, 1.0);
 
         // Create a thundr surface for every glyph in this font
         for i in 0..inst.f_font.glyph_count() {
@@ -76,7 +97,7 @@ impl<'a> FontInstance<'a> {
     }
 
     fn create_glyph(&mut self, thund: &mut Thundr, id: ab::GlyphId) -> Glyph {
-        let ab_glyph: ab::Glyph = id.with_scale_and_position(self.f_scale, ab::point(0.0, 0.0));
+        let ab_glyph: ab::Glyph = id.with_scale(self.f_scale);
         let bounds = self.f_font.glyph_bounds(&ab_glyph);
         let mut width = bounds.width();
         let mut height = bounds.height();
@@ -112,8 +133,7 @@ impl<'a> FontInstance<'a> {
         }
     }
 
-    #[allow(unused)]
-    fn get_glyph_bounds(&mut self, thund: &mut Thundr, id: ab::GlyphId) -> (f32, f32) {
+    fn get_glyph_bounds(&self, id: ab::GlyphId) -> (f32, f32) {
         let glyph = &self.f_glyphs[id.0 as usize];
         (glyph.g_width, glyph.g_height)
     }
@@ -150,22 +170,41 @@ impl<'a> FontInstance<'a> {
         let positions = glyph_buffer.glyph_positions();
 
         // This is how far we have advanced on a line
-        let mut cursor = (0.0, 0.0);
+        let mut cursor = (0.0, 100.0);
 
         // for each UTF-8 code point in the string
         for i in 0..glyph_buffer.len() {
+            let glyph_id = ab::GlyphId(infos[i].glyph_id as u16);
+
+            let scale_font = self.f_font.as_scaled(self.f_scale);
+            let min_bb = match scale_font.outline_glyph(glyph_id.with_scale(self.f_scale)) {
+                Some(outline) => (outline.px_bounds().min.x, outline.px_bounds().min.y),
+                None => (0.0, 0.0),
+            };
+
+            // Convert from ab_glyph to harfbuzz sizing
+            let buzz_scale = self
+                .f_font
+                .units_per_em()
+                .expect("font unit size exceeds the expected range")
+                / scale_font.height();
+
             let offset = (
-                cursor.0 + positions[i].x_offset as f32,
-                cursor.1 + positions[i].y_offset as f32,
+                cursor.0 + positions[i].x_offset as f32 / buzz_scale + min_bb.0,
+                cursor.1 + positions[i].y_offset as f32 / buzz_scale + min_bb.1,
             );
 
-            let bg_surf =
-                self.create_surface_for_char(thund, ab::GlyphId(infos[i].glyph_id as u16), offset);
+            let bg_surf = self.create_surface_for_char(thund, glyph_id, offset);
             list.push(bg_surf.clone());
 
             // Move the cursor
-            cursor.0 += positions[i].x_advance as f32;
-            cursor.1 += positions[i].y_advance as f32;
+            //
+            // We have to divide the coordinates that rustybuzz gives back to us since
+            // it will multiply it by 64. That's basically its way of doing subpixel precision,
+            // we are in charge of reducing it back to pixel sizes
+            // https://stackoverflow.com/questions/50292283/units-used-by-hb-position-t-in-harfbuzz
+            cursor.0 += positions[i].x_advance as f32 / buzz_scale;
+            cursor.1 += positions[i].y_advance as f32 / buzz_scale;
         }
     }
 }
@@ -192,8 +231,8 @@ fn main() {
     let info = CreateInfo::builder().surface_type(surf_type).build();
     let mut thund = Thundr::new(&info).unwrap();
 
-    let mut inst = FontInstance::new("./century_gothic.otf", &mut thund, 150.0);
-    let text = "Hello world. Testing ";
+    let mut inst = FontInstance::new("./century_gothic.otf", &mut thund, 10.0);
+    let text = "Hello world. `Testing ";
 
     // ----------- create list of surfaces
     let mut list = thundr::SurfaceList::new();
