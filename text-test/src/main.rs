@@ -1,5 +1,4 @@
-extern crate ab_glyph as ab;
-use ab::{Font, ScaleFont};
+extern crate rusttype as rt;
 extern crate thundr as th;
 use thundr::{CreateInfo, MemImage, SurfaceType, Thundr};
 extern crate rustybuzz as rb;
@@ -13,19 +12,6 @@ use sdl2::{
 use std::mem::MaybeUninit;
 use std::ptr::{addr_of, addr_of_mut};
 
-/// From ab_glyph: https://docs.rs/ab_glyph/latest/ab_glyph/trait.Font.html
-/// See the "Unit" section there for details.
-fn pt_size_to_px_scale<F: ab::Font>(
-    font: &F,
-    pt_size: f32,
-    screen_scale_factor: f32,
-) -> ab::PxScale {
-    let px_per_em = pt_size * screen_scale_factor * (96.0 / 72.0);
-    let units_per_em = font.units_per_em().unwrap();
-    let height = font.height_unscaled();
-    ab::PxScale::from(px_per_em * height / units_per_em)
-}
-
 struct Glyph {
     /// The thundr image backing this glyph.
     /// This will be none if the glyph does not have an outline
@@ -37,7 +23,7 @@ struct Glyph {
 
 struct FontInstance<'a> {
     /// The font reference for our rasterizer
-    f_font: ab::FontRef<'a>,
+    f_font: rt::Font<'a>,
     /// Font file raw contents. This is held for f_face.
     f_data: Vec<u8>,
     /// Our rustybuzz font face (see harfbuzz docs)
@@ -46,7 +32,7 @@ struct FontInstance<'a> {
     /// The ab::GlyphId is really just an index into this. That's all
     /// glyph ids are, is the index of the glyph in the font.
     f_glyphs: Vec<Glyph>,
-    f_scale: ab::PxScale,
+    f_scale: rt::Scale,
     f_point_size: f32,
 }
 
@@ -67,14 +53,14 @@ impl<'a> FontInstance<'a> {
             // Now we can use the above reference to fill in the face and font
             // entries in the struct. Here comes the self reference
             addr_of_mut!((*ptr).f_font)
-                .write(ab::FontRef::try_from_slice(data).expect("Could not find font file"));
+                .write(rt::Font::try_from_bytes(data).expect("Could not find font file"));
             addr_of_mut!((*ptr).f_face).write(
                 rb::Face::from_slice(data, 0).expect("Could not initialize rustybuzz::Face"),
             );
             // Now initialize the boring correct ones
             addr_of_mut!((*ptr).f_glyphs).write(Vec::new());
             addr_of_mut!((*ptr).f_point_size).write(point_size);
-            addr_of_mut!((*ptr).f_scale).write(ab::PxScale::from(0.0));
+            addr_of_mut!((*ptr).f_scale).write(rt::Scale { x: 0.0, y: 0.0 });
             // Finally tell the compiler it can go back to sane rules for
             // borrow tracking.
             inst.assume_init()
@@ -83,38 +69,42 @@ impl<'a> FontInstance<'a> {
         // set our font size
         inst.f_face.set_points_per_em(Some(point_size));
 
-        // Convert our point size into a pixel scale for our font
-        inst.f_scale = pt_size_to_px_scale(&inst.f_font, point_size, 1.0);
+        inst.f_scale = rt::Scale {
+            x: point_size,
+            y: point_size,
+        };
 
         // Create a thundr surface for every glyph in this font
         for i in 0..inst.f_font.glyph_count() {
             assert!(inst.f_glyphs.len() == i);
-            let glyph = inst.create_glyph(thund, ab::GlyphId(i as u16));
+            let glyph = inst.create_glyph(thund, rt::GlyphId(i as u16));
             inst.f_glyphs.push(glyph);
         }
 
         return inst;
     }
 
-    fn create_glyph(&mut self, thund: &mut Thundr, id: ab::GlyphId) -> Glyph {
-        let ab_glyph: ab::Glyph = id.with_scale(self.f_scale);
-        let bounds = self.f_font.glyph_bounds(&ab_glyph);
-        let mut width = bounds.width();
-        let mut height = bounds.height();
+    fn create_glyph(&mut self, thund: &mut Thundr, id: rt::GlyphId) -> Glyph {
+        let rt_glyph = self.f_font.glyph(id).scaled(self.f_scale);
+        let hmetrics = rt_glyph.h_metrics();
+        let vmetrics = self.f_font.v_metrics(self.f_scale);
+        // TODO: add gap fields from the metrics
+        let mut width = hmetrics.advance_width;
+        let mut height = vmetrics.ascent - vmetrics.descent;
 
         // if there is no outline for a glyph, then it does not have any
         // contents. In this case we just don't attach an image and record
         // the bounds
-        let th_image = match self.f_font.outline_glyph(ab_glyph) {
-            Some(outline) => {
+        let positioned_glyph = rt_glyph.positioned(rt::Point { x: 0.0, y: 0.0 });
+        let th_image = match positioned_glyph.pixel_bounding_box() {
+            Some(bounds) => {
                 // Regrab the size, since we want the size of the glyph
                 // to use for a) the surface size, and b) the image size
-                let bounds = outline.px_bounds();
-                width = bounds.width();
-                height = bounds.height();
+                width = bounds.width() as f32;
+                height = bounds.height() as f32;
                 let mut img = vec![Pixel(0, 0, 0, 0); (width * height) as usize].into_boxed_slice();
 
-                outline.draw(|x, y, c| {
+                positioned_glyph.draw(|x, y, c| {
                     img[(y * width as u32 + x) as usize] = Pixel(255, 255, 255, (c * 255.0) as u8)
                 });
 
@@ -133,7 +123,7 @@ impl<'a> FontInstance<'a> {
         }
     }
 
-    fn get_glyph_bounds(&self, id: ab::GlyphId) -> (f32, f32) {
+    fn get_glyph_bounds(&self, id: rt::GlyphId) -> (f32, f32) {
         let glyph = &self.f_glyphs[id.0 as usize];
         (glyph.g_width, glyph.g_height)
     }
@@ -141,7 +131,7 @@ impl<'a> FontInstance<'a> {
     fn create_surface_for_char(
         &mut self,
         thund: &mut Thundr,
-        id: ab::GlyphId,
+        id: rt::GlyphId,
         pos: (f32, f32),
     ) -> th::Surface {
         let glyph = &self.f_glyphs[id.0 as usize];
@@ -171,31 +161,32 @@ impl<'a> FontInstance<'a> {
 
         // This is how far we have advanced on a line
         let mut cursor = (0.0, 100.0);
+        let vmetrics = self.f_font.v_metrics(self.f_scale);
+        // Convert from rusttype to harfbuzz sizing
+        let buzz_scale = self.f_font.units_per_em() as f32 / self.f_scale.x;
 
         // for each UTF-8 code point in the string
         for i in 0..glyph_buffer.len() {
-            let glyph_id = ab::GlyphId(infos[i].glyph_id as u16);
+            let glyph_id = rt::GlyphId(infos[i].glyph_id as u16);
+            let glyph_raw = self.f_font.glyph(glyph_id);
 
-            let scale_font = self.f_font.as_scaled(self.f_scale);
-            let min_bb = match scale_font.outline_glyph(glyph_id.with_scale(self.f_scale)) {
-                Some(outline) => (outline.px_bounds().min.x, outline.px_bounds().min.y),
-                None => (0.0, 0.0),
-            };
+            let x_offset = positions[i].x_offset as f32 / buzz_scale;
+            let y_offset = positions[i].y_offset as f32 / buzz_scale;
 
-            // Convert from ab_glyph to harfbuzz sizing
-            let buzz_scale = self
-                .f_font
-                .units_per_em()
-                .expect("font unit size exceeds the expected range")
-                / scale_font.height();
+            let glyph = glyph_raw.scaled(self.f_scale).positioned(rt::Point {
+                x: x_offset,
+                y: y_offset,
+            });
 
-            let offset = (
-                cursor.0 + positions[i].x_offset as f32 / buzz_scale + min_bb.0,
-                cursor.1 + positions[i].y_offset as f32 / buzz_scale + min_bb.1,
-            );
+            if let Some(bb) = glyph.pixel_bounding_box() {
+                let offset = (
+                    cursor.0 + x_offset + bb.min.x as f32,
+                    cursor.1 + y_offset + vmetrics.ascent + bb.min.y as f32,
+                );
 
-            let bg_surf = self.create_surface_for_char(thund, glyph_id, offset);
-            list.push(bg_surf.clone());
+                let bg_surf = self.create_surface_for_char(thund, glyph_id, offset);
+                list.push(bg_surf.clone());
+            }
 
             // Move the cursor
             //
@@ -218,7 +209,7 @@ fn main() {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
     let window = video_subsystem
-        .window("thundr-test", 800, 600)
+        .window("thundr-test", 1200, 1080)
         .vulkan()
         .resizable()
         .position_centered()
@@ -231,8 +222,8 @@ fn main() {
     let info = CreateInfo::builder().surface_type(surf_type).build();
     let mut thund = Thundr::new(&info).unwrap();
 
-    let mut inst = FontInstance::new("./century_gothic.otf", &mut thund, 10.0);
-    let text = "Hello world. `Testing ";
+    let mut inst = FontInstance::new("./Ubuntu-Regular.ttf", &mut thund, 30.0);
+    let text = "Almost before we knew it, we had left the ground.";
 
     // ----------- create list of surfaces
     let mut list = thundr::SurfaceList::new();
