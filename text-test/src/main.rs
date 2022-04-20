@@ -1,4 +1,5 @@
 extern crate rusttype as rt;
+use rt::IntoGlyphId;
 extern crate thundr as th;
 use thundr::{CreateInfo, MemImage, SurfaceType, Thundr};
 extern crate rustybuzz as rb;
@@ -123,11 +124,6 @@ impl<'a> FontInstance<'a> {
         }
     }
 
-    fn get_glyph_bounds(&self, id: rt::GlyphId) -> (f32, f32) {
-        let glyph = &self.f_glyphs[id.0 as usize];
-        (glyph.g_width, glyph.g_height)
-    }
-
     fn create_surface_for_char(
         &mut self,
         thund: &mut Thundr,
@@ -168,6 +164,13 @@ impl<'a> FontInstance<'a> {
         // for each UTF-8 code point in the string
         for i in 0..glyph_buffer.len() {
             let glyph_id = rt::GlyphId(infos[i].glyph_id as u16);
+            // Check for newlines
+            if '\n'.into_glyph_id(&self.f_font) == glyph_id {
+                cursor.0 = 0.0;
+                cursor.1 += vmetrics.ascent - vmetrics.descent;
+                continue;
+            }
+
             let glyph_raw = self.f_font.glyph(glyph_id);
 
             let x_offset = positions[i].x_offset as f32 / buzz_scale;
@@ -222,8 +225,11 @@ fn main() {
     let info = CreateInfo::builder().surface_type(surf_type).build();
     let mut thund = Thundr::new(&info).unwrap();
 
-    let mut inst = FontInstance::new("./Ubuntu-Regular.ttf", &mut thund, 30.0);
-    let text = "Almost before we knew it, we had left the ground.";
+    let mut inst = FontInstance::new("./Ubuntu-Regular.ttf", &mut thund, 40.0);
+    let text = "This new version can actually render text in a fairly decent way.
+There are still some lingering weird points (such as extra spacing
+around certain vowels sometimes), but it can actually make strings
+that are pretty enough to not notice at first glance.";
 
     // ----------- create list of surfaces
     let mut list = thundr::SurfaceList::new();
