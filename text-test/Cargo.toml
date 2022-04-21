@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 thundr={path="../thundr", features=["sdl"]}
-rusttype = "0.9"
+fontdue = "0.7.2"
 rustybuzz = "0.4.0"
 unicode-linebreak = "0.1.2"
 utils={path="../utils"}

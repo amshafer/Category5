@@ -1,5 +1,4 @@
-extern crate rusttype as rt;
-use rt::IntoGlyphId;
+extern crate fontdue as fd;
 extern crate thundr as th;
 use thundr::{CreateInfo, MemImage, SurfaceType, Thundr};
 extern crate rustybuzz as rb;
@@ -13,18 +12,21 @@ use sdl2::{
 use std::mem::MaybeUninit;
 use std::ptr::{addr_of, addr_of_mut};
 
+#[repr(C)]
+#[derive(Clone)]
+struct Pixel(u8, u8, u8, u8);
+
 struct Glyph {
     /// The thundr image backing this glyph.
     /// This will be none if the glyph does not have an outline
     /// which happens if it's a space.
     g_image: Option<th::Image>,
-    g_width: f32,
-    g_height: f32,
+    g_metrics: fd::Metrics,
 }
 
 struct FontInstance<'a> {
     /// The font reference for our rasterizer
-    f_font: rt::Font<'a>,
+    f_font: fd::Font,
     /// Font file raw contents. This is held for f_face.
     f_data: Vec<u8>,
     /// Our rustybuzz font face (see harfbuzz docs)
@@ -33,7 +35,8 @@ struct FontInstance<'a> {
     /// The ab::GlyphId is really just an index into this. That's all
     /// glyph ids are, is the index of the glyph in the font.
     f_glyphs: Vec<Glyph>,
-    f_scale: rt::Scale,
+    // The pixel size of the font
+    f_scale: f32,
     f_point_size: f32,
 }
 
@@ -53,15 +56,17 @@ impl<'a> FontInstance<'a> {
             let data = &*addr_of!((*ptr).f_data);
             // Now we can use the above reference to fill in the face and font
             // entries in the struct. Here comes the self reference
-            addr_of_mut!((*ptr).f_font)
-                .write(rt::Font::try_from_bytes(data).expect("Could not find font file"));
+            addr_of_mut!((*ptr).f_font).write(
+                fd::Font::from_bytes(data.clone(), fontdue::FontSettings::default())
+                    .expect("Could not find font file"),
+            );
             addr_of_mut!((*ptr).f_face).write(
                 rb::Face::from_slice(data, 0).expect("Could not initialize rustybuzz::Face"),
             );
             // Now initialize the boring correct ones
             addr_of_mut!((*ptr).f_glyphs).write(Vec::new());
             addr_of_mut!((*ptr).f_point_size).write(point_size);
-            addr_of_mut!((*ptr).f_scale).write(rt::Scale { x: 0.0, y: 0.0 });
+            addr_of_mut!((*ptr).f_scale).write(0.0);
             // Finally tell the compiler it can go back to sane rules for
             // borrow tracking.
             inst.assume_init()
@@ -70,69 +75,63 @@ impl<'a> FontInstance<'a> {
         // set our font size
         inst.f_face.set_points_per_em(Some(point_size));
 
-        inst.f_scale = rt::Scale {
-            x: point_size,
-            y: point_size,
-        };
+        inst.f_scale = point_size;
 
         // Create a thundr surface for every glyph in this font
         for i in 0..inst.f_font.glyph_count() {
-            assert!(inst.f_glyphs.len() == i);
-            let glyph = inst.create_glyph(thund, rt::GlyphId(i as u16));
+            assert!(inst.f_glyphs.len() == i as usize);
+            let glyph = inst.create_glyph(thund, i);
             inst.f_glyphs.push(glyph);
         }
 
         return inst;
     }
 
-    fn create_glyph(&mut self, thund: &mut Thundr, id: rt::GlyphId) -> Glyph {
-        let rt_glyph = self.f_font.glyph(id).scaled(self.f_scale);
-        let hmetrics = rt_glyph.h_metrics();
-        let vmetrics = self.f_font.v_metrics(self.f_scale);
-        // TODO: add gap fields from the metrics
-        let mut width = hmetrics.advance_width;
-        let mut height = vmetrics.ascent - vmetrics.descent;
+    fn create_glyph(&mut self, thund: &mut Thundr, id: u16) -> Glyph {
+        let (metrics, bitmap) = self.f_font.rasterize_indexed(id, self.f_scale);
 
-        // if there is no outline for a glyph, then it does not have any
-        // contents. In this case we just don't attach an image and record
-        // the bounds
-        let positioned_glyph = rt_glyph.positioned(rt::Point { x: 0.0, y: 0.0 });
-        let th_image = match positioned_glyph.pixel_bounding_box() {
-            Some(bounds) => {
-                // Regrab the size, since we want the size of the glyph
-                // to use for a) the surface size, and b) the image size
-                width = bounds.width() as f32;
-                height = bounds.height() as f32;
-                let mut img = vec![Pixel(0, 0, 0, 0); (width * height) as usize].into_boxed_slice();
+        // If the glyph does not have a bitmap, it's an invisible character and
+        // we shouldn't make an image for it.
+        let th_image = if bitmap.len() > 0 {
+            let mut img =
+                vec![Pixel(0, 0, 0, 0); metrics.width * metrics.height].into_boxed_slice();
 
-                positioned_glyph.draw(|x, y, c| {
-                    img[(y * width as u32 + x) as usize] = Pixel(255, 255, 255, (c * 255.0) as u8)
-                });
-
-                let mimg =
-                    MemImage::new(img.as_ptr() as *mut u8, 4, width as usize, height as usize);
-                Some(thund.create_image_from_bits(&mimg, None).unwrap())
+            // So fontdue will give us a bitmap, but we need to turn that into a
+            // memory image. This loop goes through each [0,255] value in the bitmap
+            // and creates a pixel in our shm texture. We then upload that to thundr
+            for (i, v) in bitmap.iter().enumerate() {
+                let x = i % metrics.width;
+                let y = i / metrics.width;
+                img[y * metrics.width + x] = Pixel(255, 255, 255, *v);
             }
-            None => None,
+
+            let mimg = MemImage::new(img.as_ptr() as *mut u8, 4, metrics.width, metrics.height);
+
+            Some(thund.create_image_from_bits(&mimg, None).unwrap())
+        } else {
+            None
         };
 
         // Create a new glyph for this UTF-8 character
         Glyph {
             g_image: th_image,
-            g_width: width,
-            g_height: height,
+            g_metrics: metrics,
         }
     }
 
     fn create_surface_for_char(
         &mut self,
         thund: &mut Thundr,
-        id: rt::GlyphId,
+        id: u16,
         pos: (f32, f32),
     ) -> th::Surface {
-        let glyph = &self.f_glyphs[id.0 as usize];
-        let mut surf =
-            thund.create_surface(pos.0, pos.1, glyph.g_width as f32, glyph.g_height as f32);
+        let glyph = &self.f_glyphs[id as usize];
+        let mut surf = thund.create_surface(
+            pos.0,
+            pos.1,
+            glyph.g_metrics.width as f32,
+            glyph.g_metrics.height as f32,
+        );
         if let Some(image) = glyph.g_image.as_ref() {
             thund.bind_image(&mut surf, image.clone());
         }
@@ -157,39 +156,35 @@ impl<'a> FontInstance<'a> {
 
         // This is how far we have advanced on a line
         let mut cursor = (0.0, 100.0);
-        let vmetrics = self.f_font.v_metrics(self.f_scale);
         // Convert from rusttype to harfbuzz sizing
-        let buzz_scale = self.f_font.units_per_em() as f32 / self.f_scale.x;
+        let buzz_scale = self.f_font.units_per_em() as f32 / self.f_scale;
 
         // for each UTF-8 code point in the string
         for i in 0..glyph_buffer.len() {
-            let glyph_id = rt::GlyphId(infos[i].glyph_id as u16);
+            let glyph_id = infos[i].glyph_id as u16;
+            let glyph = &self.f_glyphs[glyph_id as usize];
+            let metrics = &glyph.g_metrics;
+
             // Check for newlines
-            if '\n'.into_glyph_id(&self.f_font) == glyph_id {
+            if self.f_font.lookup_glyph_index('\n') == glyph_id {
                 cursor.0 = 0.0;
-                cursor.1 += vmetrics.ascent - vmetrics.descent;
+                cursor.1 += 50.0;
                 continue;
             }
-
-            let glyph_raw = self.f_font.glyph(glyph_id);
 
             let x_offset = positions[i].x_offset as f32 / buzz_scale;
             let y_offset = positions[i].y_offset as f32 / buzz_scale;
 
-            let glyph = glyph_raw.scaled(self.f_scale).positioned(rt::Point {
-                x: x_offset,
-                y: y_offset,
-            });
+            // TODO: something might be wrong here, I'm thinking of glyphs as having
+            // a top left placement origin, but the custom may be bottom left? Look
+            // into this.
+            let offset = (
+                cursor.0 + x_offset + metrics.xmin as f32,
+                cursor.1 + y_offset + metrics.ymin as f32,
+            );
 
-            if let Some(bb) = glyph.pixel_bounding_box() {
-                let offset = (
-                    cursor.0 + x_offset + bb.min.x as f32,
-                    cursor.1 + y_offset + vmetrics.ascent + bb.min.y as f32,
-                );
-
-                let bg_surf = self.create_surface_for_char(thund, glyph_id, offset);
-                list.push(bg_surf.clone());
-            }
+            let bg_surf = self.create_surface_for_char(thund, glyph_id, offset);
+            list.push(bg_surf.clone());
 
             // Move the cursor
             //
@@ -202,10 +197,6 @@ impl<'a> FontInstance<'a> {
         }
     }
 }
-
-#[repr(C)]
-#[derive(Clone)]
-struct Pixel(u8, u8, u8, u8);
 
 fn main() {
     // SDL goodies
@@ -225,7 +216,7 @@ fn main() {
     let info = CreateInfo::builder().surface_type(surf_type).build();
     let mut thund = Thundr::new(&info).unwrap();
 
-    let mut inst = FontInstance::new("./Ubuntu-Regular.ttf", &mut thund, 40.0);
+    let mut inst = FontInstance::new("./Ubuntu-Light.ttf", &mut thund, 40.0);
     let text = "This new version can actually render text in a fairly decent way.
 There are still some lingering weird points (such as extra spacing
 around certain vowels sometimes), but it can actually make strings
