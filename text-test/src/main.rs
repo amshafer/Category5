@@ -1,7 +1,8 @@
 extern crate freetype as ft;
 extern crate thundr as th;
 use thundr::{CreateInfo, MemImage, SurfaceType, Thundr};
-extern crate rustybuzz as rb;
+extern crate harfbuzz_rs as hb;
+extern crate harfbuzz_sys as hb_sys;
 
 extern crate sdl2;
 use sdl2::{
@@ -9,12 +10,14 @@ use sdl2::{
     keyboard::Keycode,
 };
 
-use std::mem::MaybeUninit;
-use std::ptr::{addr_of, addr_of_mut};
-
 #[repr(C)]
 #[derive(Clone)]
 struct Pixel(u8, u8, u8, u8);
+
+// Define this ourselves since hb crate doesn't do it
+extern "C" {
+    pub fn hb_ft_font_create_referenced(face: ft::ffi::FT_Face) -> *mut hb_sys::hb_font_t;
+}
 
 struct Glyph {
     /// The thundr image backing this glyph.
@@ -24,82 +27,52 @@ struct Glyph {
     g_bitmap_size: (f32, f32),
     g_bitmap_left: f32,
     g_bitmap_top: f32,
-    g_metrics: ft::GlyphMetrics,
+    _g_metrics: ft::GlyphMetrics,
 }
 
 struct FontInstance<'a> {
-    f_freetype: ft::Library,
+    _f_freetype: ft::Library,
     /// The font reference for our rasterizer
-    f_font: ft::Face,
-    /// Font file raw contents. This is held for f_face.
-    f_data: Vec<u8>,
+    f_ft_face: ft::Face,
     /// Our rustybuzz font face (see harfbuzz docs)
-    f_face: rb::Face<'a>,
+    f_hb_font: hb::Owned<hb::Font<'a>>,
     /// Map of glyphs to look up to find the thundr resources
     /// The ab::GlyphId is really just an index into this. That's all
     /// glyph ids are, is the index of the glyph in the font.
-    f_glyphs: Vec<Glyph>,
-    // The pixel size of the font
-    f_scale: f32,
-    f_point_size: f32,
+    f_glyphs: Vec<Option<Glyph>>,
 }
 
 impl<'a> FontInstance<'a> {
-    fn new(font_path: &str, thund: &mut Thundr, point_size: f32) -> Self {
-        let font_data = std::fs::read(font_path).unwrap();
-
-        // See the uninit doc page
-        let mut inst = unsafe {
-            let mut inst = MaybeUninit::<FontInstance>::uninit();
-            let ptr = inst.as_mut_ptr();
-            let ft_lib = ft::Library::init().unwrap();
-            let ft_face = ft_lib.new_face(font_path, 0).unwrap();
-
-            // Using `write` instead of assignment via `=` to not call `drop` on the
-            // old, uninitialized value.
-            addr_of_mut!((*ptr).f_data).write(font_data);
-            // get a reference to f_data.
-            let data = &*addr_of!((*ptr).f_data);
-            // Now we can use the above reference to fill in the face and font
-            // entries in the struct. Here comes the self reference
-            addr_of_mut!((*ptr).f_font).write(ft_face);
-            addr_of_mut!((*ptr).f_face).write(
-                rb::Face::from_slice(data, 0).expect("Could not initialize rustybuzz::Face"),
-            );
-            // Now initialize the boring correct ones
-            addr_of_mut!((*ptr).f_glyphs).write(Vec::new());
-            addr_of_mut!((*ptr).f_point_size).write(point_size);
-            addr_of_mut!((*ptr).f_scale).write(0.0);
-            // Finally tell the compiler it can go back to sane rules for
-            // borrow tracking.
-            inst.assume_init()
+    fn new(font_path: &str, point_size: f32) -> Self {
+        let ft_lib = ft::Library::init().unwrap();
+        let mut ft_face: ft::Face = ft_lib.new_face(font_path, 0).unwrap();
+        let hb_font = unsafe {
+            let raw_font =
+                hb_ft_font_create_referenced(ft_face.raw_mut() as *mut ft::ffi::FT_FaceRec);
+            hb::Owned::from_raw(raw_font)
         };
 
         // set our font size
         // The sizes come in 1/64th of a point. See the tutorial. Zeroes
         // default to matching that size, and defaults to 72 dpi
         // TODO: account for display info
-        inst.f_font
+        ft_face
             .set_char_size(point_size as isize * 64, 0, 0, 108)
             .expect("Could not set freetype char size");
 
-        inst.f_scale = point_size;
-
-        // Create a thundr surface for every glyph in this font
-        for i in 0..inst.f_font.num_glyphs() {
-            assert!(inst.f_glyphs.len() == i as usize);
-            let glyph = inst.create_glyph(thund, i as usize);
-            inst.f_glyphs.push(glyph);
+        Self {
+            _f_freetype: ft_lib,
+            f_ft_face: ft_face,
+            f_hb_font: hb_font,
+            f_glyphs: Vec::new(),
         }
-
-        return inst;
     }
 
-    fn create_glyph(&mut self, thund: &mut Thundr, id: usize) -> Glyph {
-        self.f_font
+    fn create_glyph(&mut self, thund: &mut Thundr, id: u16) -> Glyph {
+        self.f_ft_face
             .load_glyph(id as u32, ft::face::LoadFlag::DEFAULT)
             .unwrap();
-        let glyph = self.f_font.glyph();
+        let glyph = self.f_ft_face.glyph();
         glyph
             .render_glyph(ft::render_mode::RenderMode::Normal)
             .unwrap();
@@ -134,7 +107,18 @@ impl<'a> FontInstance<'a> {
             g_bitmap_size: (bitmap.width() as f32, bitmap.rows() as f32),
             g_bitmap_left: glyph.bitmap_left() as f32,
             g_bitmap_top: glyph.bitmap_top() as f32,
-            g_metrics: glyph.metrics(),
+            _g_metrics: glyph.metrics(),
+        }
+    }
+
+    fn ensure_glyph_exists(&mut self, thund: &mut Thundr, id: u16) {
+        // If we have not imported this glyph, make it now
+        while id as usize >= self.f_glyphs.len() {
+            self.f_glyphs.push(None);
+        }
+
+        if self.f_glyphs[id as usize].is_none() {
+            self.f_glyphs[id as usize] = Some(self.create_glyph(thund, id));
         }
     }
 
@@ -144,7 +128,10 @@ impl<'a> FontInstance<'a> {
         id: u16,
         pos: (f32, f32),
     ) -> th::Surface {
-        let glyph = &self.f_glyphs[id as usize];
+        self.ensure_glyph_exists(thund, id);
+        let glyph = self.f_glyphs[id as usize]
+            .as_ref()
+            .expect("Bug: Glyph not created for this character");
         let mut surf =
             thund.create_surface(pos.0, pos.1, glyph.g_bitmap_size.0, glyph.g_bitmap_size.1);
         if let Some(image) = glyph.g_image.as_ref() {
@@ -161,32 +148,34 @@ impl<'a> FontInstance<'a> {
     /// list with them along the way.
     fn layout_text(&mut self, thund: &mut Thundr, list: &mut th::SurfaceList, text: &str) {
         // Set up our HarfBuzz buffers
-        let mut buffer = rb::UnicodeBuffer::new();
-        buffer.push_str(text);
+        let buffer = hb::UnicodeBuffer::new().add_str(text);
 
         // Now the big call to get the shaping information
-        let glyph_buffer = rb::shape(&self.f_face, Vec::with_capacity(0).as_slice(), buffer);
-        let infos = glyph_buffer.glyph_infos();
-        let positions = glyph_buffer.glyph_positions();
+        let glyph_buffer = hb::shape(&self.f_hb_font, buffer, Vec::with_capacity(0).as_slice());
+        let infos = glyph_buffer.get_glyph_infos();
+        let positions = glyph_buffer.get_glyph_positions();
 
         // This is how far we have advanced on a line
         let mut cursor = (0.0, 100.0);
 
         // for each UTF-8 code point in the string
         for i in 0..glyph_buffer.len() {
-            let glyph_id = infos[i].glyph_id as u16;
-            let glyph = &self.f_glyphs[glyph_id as usize];
+            let glyph_id = infos[i].codepoint as u16;
+            self.ensure_glyph_exists(thund, glyph_id);
+            let glyph = self.f_glyphs[glyph_id as usize]
+                .as_ref()
+                .expect("Bug: No Glyph created for this character");
 
             // Check for newlines
             // gross, we have to convert to usize through u32 :(
-            if self.f_font.get_char_index('\n' as u32 as usize) == glyph_id as u32 {
+            if self.f_ft_face.get_char_index('\n' as u32 as usize) == glyph_id as u32 {
                 cursor.0 = 0.0;
                 cursor.1 += 50.0;
                 continue;
             }
 
             // (hb_position_t * font_point_size) / (units / em)
-            let buzz_scale = self.f_face.units_per_em() as f32 / self.f_scale;
+            let buzz_scale = 64.0;
             let x_offset = positions[i].x_offset as f32 / buzz_scale;
             let y_offset = positions[i].y_offset as f32 / buzz_scale;
             let x_advance = positions[i].x_advance as f32 / buzz_scale;
@@ -228,8 +217,30 @@ fn main() {
     let info = CreateInfo::builder().surface_type(surf_type).build();
     let mut thund = Thundr::new(&info).unwrap();
 
-    let mut inst = FontInstance::new("./Ubuntu-Regular.ttf", &mut thund, 50.0);
-    let text = "But I must explain to you how all this mistaken idea";
+    let mut inst = FontInstance::new("./Ubuntu-Regular.ttf", 14.0);
+    let text = "But I must explain to you how all this mistaken idea of reprobating pleasure and
+extolling pain arose. To do so, I will give you a complete account of the system, and
+expound the actual teachings of the great explorer of the truth, the master-builder of
+human happiness. No one rejects, dislikes or avoids pleasure itself, because it is
+pleasure, but because those who do not know how to pursue pleasure rationally encounter
+consequences that are extremely painful. Nor again is there anyone who loves or pursues or
+desires to obtain pain of itself, because it is pain, but occasionally circumstances occur
+in which toil and pain can procure him some great pleasure. To take a trivial example,
+which of us ever undertakes laborious physical exercise, except to obtain some advantage
+from it? But who has any right to find fault with a man who chooses to enjoy a pleasure
+that has no annoying consequences, or one who avoids a pain that produces no resultant
+pleasure? [33] On the other hand, we denounce with righteous indignation and dislike
+men who are so beguiled and demoralized by the charms of pleasure of the moment, so
+blinded by desire, that they cannot foresee the pain and trouble that are bound to
+ensue; and equal blame belongs to those who fail in their duty through weakness of
+will, which is the same as saying through shrinking from toil and pain. These cases are
+perfectly simple and easy to distinguish. In a free hour, when our power of choice is
+untrammeled and when nothing prevents our being able to do what we like best, every
+pleasure is to be welcomed and every pain avoided. But in certain circumstances and
+owing to the claims of duty or the obligations of business it will frequently occur
+that pleasures have to be repudiated and annoyances accepted. The wise man therefore
+always holds in these matters to this principle of selection: he rejects pleasures to
+secure other greater pleasures, or else he endures pains to avoid worse pains.";
 
     // ----------- create list of surfaces
     let mut list = thundr::SurfaceList::new();
