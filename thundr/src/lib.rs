@@ -150,7 +150,7 @@ pub enum SurfaceType<'a> {
     /// does incase xcb/macos aren't enabled.
     Display(PhantomData<&'a usize>),
     #[cfg(feature = "sdl")]
-    SDL2(&'a sdl2::video::Window),
+    SDL2(&'a sdl2::VideoSubsystem, &'a sdl2::video::Window),
     #[cfg(feature = "wayland")]
     Wayland(wc::Display, wc::protocol::wl_surface::WlSurface),
 }
@@ -234,6 +234,14 @@ impl Thundr {
             th_pipe_type: ty,
             th_pipe: pipe,
         })
+    }
+
+    /// Get the Dots Per Inch for this display.
+    ///
+    /// For VK_KHR_display we will calculate it ourselves, and for
+    /// SDL we will ask SDL to tell us it.
+    pub fn get_dpi(&self) -> f32 {
+        self.th_rend.display.get_dpi()
     }
 
     pub fn get_raw_vkdev_handle(&self) -> *const std::ffi::c_void {

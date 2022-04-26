@@ -25,7 +25,7 @@ fn main() {
     let mut event_pump = sdl_context.event_pump().unwrap();
 
     // let surf_type = SurfaceType::Display(PhantomData);
-    let surf_type = SurfaceType::SDL2(&window);
+    let surf_type = SurfaceType::SDL2(&video_subsystem, &window);
 
     let info = CreateInfo::builder()
         //.enable_traditional_composition()

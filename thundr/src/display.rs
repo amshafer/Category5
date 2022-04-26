@@ -47,6 +47,8 @@ trait Backend {
         surface_loader: &khr::Surface,
         surf_type: &SurfaceType,
     ) -> Result<vk::SurfaceKHR, vk::Result>;
+
+    fn get_dpi(&self) -> f32;
 }
 
 enum BackendType {
@@ -62,7 +64,7 @@ impl Display {
         match info.surface_type {
             SurfaceType::Display(_) => BackendType::PhysicalDisplay,
             #[cfg(feature = "sdl")]
-            SurfaceType::SDL2(_) => BackendType::SDL2Display,
+            SurfaceType::SDL2(_, _) => BackendType::SDL2Display,
             #[cfg(feature = "wayland")]
             SurfaceType::Wayland(_, _) => BackendType::WaylandDisplay,
         }
@@ -80,7 +82,7 @@ impl Display {
                 PhysicalDisplay::new(entry, inst, pdev, &s_loader, &info.surface_type)
             }
             #[cfg(feature = "sdl")]
-            SurfaceType::SDL2(_) => {
+            SurfaceType::SDL2(_, _) => {
                 SDL2DisplayBackend::new(entry, inst, pdev, &s_loader, &info.surface_type)
             }
             #[cfg(feature = "wayland")]
@@ -96,6 +98,14 @@ impl Display {
             d_surface: surf,
             d_resolution: res,
         }
+    }
+
+    /// Get the Dots Per Inch for this display.
+    ///
+    /// For VK_KHR_display we will calculate it ourselves, and for
+    /// SDL we will ask SDL to tell us it.
+    pub fn get_dpi(&self) -> f32 {
+        self.d_back.get_dpi()
     }
 
     /// Selects a resolution for the renderer
@@ -181,6 +191,10 @@ struct PhysicalDisplay {
     // the display itself
     pub display: vk::DisplayKHR,
     pub display_loader: khr::Display,
+    // The physical size in millimeters
+    pd_phys_dims: vk::Extent2D,
+    // The native resolution of the display
+    pd_native_res: vk::Extent2D,
 }
 
 impl PhysicalDisplay {
@@ -204,6 +218,8 @@ impl PhysicalDisplay {
         let ret = Box::new(PhysicalDisplay {
             display_loader: d_loader,
             display: disp_props[0].display,
+            pd_phys_dims: disp_props[0].physical_dimensions,
+            pd_native_res: disp_props[0].physical_resolution,
         });
         let surface = ret
             .create_surface(entry, inst, pdev, surface_loader, surf_type)
@@ -355,10 +371,25 @@ impl Backend for PhysicalDisplay {
             Err(e) => Err(e),
         }
     }
+
+    fn get_dpi(&self) -> f32 {
+        // TODO: verify this
+        // Use pythagorean theorem to get the diagonal pixel length, then
+        // divide by diagonal mm length
+        let diag_pix =
+            f32::sqrt((self.pd_native_res.width.pow(2) + self.pd_native_res.height.pow(2)) as f32);
+        let diag_mm =
+            f32::sqrt((self.pd_phys_dims.width.pow(2) + self.pd_phys_dims.height.pow(2)) as f32);
+
+        diag_pix / diag_mm
+    }
 }
 
 #[cfg(feature = "sdl")]
-struct SDL2DisplayBackend {}
+struct SDL2DisplayBackend {
+    sdl_window: sdl2::video::Window,
+    sdl_video: sdl2::VideoSubsystem,
+}
 
 #[cfg(feature = "sdl")]
 impl SDL2DisplayBackend {
@@ -375,8 +406,12 @@ impl SDL2DisplayBackend {
         surf_type: &SurfaceType,
     ) -> Option<(Box<dyn Backend>, vk::SurfaceKHR, vk::Extent2D)> {
         match surf_type {
-            SurfaceType::SDL2(_win) => {
-                let ret = Box::new(Self {});
+            SurfaceType::SDL2(vid_sys, win) => {
+                let ret = Box::new(Self {
+                    // create a new window wrapper by cloning the Rc pointer
+                    sdl_window: sdl2::video::Window::from_ref(win.context()),
+                    sdl_video: (*vid_sys).clone(),
+                });
 
                 let surface = ret
                     .create_surface(entry, inst, pdev, surface_loader, surf_type)
@@ -394,7 +429,7 @@ impl SDL2DisplayBackend {
     /// The two most important extensions are Surface and Xcb.
     fn extension_names(surf_type: &SurfaceType) -> Option<Vec<*const i8>> {
         match surf_type {
-            SurfaceType::SDL2(win) => Some(
+            SurfaceType::SDL2(_, win) => Some(
                 win.vulkan_instance_extensions()
                     .unwrap()
                     .iter()
@@ -423,7 +458,7 @@ impl Backend for SDL2DisplayBackend {
         use vk::Handle;
 
         match surf_type {
-            SurfaceType::SDL2(win) => {
+            SurfaceType::SDL2(_, win) => {
                 // we need to convert our ash instance into the pointer to the raw vk instance
                 let raw_surf = match win.vulkan_create_surface(inst.handle().as_raw() as usize) {
                     Ok(s) => s,
@@ -437,6 +472,13 @@ impl Backend for SDL2DisplayBackend {
             }
             _ => panic!("Trying to create SDL backend on non-SDL surface"),
         }
+    }
+
+    fn get_dpi(&self) -> f32 {
+        self.sdl_video
+            .display_dpi(self.sdl_window.display_index().unwrap())
+            .unwrap()
+            .0
     }
 }
 
@@ -542,5 +584,9 @@ impl WlDisplay {
             khr::WaylandSurface::name().as_ptr(),
             DebugReport::name().as_ptr(),
         ]
+    }
+
+    fn get_dpi(&self) -> f32 {
+        (0.0, 0.0)
     }
 }

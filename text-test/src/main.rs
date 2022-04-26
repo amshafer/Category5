@@ -43,7 +43,7 @@ struct FontInstance<'a> {
 }
 
 impl<'a> FontInstance<'a> {
-    fn new(font_path: &str, point_size: f32) -> Self {
+    fn new(font_path: &str, dpi: u32, point_size: f32) -> Self {
         let ft_lib = ft::Library::init().unwrap();
         let mut ft_face: ft::Face = ft_lib.new_face(font_path, 0).unwrap();
         let hb_font = unsafe {
@@ -57,7 +57,7 @@ impl<'a> FontInstance<'a> {
         // default to matching that size, and defaults to 72 dpi
         // TODO: account for display info
         ft_face
-            .set_char_size(point_size as isize * 64, 0, 0, 108)
+            .set_char_size(point_size as isize * 64, 0, 0, dpi)
             .expect("Could not set freetype char size");
 
         Self {
@@ -212,12 +212,12 @@ fn main() {
         .unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
-    let surf_type = SurfaceType::SDL2(&window);
+    let surf_type = SurfaceType::SDL2(&video_subsystem, &window);
 
     let info = CreateInfo::builder().surface_type(surf_type).build();
     let mut thund = Thundr::new(&info).unwrap();
 
-    let mut inst = FontInstance::new("./Ubuntu-Regular.ttf", 14.0);
+    let mut inst = FontInstance::new("./Ubuntu-Regular.ttf", thund.get_dpi() as u32, 14.0);
     let text = "But I must explain to you how all this mistaken idea of reprobating pleasure and
 extolling pain arose. To do so, I will give you a complete account of the system, and
 expound the actual teachings of the great explorer of the truth, the master-builder of
