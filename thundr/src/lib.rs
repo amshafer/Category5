@@ -161,8 +161,12 @@ pub enum SurfaceType<'a> {
 /// be enabled. See `Pipeline` for methods that drive the data
 /// contained here.
 pub struct CreateInfo<'a> {
-    /// A list of queue family indexes to create the device with
+    /// Enable the compute pipeline. This is only suitable for small scenes
+    /// and is not recommended for normal use.
     pub enable_compute_composition: bool,
+    /// Enable the traditional quad rendering method. This is a bindless
+    /// engine that draws on a set of quads to composite images. This
+    /// is the default and recommended option
     pub enable_traditional_composition: bool,
     pub surface_type: SurfaceType<'a>,
 }
@@ -171,8 +175,9 @@ impl<'a> CreateInfo<'a> {
     pub fn builder() -> CreateInfoBuilder<'a> {
         CreateInfoBuilder {
             ci: CreateInfo {
-                enable_compute_composition: true,
-                enable_traditional_composition: false,
+                enable_compute_composition: false,
+                // This should always be used
+                enable_traditional_composition: true,
                 surface_type: SurfaceType::Display(PhantomData),
             },
         }
