@@ -217,10 +217,12 @@ impl<'a> FontInstance<'a> {
         infos: &[hb::GlyphInfo],
         positions: &[hb::GlyphPosition],
     ) {
+        let line_space = self.f_ft_face.size_metrics().unwrap().height / 64;
+
         while !self.for_one_line(thund, list, cursor, text, infos, positions) {
             // Move down to the next line
             cursor.c_x = 0.0;
-            cursor.c_y += 50.0;
+            cursor.c_y += line_space as f32;
         }
     }
 
