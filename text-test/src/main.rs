@@ -30,6 +30,18 @@ struct Glyph {
     _g_metrics: ft::GlyphMetrics,
 }
 
+/// Returns (x_offset, y_offset, x_advance, y_advance)
+fn scale_hb_positions(position: &hb::GlyphPosition) -> (f32, f32, f32, f32) {
+    // (hb_position_t * font_point_size) / (units / em)
+    let buzz_scale = 64.0;
+    let x_offset = position.x_offset as f32 / buzz_scale;
+    let y_offset = position.y_offset as f32 / buzz_scale;
+    let x_advance = position.x_advance as f32 / buzz_scale;
+    let y_advance = position.y_advance as f32 / buzz_scale;
+
+    (x_offset, y_offset, x_advance, y_advance)
+}
+
 struct FontInstance<'a> {
     _f_freetype: ft::Library,
     /// The font reference for our rasterizer
@@ -174,12 +186,7 @@ impl<'a> FontInstance<'a> {
                 continue;
             }
 
-            // (hb_position_t * font_point_size) / (units / em)
-            let buzz_scale = 64.0;
-            let x_offset = positions[i].x_offset as f32 / buzz_scale;
-            let y_offset = positions[i].y_offset as f32 / buzz_scale;
-            let x_advance = positions[i].x_advance as f32 / buzz_scale;
-            let y_advance = positions[i].y_advance as f32 / buzz_scale;
+            let (x_offset, y_offset, x_advance, y_advance) = scale_hb_positions(&positions[i]);
 
             // TODO: something might be wrong here, I'm thinking of glyphs as having
             // a top left placement origin, but the custom may be bottom left? Look
