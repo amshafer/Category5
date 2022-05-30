@@ -19,6 +19,15 @@ extern "C" {
     pub fn hb_ft_font_create_referenced(face: ft::ffi::FT_Face) -> *mut hb_sys::hb_font_t;
 }
 
+struct Cursor {
+    /// The index into the harfbuzz data arrays
+    c_i: usize,
+    /// The X position of the pen
+    c_x: f32,
+    /// The Y position of the pen
+    c_y: f32,
+}
+
 struct Glyph {
     /// The thundr image backing this glyph.
     /// This will be none if the glyph does not have an outline
@@ -153,6 +162,68 @@ impl<'a> FontInstance<'a> {
         return surf;
     }
 
+    /// returns if we should halt due to out of characters
+    fn for_one_line(
+        &mut self,
+        thund: &mut Thundr,
+        list: &mut th::SurfaceList,
+        cursor: &mut Cursor,
+        _text: &str,
+        infos: &[hb::GlyphInfo],
+        positions: &[hb::GlyphPosition],
+    ) -> bool {
+        // for each UTF-8 code point in the string
+        for i in cursor.c_i..infos.len() {
+            // move to the next char
+            cursor.c_i += 1;
+
+            let glyph_id = infos[i].codepoint as u16;
+            self.ensure_glyph_exists(thund, glyph_id);
+            let glyph = self.f_glyphs[glyph_id as usize]
+                .as_ref()
+                .expect("Bug: No Glyph created for this character");
+
+            // Check for newlines
+            // gross, we have to convert to usize through u32 :(
+            if self.f_ft_face.get_char_index('\n' as u32 as usize) == glyph_id as u32 {
+                return false;
+            }
+
+            let (x_offset, y_offset, x_advance, y_advance) = scale_hb_positions(&positions[i]);
+
+            let offset = (
+                cursor.c_x + x_offset + glyph.g_bitmap_left,
+                cursor.c_y + y_offset - glyph.g_bitmap_top,
+            );
+
+            let bg_surf = self.create_surface_for_char(thund, glyph_id, offset);
+            list.push(bg_surf.clone());
+
+            // Move the cursor
+            cursor.c_x += x_advance;
+            cursor.c_y += y_advance;
+        }
+        return true;
+    }
+
+    /// Kicks off layout calculation and text rendering for a paragraph. Increments
+    /// the position of the cursor as it goes.
+    fn for_each_text_block(
+        &mut self,
+        thund: &mut Thundr,
+        list: &mut th::SurfaceList,
+        cursor: &mut Cursor,
+        text: &str,
+        infos: &[hb::GlyphInfo],
+        positions: &[hb::GlyphPosition],
+    ) {
+        while !self.for_one_line(thund, list, cursor, text, infos, positions) {
+            // Move down to the next line
+            cursor.c_x = 0.0;
+            cursor.c_y += 50.0;
+        }
+    }
+
     /// This is the big text drawing function
     ///
     /// Our Font instance is going to use the provided Thundr context to
@@ -168,41 +239,13 @@ impl<'a> FontInstance<'a> {
         let positions = glyph_buffer.get_glyph_positions();
 
         // This is how far we have advanced on a line
-        let mut cursor = (0.0, 100.0);
+        let mut cursor = Cursor {
+            c_i: 0,
+            c_x: 0.0,
+            c_y: 100.0,
+        };
 
-        // for each UTF-8 code point in the string
-        for i in 0..glyph_buffer.len() {
-            let glyph_id = infos[i].codepoint as u16;
-            self.ensure_glyph_exists(thund, glyph_id);
-            let glyph = self.f_glyphs[glyph_id as usize]
-                .as_ref()
-                .expect("Bug: No Glyph created for this character");
-
-            // Check for newlines
-            // gross, we have to convert to usize through u32 :(
-            if self.f_ft_face.get_char_index('\n' as u32 as usize) == glyph_id as u32 {
-                cursor.0 = 0.0;
-                cursor.1 += 50.0;
-                continue;
-            }
-
-            let (x_offset, y_offset, x_advance, y_advance) = scale_hb_positions(&positions[i]);
-
-            // TODO: something might be wrong here, I'm thinking of glyphs as having
-            // a top left placement origin, but the custom may be bottom left? Look
-            // into this.
-            let offset = (
-                cursor.0 + x_offset + glyph.g_bitmap_left,
-                cursor.1 + y_offset - glyph.g_bitmap_top,
-            );
-
-            let bg_surf = self.create_surface_for_char(thund, glyph_id, offset);
-            list.push(bg_surf.clone());
-
-            // Move the cursor
-            cursor.0 += x_advance;
-            cursor.1 += y_advance;
-        }
+        self.for_each_text_block(thund, list, &mut cursor, text, infos, positions);
     }
 }
 
