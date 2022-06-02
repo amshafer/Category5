@@ -177,9 +177,32 @@ impl<'a> FontInstance<'a> {
         _text: &str,
         infos: &[hb::GlyphInfo],
         positions: &[hb::GlyphPosition],
-    ) -> bool {
-        // for each UTF-8 code point in the string
+    ) {
+        let mut end_index = cursor.c_i;
+        let mut line_pos = cursor.c_x;
+
+        // First find the last glyph we should include on this line
         for i in cursor.c_i..infos.len() {
+            let glyph_id = infos[i].codepoint as u16;
+            let (_, _, x_advance, _) = scale_hb_positions(&positions[i]);
+
+            // Move the cursor
+            line_pos += x_advance;
+            end_index = i + 1;
+
+            if line_pos >= cursor.c_max {
+                break;
+            }
+
+            // Check for newlines
+            // gross, we have to convert to usize through u32 :(
+            if self.f_ft_face.get_char_index('\n' as u32 as usize) == glyph_id as u32 {
+                break;
+            }
+        }
+
+        // Now do the above for real and commit it to the surface list
+        for i in cursor.c_i..end_index {
             // move to the next char
             cursor.c_i += 1;
 
@@ -188,12 +211,6 @@ impl<'a> FontInstance<'a> {
             let glyph = self.f_glyphs[glyph_id as usize]
                 .as_ref()
                 .expect("Bug: No Glyph created for this character");
-
-            // Check for newlines
-            // gross, we have to convert to usize through u32 :(
-            if self.f_ft_face.get_char_index('\n' as u32 as usize) == glyph_id as u32 {
-                return false;
-            }
 
             let (x_offset, y_offset, x_advance, y_advance) = scale_hb_positions(&positions[i]);
 
@@ -209,7 +226,6 @@ impl<'a> FontInstance<'a> {
             cursor.c_x += x_advance;
             cursor.c_y += y_advance;
         }
-        return true;
     }
 
     /// Kicks off layout calculation and text rendering for a paragraph. Increments
@@ -225,10 +241,16 @@ impl<'a> FontInstance<'a> {
     ) {
         let line_space = self.f_ft_face.size_metrics().unwrap().height / 64;
 
-        while !self.for_one_line(thund, list, cursor, text, infos, positions) {
+        loop {
+            self.for_one_line(thund, list, cursor, text, infos, positions);
             // Move down to the next line
-            cursor.c_x = 0.0;
+            cursor.c_x = cursor.c_min;
             cursor.c_y += line_space as f32;
+
+            // Break out of this text item span if we are at the end of the infos
+            if cursor.c_i >= infos.len() {
+                return;
+            }
         }
     }
 
@@ -278,29 +300,7 @@ fn main() {
     let mut thund = Thundr::new(&info).unwrap();
 
     let mut inst = FontInstance::new("./Ubuntu-Regular.ttf", thund.get_dpi() as u32, 6.0);
-    let text = "But I must explain to you how all this mistaken idea of reprobating pleasure and
-extolling pain arose. To do so, I will give you a complete account of the system, and
-expound the actual teachings of the great explorer of the truth, the master-builder of
-human happiness. No one rejects, dislikes or avoids pleasure itself, because it is
-pleasure, but because those who do not know how to pursue pleasure rationally encounter
-consequences that are extremely painful. Nor again is there anyone who loves or pursues or
-desires to obtain pain of itself, because it is pain, but occasionally circumstances occur
-in which toil and pain can procure him some great pleasure. To take a trivial example,
-which of us ever undertakes laborious physical exercise, except to obtain some advantage
-from it? But who has any right to find fault with a man who chooses to enjoy a pleasure
-that has no annoying consequences, or one who avoids a pain that produces no resultant
-pleasure? [33] On the other hand, we denounce with righteous indignation and dislike
-men who are so beguiled and demoralized by the charms of pleasure of the moment, so
-blinded by desire, that they cannot foresee the pain and trouble that are bound to
-ensue; and equal blame belongs to those who fail in their duty through weakness of
-will, which is the same as saying through shrinking from toil and pain. These cases are
-perfectly simple and easy to distinguish. In a free hour, when our power of choice is
-untrammeled and when nothing prevents our being able to do what we like best, every
-pleasure is to be welcomed and every pain avoided. But in certain circumstances and
-owing to the claims of duty or the obligations of business it will frequently occur
-that pleasures have to be repudiated and annoyances accepted. The wise man therefore
-always holds in these matters to this principle of selection: he rejects pleasures to
-secure other greater pleasures, or else he endures pains to avoid worse pains.";
+    let text = "But I must explain to you how all this mistaken idea of reprobating pleasure and extolling pain arose. To do so, I will give you a complete account of the system, and expound the actual teachings of the great explorer of the truth, the master-builder of human happiness.  No one rejects, dislikes or avoids pleasure itself, because it is pleasure, but because those who do not know how to pursue pleasure rationally encounter consequences that are extremely painful. Nor again is there anyone who loves or pursues or desires to obtain pain of itself, because it is pain, but occasionally circumstances occur in which toil and pain can procure him some great pleasure. To take a trivial example, which of us ever undertakes laborious physical exercise, except to obtain some advantage from it? But who has any right to find fault with a man who chooses to enjoy a pleasure that has no annoying consequences, or one who avoids a pain that produces no resultant pleasure? [33] On the other hand, we denounce with righteous indignation and dislike men who are so beguiled and demoralized by the charms of pleasure of the moment, so blinded by desire, that they cannot foresee the pain and trouble that are bound to ensue; and equal blame belongs to those who fail in their duty through weakness of will, which is the same as saying through shrinking from toil and pain. These cases are perfectly simple and easy to distinguish. In a free hour, when our power of choice is untrammeled and when nothing prevents our being able to do what we like best, every pleasure is to be welcomed and every pain avoided. But in certain circumstances and owing to the claims of duty or the obligations of business it will frequently occur that pleasures have to be repudiated and annoyances accepted. The wise man therefore always holds in these matters to this principle of selection: he rejects pleasures to secure other greater pleasures, or else he endures pains to avoid worse pains.";
 
     // ----------- create list of surfaces
     let mut list = thundr::SurfaceList::new();
@@ -311,7 +311,7 @@ secure other greater pleasures, or else he endures pains to avoid worse pains.";
         c_x: 0.0,
         c_y: 100.0,
         c_min: 0.0,
-        c_max: 256.0,
+        c_max: 800.0,
     };
     inst.layout_text(&mut thund, &mut list, &mut cursor, text);
 
