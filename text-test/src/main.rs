@@ -26,6 +26,12 @@ struct Cursor {
     c_x: f32,
     /// The Y position of the pen
     c_y: f32,
+    /// The minimum width for line wrap
+    /// This is the left side of the layout bounding box
+    c_min: f32,
+    /// The max width before line wrapping
+    /// This is the right side of the layout bounding box
+    c_max: f32,
 }
 
 struct Glyph {
@@ -231,7 +237,16 @@ impl<'a> FontInstance<'a> {
     /// Our Font instance is going to use the provided Thundr context to
     /// create surfaces and lay them out. It's going to update the surface
     /// list with them along the way.
-    fn layout_text(&mut self, thund: &mut Thundr, list: &mut th::SurfaceList, text: &str) {
+    ///
+    /// The cursor argument allows for itemizing runs of different fonts. The
+    /// text layout creation will continue at that point.
+    fn layout_text(
+        &mut self,
+        thund: &mut Thundr,
+        list: &mut th::SurfaceList,
+        cursor: &mut Cursor,
+        text: &str,
+    ) {
         // Set up our HarfBuzz buffers
         let buffer = hb::UnicodeBuffer::new().add_str(text);
 
@@ -240,14 +255,7 @@ impl<'a> FontInstance<'a> {
         let infos = glyph_buffer.get_glyph_infos();
         let positions = glyph_buffer.get_glyph_positions();
 
-        // This is how far we have advanced on a line
-        let mut cursor = Cursor {
-            c_i: 0,
-            c_x: 0.0,
-            c_y: 100.0,
-        };
-
-        self.for_each_text_block(thund, list, &mut cursor, text, infos, positions);
+        self.for_each_text_block(thund, list, cursor, text, infos, positions);
     }
 }
 
@@ -269,7 +277,7 @@ fn main() {
     let info = CreateInfo::builder().surface_type(surf_type).build();
     let mut thund = Thundr::new(&info).unwrap();
 
-    let mut inst = FontInstance::new("./Ubuntu-Regular.ttf", thund.get_dpi() as u32, 14.0);
+    let mut inst = FontInstance::new("./Ubuntu-Regular.ttf", thund.get_dpi() as u32, 6.0);
     let text = "But I must explain to you how all this mistaken idea of reprobating pleasure and
 extolling pain arose. To do so, I will give you a complete account of the system, and
 expound the actual teachings of the great explorer of the truth, the master-builder of
@@ -297,7 +305,15 @@ secure other greater pleasures, or else he endures pains to avoid worse pains.";
     // ----------- create list of surfaces
     let mut list = thundr::SurfaceList::new();
 
-    inst.layout_text(&mut thund, &mut list, text);
+    // This is how far we have advanced on a line
+    let mut cursor = Cursor {
+        c_i: 0,
+        c_x: 0.0,
+        c_y: 100.0,
+        c_min: 0.0,
+        c_max: 256.0,
+    };
+    inst.layout_text(&mut thund, &mut list, &mut cursor, text);
 
     // ----------- now wait for the app to exit
 
