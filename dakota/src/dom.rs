@@ -231,6 +231,7 @@ pub struct WindowEvents {
 pub struct Element {
     pub resource: Option<String>,
     pub content: Option<Content>,
+    pub text: Option<Text>,
     pub offset: Option<Offset>,
     #[serde(rename = "relativeOffset", default)]
     pub rel_offset: Option<RelativeOffset>,
@@ -245,6 +246,22 @@ pub struct Element {
     /// The LayoutNode backing this Element
     #[serde(skip)]
     pub layout_id: Option<LayoutId>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[allow(non_camel_case_types)]
+pub enum TextItem {
+    p(String),
+    b(String),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ItemizedText(Vec<TextItem>);
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Text {
+    #[serde(rename = "$value")]
+    pub items: Vec<TextItem>,
 }
 
 impl Element {

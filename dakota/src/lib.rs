@@ -21,6 +21,14 @@ pub mod event;
 use event::{Event, EventSystem};
 
 use std::collections::HashMap;
+extern crate regex;
+use regex::Regex;
+
+fn regex_trim_excess_space(str: &String) -> String {
+    let re = Regex::new(r"\s+").unwrap();
+    let trimmed = re.replace_all(str, " ");
+    trimmed.to_string()
+}
 
 struct ResMapEntry {
     rme_image: Option<th::Image>,
@@ -242,6 +250,17 @@ impl Dakota {
             dom::Size::new(0, 0),
         );
 
+        if let Some(text) = el.text.as_mut() {
+            // Trim out newlines and tabs
+            for item in text.items.iter_mut() {
+                *item = match item {
+                    dom::TextItem::p(p) => dom::TextItem::p(regex_trim_excess_space(p)),
+                    dom::TextItem::b(b) => dom::TextItem::b(regex_trim_excess_space(b)),
+                }
+            }
+            println!("{:#?}", text);
+        }
+
         // This space is what the children/content will use
         // it is restricted in size to this element (their parent)
         let mut child_space = LayoutSpace {
@@ -449,10 +468,17 @@ impl Dakota {
                     ))
                 }
             };
-            assert!(
-                (rme.rme_image.is_some() && rme.rme_color.is_none())
-                    || (rme.rme_image.is_none() && rme.rme_color.is_some())
-            );
+
+            // Assert that only one content type is set
+            let mut content_num = 0;
+            if rme.rme_image.is_some() {
+                content_num += 1;
+            }
+            if rme.rme_color.is_some() {
+                content_num += 1;
+            }
+            assert!(content_num == 1);
+
             if let Some(image) = rme.rme_image.as_ref() {
                 self.d_thund.bind_image(&mut surf, image.clone());
             }

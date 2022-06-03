@@ -1,0 +1,27 @@
+<dakota>
+	<version>0.0.0.1</version>
+	<resourceMap>
+	</resourceMap>
+	<window>
+		<id>0</id>
+		<title>Dakota Test</title>
+		<width>512</width>
+		<height>512</height>
+	</window>
+	<layout>
+		<el>
+			<content>
+				<el>
+					<text>
+						<p>
+							Here is
+							my
+						</p>
+						<b>example</b>
+						<p> text</p>
+					</text>
+				</el>
+			</content>
+		</el>
+	</layout>
+</dakota>
