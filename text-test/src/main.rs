@@ -149,7 +149,7 @@ impl<'a> FontInstance<'a> {
         }
     }
 
-    fn create_surface_for_char(
+    fn get_thundr_surf_for_glyph(
         &mut self,
         thund: &mut Thundr,
         id: u16,
@@ -169,15 +169,17 @@ impl<'a> FontInstance<'a> {
     }
 
     /// returns if we should halt due to out of characters
-    fn for_one_line(
+    fn for_one_line<F>(
         &mut self,
         thund: &mut Thundr,
-        list: &mut th::SurfaceList,
         cursor: &mut Cursor,
         _text: &str,
         infos: &[hb::GlyphInfo],
         positions: &[hb::GlyphPosition],
-    ) {
+        glyph_callback: &mut F,
+    ) where
+        F: FnMut(&mut Self, &mut Thundr, u16, (f32, f32)),
+    {
         let mut end_index = cursor.c_i + 1;
         // The last space separated point
         let mut last_word = end_index;
@@ -247,8 +249,7 @@ impl<'a> FontInstance<'a> {
                 cursor.c_y + y_offset - glyph.g_bitmap_top,
             );
 
-            let bg_surf = self.create_surface_for_char(thund, glyph_id, offset);
-            list.push(bg_surf.clone());
+            glyph_callback(self, thund, glyph_id, offset);
 
             // Move the cursor
             cursor.c_x += x_advance;
@@ -258,19 +259,21 @@ impl<'a> FontInstance<'a> {
 
     /// Kicks off layout calculation and text rendering for a paragraph. Increments
     /// the position of the cursor as it goes.
-    fn for_each_text_block(
+    fn for_each_text_block<F>(
         &mut self,
         thund: &mut Thundr,
-        list: &mut th::SurfaceList,
         cursor: &mut Cursor,
         text: &str,
         infos: &[hb::GlyphInfo],
         positions: &[hb::GlyphPosition],
-    ) {
+        glyph_callback: &mut F,
+    ) where
+        F: FnMut(&mut Self, &mut Thundr, u16, (f32, f32)),
+    {
         let line_space = self.f_ft_face.size_metrics().unwrap().height / 64;
 
         loop {
-            self.for_one_line(thund, list, cursor, text, infos, positions);
+            self.for_one_line(thund, cursor, text, infos, positions, glyph_callback);
             // Move down to the next line
             cursor.c_x = cursor.c_min;
             cursor.c_y += line_space as f32;
@@ -284,19 +287,29 @@ impl<'a> FontInstance<'a> {
 
     /// This is the big text drawing function
     ///
+    /// The caller will pass in a callback which will get called on a
+    /// per-glyph basis to get layout information propogated to it. In reality
+    /// this mechanism is purpose built for dakota: dakota wants to be able
+    /// to get all surface information and build a layout tree before it actually
+    /// generates thundr surfaces for each node. This allows it to extract all
+    /// glyph positions into each LayoutNode, and later use the
+    /// get_thundr_surf_for_glyph helper to generate surfaces for them.
+    ///
     /// Our Font instance is going to use the provided Thundr context to
     /// create surfaces and lay them out. It's going to update the surface
     /// list with them along the way.
     ///
     /// The cursor argument allows for itemizing runs of different fonts. The
     /// text layout creation will continue at that point.
-    fn layout_text(
+    fn layout_text<F>(
         &mut self,
         thund: &mut Thundr,
-        list: &mut th::SurfaceList,
         cursor: &mut Cursor,
         text: &str,
-    ) {
+        glyph_callback: &mut F,
+    ) where
+        F: FnMut(&mut Self, &mut Thundr, u16, (f32, f32)),
+    {
         // Set up our HarfBuzz buffers
         let buffer = hb::UnicodeBuffer::new().add_str(text);
 
@@ -305,7 +318,7 @@ impl<'a> FontInstance<'a> {
         let infos = glyph_buffer.get_glyph_infos();
         let positions = glyph_buffer.get_glyph_positions();
 
-        self.for_each_text_block(thund, list, cursor, text, infos, positions);
+        self.for_each_text_block(thund, cursor, text, infos, positions, glyph_callback);
     }
 }
 
@@ -341,7 +354,19 @@ fn main() {
         c_min: 0.0,
         c_max: 800.0,
     };
-    inst.layout_text(&mut thund, &mut list, &mut cursor, text);
+
+    // Layout all of our text. In this example we simply use the glyph
+    // position callback to immediately call thundr to generate surfaces
+    // for each glyph.
+    inst.layout_text(
+        &mut thund,
+        &mut cursor,
+        text,
+        &mut |inst: &mut FontInstance, thund, glyph_id, offset| {
+            let bg_surf = inst.get_thundr_surf_for_glyph(thund, glyph_id, offset);
+            list.push(bg_surf.clone());
+        },
+    );
 
     // ----------- now wait for the app to exit
 
