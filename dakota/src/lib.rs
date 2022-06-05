@@ -230,6 +230,157 @@ impl Dakota {
         Ok(())
     }
 
+    /// Calculate size and position of centered content.
+    ///
+    ///
+    /// This box has centered content.
+    /// We should either recurse the child box or calculate the
+    /// size based on the centered resource.
+    fn calculate_sizes_content(
+        &mut self,
+        content: &dom::Content,
+        space: &LayoutSpace,
+        parent: &mut LayoutNode,
+    ) -> Result<()> {
+        if let Some(child) = content.el.as_ref() {
+            // num_children_at_this_level was set earlier to 0 when we
+            // created the common child space
+            let child_id = self.calculate_sizes(&mut child.borrow_mut(), &space)?;
+            let mut child_size = &mut self.d_layout_nodes[&child_id];
+            // At this point the size of the is calculated
+            // and we can determine the offset. We want to center the
+            // box, so that's the center point of the parent minus
+            // half the size of the child.
+            //
+            // The child size should have already been clipped to the available space
+            child_size.l_offset.x = std::cmp::max(
+                (space.avail_width / 2).saturating_sub(child_size.l_size.width / 2),
+                0,
+            );
+            child_size.l_offset.y = std::cmp::max(
+                (space.avail_height / 2).saturating_sub(child_size.l_size.height / 2),
+                0,
+            );
+
+            parent.add_child(child_id.clone());
+        }
+        Ok(())
+    }
+
+    /// Recursively calls calculate_sizes on all children of el
+    ///
+    /// This does all the work to get information about children for a particular
+    /// element. After having the children calculate their sizes, it will assign
+    /// them layout positions within el. This will fill from left to right by
+    /// default, wrapping below if necessary.
+    fn calculate_sizes_children(
+        &mut self,
+        el: &mut dom::Element,
+        space: &LayoutSpace,
+        parent: &mut LayoutNode,
+    ) -> Result<()> {
+        // TODO: do vertical wrapping too
+        let mut tile_info = TileInfo {
+            t_last_x: 0,
+            t_last_y: 0,
+            t_greatest_y: 0,
+        };
+
+        for child in el.children.iter() {
+            let child_id = self.calculate_sizes(&mut child.borrow_mut(), &space)?;
+            let mut child_size = &mut self.d_layout_nodes[&child_id];
+
+            // now the child size has been made, but it still needs to find
+            // the proper position inside the parent container. If the child
+            // already had an offset specified, it is "out of the loop", and
+            // doesn't get used for pretty formatting, it just gets placed
+            // wherever.
+            if !child_size.l_offset_specified {
+                // if this element exceeds the horizontal space, set it on a
+                // new line
+                if tile_info.t_last_x + child_size.l_size.width > space.avail_width {
+                    tile_info.t_last_x = 0;
+                    tile_info.t_last_y = tile_info.t_greatest_y;
+                }
+
+                child_size.l_offset = dom::Offset {
+                    x: tile_info.t_last_x,
+                    y: tile_info.t_last_y,
+                };
+
+                // now we need to update the space that we have seen children
+                // occupy, so we know where to place the next children in the
+                // tiling formation.
+                tile_info.t_last_x += child_size.l_size.width;
+                tile_info.t_greatest_y = std::cmp::max(
+                    tile_info.t_greatest_y,
+                    tile_info.t_last_y + child_size.l_size.height,
+                );
+            }
+
+            parent.add_child(child_id.clone());
+        }
+
+        Ok(())
+    }
+
+    /// Calculate the sizes and handle the current element
+    ///
+    /// Now that we have calculated all the children, we can handle
+    /// this element.
+    /// 1. If it has a size assigned, that is the final size, all children
+    /// will be clipped or scrolled inside that window.
+    /// 2. If no size is assigned, and we are limited in the amount of space
+    /// we have, then the size is available_space
+    /// 3. No size and no bounds means we are inside of a scrolling arena, and
+    /// we should grow this box to hold all of its children.
+    fn calculate_sizes_el(
+        &mut self,
+        el: &mut dom::Element,
+        node: &mut LayoutNode,
+        space: &LayoutSpace,
+    ) -> Result<()> {
+        if let Some(off) = el.get_final_offset(&space).context(format!(
+            "Failed to calculate offset size of Element {:#?}",
+            el
+        ))? {
+            node.l_offset_specified = true;
+            node.l_offset = off;
+        }
+
+        if let Some(size) = el.get_final_size(space)? {
+            node.l_size = size;
+        } else {
+            // first grow this box to fit its children.
+            node.resize_to_children(self)?;
+
+            if node.l_size == dom::Size::new(0, 0) {
+                // if the size is still empty, there were no children. This should just be
+                // sized to the available space divided by the number of
+                // children.
+                // Clamp to 1 to avoid dividing by zero
+                let num_children = std::cmp::max(1, space.children_at_this_level);
+                // TODO: add directional tiling of elements
+                // for now just do vertical subdivision and fill horizontal
+                node.l_size = dom::Size::new(space.avail_width, space.avail_height / num_children);
+            }
+
+            // Then possibly clip the box by any available dimensions.
+            // Add our offsets while calculating this to account for space
+            // used by moving the box.
+
+            // TODO: don't clamp, add scrolling support
+            node.l_size.width = node
+                .l_size
+                .width
+                .clamp(0, space.avail_width - node.l_offset.x);
+            node.l_size.height =
+                std::cmp::min(space.avail_height + node.l_offset.y, node.l_size.height);
+        }
+
+        Ok(())
+    }
+
     /// Create a layout tree of boxes.
     ///
     /// This gives all the layout information for where we should place
@@ -250,6 +401,16 @@ impl Dakota {
             dom::Size::new(0, 0),
         );
 
+        // This space is what the children/content will use
+        // it is restricted in size to this element (their parent)
+        let mut child_space = LayoutSpace {
+            avail_width: space.avail_width,
+            avail_height: space.avail_height,
+            children_at_this_level: 0,
+        };
+
+        // TODO: we can get the available height from above, pass it to a font instance
+        // and create layout nodes for all character surfaces.
         if let Some(text) = el.text.as_mut() {
             // Trim out newlines and tabs
             for item in text.items.iter_mut() {
@@ -260,14 +421,6 @@ impl Dakota {
             }
             println!("{:#?}", text);
         }
-
-        // This space is what the children/content will use
-        // it is restricted in size to this element (their parent)
-        let mut child_space = LayoutSpace {
-            avail_width: space.avail_width,
-            avail_height: space.avail_height,
-            children_at_this_level: 0,
-        };
 
         // check if this element has its size set, shrink the available space
         // to match.
@@ -287,128 +440,30 @@ impl Dakota {
             // update our child count
             child_space.children_at_this_level = el.children.len() as u32;
 
-            // TODO: do vertical wrapping too
-            let mut tile_info = TileInfo {
-                t_last_x: 0,
-                t_last_y: 0,
-                t_greatest_y: 0,
-            };
-
-            for child in el.children.iter() {
-                let child_id = self.calculate_sizes(&mut child.borrow_mut(), &child_space)?;
-                let mut child_size = &mut self.d_layout_nodes[&child_id];
-
-                // now the child size has been made, but it still needs to find
-                // the proper position inside the parent container. If the child
-                // already had an offset specified, it is "out of the loop", and
-                // doesn't get used for pretty formatting, it just gets placed
-                // wherever.
-                if !child_size.l_offset_specified {
-                    // if this element exceeds the horizontal space, set it on a
-                    // new line
-                    if tile_info.t_last_x + child_size.l_size.width > child_space.avail_width {
-                        tile_info.t_last_x = 0;
-                        tile_info.t_last_y = tile_info.t_greatest_y;
-                    }
-
-                    child_size.l_offset = dom::Offset {
-                        x: tile_info.t_last_x,
-                        y: tile_info.t_last_y,
-                    };
-
-                    // now we need to update the space that we have seen children
-                    // occupy, so we know where to place the next children in the
-                    // tiling formation.
-                    tile_info.t_last_x += child_size.l_size.width;
-                    tile_info.t_greatest_y = std::cmp::max(
-                        tile_info.t_greatest_y,
-                        tile_info.t_last_y + child_size.l_size.height,
-                    );
-                }
-
-                ret.add_child(child_id.clone());
-            }
+            self.calculate_sizes_children(el, &child_space, &mut ret)
+                .context(format!(
+                    "Layout Tree Calculation: processing children of element {:#?}",
+                    el
+                ))?;
         } else if let Some(content) = el.content.as_ref() {
             // ------------------------------------------
             // CENTERED CONTENT
             // ------------------------------------------
-            //
-            // This box has centered content.
-            // We should either recurse the child box or calculate the
-            // size based on the centered resource.
-            if let Some(child) = content.el.as_ref() {
-                // num_children_at_this_level was set earlier to 0 when we
-                // created the common child space
-                let child_id = self.calculate_sizes(&mut child.borrow_mut(), &child_space)?;
-                let mut child_size = &mut self.d_layout_nodes[&child_id];
-                // At this point the size of the is calculated
-                // and we can determine the offset. We want to center the
-                // box, so that's the center point of the parent minus
-                // half the size of the child.
-                //
-                // The child size should have already been clipped to the available space
-                child_size.l_offset.x = std::cmp::max(
-                    (space.avail_width / 2).saturating_sub(child_size.l_size.width / 2),
-                    0,
-                );
-                child_size.l_offset.y = std::cmp::max(
-                    (space.avail_height / 2).saturating_sub(child_size.l_size.height / 2),
-                    0,
-                );
-
-                ret.add_child(child_id.clone());
-            }
+            self.calculate_sizes_content(content, space, &mut ret)
+                .context(format!(
+                    "Layout Tree Calculation: processing centered content {:#?} of element {:#?}",
+                    content, el
+                ))?;
         }
 
         // ------------------------------------------
         // HANDLE THIS ELEMENT
         // ------------------------------------------
-        //
-        // Now that we have calculated all the children, we can handle
-        // this element.
-        // 1. If it has a size assigned, that is the final size, all children
-        // will be clipped or scrolled inside that window.
-        // 2. If no size is assigned, and we are limited in the amount of space
-        // we have, then the size is available_space
-        // 3. No size and no bounds means we are inside of a scrolling arena, and
-        // we should grow this box to hold all of its children.
-        if let Some(off) = el.get_final_offset(&space).context(format!(
-            "Failed to calculate offset size of Element {:#?}",
-            el
-        ))? {
-            ret.l_offset_specified = true;
-            ret.l_offset = off;
-        }
-
-        if let Some(size) = el.get_final_size(space)? {
-            ret.l_size = size;
-        } else {
-            // first grow this box to fit its children.
-            ret.resize_to_children(self)?;
-
-            if ret.l_size == dom::Size::new(0, 0) {
-                // if the size is still empty, there were no children. This should just be
-                // sized to the available space divided by the number of
-                // children.
-                // Clamp to 1 to avoid dividing by zero
-                let num_children = std::cmp::max(1, space.children_at_this_level);
-                // TODO: add directional tiling of elements
-                // for now just do vertical subdivision and fill horizontal
-                ret.l_size = dom::Size::new(space.avail_width, space.avail_height / num_children);
-            }
-
-            // Then possibly clip the box by any available dimensions.
-            // Add our offsets while calculating this to account for space
-            // used by moving the box.
-
-            // TODO: don't clamp, add scrolling support
-            ret.l_size.width = ret
-                .l_size
-                .width
-                .clamp(0, space.avail_width - ret.l_offset.x);
-            ret.l_size.height =
-                std::cmp::min(space.avail_height + ret.l_offset.y, ret.l_size.height);
-        }
+        self.calculate_sizes_el(el, &mut ret, space)
+            .context(format!(
+                "Layout Tree Calculation: processing element {:#?}",
+                el
+            ))?;
 
         log::debug!("Final size of element is {:?}", ret);
         self.d_layout_nodes[&new_id] = ret;
