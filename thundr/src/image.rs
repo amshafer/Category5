@@ -37,6 +37,7 @@ const TARGET_FORMAT: vk::Format = vk::Format::B8G8R8A8_UNORM;
 ///
 /// Images must be created from the global thundr instance. All
 /// images must be destroyed before the instance can be.
+#[derive(Default)]
 pub(crate) struct ImageInternal {
     /// This id is the index of this image in Thundr's image list (th_image_list).
     pub i_id: i32,
@@ -154,8 +155,15 @@ impl fmt::Debug for Image {
 /// imported (copyless) and bound to the image's image
 #[derive(Debug)]
 enum ImagePrivate {
+    InvalidImage,
     Dmabuf(DmabufPrivate),
     MemImage,
+}
+
+impl Default for ImagePrivate {
+    fn default() -> Self {
+        Self::InvalidImage
+    }
 }
 
 /// Private data for gpu buffers
@@ -821,11 +829,6 @@ impl Renderer {
             self.dev.destroy_image(image.i_image, None);
             self.dev.destroy_image_view(image.i_image_view, None);
             self.free_memory(image.i_image_mem);
-            match &image.i_priv {
-                // dma has nothing dynamic to free
-                ImagePrivate::Dmabuf(_) => {}
-                ImagePrivate::MemImage => {}
-            }
         }
     }
 }

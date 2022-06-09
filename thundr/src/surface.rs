@@ -18,7 +18,7 @@ use std::rc::Rc;
 /// A surface represents a geometric region that will be
 /// drawn. It needs to have an image attached. The same
 /// image can be bound to multiple surfaces.
-#[derive(PartialEq)]
+#[derive(PartialEq, Default)]
 pub(crate) struct SurfaceInternal {
     /// The position and size of the surface.
     pub s_rect: Rect<f32>,
