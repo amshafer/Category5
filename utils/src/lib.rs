@@ -169,3 +169,24 @@ impl Dmabuf {
         }
     }
 }
+
+/// Helper to perform max on PartialOrd types
+///
+/// We are using PartialOrd so that size and offset can handle
+/// floating point types that do not support Ord
+pub fn partial_max<T: PartialOrd>(a: T, b: T) -> T {
+    if a >= b {
+        return a;
+    } else {
+        return b;
+    }
+}
+
+/// Helper to perform min on PartialOrd types
+pub fn partial_min<T: PartialOrd>(a: T, b: T) -> T {
+    if a <= b {
+        return a;
+    } else {
+        return b;
+    }
+}

@@ -4,7 +4,7 @@ use crate::{Context, Dakota, Result};
 
 use std::io::BufRead;
 
-impl Dakota {
+impl<'a> Dakota<'a> {
     pub fn load_xml_str(&mut self, xml: &str) -> Result<DakotaDOM> {
         let dom: DakotaDOM =
             quick_xml::de::from_str(xml).context("Failed to parse XML dakota string")?;

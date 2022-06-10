@@ -93,40 +93,58 @@ impl RelativeOffset {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Serialize, Deserialize)]
-pub struct Offset {
-    pub x: u32,
-    pub y: u32,
+#[derive(Debug, PartialEq, Eq, PartialOrd, Copy, Clone, Serialize, Deserialize)]
+pub struct Offset<T: Copy> {
+    pub x: T,
+    pub y: T,
 }
 
-impl Offset {
-    pub fn new(w: u32, h: u32) -> Self {
+impl<T: PartialOrd + Copy> Offset<T> {
+    pub fn new(w: T, h: T) -> Self {
         Self { x: w, y: h }
     }
 
     #[allow(dead_code)]
     pub fn union(&mut self, other: &Self) {
-        self.x = std::cmp::max(self.x, other.x);
-        self.y = std::cmp::max(self.y, other.y);
+        self.x = utils::partial_max(self.x, other.x);
+        self.y = utils::partial_max(self.y, other.y);
+    }
+}
+
+impl From<Offset<u32>> for Offset<f32> {
+    fn from(item: Offset<u32>) -> Self {
+        Self {
+            x: item.x as f32,
+            y: item.y as f32,
+        }
     }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Serialize, Deserialize)]
-pub struct Size {
-    pub width: u32,
-    pub height: u32,
+pub struct Size<T: Copy> {
+    pub width: T,
+    pub height: T,
 }
 
-impl Size {
-    pub fn new(w: u32, h: u32) -> Self {
+impl<T: PartialOrd + Copy> Size<T> {
+    pub fn new(w: T, h: T) -> Self {
         Self {
             width: w,
             height: h,
         }
     }
     pub fn union(&mut self, other: &Self) {
-        self.width = std::cmp::max(self.width, other.width);
-        self.height = std::cmp::max(self.height, other.height);
+        self.width = utils::partial_max(self.width, other.width);
+        self.height = utils::partial_max(self.height, other.height);
+    }
+}
+
+impl From<Size<u32>> for Size<f32> {
+    fn from(item: Size<u32>) -> Self {
+        Self {
+            width: item.width as f32,
+            height: item.height as f32,
+        }
     }
 }
 
@@ -232,10 +250,10 @@ pub struct Element {
     pub resource: Option<String>,
     pub content: Option<Content>,
     pub text: Option<Text>,
-    pub offset: Option<Offset>,
+    pub offset: Option<Offset<u32>>,
     #[serde(rename = "relativeOffset", default)]
     pub rel_offset: Option<RelativeOffset>,
-    pub size: Option<Size>,
+    pub size: Option<Size<u32>>,
     #[serde(rename = "relativeSize", default)]
     pub rel_size: Option<RelativeSize>,
     #[serde(rename = "scrolling", default)]
@@ -268,7 +286,7 @@ impl Element {
     /// Get the final size to use as an offset into the
     /// parent space. This takes care of handling the relative
     /// proportional offset size
-    pub fn get_final_offset(&self, space: &LayoutSpace) -> Result<Option<Offset>> {
+    pub fn get_final_offset(&self, space: &LayoutSpace) -> Result<Option<Offset<u32>>> {
         if self.offset.is_some() && self.rel_offset.is_some() {
             return Err(anyhow!(
                 "Element.offset and Element.relativeOffset cannot both be defined"
@@ -293,7 +311,7 @@ impl Element {
     /// Get the final size to use within the parent space.
     /// This takes care of handling the relative
     /// proportional size.
-    pub fn get_final_size(&self, space: &LayoutSpace) -> Result<Option<Size>> {
+    pub fn get_final_size(&self, space: &LayoutSpace) -> Result<Option<Size<f32>>> {
         if self.size.is_some() && self.rel_size.is_some() {
             return Err(anyhow!(
                 "Element.size and Element.relativeSize cannot both be defined"
@@ -307,12 +325,15 @@ impl Element {
                 ));
             }
             return Ok(Some(Size::new(
-                (space.avail_width as f32 * rel.width) as u32,
-                (space.avail_height as f32 * rel.height) as u32,
+                space.avail_width * rel.width,
+                space.avail_height * rel.height,
             )));
         }
 
-        Ok(self.size)
+        // Convert to dom::Size<f32>
+        Ok(self
+            .size
+            .map(|size| Size::new(size.width as f32, size.height as f32)))
     }
 }
 

@@ -37,13 +37,34 @@ pub type HandlerArgs = Rc<Vec<String>>;
 
 #[derive(Debug)]
 pub enum Event {
-    WindowResized { args: HandlerArgs, size: dom::Size },
-    WindowClosed { args: HandlerArgs },
-    WindowRedrawComplete { args: HandlerArgs },
-    InputKeyDown { key: Keycode, modifiers: Mods },
-    InputKeyUp { key: Keycode, modifiers: Mods },
-    InputMouseButtonDown { button: MouseButton, x: i32, y: i32 },
-    InputMouseButtonUp { button: MouseButton, x: i32, y: i32 },
+    WindowResized {
+        args: HandlerArgs,
+        size: dom::Size<u32>,
+    },
+    WindowClosed {
+        args: HandlerArgs,
+    },
+    WindowRedrawComplete {
+        args: HandlerArgs,
+    },
+    InputKeyDown {
+        key: Keycode,
+        modifiers: Mods,
+    },
+    InputKeyUp {
+        key: Keycode,
+        modifiers: Mods,
+    },
+    InputMouseButtonDown {
+        button: MouseButton,
+        x: i32,
+        y: i32,
+    },
+    InputMouseButtonUp {
+        button: MouseButton,
+        x: i32,
+        y: i32,
+    },
 }
 
 impl EventSystem {
@@ -74,7 +95,7 @@ impl EventSystem {
     ///
     /// This signifies that a window was resized, and is triggered
     /// anytime OOD is returned from thundr.
-    pub fn add_event_window_resized(&mut self, dom: &DakotaDOM, new_size: dom::Size) {
+    pub fn add_event_window_resized(&mut self, dom: &DakotaDOM, new_size: dom::Size<u32>) {
         if let Some(events) = dom.window.events.as_ref() {
             if let Some(handler) = events.resize.as_ref() {
                 self.es_global_event_queue.push(Event::WindowResized {

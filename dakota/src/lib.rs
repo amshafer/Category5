@@ -20,6 +20,9 @@ pub mod xml;
 pub mod event;
 use event::{Event, EventSystem};
 
+mod font;
+use font::*;
+
 use std::collections::HashMap;
 extern crate regex;
 use regex::Regex;
@@ -37,7 +40,7 @@ struct ResMapEntry {
 
 pub type LayoutId = ECSId;
 
-pub struct Dakota {
+pub struct Dakota<'a> {
     // GROSS: we need thund to be before plat so that it gets dropped first
     // It might reference the window inside plat, and will segfault if
     // dropped after it.
@@ -57,17 +60,22 @@ pub struct Dakota {
     d_window_dims: Option<(u32, u32)>,
     d_needs_redraw: bool,
     d_event_sys: EventSystem,
+    d_font_inst: FontInstance<'a>,
 }
 
 /// The elements of the layout tree.
 /// This will be constructed from the Elements in the DOM
 #[derive(Debug)]
 struct LayoutNode {
+    /// Has this element been assigned a resource?
     l_resource: Option<String>,
+    /// Is this element a glyph subsurface. If so it is one character
+    /// in a block of text. This is really an index into the font.
+    l_glyph_id: Option<u16>,
     /// True if the dakota file specified an offset for this el
     l_offset_specified: bool,
-    l_offset: dom::Offset,
-    l_size: dom::Size,
+    l_offset: dom::Offset<f32>,
+    l_size: dom::Size<f32>,
     /// Ids of the children that this layout node has
     l_children: Vec<LayoutId>,
 }
@@ -76,18 +84,25 @@ impl Default for LayoutNode {
     fn default() -> Self {
         Self {
             l_resource: None,
+            l_glyph_id: None,
             l_offset_specified: false,
-            l_offset: dom::Offset::new(0, 0),
-            l_size: dom::Size::new(0, 0),
+            l_offset: dom::Offset::new(0.0, 0.0),
+            l_size: dom::Size::new(0.0, 0.0),
             l_children: Vec::with_capacity(0),
         }
     }
 }
 
 impl LayoutNode {
-    fn new(res: Option<String>, off: dom::Offset, size: dom::Size) -> Self {
+    fn new(
+        res: Option<String>,
+        glyph_id: Option<u16>,
+        off: dom::Offset<f32>,
+        size: dom::Size<f32>,
+    ) -> Self {
         Self {
             l_resource: res,
+            l_glyph_id: glyph_id,
             l_offset_specified: false,
             l_offset: off,
             l_size: size,
@@ -108,6 +123,11 @@ impl LayoutNode {
     /// to be used when there are no bounds (such as in a scrolling arena) and
     /// we just want to grow this element to fit everything.
     pub fn resize_to_children(&mut self, dakota: &Dakota) -> Result<()> {
+        self.l_size = dom::Size {
+            width: 0.0,
+            height: 0.0,
+        };
+
         for child_id in self.l_children.iter() {
             let other = &dakota.d_layout_nodes[child_id];
 
@@ -138,14 +158,14 @@ struct TileInfo {
 #[derive(Debug, Clone)]
 pub struct LayoutSpace {
     /// This is essentially the width of the parent container
-    pub avail_width: u32,
+    pub avail_width: f32,
     /// This is essentially the height of the parent container
-    pub avail_height: u32,
+    pub avail_height: f32,
     /// This is the number of children the parent container has
     pub children_at_this_level: u32,
 }
 
-impl Dakota {
+impl<'a> Dakota<'a> {
     /// Construct a new Dakota instance
     ///
     /// This will initialize the window system platform layer, create a thundr
@@ -167,6 +187,8 @@ impl Dakota {
         let layout_ecs = ECSInstance::new();
         let layout_table = ECSTable::new(layout_ecs.clone());
 
+        let inst = FontInstance::new("./Ubuntu-Regular.ttf", thundr.get_dpi() as u32, 11.0);
+
         Ok(Self {
             d_plat: plat,
             d_thund: thundr,
@@ -178,6 +200,7 @@ impl Dakota {
             d_window_dims: None,
             d_needs_redraw: false,
             d_event_sys: EventSystem::new(),
+            d_font_inst: inst,
         })
     }
 
@@ -253,13 +276,13 @@ impl Dakota {
             // half the size of the child.
             //
             // The child size should have already been clipped to the available space
-            child_size.l_offset.x = std::cmp::max(
-                (space.avail_width / 2).saturating_sub(child_size.l_size.width / 2),
-                0,
+            child_size.l_offset.x = utils::partial_max(
+                (space.avail_width / 2.0) - (child_size.l_size.width / 2.0),
+                0.0,
             );
-            child_size.l_offset.y = std::cmp::max(
-                (space.avail_height / 2).saturating_sub(child_size.l_size.height / 2),
-                0,
+            child_size.l_offset.y = utils::partial_max(
+                (space.avail_height / 2.0) - (child_size.l_size.height / 2.0),
+                0.0,
             );
 
             parent.add_child(child_id.clone());
@@ -298,23 +321,23 @@ impl Dakota {
             if !child_size.l_offset_specified {
                 // if this element exceeds the horizontal space, set it on a
                 // new line
-                if tile_info.t_last_x + child_size.l_size.width > space.avail_width {
+                if tile_info.t_last_x as f32 + child_size.l_size.width > space.avail_width {
                     tile_info.t_last_x = 0;
                     tile_info.t_last_y = tile_info.t_greatest_y;
                 }
 
                 child_size.l_offset = dom::Offset {
-                    x: tile_info.t_last_x,
-                    y: tile_info.t_last_y,
+                    x: tile_info.t_last_x as f32,
+                    y: tile_info.t_last_y as f32,
                 };
 
                 // now we need to update the space that we have seen children
                 // occupy, so we know where to place the next children in the
                 // tiling formation.
-                tile_info.t_last_x += child_size.l_size.width;
+                tile_info.t_last_x += child_size.l_size.width as u32;
                 tile_info.t_greatest_y = std::cmp::max(
                     tile_info.t_greatest_y,
-                    tile_info.t_last_y + child_size.l_size.height,
+                    tile_info.t_last_y + child_size.l_size.height as u32,
                 );
             }
 
@@ -345,16 +368,18 @@ impl Dakota {
             el
         ))? {
             node.l_offset_specified = true;
-            node.l_offset = off;
+            node.l_offset = off.into();
         }
 
         if let Some(size) = el.get_final_size(space)? {
-            node.l_size = size;
+            node.l_size = size.into();
         } else {
             // first grow this box to fit its children.
-            node.resize_to_children(self)?;
+            // TODO: this element's size should be set and children
+            // will have to be contained within it.
+            //node.resize_to_children(self)?;
 
-            if node.l_size == dom::Size::new(0, 0) {
+            if node.l_size == dom::Size::new(0.0, 0.0) {
                 // if the size is still empty, there were no children. This should just be
                 // sized to the available space divided by the number of
                 // children.
@@ -362,7 +387,8 @@ impl Dakota {
                 let num_children = std::cmp::max(1, space.children_at_this_level);
                 // TODO: add directional tiling of elements
                 // for now just do vertical subdivision and fill horizontal
-                node.l_size = dom::Size::new(space.avail_width, space.avail_height / num_children);
+                node.l_size =
+                    dom::Size::new(space.avail_width, space.avail_height / num_children as f32);
             }
 
             // Then possibly clip the box by any available dimensions.
@@ -373,9 +399,9 @@ impl Dakota {
             node.l_size.width = node
                 .l_size
                 .width
-                .clamp(0, space.avail_width - node.l_offset.x);
+                .clamp(0.0, space.avail_width - node.l_offset.x);
             node.l_size.height =
-                std::cmp::min(space.avail_height + node.l_offset.y, node.l_size.height);
+                utils::partial_min(space.avail_height + node.l_offset.y, node.l_size.height);
         }
 
         Ok(())
@@ -397,8 +423,9 @@ impl Dakota {
         el.layout_id = Some(new_id.clone());
         let mut ret = LayoutNode::new(
             el.resource.clone(),
-            dom::Offset::new(0, 0),
-            dom::Size::new(0, 0),
+            None,
+            dom::Offset::new(0.0, 0.0),
+            dom::Size::new(0.0, 0.0),
         );
 
         // This space is what the children/content will use
@@ -409,24 +436,11 @@ impl Dakota {
             children_at_this_level: 0,
         };
 
-        // TODO: we can get the available height from above, pass it to a font instance
-        // and create layout nodes for all character surfaces.
-        if let Some(text) = el.text.as_mut() {
-            // Trim out newlines and tabs
-            for item in text.items.iter_mut() {
-                *item = match item {
-                    dom::TextItem::p(p) => dom::TextItem::p(regex_trim_excess_space(p)),
-                    dom::TextItem::b(b) => dom::TextItem::b(regex_trim_excess_space(b)),
-                }
-            }
-            println!("{:#?}", text);
-        }
-
         // check if this element has its size set, shrink the available space
         // to match.
         if let Some(size) = el.size.as_ref() {
-            child_space.avail_width = size.width;
-            child_space.avail_height = size.height;
+            child_space.avail_width = size.width as f32;
+            child_space.avail_height = size.height as f32;
         }
 
         // if the box has children, then recurse through them and calculate our
@@ -465,6 +479,62 @@ impl Dakota {
                 el
             ))?;
 
+        // ------------------------------------------
+        // HANDLE TEXT
+        // ------------------------------------------
+        // We do this after handling the size of the current element so that we
+        // can know what width we have available to fill in with text.
+        if let Some(text) = el.text.as_mut() {
+            // This is how far we have advanced on a line
+            let mut cursor = Cursor {
+                c_i: 0,
+                c_x: 0.0,
+                c_y: 100.0,
+                c_min: 0.0,
+                c_max: 800.0,
+            };
+
+            // Trim out newlines and tabs. Styling is done with entries in the DOM, not
+            // through text formatting in the dakota file.
+            for item in text.items.iter_mut() {
+                match item {
+                    dom::TextItem::p(s) | dom::TextItem::b(s) => {
+                        // TODO: we can get the available height from above, pass it to a font instance
+                        // and create layout nodes for all character surfaces.
+                        let trim = regex_trim_excess_space(s);
+
+                        // Record text locations
+                        // We will create a whole bunch of sub-nodes which will be assigned
+                        // glyph ids. These ids will later be used to get surfaces for.
+                        self.d_font_inst.layout_text(
+                            &mut self.d_thund,
+                            &mut cursor,
+                            &trim,
+                            &mut |inst: &mut FontInstance, thund, glyph_id, offset| {
+                                let size = inst.get_glyph_thundr_size(thund, glyph_id);
+                                let char_node = LayoutNode::new(
+                                    None,
+                                    Some(glyph_id),
+                                    dom::Offset {
+                                        x: offset.0,
+                                        y: offset.1,
+                                    },
+                                    dom::Size {
+                                        width: size.0,
+                                        height: size.1,
+                                    },
+                                );
+                            },
+                        );
+
+                        *s = trim;
+                    }
+                }
+            }
+
+            println!("{:#?}", text);
+        }
+
         log::debug!("Final size of element is {:?}", ret);
         self.d_layout_nodes[&new_id] = ret;
 
@@ -489,7 +559,7 @@ impl Dakota {
     fn create_thundr_surf_for_el(
         &mut self,
         node: LayoutId,
-        poffset: dom::Offset,
+        poffset: dom::Offset<f32>,
     ) -> Result<Option<th::Surface>> {
         let layout = &self.d_layout_nodes[&node];
         // TODO: optimize
@@ -585,8 +655,8 @@ impl Dakota {
         self.d_layout_tree_root = Some(self.calculate_sizes(
             &mut dom.layout.root_element.borrow_mut(),
             &LayoutSpace {
-                avail_width: self.d_window_dims.unwrap().0, // available width
-                avail_height: self.d_window_dims.unwrap().1, // available height
+                avail_width: self.d_window_dims.unwrap().0 as f32, // available width
+                avail_height: self.d_window_dims.unwrap().1 as f32, // available height
                 children_at_this_level: num_children,
             },
         )?);
@@ -598,7 +668,7 @@ impl Dakota {
         // Create our thundr surface and add it to the list
         // one list with subsurfaces?
         let root_node_id = self.d_layout_tree_root.as_ref().unwrap().clone();
-        self.create_thundr_surf_for_el(root_node_id, dom::Offset { x: 0, y: 0 })
+        self.create_thundr_surf_for_el(root_node_id, dom::Offset { x: 0.0, y: 0.0 })
             .context("Could not construct Thundr surface tree")?;
 
         Ok(())
@@ -634,7 +704,7 @@ impl Dakota {
     ///
     /// The app should do this in its main loop after dispatching.
     /// These will be cleared during each dispatch.
-    pub fn get_events<'a>(&'a self) -> &'a [Event] {
+    pub fn get_events<'b>(&'b self) -> &'b [Event] {
         self.d_event_sys.get_events()
     }
 

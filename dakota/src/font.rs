@@ -1,14 +1,9 @@
 extern crate freetype as ft;
-extern crate thundr as th;
-use thundr::{CreateInfo, MemImage, SurfaceType, Thundr};
 extern crate harfbuzz_rs as hb;
 extern crate harfbuzz_sys as hb_sys;
 
-extern crate sdl2;
-use sdl2::{
-    event::{Event, WindowEvent},
-    keyboard::Keycode,
-};
+use crate::th::Thundr;
+use crate::utils::MemImage;
 
 #[repr(C)]
 #[derive(Clone)]
@@ -21,17 +16,17 @@ extern "C" {
 
 pub struct Cursor {
     /// The index into the harfbuzz data arrays
-    c_i: usize,
+    pub c_i: usize,
     /// The X position of the pen
-    c_x: f32,
+    pub c_x: f32,
     /// The Y position of the pen
-    c_y: f32,
+    pub c_y: f32,
     /// The minimum width for line wrap
     /// This is the left side of the layout bounding box
-    c_min: f32,
+    pub c_min: f32,
     /// The max width before line wrapping
     /// This is the right side of the layout bounding box
-    c_max: f32,
+    pub c_max: f32,
 }
 
 struct Glyph {
@@ -70,7 +65,7 @@ pub struct FontInstance<'a> {
 }
 
 impl<'a> FontInstance<'a> {
-    fn new(font_path: &str, dpi: u32, point_size: f32) -> Self {
+    pub fn new(font_path: &str, dpi: u32, point_size: f32) -> Self {
         let ft_lib = ft::Library::init().unwrap();
         let mut ft_face: ft::Face = ft_lib.new_face(font_path, 0).unwrap();
         let hb_font = unsafe {
@@ -138,6 +133,7 @@ impl<'a> FontInstance<'a> {
         }
     }
 
+    /// Go ahead and create the Glyph for an id in our map
     fn ensure_glyph_exists(&mut self, thund: &mut Thundr, id: u16) {
         // If we have not imported this glyph, make it now
         while id as usize >= self.f_glyphs.len() {
@@ -149,7 +145,21 @@ impl<'a> FontInstance<'a> {
         }
     }
 
-    fn get_thundr_surf_for_glyph(
+    /// Helper to get the size of a surface. Used to fill in the LayoutNode
+    /// size in Dakota.
+    pub fn get_glyph_thundr_size(&mut self, thund: &mut Thundr, id: u16) -> (f32, f32) {
+        self.ensure_glyph_exists(thund, id);
+        let glyph = self.f_glyphs[id as usize]
+            .as_ref()
+            .expect("Bug: Glyph not created for this character");
+
+        glyph.g_bitmap_size
+    }
+
+    /// Helper to get a thundr surface for a glyph. This involves looking it up
+    /// in the cache of glyph images, creating a surface of the right size/offset,
+    /// and binding the image from freetype to it.
+    pub fn get_thundr_surf_for_glyph(
         &mut self,
         thund: &mut Thundr,
         id: u16,
@@ -301,7 +311,7 @@ impl<'a> FontInstance<'a> {
     ///
     /// The cursor argument allows for itemizing runs of different fonts. The
     /// text layout creation will continue at that point.
-    fn layout_text<F>(
+    pub fn layout_text<F>(
         &mut self,
         thund: &mut Thundr,
         cursor: &mut Cursor,
@@ -317,90 +327,11 @@ impl<'a> FontInstance<'a> {
         let glyph_buffer = hb::shape(&self.f_hb_font, buffer, Vec::with_capacity(0).as_slice());
         let infos = glyph_buffer.get_glyph_infos();
         let positions = glyph_buffer.get_glyph_positions();
+        // For each itemized text run we need to reset the index that
+        // the cursor is using, since we will be using a different infos
+        // array and we may accidentally use an old size
+        cursor.c_i = 0;
 
         self.for_each_text_block(thund, cursor, text, infos, positions, glyph_callback);
-    }
-}
-
-fn main() {
-    // SDL goodies
-    let sdl_context = sdl2::init().unwrap();
-    let video_subsystem = sdl_context.video().unwrap();
-    let window = video_subsystem
-        .window("thundr-test", 1200, 1080)
-        .vulkan()
-        .resizable()
-        .position_centered()
-        .build()
-        .unwrap();
-    let mut event_pump = sdl_context.event_pump().unwrap();
-
-    let surf_type = SurfaceType::SDL2(&video_subsystem, &window);
-
-    let info = CreateInfo::builder().surface_type(surf_type).build();
-    let mut thund = Thundr::new(&info).unwrap();
-
-    let mut inst = FontInstance::new("./Ubuntu-Regular.ttf", thund.get_dpi() as u32, 11.0);
-    let text = "But I must explain to you how all this mistaken idea of reprobating pleasure and extolling pain arose. To do so, I will give you a complete account of the system, and expound the actual teachings of the great explorer of the truth, the master-builder of human happiness.  No one rejects, dislikes or avoids pleasure itself, because it is pleasure, but because those who do not know how to pursue pleasure rationally encounter consequences that are extremely painful. Nor again is there anyone who loves or pursues or desires to obtain pain of itself, because it is pain, but occasionally circumstances occur in which toil and pain can procure him some great pleasure. To take a trivial example, which of us ever undertakes laborious physical exercise, except to obtain some advantage from it? But who has any right to find fault with a man who chooses to enjoy a pleasure that has no annoying consequences, or one who avoids a pain that produces no resultant pleasure? [33] On the other hand, we denounce with righteous indignation and dislike men who are so beguiled and demoralized by the charms of pleasure of the moment, so blinded by desire, that they cannot foresee the pain and trouble that are bound to ensue; and equal blame belongs to those who fail in their duty through weakness of will, which is the same as saying through shrinking from toil and pain. These cases are perfectly simple and easy to distinguish. In a free hour, when our power of choice is untrammeled and when nothing prevents our being able to do what we like best, every pleasure is to be welcomed and every pain avoided. But in certain circumstances and owing to the claims of duty or the obligations of business it will frequently occur that pleasures have to be repudiated and annoyances accepted. The wise man therefore always holds in these matters to this principle of selection: he rejects pleasures to secure other greater pleasures,";
-
-    // ----------- create list of surfaces
-    let mut list = thundr::SurfaceList::new();
-
-    // This is how far we have advanced on a line
-    let mut cursor = Cursor {
-        c_i: 0,
-        c_x: 0.0,
-        c_y: 100.0,
-        c_min: 0.0,
-        c_max: 800.0,
-    };
-
-    // Layout all of our text. In this example we simply use the glyph
-    // position callback to immediately call thundr to generate surfaces
-    // for each glyph.
-    inst.layout_text(
-        &mut thund,
-        &mut cursor,
-        text,
-        &mut |inst: &mut FontInstance, thund, glyph_id, offset| {
-            let bg_surf = inst.get_thundr_surf_for_glyph(thund, glyph_id, offset);
-            list.push(bg_surf.clone());
-        },
-    );
-
-    // ----------- now wait for the app to exit
-
-    'running: loop {
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Window {
-                    timestamp: _,
-                    window_id: _,
-                    win_event,
-                } => match win_event {
-                    WindowEvent::Resized { .. } => thund.handle_ood(),
-                    _ => {}
-                },
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => break 'running,
-                _ => {}
-            }
-        }
-        // ----------- Perform draw calls
-        match thund.draw_frame(&mut list) {
-            Ok(_) => {}
-            Err(th::ThundrError::OUT_OF_DATE) => continue,
-            Err(e) => panic!("failed to draw frame: {:?}", e),
-        };
-
-        // ----------- Present to screen
-        match thund.present() {
-            Ok(_) => {}
-            Err(th::ThundrError::OUT_OF_DATE) => continue,
-            Err(e) => panic!("failed to draw frame: {:?}", e),
-        };
     }
 }
