@@ -2,6 +2,7 @@ extern crate freetype as ft;
 extern crate harfbuzz_rs as hb;
 extern crate harfbuzz_sys as hb_sys;
 
+use crate::dom;
 use crate::th::Thundr;
 use crate::utils::MemImage;
 
@@ -14,6 +15,7 @@ extern "C" {
     pub fn hb_ft_font_create_referenced(face: ft::ffi::FT_Face) -> *mut hb_sys::hb_font_t;
 }
 
+#[derive(Debug)]
 pub struct Cursor {
     /// The index into the harfbuzz data arrays
     pub c_i: usize,
@@ -163,14 +165,14 @@ impl<'a> FontInstance<'a> {
         &mut self,
         thund: &mut Thundr,
         id: u16,
-        pos: (f32, f32),
+        pos: dom::Offset<f32>,
     ) -> th::Surface {
         self.ensure_glyph_exists(thund, id);
         let glyph = self.f_glyphs[id as usize]
             .as_ref()
             .expect("Bug: Glyph not created for this character");
         let mut surf =
-            thund.create_surface(pos.0, pos.1, glyph.g_bitmap_size.0, glyph.g_bitmap_size.1);
+            thund.create_surface(pos.x, pos.y, glyph.g_bitmap_size.0, glyph.g_bitmap_size.1);
         if let Some(image) = glyph.g_image.as_ref() {
             thund.bind_image(&mut surf, image.clone());
         }
@@ -178,7 +180,12 @@ impl<'a> FontInstance<'a> {
         return surf;
     }
 
-    /// returns if we should halt due to out of characters
+    /// Handle one line of text
+    ///
+    /// This calls the glyph callback to handle up to one line of text. The
+    /// return value is false if the end of a line was not reached by this
+    /// text, and true if this function returned because the text is more
+    /// than one line long.
     fn for_one_line<F>(
         &mut self,
         thund: &mut Thundr,
@@ -187,9 +194,11 @@ impl<'a> FontInstance<'a> {
         infos: &[hb::GlyphInfo],
         positions: &[hb::GlyphPosition],
         glyph_callback: &mut F,
-    ) where
+    ) -> bool
+    where
         F: FnMut(&mut Self, &mut Thundr, u16, (f32, f32)),
     {
+        let mut ret = false;
         let mut end_index = cursor.c_i + 1;
         // The last space separated point
         let mut last_word = end_index;
@@ -217,6 +226,7 @@ impl<'a> FontInstance<'a> {
             // gross, we have to convert to usize through u32 :(
             if self.f_ft_face.get_char_index('\n' as u32 as usize) == glyph_id as u32 {
                 last_word = end_index;
+                ret = true;
                 break;
             }
 
@@ -224,6 +234,7 @@ impl<'a> FontInstance<'a> {
             // at the last known word break (last_word)
             if line_pos >= cursor.c_max {
                 line_wrap_needed = true;
+                ret = true;
                 break;
             }
         }
@@ -265,6 +276,13 @@ impl<'a> FontInstance<'a> {
             cursor.c_x += x_advance;
             cursor.c_y += y_advance;
         }
+
+        return ret;
+    }
+
+    /// Helper for getting the height of a line of text
+    pub fn get_vertical_line_spacing(&self) -> f32 {
+        self.f_ft_face.size_metrics().unwrap().height as f32 / 64.0
     }
 
     /// Kicks off layout calculation and text rendering for a paragraph. Increments
@@ -280,19 +298,23 @@ impl<'a> FontInstance<'a> {
     ) where
         F: FnMut(&mut Self, &mut Thundr, u16, (f32, f32)),
     {
-        let line_space = self.f_ft_face.size_metrics().unwrap().height / 64;
+        let line_space = self.get_vertical_line_spacing();
 
         loop {
-            self.for_one_line(thund, cursor, text, infos, positions, glyph_callback);
-            // Move down to the next line
-            cursor.c_x = cursor.c_min;
-            cursor.c_y += line_space as f32;
+            if self.for_one_line(thund, cursor, text, infos, positions, glyph_callback) {
+                // Move down to the next line
+                cursor.c_x = cursor.c_min;
+                cursor.c_y += line_space;
+            }
 
             // Break out of this text item span if we are at the end of the infos
             if cursor.c_i >= infos.len() {
                 return;
             }
         }
+
+        // TODO: Add on the width of one space to separate this from any
+        // future itemized runs that may come our way
     }
 
     /// This is the big text drawing function

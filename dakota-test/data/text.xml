@@ -1,27 +1,51 @@
 <dakota>
-	<version>0.0.0.1</version>
-	<resourceMap>
-	</resourceMap>
-	<window>
-		<id>0</id>
-		<title>Dakota Test</title>
-		<width>512</width>
-		<height>512</height>
-	</window>
-	<layout>
-		<el>
-			<content>
-				<el>
-					<text>
-						<p>
-							Here is
-							my
-						</p>
-						<b>example</b>
-						<p> text</p>
-					</text>
-				</el>
-			</content>
-		</el>
-	</layout>
+ <version>0.0.0.1</version>
+ <resourceMap>
+ </resourceMap>
+ <window>
+  <id>0</id>
+  <title>Dakota Test</title>
+  <width>512</width>
+  <height>512</height>
+ </window>
+ <layout>
+  <el>
+   <content>
+    <el>
+     <el>
+      <text>
+       <p>
+        Here is
+        my
+       </p>
+       <b>example</b>
+       <p> text</p>
+      </text>
+     </el>
+     <el>
+      <text>
+       <p>
+        Lorem ipsum dolor sit amet, consectetur adipiscing
+        elit. Sed at faucibus mi, a condimentum ligula.
+        Maecenas eu ligula dapibus, volutpat metus ac,
+        facilisis turpis. Morbi at rhoncus elit. Nullam sed
+        urna augue. Duis posuere aliquam dui, ac fermentum
+        justo maximus ut.  Maecenas nisi leo, vestibulum
+        eget lorem et, bibendum hendrerit nunc. Donec
+        tortor turpis, sollicitudin a malesuada ac, ornare
+        sit amet quam.  Phasellus dignissim, nulla et
+        lacinia tempus, urna arcu finibus neque, ut
+        faucibus elit massa et leo.  Nulla sagittis nibh a
+        ullamcorper condimentum.  Fusce non venenatis urna.
+        Nunc ac pharetra dui.  Vivamus laoreet, nisi vitae
+        fringilla euismod, turpis massa malesuada elit, et
+        blandit nunc tortor in ipsum. Curabitur ac
+        hendrerit sem. 
+       </p>
+      </text>
+     </el>
+    </el>
+   </content>
+  </el>
+ </layout>
 </dakota>

@@ -122,6 +122,7 @@ impl LayoutNode {
     /// We don't need to worry about bounding by an available size, this is
     /// to be used when there are no bounds (such as in a scrolling arena) and
     /// we just want to grow this element to fit everything.
+    #[allow(dead_code)]
     pub fn resize_to_children(&mut self, dakota: &Dakota) -> Result<()> {
         self.l_size = dom::Size {
             width: 0.0,
@@ -407,6 +408,104 @@ impl<'a> Dakota<'a> {
         Ok(())
     }
 
+    /// Handles creating LayoutNodes for every glyph in a passage
+    ///
+    /// This is the handler for the text field in the dakota file
+    fn calculate_sizes_text(&mut self, text: &mut dom::Text, node: &mut LayoutNode) -> Result<()> {
+        let line_space = self.d_font_inst.get_vertical_line_spacing();
+
+        // This is how far we have advanced on a line
+        // Go down by one line space before writing the first line. This deals
+        // with the problem that ft/hb want to index by the bottom left corner
+        // and all my stuff wants to index from the top left corner. Without this
+        // text starts being written "above" the element it is assigned to.
+        let mut cursor = Cursor {
+            c_i: 0,
+            c_x: node.l_offset.x,
+            c_y: node.l_offset.y + line_space,
+            c_min: node.l_offset.x,
+            c_max: node.l_offset.x + node.l_size.width,
+        };
+
+        println!("Drawing text");
+        println!("{:#?}", cursor);
+
+        // Trim out newlines and tabs. Styling is done with entries in the DOM, not
+        // through text formatting in the dakota file.
+        for item in text.items.iter_mut() {
+            match item {
+                dom::TextItem::p(s) | dom::TextItem::b(s) => {
+                    // TODO: we can get the available height from above, pass it to a font instance
+                    // and create layout nodes for all character surfaces.
+                    let trim = regex_trim_excess_space(s);
+
+                    // We need to take references to everything at once before the closure
+                    // so that the borrow checker can see we aren't trying to reference all
+                    // of self
+                    let font_inst = &mut self.d_font_inst;
+                    let ecs_inst = &mut self.d_layout_ecs_inst;
+                    let layouts = &mut self.d_layout_nodes;
+
+                    // Record text locations
+                    // We will create a whole bunch of sub-nodes which will be assigned
+                    // glyph ids. These ids will later be used to get surfaces for.
+                    font_inst.layout_text(
+                        &mut self.d_thund,
+                        &mut cursor,
+                        &trim,
+                        &mut |inst: &mut FontInstance, thund, glyph_id, offset| {
+                            let size = inst.get_glyph_thundr_size(thund, glyph_id);
+                            let new_id = ecs_inst.mint_new_id();
+                            layouts[&new_id] = LayoutNode::new(
+                                None,
+                                Some(glyph_id),
+                                dom::Offset {
+                                    x: offset.0,
+                                    y: offset.1,
+                                },
+                                dom::Size {
+                                    width: size.0,
+                                    height: size.1,
+                                },
+                            );
+                            node.add_child(new_id);
+                        },
+                    );
+
+                    *s = trim;
+                }
+            }
+        }
+
+        println!("Dumping children of node");
+        for l in node.l_children.iter() {
+            println!("Child");
+            println!("{:#?}", self.d_layout_nodes[l].l_offset);
+            println!("{:#?}", self.d_layout_nodes[l].l_size);
+        }
+        println!("{:#?}", text);
+        Ok(())
+    }
+
+    /// Create a new LayoutNode and id pair
+    ///
+    /// This is a helper for creating a LayoutNode and a matching LayoutId.
+    /// We need both because we need a) a node struct holding a bunch of data
+    /// and b) we need an ECS ID to perform lookups with.
+    #[allow(dead_code)]
+    fn create_layout_node(
+        &mut self,
+        res: Option<String>,
+        glyph_id: Option<u16>,
+        off: dom::Offset<f32>,
+        size: dom::Size<f32>,
+    ) -> LayoutId {
+        let new_id = self.d_layout_ecs_inst.mint_new_id();
+        self.d_layout_nodes[&new_id] = LayoutNode::new(res, glyph_id, off, size);
+
+        new_id
+    }
+
     /// Create a layout tree of boxes.
     ///
     /// This gives all the layout information for where we should place
@@ -473,6 +572,7 @@ impl<'a> Dakota<'a> {
         // ------------------------------------------
         // HANDLE THIS ELEMENT
         // ------------------------------------------
+        // Must be done before anything referencing the size of this element
         self.calculate_sizes_el(el, &mut ret, space)
             .context(format!(
                 "Layout Tree Calculation: processing element {:#?}",
@@ -485,54 +585,7 @@ impl<'a> Dakota<'a> {
         // We do this after handling the size of the current element so that we
         // can know what width we have available to fill in with text.
         if let Some(text) = el.text.as_mut() {
-            // This is how far we have advanced on a line
-            let mut cursor = Cursor {
-                c_i: 0,
-                c_x: 0.0,
-                c_y: 100.0,
-                c_min: 0.0,
-                c_max: 800.0,
-            };
-
-            // Trim out newlines and tabs. Styling is done with entries in the DOM, not
-            // through text formatting in the dakota file.
-            for item in text.items.iter_mut() {
-                match item {
-                    dom::TextItem::p(s) | dom::TextItem::b(s) => {
-                        // TODO: we can get the available height from above, pass it to a font instance
-                        // and create layout nodes for all character surfaces.
-                        let trim = regex_trim_excess_space(s);
-
-                        // Record text locations
-                        // We will create a whole bunch of sub-nodes which will be assigned
-                        // glyph ids. These ids will later be used to get surfaces for.
-                        self.d_font_inst.layout_text(
-                            &mut self.d_thund,
-                            &mut cursor,
-                            &trim,
-                            &mut |inst: &mut FontInstance, thund, glyph_id, offset| {
-                                let size = inst.get_glyph_thundr_size(thund, glyph_id);
-                                let char_node = LayoutNode::new(
-                                    None,
-                                    Some(glyph_id),
-                                    dom::Offset {
-                                        x: offset.0,
-                                        y: offset.1,
-                                    },
-                                    dom::Size {
-                                        width: size.0,
-                                        height: size.1,
-                                    },
-                                );
-                            },
-                        );
-
-                        *s = trim;
-                    }
-                }
-            }
-
-            println!("{:#?}", text);
+            self.calculate_sizes_text(text, &mut ret)?;
         }
 
         log::debug!("Final size of element is {:?}", ret);
@@ -622,6 +675,16 @@ impl<'a> Dakota<'a> {
             }
 
             return Ok(Some(surf));
+        } else if let Some(glyph_id) = layout.l_glyph_id {
+            // If this path is hit, then this layout node is really a glyph in a
+            // larger block of text. It has been created as a child, and isn't
+            // a real element. We ask the font code to give us a surface for
+            // it that we can display.
+            let surf =
+                self.d_font_inst
+                    .get_thundr_surf_for_glyph(&mut self.d_thund, glyph_id, offset);
+
+            return Ok(Some(surf));
         }
 
         // if we are here, then the current element does not have content.
@@ -629,7 +692,10 @@ impl<'a> Dakota<'a> {
         // children, and append them to the surfacelist.
         for child_id in layout_children.iter() {
             // add the new child surface as a subsurface
-            self.create_thundr_surf_for_el(child_id.clone(), offset)?;
+            let child = self.create_thundr_surf_for_el(child_id.clone(), offset)?;
+            if let Some(child_surf) = child {
+                self.d_surfaces.push(child_surf);
+            }
         }
         return Ok(None);
     }
