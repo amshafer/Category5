@@ -427,8 +427,8 @@ impl<'a> Dakota<'a> {
             c_max: node.l_offset.x + node.l_size.width,
         };
 
-        println!("Drawing text");
-        println!("{:#?}", cursor);
+        log::info!("Drawing text");
+        log::info!("{:#?}", cursor);
 
         // Trim out newlines and tabs. Styling is done with entries in the DOM, not
         // through text formatting in the dakota file.
@@ -477,13 +477,16 @@ impl<'a> Dakota<'a> {
             }
         }
 
-        println!("Dumping children of node");
-        for l in node.l_children.iter() {
-            println!("Child");
-            println!("{:#?}", self.d_layout_nodes[l].l_offset);
-            println!("{:#?}", self.d_layout_nodes[l].l_size);
+        #[cfg(debug_assertions)]
+        {
+            log::info!("Dumping children of node");
+            for l in node.l_children.iter() {
+                log::info!("Child");
+                log::info!("{:#?}", self.d_layout_nodes[l].l_offset);
+                log::info!("{:#?}", self.d_layout_nodes[l].l_size);
+            }
+            log::info!("{:#?}", text);
         }
-        println!("{:#?}", text);
         Ok(())
     }
 
@@ -542,6 +545,25 @@ impl<'a> Dakota<'a> {
             child_space.avail_height = size.height as f32;
         }
 
+        // ------------------------------------------
+        // HANDLE THIS ELEMENT
+        // ------------------------------------------
+        // Must be done before anything referencing the size of this element
+        self.calculate_sizes_el(el, &mut ret, space)
+            .context(format!(
+                "Layout Tree Calculation: processing element {:#?}",
+                el
+            ))?;
+
+        // ------------------------------------------
+        // HANDLE TEXT
+        // ------------------------------------------
+        // We do this after handling the size of the current element so that we
+        // can know what width we have available to fill in with text.
+        if let Some(text) = el.text.as_mut() {
+            self.calculate_sizes_text(text, &mut ret)?;
+        }
+
         // if the box has children, then recurse through them and calculate our
         // box size based on the fill type.
         if el.children.len() > 0 {
@@ -569,25 +591,6 @@ impl<'a> Dakota<'a> {
                 ))?;
         }
 
-        // ------------------------------------------
-        // HANDLE THIS ELEMENT
-        // ------------------------------------------
-        // Must be done before anything referencing the size of this element
-        self.calculate_sizes_el(el, &mut ret, space)
-            .context(format!(
-                "Layout Tree Calculation: processing element {:#?}",
-                el
-            ))?;
-
-        // ------------------------------------------
-        // HANDLE TEXT
-        // ------------------------------------------
-        // We do this after handling the size of the current element so that we
-        // can know what width we have available to fill in with text.
-        if let Some(text) = el.text.as_mut() {
-            self.calculate_sizes_text(text, &mut ret)?;
-        }
-
         log::debug!("Final size of element is {:?}", ret);
         self.d_layout_nodes[&new_id] = ret;
 
@@ -609,32 +612,24 @@ impl<'a> Dakota<'a> {
     /// At this point the layout tree should have been constructed, aka
     /// Elements will have their sizes correctly (re)calculated and filled
     /// in by `calculate_sizes`.
-    fn create_thundr_surf_for_el(
-        &mut self,
-        node: LayoutId,
-        poffset: dom::Offset<f32>,
-    ) -> Result<Option<th::Surface>> {
+    fn create_thundr_surf_for_el(&mut self, node: LayoutId) -> Result<th::Surface> {
         let layout = &self.d_layout_nodes[&node];
         // TODO: optimize
         // this is gross but we have to do it for the borrow checker to be happy
         // Otherwise calling the &mut self functions throws errors
         let layout_children = layout.l_children.clone();
 
-        let offset = dom::Offset {
-            x: layout.l_offset.x + poffset.x,
-            y: layout.l_offset.y + poffset.y,
-        };
-        let size = layout.l_size;
+        // first create a surface for this element
+        // This starts as an empty unbound surface but may be assigned content below
+        let mut surf = self.d_thund.create_surface(
+            layout.l_offset.x,
+            layout.l_offset.y,
+            layout.l_size.width,
+            layout.l_size.height,
+        );
 
+        // Handle binding images
         if let Some(resname) = layout.l_resource.as_ref() {
-            // first create a surface for this element
-            let mut surf = self.d_thund.create_surface(
-                offset.x as f32,
-                offset.y as f32,
-                size.width as f32,
-                size.height as f32,
-            );
-
             // We need to get the resource's content from our resource map, get
             // the thundr image for it, and bind it to our new surface.
             let rme = match self.d_resmap.get(resname) {
@@ -663,41 +658,30 @@ impl<'a> Dakota<'a> {
             if let Some(color) = rme.rme_color.as_ref() {
                 surf.set_color((color.r, color.g, color.b, color.a));
             }
-            self.d_surfaces.push(surf.clone());
-
-            // now iterate through all of it's children, and recursively do the same
-            for child_id in layout_children.iter() {
-                // add the new child surface as a subsurface
-                let child_surf = self.create_thundr_surf_for_el(child_id.clone(), offset)?;
-                if let Some(csurf) = child_surf {
-                    surf.add_subsurface(csurf);
-                }
-            }
-
-            return Ok(Some(surf));
         } else if let Some(glyph_id) = layout.l_glyph_id {
             // If this path is hit, then this layout node is really a glyph in a
             // larger block of text. It has been created as a child, and isn't
             // a real element. We ask the font code to give us a surface for
             // it that we can display.
-            let surf =
-                self.d_font_inst
-                    .get_thundr_surf_for_glyph(&mut self.d_thund, glyph_id, offset);
+            let surf = self.d_font_inst.get_thundr_surf_for_glyph(
+                &mut self.d_thund,
+                glyph_id,
+                layout.l_offset,
+            );
 
-            return Ok(Some(surf));
+            return Ok(surf);
         }
 
-        // if we are here, then the current element does not have content.
-        // Instead what we do is recursively call this function on the
-        // children, and append them to the surfacelist.
+        self.d_surfaces.push(surf.clone());
+
+        // now iterate through all of it's children, and recursively do the same
         for child_id in layout_children.iter() {
             // add the new child surface as a subsurface
-            let child = self.create_thundr_surf_for_el(child_id.clone(), offset)?;
-            if let Some(child_surf) = child {
-                self.d_surfaces.push(child_surf);
-            }
+            let child_surf = self.create_thundr_surf_for_el(child_id.clone())?;
+            surf.add_subsurface(child_surf);
         }
-        return Ok(None);
+
+        return Ok(surf);
     }
 
     /// This refreshes the entire scene, and regenerates
@@ -734,7 +718,7 @@ impl<'a> Dakota<'a> {
         // Create our thundr surface and add it to the list
         // one list with subsurfaces?
         let root_node_id = self.d_layout_tree_root.as_ref().unwrap().clone();
-        self.create_thundr_surf_for_el(root_node_id, dom::Offset { x: 0.0, y: 0.0 })
+        self.create_thundr_surf_for_el(root_node_id)
             .context("Could not construct Thundr surface tree")?;
 
         Ok(())

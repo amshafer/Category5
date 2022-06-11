@@ -245,13 +245,6 @@ impl<'a> FontInstance<'a> {
             end_index
         };
 
-        println!(
-            "Handling glyphs {}..{} out of {}",
-            cursor.c_i,
-            end_of_line,
-            infos.len()
-        );
-
         // Now do the above for real and commit it to the surface list
         for i in cursor.c_i..end_of_line {
             // move to the next char
