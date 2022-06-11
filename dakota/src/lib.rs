@@ -672,8 +672,6 @@ impl<'a> Dakota<'a> {
             return Ok(surf);
         }
 
-        self.d_surfaces.push(surf.clone());
-
         // now iterate through all of it's children, and recursively do the same
         for child_id in layout_children.iter() {
             // add the new child surface as a subsurface
@@ -753,8 +751,10 @@ impl<'a> Dakota<'a> {
         // Create our thundr surface and add it to the list
         // one list with subsurfaces?
         let root_node_id = self.d_layout_tree_root.as_ref().unwrap().clone();
-        self.create_thundr_surf_for_el(root_node_id)
+        let root_surf = self
+            .create_thundr_surf_for_el(root_node_id)
             .context("Could not construct Thundr surface tree")?;
+        self.d_surfaces.push(root_surf.clone());
 
         Ok(())
     }
