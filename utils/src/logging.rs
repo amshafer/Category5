@@ -10,9 +10,10 @@ pub enum LogLevel {
     // in order of highest priority
     critical, // Urgent and must always be displayed
     error,
-    debug,     // debugging related, not verbose
-    info,      // more verbose
-    profiling, // profiling related timing
+    debug,     // debugging related, fairly verbose
+    verbose,   // more verbose debug output
+    info,      // most verbose
+    profiling, // profiling related timing, absurdly verbose
 }
 
 impl LogLevel {
@@ -21,6 +22,7 @@ impl LogLevel {
             LogLevel::critical => "critical",
             LogLevel::error => "error",
             LogLevel::debug => "debug",
+            LogLevel::verbose => "verbose",
             LogLevel::info => "info",
             LogLevel::profiling => "profiling",
         }
@@ -31,8 +33,9 @@ impl LogLevel {
             LogLevel::critical => 0,
             LogLevel::error => 1,
             LogLevel::debug => 2,
-            LogLevel::info => 3,
-            LogLevel::profiling => 4,
+            LogLevel::verbose => 3,
+            LogLevel::info => 4,
+            LogLevel::profiling => 5,
         }
     }
 }
@@ -42,6 +45,14 @@ macro_rules! debug {
     ($($format_args:tt)+) => {{
         #[cfg(debug_assertions)]
         log::log_internal!(log::LogLevel::debug, $($format_args)+)
+    }};
+}
+
+#[macro_export]
+macro_rules! verbose {
+    ($($format_args:tt)+) => {{
+        #[cfg(debug_assertions)]
+        log::log_internal!(log::LogLevel::verbose, $($format_args)+)
     }};
 }
 
@@ -79,6 +90,8 @@ macro_rules! log_internal{
             static ref LOG_LEVEL_RAW: u32 = match std::env::var("CATEGORY5_LOG") {
                 Ok(val) => match val.as_str() {
                     "debug" => crate::utils::logging::LogLevel::debug.get_level(),
+                    "verbose" => crate::utils::logging::LogLevel::verbose.get_level(),
+                    "info" => crate::utils::logging::LogLevel::info.get_level(),
                     _ => *DEFAULT_LEVEL,
                 },
                 Err(_) => *DEFAULT_LEVEL,

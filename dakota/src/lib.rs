@@ -684,9 +684,37 @@ impl<'a> Dakota<'a> {
         return Ok(surf);
     }
 
+    /// Helper method to print out our layout tree
+    fn print_node(&self, node: &LayoutNode, indent_level: usize) {
+        let spaces = std::iter::repeat("  ")
+            .take(indent_level)
+            .collect::<String>();
+
+        log::verbose!("{}Layout node:", spaces);
+        log::verbose!(
+            "{}    offset={:?}, size={:?}",
+            spaces,
+            node.l_offset,
+            node.l_size
+        );
+        log::verbose!(
+            "{}    resource={:?}, glyph_id={:?}, num_children={}",
+            spaces,
+            node.l_resource,
+            node.l_glyph_id,
+            node.l_children.len(),
+        );
+
+        for child in node.l_children.iter() {
+            let child = &self.d_layout_nodes[&child];
+            self.print_node(child, indent_level + 1);
+        }
+    }
+
     /// This refreshes the entire scene, and regenerates
     /// the Thundr surface list.
     pub fn refresh_elements(&mut self, dom: &DakotaDOM) -> Result<()> {
+        log::verbose!("Dakota: Refreshing element tree");
         // check if the window size is set. If it is not, this is the
         // first iteration and we need to populate the dimensions
         // from the DOM
@@ -710,6 +738,13 @@ impl<'a> Dakota<'a> {
                 children_at_this_level: num_children,
             },
         )?);
+
+        #[cfg(debug_assertions)]
+        {
+            if let Some(root_id) = self.d_layout_tree_root.as_ref() {
+                self.print_node(&self.d_layout_nodes[&root_id], 0);
+            }
+        }
 
         // reset our thundr surface list. If the set of resources has
         // changed, then we should have called clear_thundr to do so by now.

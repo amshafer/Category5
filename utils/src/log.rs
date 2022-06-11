@@ -7,4 +7,5 @@ pub use crate::error;
 pub use crate::info;
 pub use crate::log_internal;
 pub use crate::profiling;
+pub use crate::verbose;
 pub use crate::{logging::LogLevel, timing::get_current_millis};
