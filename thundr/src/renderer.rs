@@ -261,6 +261,7 @@ impl Renderer {
         // For some reason old versions of the validation layers segfault in renderpass on the
         // geometric one, so only use validation on compute
         let layer_names = vec![
+            #[cfg(debug_assertions)]
             CString::new("VK_LAYER_KHRONOS_validation").unwrap(),
             #[cfg(target_os = "macos")]
             CString::new("VK_LAYER_KHRONOS_synchronization2").unwrap(),
