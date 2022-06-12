@@ -488,13 +488,9 @@ impl Renderer {
         // We need to get the updated size of our swapchain. This
         // will be the current size of the surface in use. We should
         // also update Display.d_resolution while we are at it.
-        let new_res = self
-            .display
-            .d_surface_loader
-            .get_physical_device_surface_capabilities(self.pdev, self.display.d_surface)
-            .expect("Could not get physical device surface capabilities");
-        self.display.d_resolution = new_res.current_extent;
-        self.resolution = new_res.current_extent;
+        let new_res = self.display.get_vulkan_drawable_size(self.pdev);
+        self.display.d_resolution = new_res;
+        self.resolution = new_res;
 
         self.swapchain = Renderer::create_swapchain(
             &self.inst,

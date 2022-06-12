@@ -48,7 +48,19 @@ trait Backend {
         surf_type: &SurfaceType,
     ) -> Result<vk::SurfaceKHR, vk::Result>;
 
+    /// Get the dots per inch for this surface
+    ///
+    /// This is useful because some upper parts of the stack (dakota
+    /// text management) need to know this value to calculate the
+    /// resolution of things.
     fn get_dpi(&self) -> f32;
+
+    /// Helper for getting the drawable size according to the
+    /// display. This will basically just be passed to SDL's
+    /// function of the same name.
+    /// Returns None if not supported and the display should
+    /// get the size from vulkan
+    fn get_vulkan_drawable_size(&self) -> Option<vk::Extent2D>;
 }
 
 enum BackendType {
@@ -182,6 +194,20 @@ impl Display {
         // deconstructors for them
         //
         // The validation layers do warn about them however (bug?)
+    }
+
+    pub unsafe fn get_vulkan_drawable_size(&self, pdev: vk::PhysicalDevice) -> vk::Extent2D {
+        match self.d_back.get_vulkan_drawable_size() {
+            Some(size) => size,
+            None => {
+                // If the backend doesn't support this then just get the
+                // value from vulkan
+                self.d_surface_loader
+                    .get_physical_device_surface_capabilities(pdev, self.d_surface)
+                    .expect("Could not get physical device surface capabilities")
+                    .current_extent
+            }
+        }
     }
 }
 
@@ -383,6 +409,10 @@ impl Backend for PhysicalDisplay {
 
         diag_pix / diag_mm
     }
+
+    fn get_vulkan_drawable_size(&self) -> Option<vk::Extent2D> {
+        None
+    }
 }
 
 #[cfg(feature = "sdl")]
@@ -479,6 +509,14 @@ impl Backend for SDL2DisplayBackend {
             .display_dpi(self.sdl_window.display_index().unwrap())
             .unwrap()
             .0
+    }
+
+    fn get_vulkan_drawable_size(&self) -> Option<vk::Extent2D> {
+        let res = self.sdl_window.vulkan_drawable_size();
+        Some(vk::Extent2D {
+            width: res.0,
+            height: res.1,
+        })
     }
 }
 

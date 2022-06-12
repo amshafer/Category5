@@ -724,12 +724,12 @@ impl<'a> Dakota<'a> {
         // from the DOM
         if self.d_window_dims.is_none() {
             self.d_window_dims = Some((dom.window.width, dom.window.height));
-        }
 
-        // we need to update the window dimensions if possible,
-        // so call into our platform do handle it
-        self.d_plat
-            .set_output_params(&dom.window, self.d_window_dims.unwrap())?;
+            // we need to update the window dimensions if possible,
+            // so call into our platform do handle it
+            self.d_plat
+                .set_output_params(&dom.window, self.d_window_dims.unwrap())?;
+        }
 
         // construct layout tree with sizes of all boxes
         // create our thundr surfaces while we are at it.
