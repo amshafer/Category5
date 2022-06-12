@@ -41,6 +41,10 @@ use std::rc::Rc;
 
 #[derive(Debug)]
 struct ECSInstanceInternal {
+    /// The number of ids we have allocated out of the list above. This
+    /// allows us to optimize the case of a full id list: We don't have to
+    /// scan the entire list if it's full
+    eci_total_num_ids: usize,
     /// This is a list of active ids in the system.
     eci_valid_ids: Vec<bool>,
 }
@@ -66,6 +70,7 @@ impl ECSInstance {
         Self {
             ecs_internal: Rc::new(RefCell::new(ECSInstanceInternal {
                 eci_valid_ids: Vec::new(),
+                eci_total_num_ids: 0,
             })),
         }
     }
@@ -76,23 +81,32 @@ impl ECSInstance {
         };
         let mut internal = self.ecs_internal.borrow_mut();
 
-        // Find the first free id that is not in use
-        // if all ids are in use, then add one to the back
-        let first_valid_id = match internal.eci_valid_ids.iter().enumerate().find(|(_, val)| {
-            if !**val {
-                return true;
-            }
-            false
-        }) {
-            Some((index, _)) => index,
-            None => {
-                internal.eci_valid_ids.push(true);
-                internal.eci_valid_ids.len() - 1
-            }
-        };
+        // Find the first free id that is not in use or make one
+        let first_valid_id = {
+            let mut index = None;
 
+            // first check the array from back to front
+            // Don't do this if the array is full, just skip to extending the
+            // array if that is the case
+            if internal.eci_total_num_ids != internal.eci_valid_ids.len() {
+                for i in internal.eci_valid_ids.len()..0 {
+                    if !internal.eci_valid_ids[i] {
+                        index = Some(i);
+                    }
+                }
+            }
+
+            // if that didn't work then add one to the back
+            if index.is_none() {
+                internal.eci_valid_ids.push(true);
+                index = Some(internal.eci_valid_ids.len() - 1);
+            }
+
+            index.unwrap()
+        };
         // Mark this new id as active
         internal.eci_valid_ids[first_valid_id] = true;
+        internal.eci_total_num_ids += 1;
 
         return Rc::new(ECSIdInternal {
             ecs_id: first_valid_id,
@@ -104,6 +118,7 @@ impl ECSInstance {
         let mut internal = self.ecs_internal.borrow_mut();
         assert!(internal.eci_valid_ids[id]);
         internal.eci_valid_ids[id] = false;
+        internal.eci_total_num_ids -= 1;
     }
 
     fn assert_id_is_valid(&self, id: &ECSId) {
