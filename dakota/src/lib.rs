@@ -616,10 +616,6 @@ impl<'a> Dakota<'a> {
     /// in by `calculate_sizes`.
     fn create_thundr_surf_for_el(&mut self, node: LayoutId) -> Result<th::Surface> {
         let layout = &self.d_layout_nodes[&node];
-        // TODO: optimize
-        // this is gross but we have to do it for the borrow checker to be happy
-        // Otherwise calling the &mut self functions throws errors
-        let layout_children = layout.l_children.clone();
 
         // first create a surface for this element
         // This starts as an empty unbound surface but may be assigned content below
@@ -675,7 +671,15 @@ impl<'a> Dakota<'a> {
         }
 
         // now iterate through all of it's children, and recursively do the same
-        for child_id in layout_children.iter() {
+        // This is written kind of weird to work around some annoying borrow checker
+        // bits. By not referencing self in the for loop we can avoid double
+        // mut reffing self and hitting borrow checker issues
+        let num_children = layout.l_children.len();
+        for i in 0..num_children {
+            let child_id = {
+                let layout = &self.d_layout_nodes[&node];
+                layout.l_children[i].clone()
+            };
             // add the new child surface as a subsurface
             let child_surf = self.create_thundr_surf_for_el(child_id.clone())?;
             surf.add_subsurface(child_surf);
