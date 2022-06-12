@@ -581,10 +581,10 @@ impl Renderer {
             .contains(vk::ImageUsageFlags::STORAGE)
         {
             extra_usage |= vk::ImageUsageFlags::STORAGE;
-            log::error!("Format {:?} supports Storage usage", surface_format.format);
+            log::debug!("Format {:?} supports Storage usage", surface_format.format);
         } else {
             assert!(dev_features.vkc_supports_mut_swapchain);
-            log::error!(
+            log::debug!(
                 "Format {:?} does not support Storage usage, using mutable swapchain",
                 surface_format.format
             );
@@ -695,7 +695,7 @@ impl Renderer {
             .map(|&image| {
                 let format_props =
                     inst.get_physical_device_format_properties(pdev, surface_format.format);
-                log::error!("format props: {:#?}", format_props);
+                log::debug!("format props: {:#?}", format_props);
 
                 // we want to interact with this image as a 2D
                 // array of RGBA pixels (i.e. the "normal" way)
@@ -1392,10 +1392,10 @@ impl Renderer {
 
             // TODO: allow for multiple pipes in use at once
             let pipe_type = if info.enable_traditional_composition {
-                log::error!("Using render pipeline");
+                log::debug!("Using render pipeline");
                 PipelineType::GEOMETRIC
             } else {
-                log::error!("Using async compute pipeline");
+                log::debug!("Using async compute pipeline");
                 PipelineType::COMPUTE
             };
             let enabled_pipelines = vec![pipe_type];

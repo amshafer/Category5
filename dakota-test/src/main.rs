@@ -25,8 +25,6 @@ fn main() {
         dak.dispatch(&dom, None).unwrap();
 
         for event in dak.get_events().iter() {
-            println!("Dakota Event: {:?}", event);
-
             // Exit if the window is closed, else do nothing
             match event {
                 Event::WindowClosed { .. } => return,

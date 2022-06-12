@@ -205,6 +205,11 @@ impl<'a> Dakota<'a> {
         })
     }
 
+    /// Reload all of the thundr images from their dakota resources
+    ///
+    /// Dakota resources may be backed by a Thundr Image. This funciton is in charge
+    /// of iterating through all of the dakota resources in use by elements and create
+    /// Images for all of them.
     pub fn refresh_resource_map(&mut self, dom: &DakotaDOM) -> Result<()> {
         self.d_thund.clear_all();
 
@@ -226,7 +231,7 @@ impl<'a> Dakota<'a> {
                         "Format of image could not be guessed correctly. Could not get resolution",
                     )?;
                     let img = image::open(file_path)
-                        .context(format!("Could not open image: {:?}", file_path))?
+                        .context("Could not open image path")?
                         .to_bgra8();
                     let pixels: Vec<u8> = img.into_vec();
                     let mimg = MemImage::new(
@@ -364,10 +369,10 @@ impl<'a> Dakota<'a> {
         node: &mut LayoutNode,
         space: &LayoutSpace,
     ) -> Result<()> {
-        if let Some(off) = el.get_final_offset(&space).context(format!(
-            "Failed to calculate offset size of Element {:#?}",
-            el
-        ))? {
+        if let Some(off) = el
+            .get_final_offset(&space)
+            .context("Failed to calculate offset size of Element")?
+        {
             node.l_offset_specified = true;
             node.l_offset = off.into();
         }
@@ -552,10 +557,7 @@ impl<'a> Dakota<'a> {
         // ------------------------------------------
         // Must be done before anything referencing the size of this element
         self.calculate_sizes_el(el, &mut ret, space)
-            .context(format!(
-                "Layout Tree Calculation: processing element {:#?}",
-                el
-            ))?;
+            .context("Layout Tree Calculation: processing element")?;
 
         // ------------------------------------------
         // HANDLE TEXT
@@ -578,19 +580,13 @@ impl<'a> Dakota<'a> {
             child_space.children_at_this_level = el.children.len() as u32;
 
             self.calculate_sizes_children(el, &child_space, &mut ret)
-                .context(format!(
-                    "Layout Tree Calculation: processing children of element {:#?}",
-                    el
-                ))?;
+                .context("Layout Tree Calculation: processing children of element")?;
         } else if let Some(content) = el.content.as_ref() {
             // ------------------------------------------
             // CENTERED CONTENT
             // ------------------------------------------
             self.calculate_sizes_content(content, space, &mut ret)
-                .context(format!(
-                    "Layout Tree Calculation: processing centered content {:#?} of element {:#?}",
-                    content, el
-                ))?;
+                .context("Layout Tree Calculation: processing centered content of element")?;
         }
 
         log::debug!("Final size of element is {:?}", ret);
@@ -689,6 +685,8 @@ impl<'a> Dakota<'a> {
     }
 
     /// Helper method to print out our layout tree
+    #[allow(dead_code)]
+    #[cfg(debug_assertions)]
     fn print_node(&self, node: &LayoutNode, indent_level: usize) {
         let spaces = std::iter::repeat("  ")
             .take(indent_level)
