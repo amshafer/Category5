@@ -437,7 +437,9 @@ impl<'a> Dakota<'a> {
                 dom::TextItem::p(s) | dom::TextItem::b(s) => {
                     // TODO: we can get the available height from above, pass it to a font instance
                     // and create layout nodes for all character surfaces.
-                    let trim = regex_trim_excess_space(s);
+                    let mut trim = regex_trim_excess_space(s);
+                    // TODO: Find a better way of adding space around itemized runs
+                    trim.push_str(" ");
 
                     // We need to take references to everything at once before the closure
                     // so that the borrow checker can see we aren't trying to reference all
