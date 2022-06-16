@@ -362,10 +362,7 @@ impl Renderer {
         // supported types we can import as
         let dmabuf_type_bits = self
             .external_mem_fd_loader
-            .get_memory_fd_properties_khr(
-                vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT,
-                dmabuf.db_fd,
-            )
+            .get_memory_fd_properties(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT, dmabuf.db_fd)
             .expect("Could not get memory fd properties")
             // bitmask set for each supported memory type
             .memory_type_bits;

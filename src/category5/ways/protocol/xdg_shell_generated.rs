@@ -330,7 +330,7 @@ pub mod xdg_wm_base {
         type Request = Request;
         type Event = Event;
         const NAME: &'static str = "xdg_wm_base";
-        const VERSION: u32 = 3;
+        const VERSION: u32 = 4;
         fn c_interface() -> *const wl_interface {
             unsafe { &xdg_wm_base_interface }
         }
@@ -390,7 +390,7 @@ pub mod xdg_wm_base {
     #[doc = r" C representation of this interface, for interop"]
     pub static mut xdg_wm_base_interface: wl_interface = wl_interface {
         name: b"xdg_wm_base\0" as *const u8 as *const c_char,
-        version: 3,
+        version: 4,
         request_count: 4,
         requests: unsafe { &xdg_wm_base_requests as *const _ },
         event_count: 1,
@@ -934,7 +934,7 @@ pub mod xdg_positioner {
         type Request = Request;
         type Event = Event;
         const NAME: &'static str = "xdg_positioner";
-        const VERSION: u32 = 3;
+        const VERSION: u32 = 4;
         fn c_interface() -> *const wl_interface {
             unsafe { &xdg_positioner_interface }
         }
@@ -1016,14 +1016,14 @@ pub mod xdg_positioner {
     #[doc = r" C representation of this interface, for interop"]
     pub static mut xdg_positioner_interface: wl_interface = wl_interface {
         name: b"xdg_positioner\0" as *const u8 as *const c_char,
-        version: 3,
+        version: 4,
         request_count: 10,
         requests: unsafe { &xdg_positioner_requests as *const _ },
         event_count: 0,
         events: NULLPTR as *const wl_message,
     };
 }
-#[doc = "desktop user interface surface base interface\n\nAn interface that may be implemented by a wl_surface, for\nimplementations that provide a desktop-style user interface.\n\nIt provides a base set of functionality required to construct user\ninterface elements requiring management by the compositor, such as\ntoplevel windows, menus, etc. The types of functionality are split into\nxdg_surface roles.\n\nCreating an xdg_surface does not set the role for a wl_surface. In order\nto map an xdg_surface, the client must create a role-specific object\nusing, e.g., get_toplevel, get_popup. The wl_surface for any given\nxdg_surface can have at most one role, and may not be assigned any role\nnot based on xdg_surface.\n\nA role must be assigned before any other requests are made to the\nxdg_surface object.\n\nThe client must call wl_surface.commit on the corresponding wl_surface\nfor the xdg_surface state to take effect.\n\nCreating an xdg_surface from a wl_surface which has a buffer attached or\ncommitted is a client error, and any attempts by a client to attach or\nmanipulate a buffer prior to the first xdg_surface.configure call must\nalso be treated as errors.\n\nAfter creating a role-specific object and setting it up, the client must\nperform an initial commit without any buffer attached. The compositor\nwill reply with an xdg_surface.configure event. The client must\nacknowledge it and is then allowed to attach a buffer to map the surface.\n\nMapping an xdg_surface-based role surface is defined as making it\npossible for the surface to be shown by the compositor. Note that\na mapped surface is not guaranteed to be visible once it is mapped.\n\nFor an xdg_surface to be mapped by the compositor, the following\nconditions must be met:\n(1) the client has assigned an xdg_surface-based role to the surface\n(2) the client has set and committed the xdg_surface state and the\nrole-dependent state to the surface\n(3) the client has committed a buffer to the surface\n\nA newly-unmapped surface is considered to have met condition (1) out\nof the 3 required conditions for mapping a surface if its role surface\nhas not been destroyed."]
+#[doc = "desktop user interface surface base interface\n\nAn interface that may be implemented by a wl_surface, for\nimplementations that provide a desktop-style user interface.\n\nIt provides a base set of functionality required to construct user\ninterface elements requiring management by the compositor, such as\ntoplevel windows, menus, etc. The types of functionality are split into\nxdg_surface roles.\n\nCreating an xdg_surface does not set the role for a wl_surface. In order\nto map an xdg_surface, the client must create a role-specific object\nusing, e.g., get_toplevel, get_popup. The wl_surface for any given\nxdg_surface can have at most one role, and may not be assigned any role\nnot based on xdg_surface.\n\nA role must be assigned before any other requests are made to the\nxdg_surface object.\n\nThe client must call wl_surface.commit on the corresponding wl_surface\nfor the xdg_surface state to take effect.\n\nCreating an xdg_surface from a wl_surface which has a buffer attached or\ncommitted is a client error, and any attempts by a client to attach or\nmanipulate a buffer prior to the first xdg_surface.configure call must\nalso be treated as errors.\n\nAfter creating a role-specific object and setting it up, the client must\nperform an initial commit without any buffer attached. The compositor\nwill reply with an xdg_surface.configure event. The client must\nacknowledge it and is then allowed to attach a buffer to map the surface.\n\nMapping an xdg_surface-based role surface is defined as making it\npossible for the surface to be shown by the compositor. Note that\na mapped surface is not guaranteed to be visible once it is mapped.\n\nFor an xdg_surface to be mapped by the compositor, the following\nconditions must be met:\n(1) the client has assigned an xdg_surface-based role to the surface\n(2) the client has set and committed the xdg_surface state and the\nrole-dependent state to the surface\n(3) the client has committed a buffer to the surface\n\nA newly-unmapped surface is considered to have met condition (1) out\nof the 3 required conditions for mapping a surface if its role surface\nhas not been destroyed, i.e. the client must perform the initial commit\nagain before attaching a buffer."]
 pub mod xdg_surface {
     use super::sys::common::{wl_argument, wl_array, wl_interface, wl_message};
     use super::sys::server::*;
@@ -1421,7 +1421,7 @@ pub mod xdg_surface {
         type Request = Request;
         type Event = Event;
         const NAME: &'static str = "xdg_surface";
-        const VERSION: u32 = 3;
+        const VERSION: u32 = 4;
         fn c_interface() -> *const wl_interface {
             unsafe { &xdg_surface_interface }
         }
@@ -1489,7 +1489,7 @@ pub mod xdg_surface {
     #[doc = r" C representation of this interface, for interop"]
     pub static mut xdg_surface_interface: wl_interface = wl_interface {
         name: b"xdg_surface\0" as *const u8 as *const c_char,
-        version: 3,
+        version: 4,
         request_count: 5,
         requests: unsafe { &xdg_surface_requests as *const _ },
         event_count: 1,
@@ -1505,6 +1505,24 @@ pub mod xdg_toplevel {
         MessageDesc, MessageGroup, Object, ObjectMetadata, Resource, NULLPTR,
     };
     use std::os::raw::c_char;
+    #[repr(u32)]
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[non_exhaustive]
+    pub enum Error {
+        #[doc = "provided value is not a valid variant of the resize_edge enum"]
+        InvalidResizeEdge = 0,
+    }
+    impl Error {
+        pub fn from_raw(n: u32) -> Option<Error> {
+            match n {
+                0 => Some(Error::InvalidResizeEdge),
+                _ => Option::None,
+            }
+        }
+        pub fn to_raw(&self) -> u32 {
+            *self as u32
+        }
+    }
     #[doc = "edge values for resizing\n\nThese values are used to indicate which edge of a surface\nis being dragged in a resize operation."]
     #[repr(u32)]
     #[derive(Copy, Clone, Debug, PartialEq)]
@@ -1604,7 +1622,7 @@ pub mod xdg_toplevel {
             seat: super::wl_seat::WlSeat,
             serial: u32,
         },
-        #[doc = "start an interactive resize\n\nStart a user-driven, interactive resize of the surface.\n\nThis request must be used in response to some sort of user action\nlike a button press, key press, or touch down event. The passed\nserial is used to determine the type of interactive resize (touch,\npointer, etc).\n\nThe server may ignore resize requests depending on the state of\nthe surface (e.g. fullscreen or maximized).\n\nIf triggered, the client will receive configure events with the\n\"resize\" state enum value and the expected sizes. See the \"resize\"\nenum value for more details about what is required. The client\nmust also acknowledge configure events using \"ack_configure\". After\nthe resize is completed, the client will receive another \"configure\"\nevent without the resize state.\n\nIf triggered, the surface also will lose the focus of the device\n(wl_pointer, wl_touch, etc) used for the resize. It is up to the\ncompositor to visually indicate that the resize is taking place,\nsuch as updating a pointer cursor, during the resize. There is no\nguarantee that the device focus will return when the resize is\ncompleted.\n\nThe edges parameter specifies how the surface should be resized,\nand is one of the values of the resize_edge enum. The compositor\nmay use this information to update the surface position for\nexample when dragging the top left corner. The compositor may also\nuse this information to adapt its behavior, e.g. choose an\nappropriate cursor image."]
+        #[doc = "start an interactive resize\n\nStart a user-driven, interactive resize of the surface.\n\nThis request must be used in response to some sort of user action\nlike a button press, key press, or touch down event. The passed\nserial is used to determine the type of interactive resize (touch,\npointer, etc).\n\nThe server may ignore resize requests depending on the state of\nthe surface (e.g. fullscreen or maximized).\n\nIf triggered, the client will receive configure events with the\n\"resize\" state enum value and the expected sizes. See the \"resize\"\nenum value for more details about what is required. The client\nmust also acknowledge configure events using \"ack_configure\". After\nthe resize is completed, the client will receive another \"configure\"\nevent without the resize state.\n\nIf triggered, the surface also will lose the focus of the device\n(wl_pointer, wl_touch, etc) used for the resize. It is up to the\ncompositor to visually indicate that the resize is taking place,\nsuch as updating a pointer cursor, during the resize. There is no\nguarantee that the device focus will return when the resize is\ncompleted.\n\nThe edges parameter specifies how the surface should be resized, and\nis one of the values of the resize_edge enum. Values not matching\na variant of the enum will cause a protocol error. The compositor\nmay use this information to update the surface position for example\nwhen dragging the top left corner. The compositor may also use\nthis information to adapt its behavior, e.g. choose an appropriate\ncursor image."]
         Resize {
             seat: super::wl_seat::WlSeat,
             serial: u32,
@@ -2085,6 +2103,8 @@ pub mod xdg_toplevel {
         },
         #[doc = "surface wants to be closed\n\nThe close event is sent by the compositor when the user\nwants the surface to be closed. This should be equivalent to\nthe user clicking the close button in client-side decorations,\nif your application has any.\n\nThis is only a request that the user intends to close the\nwindow. The client may choose to ignore this request, or show\na dialog to ask the user to save their data, etc."]
         Close,
+        #[doc = "recommended window geometry bounds\n\nThe configure_bounds event may be sent prior to a xdg_toplevel.configure\nevent to communicate the bounds a window geometry size is recommended\nto constrain to.\n\nThe passed width and height are in surface coordinate space. If width\nand height are 0, it means bounds is unknown and equivalent to as if no\nconfigure_bounds event was ever sent for this surface.\n\nThe bounds can for example correspond to the size of a monitor excluding\nany panels or other shell components, so that a surface isn't created in\na way that it cannot fit.\n\nThe bounds may change at any point, and in such a case, a new\nxdg_toplevel.configure_bounds will be sent, followed by\nxdg_toplevel.configure and xdg_surface.configure.\n\nOnly available since version 4 of the interface"]
+        ConfigureBounds { width: i32, height: i32 },
     }
     impl super::MessageGroup for Event {
         const MESSAGES: &'static [super::MessageDesc] = &[
@@ -2104,6 +2124,12 @@ pub mod xdg_toplevel {
                 signature: &[],
                 destructor: false,
             },
+            super::MessageDesc {
+                name: "configure_bounds",
+                since: 4,
+                signature: &[super::ArgumentType::Int, super::ArgumentType::Int],
+                destructor: false,
+            },
         ];
         type Map = super::ResourceMap;
         fn is_destructor(&self) -> bool {
@@ -2115,12 +2141,14 @@ pub mod xdg_toplevel {
             match *self {
                 Event::Configure { .. } => 0,
                 Event::Close => 1,
+                Event::ConfigureBounds { .. } => 2,
             }
         }
         fn since(&self) -> u32 {
             match *self {
                 Event::Configure { .. } => 1,
                 Event::Close => 1,
+                Event::ConfigureBounds { .. } => 4,
             }
         }
         fn child<Meta: ObjectMetadata>(
@@ -2154,6 +2182,11 @@ pub mod xdg_toplevel {
                     sender_id: sender_id,
                     opcode: 1,
                     args: smallvec![],
+                },
+                Event::ConfigureBounds { width, height } => Message {
+                    sender_id: sender_id,
+                    opcode: 2,
+                    args: smallvec![Argument::Int(width), Argument::Int(height),],
                 },
             }
         }
@@ -2189,6 +2222,12 @@ pub mod xdg_toplevel {
                     let mut _args_array: [wl_argument; 0] = unsafe { ::std::mem::zeroed() };
                     f(1, &mut _args_array)
                 }
+                Event::ConfigureBounds { width, height } => {
+                    let mut _args_array: [wl_argument; 2] = unsafe { ::std::mem::zeroed() };
+                    _args_array[0].i = width;
+                    _args_array[1].i = height;
+                    f(2, &mut _args_array)
+                }
             }
         }
     }
@@ -2221,7 +2260,7 @@ pub mod xdg_toplevel {
         type Request = Request;
         type Event = Event;
         const NAME: &'static str = "xdg_toplevel";
-        const VERSION: u32 = 3;
+        const VERSION: u32 = 4;
         fn c_interface() -> *const wl_interface {
             unsafe { &xdg_toplevel_interface }
         }
@@ -2239,6 +2278,14 @@ pub mod xdg_toplevel {
         #[doc = "surface wants to be closed\n\nThe close event is sent by the compositor when the user\nwants the surface to be closed. This should be equivalent to\nthe user clicking the close button in client-side decorations,\nif your application has any.\n\nThis is only a request that the user intends to close the\nwindow. The client may choose to ignore this request, or show\na dialog to ask the user to save their data, etc."]
         pub fn close(&self) -> () {
             let msg = Event::Close;
+            self.0.send(msg);
+        }
+        #[doc = "recommended window geometry bounds\n\nThe configure_bounds event may be sent prior to a xdg_toplevel.configure\nevent to communicate the bounds a window geometry size is recommended\nto constrain to.\n\nThe passed width and height are in surface coordinate space. If width\nand height are 0, it means bounds is unknown and equivalent to as if no\nconfigure_bounds event was ever sent for this surface.\n\nThe bounds can for example correspond to the size of a monitor excluding\nany panels or other shell components, so that a surface isn't created in\na way that it cannot fit.\n\nThe bounds may change at any point, and in such a case, a new\nxdg_toplevel.configure_bounds will be sent, followed by\nxdg_toplevel.configure and xdg_surface.configure.\n\nOnly available since version 4 of the interface."]
+        pub fn configure_bounds(&self, width: i32, height: i32) -> () {
+            let msg = Event::ConfigureBounds {
+                width: width,
+                height: height,
+            };
             self.0.send(msg);
         }
     }
@@ -2274,6 +2321,8 @@ pub mod xdg_toplevel {
     pub const EVT_CONFIGURE_SINCE: u32 = 1u32;
     #[doc = r" The minimal object version supporting this event"]
     pub const EVT_CLOSE_SINCE: u32 = 1u32;
+    #[doc = r" The minimal object version supporting this event"]
+    pub const EVT_CONFIGURE_BOUNDS_SINCE: u32 = 4u32;
     static mut xdg_toplevel_requests_set_parent_types: [*const wl_interface; 1] =
         [unsafe { &super::xdg_toplevel::xdg_toplevel_interface as *const wl_interface }];
     static mut xdg_toplevel_requests_show_window_menu_types: [*const wl_interface; 4] = [
@@ -2367,7 +2416,7 @@ pub mod xdg_toplevel {
         },
     ];
     #[doc = r" C-representation of the messages of this interface, for interop"]
-    pub static mut xdg_toplevel_events: [wl_message; 2] = [
+    pub static mut xdg_toplevel_events: [wl_message; 3] = [
         wl_message {
             name: b"configure\0" as *const u8 as *const c_char,
             signature: b"iia\0" as *const u8 as *const c_char,
@@ -2378,14 +2427,19 @@ pub mod xdg_toplevel {
             signature: b"\0" as *const u8 as *const c_char,
             types: unsafe { &types_null as *const _ },
         },
+        wl_message {
+            name: b"configure_bounds\0" as *const u8 as *const c_char,
+            signature: b"4ii\0" as *const u8 as *const c_char,
+            types: unsafe { &types_null as *const _ },
+        },
     ];
     #[doc = r" C representation of this interface, for interop"]
     pub static mut xdg_toplevel_interface: wl_interface = wl_interface {
         name: b"xdg_toplevel\0" as *const u8 as *const c_char,
-        version: 3,
+        version: 4,
         request_count: 14,
         requests: unsafe { &xdg_toplevel_requests as *const _ },
-        event_count: 2,
+        event_count: 3,
         events: unsafe { &xdg_toplevel_events as *const _ },
     };
 }
@@ -2733,7 +2787,7 @@ pub mod xdg_popup {
         type Request = Request;
         type Event = Event;
         const NAME: &'static str = "xdg_popup";
-        const VERSION: u32 = 3;
+        const VERSION: u32 = 4;
         fn c_interface() -> *const wl_interface {
             unsafe { &xdg_popup_interface }
         }
@@ -2819,7 +2873,7 @@ pub mod xdg_popup {
     #[doc = r" C representation of this interface, for interop"]
     pub static mut xdg_popup_interface: wl_interface = wl_interface {
         name: b"xdg_popup\0" as *const u8 as *const c_char,
-        version: 3,
+        version: 4,
         request_count: 3,
         requests: unsafe { &xdg_popup_requests as *const _ },
         event_count: 3,

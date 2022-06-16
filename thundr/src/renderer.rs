@@ -239,7 +239,11 @@ impl Renderer {
                 vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
                     | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING,
             )
-            .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
+            .message_type(
+                vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                    | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
+                    | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION,
+            )
             .pfn_user_callback(Some(vulkan_debug_callback));
 
         let dr_loader = ext::DebugUtils::new(entry, instance);
@@ -255,7 +259,7 @@ impl Renderer {
     /// some basic extensions being enabled. All of the work is
     /// done in subfunctions.
     unsafe fn create_instance(info: &CreateInfo) -> (Entry, Instance) {
-        let entry = Entry::new().unwrap();
+        let entry = Entry::linked();
         let app_name = CString::new("Thundr").unwrap();
 
         // For some reason old versions of the validation layers segfault in renderpass on the

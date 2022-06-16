@@ -741,13 +741,14 @@ impl WindowManager {
     /// The main event loop of the vkcomp thread
     pub fn worker_thread(&mut self) {
         // first set the background
-        let img = image::open("images/hurricane.png").unwrap().to_bgra8();
+        let img = image::open("images/beach.png").unwrap().to_bgra8();
+        let dims = img.dimensions();
         let pixels: Vec<u8> = img.into_vec();
         self.set_background_from_mem(
             pixels.as_slice(),
             // dimensions of the texture
-            512,
-            512,
+            dims.0,
+            dims.1,
         )
         .unwrap();
 

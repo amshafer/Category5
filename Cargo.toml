@@ -10,11 +10,11 @@ edition = "2018"
 thundr={path="thundr"}
 wayland-server={version="0.29.1", features=["use_system_lib"]}
 wayland-commons="0.29.1"
-input={path="../input.rs", features=["gen"]}
+input={version="0.7.1", features=["gen"]}
 udev="0.6"
 libc="0.2"
 image="0.23.14"
-nix="0.17"
+nix="0.24"
 bitflags="1.3.2"
 xkbcommon="0.4"
 atmos_gen={path="atmos_gen"}
