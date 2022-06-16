@@ -55,12 +55,18 @@ impl SeatInstance {
 
         let input = parent.s_input.borrow();
         // Make a temp fd to share with the client
+        #[cfg(target_os = "freebsd")]
         let fd = unsafe {
             libc::shm_open(
                 libc::SHM_ANON,
                 libc::O_CREAT | libc::O_RDWR | libc::O_EXCL | libc::O_CLOEXEC,
                 0o600,
             )
+        };
+        #[cfg(target_os = "linux")]
+        let fd = unsafe {
+            let memfd_name = std::ffi::CString::new("cat5_keymap").unwrap();
+            libc::memfd_create(memfd_name.as_ptr() as *mut i8, libc::MFD_CLOEXEC)
         };
         assert!(fd > 0);
         let mut file = unsafe { File::from_raw_fd(fd) };
