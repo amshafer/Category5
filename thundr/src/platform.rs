@@ -30,6 +30,8 @@ pub struct VKDeviceFeatures {
     pub vkc_supports_incremental_present: bool,
     /// Does this device support telling us the DRM major/minor numbers in use?
     pub vkc_supports_phys_dev_drm: bool,
+    /// Does this device support the nvidia aftermath sdk?
+    pub vkc_supports_nvidia_aftermath: bool,
 
     // The following are the lists of extensions that map to the above features
     vkc_ext_mem_exts: [*const i8; 1],
@@ -39,6 +41,7 @@ pub struct VKDeviceFeatures {
     vkc_drm_modifiers_exts: [*const i8; 1],
     vkc_incremental_present_exts: [*const i8; 1],
     vkc_phys_dev_drm_exts: [*const i8; 1],
+    vkc_nv_aftermath_exts: [*const i8; 2],
 
     // Capabilities
     pub max_sampler_count: u32,
@@ -82,6 +85,7 @@ impl VKDeviceFeatures {
             vkc_supports_drm_modifiers: false,
             vkc_supports_incremental_present: false,
             vkc_supports_phys_dev_drm: false,
+            vkc_supports_nvidia_aftermath: false,
             vkc_ext_mem_exts: [khr::ExternalMemoryFd::name().as_ptr()],
             vkc_dmabuf_exts: [
                 khr::ExternalMemoryFd::name().as_ptr(),
@@ -103,6 +107,10 @@ impl VKDeviceFeatures {
                 .properties
                 .limits
                 .max_per_stage_descriptor_samplers,
+            vkc_nv_aftermath_exts: [
+                vk::NvDeviceDiagnosticsConfigFn::name().as_ptr(),
+                vk::NvDeviceDiagnosticCheckpointsFn::name().as_ptr(),
+            ],
         };
 
         let exts = unsafe { inst.enumerate_device_extension_properties(pdev).unwrap() };
@@ -140,6 +148,15 @@ impl VKDeviceFeatures {
             false => log::error!("This vulkan device does not support incremental presentation"),
         }
 
+        let supports_aftermath =
+            match contains_extensions(exts.as_slice(), &ret.vkc_nv_aftermath_exts) {
+                true => true,
+                false => {
+                    log::error!("This vulkan device does not support incremental presentation");
+                    false
+                }
+            };
+
         // Now test the device features to see if subcomponents of these extensions are available
         let mut features = vk::PhysicalDeviceFeatures2::builder().build();
         let mut index_features = vk::PhysicalDeviceDescriptorIndexingFeatures::builder().build();
@@ -159,6 +176,7 @@ impl VKDeviceFeatures {
             && index_features.descriptor_binding_update_unused_while_pending > 0
             && index_features.descriptor_binding_storage_buffer_update_after_bind > 0
             && index_features.descriptor_binding_sampled_image_update_after_bind > 0;
+        ret.vkc_supports_nvidia_aftermath = supports_aftermath;
 
         match contains_extensions(exts.as_slice(), &ret.vkc_phys_dev_drm_exts) {
             true => ret.vkc_supports_phys_dev_drm = true,
@@ -203,6 +221,11 @@ impl VKDeviceFeatures {
         }
         if self.vkc_supports_phys_dev_drm {
             for e in self.vkc_phys_dev_drm_exts.iter() {
+                ret.push(*e)
+            }
+        }
+        if self.vkc_supports_nvidia_aftermath {
+            for e in self.vkc_nv_aftermath_exts.iter() {
                 ret.push(*e)
             }
         }

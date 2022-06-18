@@ -23,7 +23,10 @@ thiserror="1.0"
 sdl2={ version="0.35", optional=true }
 wayland-client={ version="0.29", optional=true }
 
+nvidia-aftermath-rs = { path="../../nvidia-aftermath-rs", optional = true }
+
 [features]
+aftermath = ["nvidia-aftermath-rs"]
 sdl=["sdl2"]
 wayland = ["wayland-client"]
 

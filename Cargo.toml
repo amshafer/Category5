@@ -24,3 +24,6 @@ lazy_static="1.4"
 
 [build-dependencies]
 wayland-scanner="0.29.1"
+
+[features]
+aftermath = ["thundr/aftermath"]

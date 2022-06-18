@@ -28,6 +28,12 @@ use crate::{CreateInfo, Damage};
 use crate::{Result, ThundrError};
 use cat5_utils::{log, region::Rect, MemImage};
 
+// Nvidia aftermath SDK GPU crashdump support
+#[cfg(feature = "aftermath")]
+extern crate nvidia_aftermath_rs as aftermath;
+#[cfg(feature = "aftermath")]
+use aftermath::Aftermath;
+
 /// This is the offset from the base of the winlist buffer to the
 /// window array in the actual ssbo. This needs to match the `offset`
 /// field in the `layout` qualifier in the shaders
@@ -190,6 +196,11 @@ pub struct Renderer {
     /// Dmabuf import release barriers. These let drm know vulkan
     /// is done using them.
     pub r_release_barriers: Vec<vk::ImageMemoryBarrier>,
+
+    /// Nvidia Aftermath SDK instance. Inclusion of this enables
+    /// GPU crashdumps.
+    #[cfg(feature = "aftermath")]
+    r_aftermath: Aftermath,
 }
 
 /// This must match the definition of the Window struct in the
@@ -453,6 +464,21 @@ impl Renderer {
                 .build();
 
             dev_create_info.p_next = &indexing_info as *const _ as *mut std::ffi::c_void;
+        }
+
+        #[cfg(feature = "aftermath")]
+        {
+            let mut aftermath_info = vk::DeviceDiagnosticsConfigCreateInfoNV::builder()
+                .flags(
+                    vk::DeviceDiagnosticsConfigFlagsNV::ENABLE_SHADER_DEBUG_INFO
+                        | vk::DeviceDiagnosticsConfigFlagsNV::ENABLE_RESOURCE_TRACKING,
+                )
+                .build();
+            aftermath_info.p_next = dev_create_info.p_next;
+
+            dev_create_info.p_next = &aftermath_info as *const _ as *mut std::ffi::c_void;
+            // do our call here so aftermath_info is still in scope
+            return inst.create_device(pdev, &dev_create_info, None).unwrap();
         }
 
         // return a newly created device
@@ -1426,6 +1452,10 @@ impl Renderer {
             // Remove duplicate entries to keep validation from complaining
             families.dedup();
 
+            // This *must* be done before we create our device
+            #[cfg(feature = "aftermath")]
+            let aftermath = Aftermath::initialize().expect("Could not enable Nvidia Aftermath SDK");
+
             let dev_features = VKDeviceFeatures::new(&info, &inst, pdev);
             if !dev_features.vkc_supports_desc_indexing {
                 return Err(ThundrError::VK_NOT_ALL_EXTENSIONS_AVAILABLE);
@@ -1581,6 +1611,8 @@ impl Renderer {
                 tmp_image_mem: tmp_mem,
                 r_acquire_barriers: Vec::new(),
                 r_release_barriers: Vec::new(),
+                #[cfg(feature = "aftermath")]
+                r_aftermath: aftermath,
             };
             rend.reallocate_winlist_buf_with_cap(rend.r_winlist_capacity);
 
@@ -1680,13 +1712,24 @@ impl Renderer {
     /// Wait for the submit_fence
     pub fn wait_for_prev_submit(&self) {
         unsafe {
-            self.dev
-                .wait_for_fences(
-                    &[self.submit_fence, self.copy_cbuf_fence],
-                    true,          // wait for all
-                    std::u64::MAX, //timeout
-                )
-                .expect("Could not wait for the copy fence");
+            match self.dev.wait_for_fences(
+                &[self.submit_fence, self.copy_cbuf_fence],
+                true,          // wait for all
+                std::u64::MAX, //timeout
+            ) {
+                Ok(_) => {}
+                Err(e) => match e {
+                    vk::Result::ERROR_DEVICE_LOST => {
+                        // If aftermath support is enabled, wait for aftermath
+                        // to dump the GPU state
+                        #[cfg(feature = "aftermath")]
+                        {
+                            self.r_aftermath.wait_for_dump();
+                        }
+                    }
+                    _ => panic!("Could not wait for vulkan fences"),
+                },
+            };
         }
     }
 
