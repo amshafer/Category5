@@ -89,7 +89,7 @@ pub use surface::{SubsurfaceOrder, Surface};
 extern crate utils;
 pub use crate::utils::region::Rect;
 pub use crate::utils::{anyhow, Context, Dmabuf, MemImage};
-use utils::log;
+use utils::{ecs::ECSInstance, log};
 
 pub type Result<T> = std::result::Result<T, ThundrError>;
 
@@ -130,6 +130,8 @@ pub enum ThundrError {
 
 pub struct Thundr {
     th_rend: Renderer,
+    /// This is the system used to track all Thundr resources
+    th_ecs_inst: ECSInstance,
 
     /// We keep a list of all the images allocated by this context
     /// so that Pipeline::draw doesn't have to dedup the surfacelist's images
@@ -212,9 +214,11 @@ impl<'a> CreateInfoBuilder<'a> {
 impl Thundr {
     // TODO: make get_available_params and add customization
     pub fn new(info: &CreateInfo) -> Result<Thundr> {
+        let ecs = ECSInstance::new();
+
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
-        let mut rend = Renderer::new(&info)?;
+        let mut rend = Renderer::new(&info, &ecs)?;
 
         // Create the pipeline(s) requested
         // Record the type we are using so that we know which type to regenerate
@@ -235,6 +239,7 @@ impl Thundr {
 
         Ok(Thundr {
             th_rend: rend,
+            th_ecs_inst: ecs,
             th_image_list: Vec::new(),
             th_pipe_type: ty,
             th_pipe: pipe,
@@ -377,7 +382,14 @@ impl Thundr {
     /// drawn. It needs to have an image attached. The same
     /// image can be bound to multiple surfaces.
     pub fn create_surface(&mut self, x: f32, y: f32, width: f32, height: f32) -> Surface {
-        Surface::create_surface(x, y, width, height)
+        let id = self.th_ecs_inst.mint_new_id();
+        let surf = Surface::create_surface(id, x, y, width, height);
+        let ecs_capacity = self.th_ecs_inst.num_entities();
+
+        // Make space in our vulkan buffers
+        self.th_rend.ensure_window_capacity(ecs_capacity);
+
+        return surf;
     }
 
     /// Attaches an image to this surface, when this surface
@@ -480,7 +492,7 @@ impl Thundr {
             }
 
             log::debug!("Window list:");
-            for (i, w) in self.th_rend.r_winlist.iter().enumerate() {
+            for (i, w) in self.th_rend.r_windows.iter().enumerate() {
                 log::debug!(
                     "[{}] Image={}, Pos={:?}, Size={:?}, Opaque(Pos={:?}, Size={:?})",
                     i,

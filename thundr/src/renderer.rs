@@ -19,7 +19,7 @@ use crate::display::Display;
 use crate::list::SurfaceList;
 use crate::pipelines::PipelineType;
 use crate::platform::VKDeviceFeatures;
-use crate::Image;
+use crate::{Image, Surface};
 
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +33,8 @@ use cat5_utils::{log, region::Rect, MemImage};
 extern crate nvidia_aftermath_rs as aftermath;
 #[cfg(feature = "aftermath")]
 use aftermath::Aftermath;
+
+use utils::ecs::{ECSId, ECSInstance, ECSTable};
 
 /// This is the offset from the base of the winlist buffer to the
 /// window array in the actual ssbo. This needs to match the `offset`
@@ -178,11 +180,16 @@ pub struct Renderer {
     pub(crate) r_images_desc: vk::DescriptorSet,
 
     /// The list of window dimensions that is passed to the shader
-    pub r_winlist: Vec<Window>,
-    pub r_winlist_buf: vk::Buffer,
-    pub r_winlist_mem: vk::DeviceMemory,
+    pub r_windows: ECSTable<Window>,
+    pub r_windows_buf: vk::Buffer,
+    pub r_windows_mem: vk::DeviceMemory,
     /// The number of Windows that r_winlist_mem was allocate to hold
-    r_winlist_capacity: usize,
+    pub r_windows_capacity: usize,
+    /// The order of windows to be drawn. References r_windows
+    pub r_window_order: Vec<ECSId>,
+    pub r_order_buf: vk::Buffer,
+    pub r_order_mem: vk::DeviceMemory,
+    pub r_order_capacity: usize,
 
     /// Temporary image to bind to the image list when
     /// no images are attached.
@@ -209,7 +216,7 @@ pub struct Renderer {
 /// This *MUST* be a power of two, as the layout of the shader ssbo
 /// is dependent on offsetting using the size of this.
 #[repr(C)]
-#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
+#[derive(Default, Copy, Clone, Serialize, Deserialize, Debug)]
 pub struct Window {
     /// The id of the image. This is the offset into the unbounded sampler array.
     /// w_id.0: id that's the offset into the unbound sampler array
@@ -1363,9 +1370,28 @@ impl Renderer {
         (bindless_pool, bindless_layout)
     }
 
-    unsafe fn reallocate_winlist_buf_with_cap(&mut self, capacity: usize) {
-        self.dev.destroy_buffer(self.r_winlist_buf, None);
-        self.free_memory(self.r_winlist_mem);
+    /// This helper ensures that our window list can hold `capacity` elements
+    ///
+    /// This will doube the winlist capacity until it fits.
+    pub fn ensure_window_capacity(&mut self, capacity: usize) {
+        if capacity >= self.r_windows_capacity {
+            let mut new_capacity = 0;
+            while new_capacity <= self.r_windows_capacity {
+                new_capacity += self.r_windows_capacity;
+            }
+
+            unsafe {
+                self.reallocate_windows_buf_with_cap(new_capacity);
+            }
+        }
+    }
+
+    /// This is a helper for reallocating the vulkan resources of the winlist
+    unsafe fn reallocate_windows_buf_with_cap(&mut self, capacity: usize) {
+        self.wait_for_prev_submit();
+
+        self.dev.destroy_buffer(self.r_windows_buf, None);
+        self.free_memory(self.r_windows_mem);
 
         // create our data and a storage buffer for the window list
         let (wl_storage, wl_storage_mem) = self.create_buffer_with_size(
@@ -1379,8 +1405,33 @@ impl Renderer {
         self.dev
             .bind_buffer_memory(wl_storage, wl_storage_mem, 0)
             .unwrap();
-        self.r_winlist_buf = wl_storage;
-        self.r_winlist_mem = wl_storage_mem;
+        self.r_windows_buf = wl_storage;
+        self.r_windows_mem = wl_storage_mem;
+        self.r_windows_capacity = capacity;
+    }
+
+    /// This is a helper for reallocating the vulkan resources of the window order list
+    unsafe fn reallocate_order_buf_with_cap(&mut self, capacity: usize) {
+        self.wait_for_prev_submit();
+
+        self.dev.destroy_buffer(self.r_order_buf, None);
+        self.free_memory(self.r_order_mem);
+
+        // create our data and a storage buffer for the window list
+        let (wl_storage, wl_storage_mem) = self.create_buffer_with_size(
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            vk::SharingMode::EXCLUSIVE,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL
+                | vk::MemoryPropertyFlags::HOST_VISIBLE
+                | vk::MemoryPropertyFlags::HOST_COHERENT,
+            (std::mem::size_of::<Window>() * capacity) as u64 + WINDOW_LIST_GLSL_OFFSET as u64,
+        );
+        self.dev
+            .bind_buffer_memory(wl_storage, wl_storage_mem, 0)
+            .unwrap();
+        self.r_order_buf = wl_storage;
+        self.r_order_mem = wl_storage_mem;
+        self.r_order_capacity = capacity;
     }
 
     /// Create a new Vulkan Renderer
@@ -1393,7 +1444,7 @@ impl Renderer {
     /// All methods called after this only need to take a mutable reference to
     /// self, avoiding any nasty argument lists like the functions above.
     /// The goal is to have this make dealing with the api less wordy.
-    pub fn new(info: &CreateInfo) -> Result<Renderer> {
+    pub fn new(info: &CreateInfo, ecs: &ECSInstance) -> Result<Renderer> {
         unsafe {
             let (entry, inst) = Renderer::create_instance(info);
 
@@ -1537,8 +1588,6 @@ impl Renderer {
             let bindless_desc =
                 Self::allocate_bindless_desc(&dev, bindless_pool, &[bindless_layout], 1);
 
-            let winlist: Vec<Window> = Vec::with_capacity(64);
-
             let (tmp, tmp_view, tmp_mem) = Self::create_image(
                 &dev,
                 &mem_props,
@@ -1602,10 +1651,14 @@ impl Renderer {
                 r_images_desc_pool: bindless_pool,
                 r_images_desc_layout: bindless_layout,
                 r_images_desc: bindless_desc,
-                r_winlist: winlist,
-                r_winlist_buf: vk::Buffer::null(),
-                r_winlist_mem: vk::DeviceMemory::null(),
-                r_winlist_capacity: 8,
+                r_windows: ECSTable::new(ecs.clone()),
+                r_windows_buf: vk::Buffer::null(),
+                r_windows_mem: vk::DeviceMemory::null(),
+                r_windows_capacity: 8,
+                r_window_order: Vec::new(),
+                r_order_buf: vk::Buffer::null(),
+                r_order_mem: vk::DeviceMemory::null(),
+                r_order_capacity: 8,
                 tmp_image: tmp,
                 tmp_image_view: tmp_view,
                 tmp_image_mem: tmp_mem,
@@ -1614,58 +1667,85 @@ impl Renderer {
                 #[cfg(feature = "aftermath")]
                 r_aftermath: aftermath,
             };
-            rend.reallocate_winlist_buf_with_cap(rend.r_winlist_capacity);
+            rend.reallocate_windows_buf_with_cap(rend.r_windows_capacity);
+            rend.reallocate_order_buf_with_cap(rend.r_order_capacity);
 
             return Ok(rend);
+        }
+    }
+
+    fn update_window_list_recurse(&mut self, mut surf: Surface, offset: (i32, i32)) {
+        if surf.modified() {
+            self.update_surf_shader_window(&surf, offset);
+
+            surf.set_modified(false);
+            let surf_off = surf.get_size();
+
+            for i in 0..surf.get_subsurface_count() {
+                let child = surf.get_subsurface(i);
+
+                self.update_window_list_recurse(
+                    child,
+                    (offset.0 + surf_off.0 as i32, offset.1 + surf_off.1 as i32),
+                );
+            }
         }
     }
 
     /// Extract information for shaders from a surface list
     ///
     /// This includes dimensions, the image bound, etc.
-    fn update_window_list(&mut self, surfaces: &SurfaceList) -> bool {
-        self.r_winlist.clear();
+    fn update_window_list(&mut self, surfaces: &SurfaceList) {
+        self.r_window_order.clear();
+
+        for surf in surfaces.iter() {
+            self.update_window_list_recurse(surf.clone(), (0, 0));
+        }
+    }
+
+    /// Write our Thundr Surface's data to the window list we will pass to the shader
+    ///
+    /// The shader needs a contiguous list of surfaces, so we turn our surfaces
+    /// into a bunch of "windows". These windows will have their size and offset
+    /// populated, along with any other drawing data. These live in r_windows, and
+    /// the order is set by r_window_order.
+    ///
+    /// The offset parameter comes from the offset of this window due to its
+    /// surface being a subsurface.
+    fn update_surf_shader_window(&mut self, surf_rc: &Surface, offset: (i32, i32)) {
         // Our iterator is going to take into account the dimensions of the
         // parent surface(s), and give us the offset from which we should start
         // doing our calculations. Basically off_x is the parent surfaces X position.
-        surfaces.map_on_all_surfaces(|surf_rc, off_x, off_y| {
-            let surf = surf_rc.s_internal.borrow();
-            let opaque_reg = match surf_rc.get_opaque() {
-                Some(r) => r,
-                // If no opaque data was attached, place a -1 in the start.x component
-                // to tell the shader to ignore this
-                None => Rect::new(-1, 0, -1, 0),
-            };
-            let (image_id, use_color) = match surf.s_image.as_ref() {
-                Some(i) => (i.get_id(), false),
-                None => (-1, true),
-            };
+        let surf = surf_rc.s_internal.borrow();
+        let opaque_reg = match surf_rc.get_opaque() {
+            Some(r) => r,
+            // If no opaque data was attached, place a -1 in the start.x component
+            // to tell the shader to ignore this
+            None => Rect::new(-1, 0, -1, 0),
+        };
+        let (image_id, use_color) = match surf.s_image.as_ref() {
+            Some(i) => (i.get_id(), false),
+            None => (-1, true),
+        };
 
-            self.r_winlist.push(Window {
-                w_id: (image_id, use_color as i32, 0, 0),
-                w_color: match surf.s_color {
-                    Some((r, g, b, a)) => (r, g, b, a),
-                    // magic value so it's easy to debug
-                    // this is clear, since we don't have a color
-                    // assigned and we may not have an image bound.
-                    // In that case, we want this surface to be clear.
-                    None => (0.0, 50.0, 100.0, 0.0),
-                },
-                w_dims: Rect::new(
-                    off_x + surf.s_rect.r_pos.0 as i32,
-                    off_y + surf.s_rect.r_pos.1 as i32,
-                    surf.s_rect.r_size.0 as i32,
-                    surf.s_rect.r_size.1 as i32,
-                ),
-                w_opaque: opaque_reg,
-            });
-
-            // Return true to tell the iter to continue
-            true
-        });
-
-        // TODO: if surfaces hasn't changed update windows individually
-        return true;
+        self.r_windows[&surf_rc.s_window_id] = Window {
+            w_id: (image_id, use_color as i32, 0, 0),
+            w_color: match surf.s_color {
+                Some((r, g, b, a)) => (r, g, b, a),
+                // magic value so it's easy to debug
+                // this is clear, since we don't have a color
+                // assigned and we may not have an image bound.
+                // In that case, we want this surface to be clear.
+                None => (0.0, 50.0, 100.0, 0.0),
+            },
+            w_dims: Rect::new(
+                offset.0 + surf.s_rect.r_pos.0 as i32,
+                offset.1 + surf.s_rect.r_pos.1 as i32,
+                surf.s_rect.r_size.0 as i32,
+                surf.s_rect.r_size.1 as i32,
+            ),
+            w_opaque: opaque_reg,
+        };
     }
 
     fn initialize_transfer_mem(&mut self) {
@@ -2328,7 +2408,7 @@ impl Renderer {
 
         // Now write the new bindless descriptor
         let window_info = vk::DescriptorBufferInfo::builder()
-            .buffer(self.r_winlist_buf)
+            .buffer(self.r_windows_buf)
             .offset(0)
             .range(vk::WHOLE_SIZE)
             .build();
@@ -2367,27 +2447,20 @@ impl Renderer {
         // any changed
         self.update_window_list(surfaces);
 
-        log::info!("Window List: {:#?}", self.r_winlist);
+        self.ensure_window_capacity(self.r_windows.ect_data.len());
+
+        log::info!("Window List: {:#?}", self.r_windows);
 
         // TODO: don't even use CPU copies of the datastructs and perform
         // the tile/window updates in the mapped GPU memory
         // (requires benchmark)
         unsafe {
-            if self.r_winlist.len() > self.r_winlist_capacity {
-                self.r_winlist_capacity *= 2;
-                // If doubling was not enough, then just make it the size
-                if self.r_winlist.len() > self.r_winlist_capacity {
-                    self.r_winlist_capacity = self.r_winlist.len();
-                }
-                self.reallocate_winlist_buf_with_cap(self.r_winlist_capacity);
-            }
-
             // Shader expects struct WindowList { int count; Window windows[] }
-            self.update_memory(self.r_winlist_mem, 0, &[self.r_winlist.len()]);
+            self.update_memory(self.r_windows_mem, 0, &[self.r_windows.ect_data.len()]);
             self.update_memory(
-                self.r_winlist_mem,
+                self.r_windows_mem,
                 WINDOW_LIST_GLSL_OFFSET,
-                self.r_winlist.as_slice(),
+                self.r_windows.ect_data.as_slice(),
             );
         }
     }
@@ -2538,8 +2611,8 @@ impl Drop for Renderer {
 
             self.dev
                 .destroy_descriptor_pool(self.r_images_desc_pool, None);
-            self.dev.destroy_buffer(self.r_winlist_buf, None);
-            self.free_memory(self.r_winlist_mem);
+            self.dev.destroy_buffer(self.r_windows_buf, None);
+            self.free_memory(self.r_windows_mem);
 
             self.destroy_swapchain();
 

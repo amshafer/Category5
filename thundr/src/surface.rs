@@ -10,7 +10,7 @@ extern crate nix;
 use crate::{Damage, Result, ThundrError};
 
 use super::image::Image;
-use utils::region::Rect;
+use utils::{ecs::ECSId, region::Rect};
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -48,6 +48,8 @@ pub(crate) struct SurfaceInternal {
     /// If this is a subsurface, this will point to the parent we need to
     /// remove it from.
     pub s_parent: Option<Surface>,
+    /// Does this surface need to flush its contents to the window list?
+    s_modified: bool,
 }
 
 impl SurfaceInternal {
@@ -75,6 +77,7 @@ impl SurfaceInternal {
     }
 
     fn record_damage(&mut self) {
+        self.s_modified = true;
         self.s_was_damaged = true;
         let new_rect = self.s_rect.into();
 
@@ -97,6 +100,9 @@ impl SurfaceInternal {
 /// like to show the same image on multiple lists, then create multiple surfaces per-list.
 #[derive(Clone)]
 pub struct Surface {
+    /// The Thundr window list Id. This is an ECS ID to track surface updates
+    /// in the shader's list.
+    pub s_window_id: ECSId,
     pub(crate) s_internal: Rc<RefCell<SurfaceInternal>>,
 }
 
@@ -107,8 +113,9 @@ impl PartialEq for Surface {
 }
 
 impl Surface {
-    pub(crate) fn create_surface(x: f32, y: f32, width: f32, height: f32) -> Surface {
+    pub(crate) fn create_surface(id: ECSId, x: f32, y: f32, width: f32, height: f32) -> Surface {
         Surface {
+            s_window_id: id,
             s_internal: Rc::new(RefCell::new(SurfaceInternal {
                 s_rect: Rect::new(x, y, width, height),
                 s_image: None,
@@ -118,8 +125,27 @@ impl Surface {
                 s_was_damaged: false,
                 s_subsurfaces: Vec::with_capacity(0), // this keeps us from allocating
                 s_parent: None,
+                // When the surface is first created we don't send its size to
+                // the GPU. We mark it as modified and the first time it is used
+                // it will be flushed
+                s_modified: true,
             })),
         }
+    }
+
+    /// Get the ECS Id tracking this resource
+    pub fn get_ecs_id(&self) -> ECSId {
+        self.s_window_id.clone()
+    }
+
+    /// Does this surface need to have its size and offset flushed to the
+    /// GPU's window list?
+    pub fn modified(&self) -> bool {
+        self.s_internal.borrow().s_modified
+    }
+
+    pub fn set_modified(&mut self, modified: bool) {
+        self.s_internal.borrow_mut().s_modified = modified;
     }
 
     /// Internally record a damage rectangle for the dimensions
@@ -396,6 +422,10 @@ impl Surface {
         );
 
         Ok(())
+    }
+
+    pub fn get_subsurface_count(&self) -> usize {
+        self.s_internal.borrow().s_subsurfaces.len()
     }
 
     pub fn get_subsurface(&self, i: usize) -> Surface {

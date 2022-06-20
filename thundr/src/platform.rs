@@ -224,6 +224,8 @@ impl VKDeviceFeatures {
                 ret.push(*e)
             }
         }
+
+        #[cfg(aftermath)]
         if self.vkc_supports_nvidia_aftermath {
             for e in self.vkc_nv_aftermath_exts.iter() {
                 ret.push(*e)

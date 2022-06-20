@@ -75,6 +75,13 @@ impl ECSInstance {
         }
     }
 
+    /// Get the total number of entities that have been allocated.
+    ///
+    /// This returns the number of "live" ids
+    pub fn num_entities(&self) -> usize {
+        self.ecs_internal.borrow().eci_total_num_ids
+    }
+
     pub fn mint_new_id(&mut self) -> ECSId {
         let new_self = Self {
             ecs_internal: self.ecs_internal.clone(),
@@ -165,9 +172,9 @@ pub type ECSId = Rc<ECSIdInternal>;
 /// like to track for an entity.
 #[derive(Debug)]
 pub struct ECSTable<T: Default> {
-    ect_inst: ECSInstance,
+    pub ect_inst: ECSInstance,
     /// This is a component set, it will be indexed by ECSId
-    ect_data: Vec<T>,
+    pub ect_data: Vec<T>,
 }
 
 impl<T: Default> ECSTable<T> {
@@ -187,6 +194,13 @@ impl<T: Default> ECSTable<T> {
             self.ect_data.resize_with(id + 1, || T::default());
         }
     }
+
+    pub fn iter<'a>(&'a self) -> ECSTableIterator<'a, T> {
+        ECSTableIterator {
+            eti_table: self,
+            eti_cur: 0,
+        }
+    }
 }
 
 impl<T: Default> Index<&ECSId> for ECSTable<T> {
@@ -204,5 +218,24 @@ impl<T: Default> IndexMut<&ECSId> for ECSTable<T> {
     fn index_mut(&mut self, id: &ECSId) -> &mut T {
         self.ensure_space_for_id(id);
         &mut self.ect_data[id.ecs_id]
+    }
+}
+
+pub struct ECSTableIterator<'a, T: Default> {
+    eti_table: &'a ECSTable<T>,
+    eti_cur: usize,
+}
+
+impl<'a, T: Default> Iterator for ECSTableIterator<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.eti_cur >= self.eti_table.ect_data.len() {
+            return None;
+        }
+        let ret = &self.eti_table.ect_data[self.eti_cur];
+        self.eti_cur += 1;
+
+        return Some(ret);
     }
 }
