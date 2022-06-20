@@ -752,7 +752,9 @@ dependencies = [
 
 [[package]]
 name = "nvidia-aftermath-rs"
-version = "0.0.1"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8f5f2053881dd4ac41c97884eafe4888acc538f6699a5362b3a31655b07b8ca"
 dependencies = [
  "bindgen 0.60.1",
 ]
