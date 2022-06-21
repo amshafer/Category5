@@ -185,7 +185,11 @@ pub struct Renderer {
     pub r_windows_mem: vk::DeviceMemory,
     /// The number of Windows that r_winlist_mem was allocate to hold
     pub r_windows_capacity: usize,
-    /// The order of windows to be drawn. References r_windows
+    /// The order of windows to be drawn. References r_windows.
+    ///
+    /// This is sorted back to front, where back comes first. i.e. the
+    /// things you want to draw first should be in front of things that
+    /// you want to be able to blend overtop of.
     pub r_window_order: Vec<ECSId>,
     pub r_order_buf: vk::Buffer,
     pub r_order_mem: vk::DeviceMemory,
@@ -255,6 +259,7 @@ impl Renderer {
         let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
+                    | vk::DebugUtilsMessageSeverityFlagsEXT::INFO
                     | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING,
             )
             .message_type(
@@ -304,10 +309,15 @@ impl Renderer {
             .engine_version(0)
             .api_version(vk::API_VERSION_1_2);
 
-        let create_info = vk::InstanceCreateInfo::builder()
+        let mut create_info = vk::InstanceCreateInfo::builder()
             .application_info(&appinfo)
             .enabled_layer_names(&layer_names_raw)
             .enabled_extension_names(&extension_names_raw);
+
+        let printf_info = vk::ValidationFeaturesEXT::builder()
+            .enabled_validation_features(&[vk::ValidationFeatureEnableEXT::DEBUG_PRINTF])
+            .build();
+        create_info.p_next = &printf_info as *const _ as *const std::os::raw::c_void;
 
         let instance: Instance = entry
             .create_instance(&create_info, None)
@@ -604,9 +614,9 @@ impl Renderer {
         let mode = present_modes
             .iter()
             .cloned()
-            .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
+            .find(|&mode| mode == vk::PresentModeKHR::IMMEDIATE)
             // fallback to FIFO if the mailbox mode is not available
-            .unwrap_or(vk::PresentModeKHR::FIFO);
+            .unwrap_or(vk::PresentModeKHR::IMMEDIATE);
 
         // we need to check if the surface format supports the
         // storage image type
@@ -1442,7 +1452,8 @@ impl Renderer {
             vk::MemoryPropertyFlags::DEVICE_LOCAL
                 | vk::MemoryPropertyFlags::HOST_VISIBLE
                 | vk::MemoryPropertyFlags::HOST_COHERENT,
-            (std::mem::size_of::<i32>() * capacity) as u64 + WINDOW_LIST_GLSL_OFFSET as u64,
+            (std::mem::size_of::<i32>() * 4 * (capacity / 4 + 1)) as u64
+                + WINDOW_LIST_GLSL_OFFSET as u64,
         );
         self.dev
             .bind_buffer_memory(wl_storage, wl_storage_mem, 0)
@@ -1693,22 +1704,32 @@ impl Renderer {
     }
 
     fn update_window_list_recurse(&mut self, mut surf: Surface, offset: (i32, i32)) {
-        self.r_window_order.push(surf.s_window_id.clone());
+        {
+            // Only draw this surface if it has contents defined. Either
+            // an image or a color
+            //
+            // Add this surface before its children, since we need to draw it
+            // first so that any alpha in the children will see this underneath
+            let internal = surf.s_internal.borrow();
+            if internal.s_image.is_some() || internal.s_color.is_some() {
+                self.r_window_order.push(surf.s_window_id.clone());
+            }
+        }
 
         if surf.modified() {
             self.update_surf_shader_window(&surf, offset);
 
             surf.set_modified(false);
-            let surf_off = surf.get_size();
+        }
 
-            for i in 0..surf.get_subsurface_count() {
-                let child = surf.get_subsurface(i);
+        let surf_off = surf.get_pos();
+        for i in 0..surf.get_subsurface_count() {
+            let child = surf.get_subsurface(i);
 
-                self.update_window_list_recurse(
-                    child,
-                    (offset.0 + surf_off.0 as i32, offset.1 + surf_off.1 as i32),
-                );
-            }
+            self.update_window_list_recurse(
+                child,
+                (offset.0 + surf_off.0 as i32, offset.1 + surf_off.1 as i32),
+            );
         }
     }
 
@@ -1718,7 +1739,7 @@ impl Renderer {
     fn update_window_list(&mut self, surfaces: &SurfaceList) {
         self.r_window_order.clear();
 
-        for surf in surfaces.iter() {
+        for surf in surfaces.iter().rev() {
             self.update_window_list_recurse(surf.clone(), (0, 0));
         }
     }
@@ -2507,6 +2528,8 @@ impl Renderer {
                 WINDOW_LIST_GLSL_OFFSET,
                 window_order.as_slice(),
             );
+
+            self.dev.device_wait_idle().unwrap();
         }
     }
 

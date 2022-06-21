@@ -40,9 +40,9 @@ dependencies = [
 
 [[package]]
 name = "ash"
-version = "0.33.0+1.2.186"
+version = "0.37.0+1.3.209"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2142f1fa77cc4d24ffd2f24dc84f88ce5b1e588d524f10fb473a04b93aef14f"
+checksum = "006ca68e0f2b03f22d6fa9f2860f85aed430d257fec20f8879b2145e7c7ae1a6"
 dependencies = [
  "libloading",
 ]
@@ -419,9 +419,9 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.98"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "320cfe77175da3a483efed4bc0adc1968ca050b098ce4f2f1c13a56626128790"
+checksum = "349d5a591cd28b49e1d1037471617a32ddcda5731b99419008085f72d5a53836"
 
 [[package]]
 name = "libloading"
@@ -487,6 +487,18 @@ dependencies = [
  "cfg-if 0.1.10",
  "libc",
  "void",
+]
+
+[[package]]
+name = "nix"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f17df307904acd05aa8e32e97bb20f2a0df1728bbc2d771ae8f9a90463441e9"
+dependencies = [
+ "bitflags",
+ "cfg-if 1.0.0",
+ "libc",
+ "memoffset 0.6.4",
 ]
 
 [[package]]
@@ -840,7 +852,7 @@ dependencies = [
  "cgmath",
  "lazy_static",
  "memoffset 0.5.6",
- "nix",
+ "nix 0.24.1",
  "sdl2",
  "serde",
  "thiserror",
@@ -870,7 +882,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "lazy_static",
- "nix",
+ "nix 0.17.0",
  "serde",
  "serde_derive",
 ]

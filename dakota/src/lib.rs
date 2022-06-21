@@ -589,7 +589,8 @@ impl<'a> Dakota<'a> {
                 .context("Layout Tree Calculation: processing centered content of element")?;
         }
 
-        log::debug!("Final size of element is {:?}", ret);
+        log::debug!("Final offset of element is {:?}", ret.l_offset);
+        log::debug!("Final size of element is {:?}", ret.l_size);
         self.d_layout_nodes[&new_id] = ret;
 
         return Ok(new_id);

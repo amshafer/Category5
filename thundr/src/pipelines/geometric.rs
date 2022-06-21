@@ -143,7 +143,7 @@ impl Pipeline for GeomPipeline {
         rend: &mut Renderer,
         params: &RecordParams,
         _images: &[Image],
-        surfaces: &mut SurfaceList,
+        _surfaces: &mut SurfaceList,
     ) -> bool {
         self.begin_recording(rend, params);
         unsafe {
@@ -165,13 +165,14 @@ impl Pipeline for GeomPipeline {
             // technically 3 vertices are being drawn
             // by the shader
             rend.dev.cmd_draw_indexed(
-                params.cbuf,                            // drawing command buffer
-                self.vert_count,                        // number of verts
-                surfaces.len_with_subsurfaces() as u32, // number of instances
-                0,                                      // first vertex
-                0,                                      // vertex offset
-                0,                                      // first instance
+                params.cbuf,                      // drawing command buffer
+                self.vert_count,                  // number of verts
+                rend.r_window_order.len() as u32, // number of instances
+                0,                                // first vertex
+                0,                                // vertex offset
+                0,                                // first instance
             );
+            log::info!("Drawing {} objects", rend.r_window_order.len());
 
             // make sure to end recording
             rend.dev.cmd_end_render_pass(params.cbuf);
