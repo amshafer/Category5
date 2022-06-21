@@ -1315,6 +1315,10 @@ impl Renderer {
                 .descriptor_count(1)
                 .build(),
             vk::DescriptorPoolSize::builder()
+                .ty(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .build(),
+            vk::DescriptorPoolSize::builder()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 // Okay it looks like this must match the layout
                 // TODO: should this be changed?
@@ -1338,9 +1342,20 @@ impl Renderer {
                 )
                 .descriptor_count(1)
                 .build(),
-            // the variable image list
+            // the window order list
             vk::DescriptorSetLayoutBinding::builder()
                 .binding(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(
+                    vk::ShaderStageFlags::COMPUTE
+                        | vk::ShaderStageFlags::VERTEX
+                        | vk::ShaderStageFlags::FRAGMENT,
+                )
+                .descriptor_count(1)
+                .build(),
+            // the variable image list
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(2)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .stage_flags(
                     vk::ShaderStageFlags::COMPUTE
@@ -1360,6 +1375,7 @@ impl Renderer {
         let usage_info = vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT::builder()
             .binding_flags(&[
                 vk::DescriptorBindingFlags::empty(), // the winlist
+                vk::DescriptorBindingFlags::empty(), // the window order list
                 Self::get_bindless_desc_flags(),     // The unbounded array of images
             ])
             .build();
@@ -1424,7 +1440,7 @@ impl Renderer {
             vk::MemoryPropertyFlags::DEVICE_LOCAL
                 | vk::MemoryPropertyFlags::HOST_VISIBLE
                 | vk::MemoryPropertyFlags::HOST_COHERENT,
-            (std::mem::size_of::<Window>() * capacity) as u64 + WINDOW_LIST_GLSL_OFFSET as u64,
+            (std::mem::size_of::<i32>() * capacity) as u64 + WINDOW_LIST_GLSL_OFFSET as u64,
         );
         self.dev
             .bind_buffer_memory(wl_storage, wl_storage_mem, 0)
@@ -1675,6 +1691,8 @@ impl Renderer {
     }
 
     fn update_window_list_recurse(&mut self, mut surf: Surface, offset: (i32, i32)) {
+        self.r_window_order.push(surf.s_window_id.clone());
+
         if surf.modified() {
             self.update_surf_shader_window(&surf, offset);
 
@@ -2407,22 +2425,32 @@ impl Renderer {
         }
 
         // Now write the new bindless descriptor
-        let window_info = vk::DescriptorBufferInfo::builder()
-            .buffer(self.r_windows_buf)
-            .offset(0)
-            .range(vk::WHOLE_SIZE)
-            .build();
         let write_infos = &[
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.r_images_desc)
                 .dst_binding(0)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&[window_info])
+                .buffer_info(&[vk::DescriptorBufferInfo::builder()
+                    .buffer(self.r_windows_buf)
+                    .offset(0)
+                    .range(vk::WHOLE_SIZE)
+                    .build()])
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.r_images_desc)
                 .dst_binding(1)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(&[vk::DescriptorBufferInfo::builder()
+                    .buffer(self.r_order_buf)
+                    .offset(0)
+                    .range(vk::WHOLE_SIZE)
+                    .build()])
+                .build(),
+            vk::WriteDescriptorSet::builder()
+                .dst_set(self.r_images_desc)
+                .dst_binding(2)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .image_info(self.r_image_infos.as_slice())
@@ -2461,6 +2489,21 @@ impl Renderer {
                 self.r_windows_mem,
                 WINDOW_LIST_GLSL_OFFSET,
                 self.r_windows.ect_data.as_slice(),
+            );
+
+            // Turn our vec of ECSIds into a vec of actual ids.
+            let mut window_order = Vec::new();
+            for ecs in self.r_window_order.iter() {
+                window_order.push(ecs.get_raw_id() as i32);
+            }
+            log::debug!("Window order is {:?}", window_order);
+
+            self.reallocate_order_buf_with_cap(self.r_window_order.len());
+            self.update_memory(self.r_order_mem, 0, &[self.r_window_order.len()]);
+            self.update_memory(
+                self.r_order_mem,
+                WINDOW_LIST_GLSL_OFFSET,
+                window_order.as_slice(),
             );
         }
     }
@@ -2613,6 +2656,8 @@ impl Drop for Renderer {
                 .destroy_descriptor_pool(self.r_images_desc_pool, None);
             self.dev.destroy_buffer(self.r_windows_buf, None);
             self.free_memory(self.r_windows_mem);
+            self.dev.destroy_buffer(self.r_order_buf, None);
+            self.free_memory(self.r_order_mem);
 
             self.destroy_swapchain();
 

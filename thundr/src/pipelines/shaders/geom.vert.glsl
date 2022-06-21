@@ -33,17 +33,25 @@ struct Window {
 /* the position/size/damage of our windows */
 layout(set = 1, binding = 0, std140) buffer window_list
 {
-	layout(offset = 0) int window_count;
+	layout(offset = 0) int total_window_count;
 	layout(offset = 16) Window windows[];
 };
 
+layout(set = 1, binding = 1, std140) buffer order_list
+{
+	layout(offset = 0) int window_count;
+	layout(offset = 16) int ordered_windows[];
+};
+
+
 /* The array of textures that are the window contents */
-layout(set = 1, binding = 1) uniform sampler2D images[];
+layout(set = 1, binding = 2) uniform sampler2D images[];
 
 void main() {
 	// Go in reverse order, so that alpha works correctly
-	int win = (window_count - 1) - gl_InstanceIndex;
-	window_index = win;
+	int index = (window_count - 1) - gl_InstanceIndex;
+	window_index = ordered_windows[index];
+
 	// 1. loc should ALWAYS be 0,1 for the default quad.
 	// 2. multiply by two since the axis are over the range (-1,1).
 	// 3. multiply by the percentage of the screen that the window
@@ -52,13 +60,13 @@ void main() {
 	// 5. also multiply the base by 2 for the same reason
 	vec2 adjusted = loc
 		* vec2(2, 2)
-		* (windows[win].dims.size / vec2(ubo.width, ubo.height))
-		+ (windows[win].dims.start / vec2(ubo.width, ubo.height))
+		* (windows[window_index].dims.size / vec2(ubo.width, ubo.height))
+		+ (windows[window_index].dims.start / vec2(ubo.width, ubo.height))
 		* vec2(2, 2);
 
 	// The model transform will align x,y = (0, 0) with the top left of
 	// the screen. It should stubtract 1.0 from x and y.
-	float order = 0.0 + (float(win) * 0.0000001);
+	float order = 0.0 + (float(window_index) * 0.0000001);
 	gl_Position = ubo.model * vec4(adjusted, order, 1.0);
 
 	fragcoord = coord;

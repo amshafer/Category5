@@ -139,6 +139,13 @@ pub struct ECSIdInternal {
     ecs_inst: ECSInstance,
 }
 
+impl ECSIdInternal {
+    /// Gets the raw index offset for this entity
+    pub fn get_raw_id(&self) -> usize {
+        self.ecs_id
+    }
+}
+
 impl Drop for ECSIdInternal {
     fn drop(&mut self) {
         self.ecs_inst.invalidate_id(self.ecs_id);

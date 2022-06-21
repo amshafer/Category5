@@ -30,7 +30,7 @@ layout(set = 1, binding = 0, std140) buffer window_list
 };
 
 /* The array of textures that are the window contents */
-layout(set = 1, binding = 1) uniform sampler2D images[];
+layout(set = 1, binding = 2) uniform sampler2D images[];
 
 void main() {
 	if (windows[window_index].id.y > 0) {
