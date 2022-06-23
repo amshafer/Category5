@@ -96,8 +96,8 @@ impl ECSInstance {
             // Don't do this if the array is full, just skip to extending the
             // array if that is the case
             if internal.eci_total_num_ids != internal.eci_valid_ids.len() {
-                for i in internal.eci_valid_ids.len()..0 {
-                    if !internal.eci_valid_ids[i] {
+                for (i, is_valid) in internal.eci_valid_ids.iter().enumerate().rev() {
+                    if !*is_valid {
                         index = Some(i);
                     }
                 }
