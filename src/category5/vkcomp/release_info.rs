@@ -23,7 +23,7 @@ pub struct DmabufReleaseInfo {
 
 impl DmabufReleaseInfo {
     pub fn release(&mut self) {
-        log::profiling!("Releasing wl_buffer for dmabuf {}", self.dr_fd);
+        log::debug!("Releasing wl_buffer for dmabuf {}", self.dr_fd);
         self.dr_wl_buffer.release();
     }
 }

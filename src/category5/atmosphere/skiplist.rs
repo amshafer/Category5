@@ -31,6 +31,17 @@ impl Atmosphere {
         if let Some(n) = next {
             self.set_skiplist_prev(n, prev);
         }
+
+        // If this id is the first subsurface, then we need
+        // to remove it from the parent
+        if let Some(parent) = self.get_parent_window(id) {
+            if let Some(top_child) = self.get_top_child(parent) {
+                if top_child == id {
+                    // Select the next subsurface
+                    self.set_top_child(parent, next);
+                }
+            }
+        }
     }
 
     /// Remove id from the `win_focus` visibility skiplist

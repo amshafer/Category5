@@ -3,9 +3,10 @@
 // Austin Shafer - 2020
 
 use super::surface::Surface;
-use crate::{Damage, Result, ThundrError};
+use crate::{Damage, Result};
 use std::iter::DoubleEndedIterator;
 use std::ops::Index;
+use utils::log;
 
 pub struct SurfaceList {
     /// This will get cleared during Thundr::draw
@@ -39,15 +40,15 @@ impl SurfaceList {
     }
 
     pub fn remove_surface(&mut self, surf: Surface) -> Result<()> {
-        let (index, _) = self
-            .l_vec
-            .iter()
-            .enumerate()
-            .find(|(_, s)| **s == surf)
-            .ok_or(ThundrError::SURFACE_NOT_FOUND)?;
-        self.remove(index);
+        // Check if the surface is present in the surface list. If so,
+        // remove it.
+        if let Some((index, _)) = self.l_vec.iter().enumerate().find(|(_, s)| **s == surf) {
+            log::debug!("Removing surface at index {}", index);
+            self.remove(index);
+        }
 
         if let Some(mut parent) = surf.get_parent() {
+            log::debug!("Removing subsurface");
             parent.remove_subsurface(surf)?;
         }
 

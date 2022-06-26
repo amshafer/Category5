@@ -781,6 +781,14 @@ impl ShellSurface {
         self.reposition_popup();
     }
 
+    fn popup_done(&mut self) {
+        // getting the xdg_popup::Destroy event is making firefox destroy the dmabuf I think...
+        self.ss_surface
+            .borrow_mut()
+            .destroy(&mut self.ss_atmos.borrow_mut());
+        self.ss_xdg_popup.as_ref().unwrap().pu_pop.popup_done();
+    }
+
     /// handle xdg_popup requests
     ///
     /// This should load our xdg state with any changes that the client
@@ -792,12 +800,12 @@ impl ShellSurface {
         match req {
             xdg_popup::Request::Destroy => {
                 log::debug!("Popup destroyed. Dismissing it");
-                self.ss_xdg_popup.as_ref().unwrap().pu_pop.popup_done();
+                self.popup_done();
             }
             // TODO: implement grab
             xdg_popup::Request::Grab { seat, serial } => {
                 log::error!("Grabbing a popup is not supported");
-                self.ss_xdg_popup.as_ref().unwrap().pu_pop.popup_done();
+                self.popup_done();
             }
             xdg_popup::Request::Reposition { positioner, token } => {
                 self.ss_xdg_popup.as_mut().unwrap().pu_next_positioner = Some(positioner);

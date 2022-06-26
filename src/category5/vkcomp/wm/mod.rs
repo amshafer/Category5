@@ -532,7 +532,9 @@ impl WindowManager {
     /// This adds it to our death list, which will be reaped next frame after
     /// we are done using its resources.
     fn close_window(&mut self, id: WindowId) -> Result<()> {
+        // atmosphere skiplist not being propogated?
         assert!(self.wm_apps.id_exists(id.into()));
+        log::debug!("Closing window {:?}", id);
 
         let mut app = self.wm_apps[id.into()].as_mut().unwrap();
         app.a_marked_for_death = true;
@@ -541,6 +543,7 @@ impl WindowManager {
         // Remove the surface. The surfacelist will damage the region that the
         // window occupied
         // This is haneld in the reordering bits
+        // The window order is still showing removed subsurfaces....
         match self.wm_surfaces.remove_surface(app.a_surf.clone()) {
             Ok(()) => {}
             // If the surface wasn't found, it's because this is

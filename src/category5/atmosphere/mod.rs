@@ -706,6 +706,9 @@ impl Atmosphere {
 
     /// Mark the id as available
     pub fn free_window_id(&mut self, client: ClientId, id: WindowId) {
+        log::debug!("Ways before removing id {:?}", id);
+        self.print_surface_tree();
+
         // we also need to remove this surface from focus
         self.skiplist_remove_win_focus(id);
         self.skiplist_remove_surf_focus(id);
@@ -731,6 +734,9 @@ impl Atmosphere {
         // This needs to be last since calling `set` on a propmap will
         // activate the id.
         self.a_window_priv.deactivate(raw_id);
+
+        log::debug!("Ways after removing id {:?}", id);
+        self.print_surface_tree();
     }
 
     /// convert a global location to a surface local coordinates.

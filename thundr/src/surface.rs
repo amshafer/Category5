@@ -10,7 +10,7 @@ extern crate nix;
 use crate::{Damage, Result, ThundrError};
 
 use super::image::Image;
-use utils::{ecs::ECSId, region::Rect};
+use utils::{ecs::ECSId, log, region::Rect};
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -369,6 +369,7 @@ impl Surface {
             let mut surf_internal = surf.s_internal.borrow_mut();
             // make sure this is a subsurface
             if surf_internal.s_parent.as_ref().unwrap().clone() != *self {
+                log::debug!("Cannot remove subsurface because we are not its parent");
                 return Err(ThundrError::SURFACE_NOT_FOUND);
             }
             surf_internal.s_parent = None;
