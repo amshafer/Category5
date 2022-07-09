@@ -143,6 +143,24 @@ pub struct Thundr {
     pub(crate) th_pipe: Box<dyn Pipeline>,
 }
 
+/// A region to display to
+///
+/// The viewport will control what section of the screen is rendered
+/// to. You will specify it when performing draw calls.
+pub struct Viewport {
+    pub offset: (f32, f32),
+    pub size: (f32, f32),
+}
+
+impl Viewport {
+    pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self {
+            offset: (x, y),
+            size: (width, height),
+        }
+    }
+}
+
 #[cfg(feature = "sdl")]
 extern crate sdl2;
 
@@ -428,7 +446,7 @@ impl Thundr {
     }
 
     // draw_frame
-    pub fn draw_frame(&mut self, surfaces: &mut SurfaceList) -> Result<()> {
+    pub fn draw_frame(&mut self, surfaces: &mut SurfaceList, viewport: &Viewport) -> Result<()> {
         // record rendering commands
         let params = match self.th_rend.begin_recording_one_frame(surfaces) {
             Ok(params) => params,
@@ -447,6 +465,7 @@ impl Thundr {
             &params,
             self.th_image_list.as_slice(),
             surfaces,
+            viewport,
         );
         // Now that we have processed this surfacelist, unmark it as changed
         surfaces.l_changed = false;

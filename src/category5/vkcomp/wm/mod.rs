@@ -593,7 +593,10 @@ impl WindowManager {
     /// WindowManager::end_frame is called.
     fn begin_frame(&mut self) -> Result<()> {
         self.record_draw();
-        match self.wm_thundr.draw_frame(&mut self.wm_surfaces) {
+        let res = self.d_thund.get_resolution();
+        let viewport = th::Viewport::new(0.0, 0.0, res.0 as f32, res.1 as f32);
+
+        match self.wm_thundr.draw_frame(&mut self.wm_surfaces, &viewport) {
             Ok(_) => {}
             Err(th::ThundrError::OUT_OF_DATE) => {}
             Err(e) => panic!("Failed to draw frame: {:?}", e),

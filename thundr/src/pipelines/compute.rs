@@ -12,7 +12,7 @@ use ash::{util, vk, Instance};
 use super::Pipeline;
 use crate::display::Display;
 use crate::renderer::{RecordParams, Renderer};
-use crate::{Image, SurfaceList};
+use crate::{Image, SurfaceList, Viewport};
 
 use utils::{log, timing::StopWatch};
 
@@ -642,6 +642,7 @@ impl Pipeline for CompPipeline {
         _params: &RecordParams,
         _images: &[Image],
         _surfaces: &mut SurfaceList,
+        _viewport: &Viewport,
     ) -> bool {
         unsafe {
             let mut stop = StopWatch::new();
