@@ -840,7 +840,10 @@ impl<'a> Dakota<'a> {
         // and will return that to the dakota user so they have a chance to resize
         // anything they want
         if self.d_needs_redraw {
-            match self.d_thund.draw_frame(&mut self.d_surfaces) {
+            let res = self.d_thund.get_resolution();
+            let viewport = th::Viewport::new(0.0, 0.0, res.0 as f32, res.1 as f32);
+
+            match self.d_thund.draw_frame(&mut self.d_surfaces, &viewport) {
                 Ok(()) => {}
                 Err(th::ThundrError::OUT_OF_DATE) => {
                     self.handle_ood(dom)?;

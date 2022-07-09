@@ -110,9 +110,11 @@ fn main() {
 
         cursor_surf.set_pos(curpos.0 + dx, curpos.1 + dy);
 
+        let viewport = th::Viewport::new(0.0, 0.0, ws.0 as f32, ws.1 as f32);
+
         stop.start();
         // ----------- Perform draw calls
-        match thund.draw_frame(&mut list) {
+        match thund.draw_frame(&mut list, &viewport) {
             Ok(_) => {}
             Err(th::ThundrError::OUT_OF_DATE) => continue,
             Err(e) => panic!("failed to draw frame: {:?}", e),

@@ -16,7 +16,7 @@ use ash::{util, vk};
 
 use super::Pipeline;
 use crate::renderer::{RecordParams, Renderer};
-use crate::{Image, SurfaceList};
+use crate::{Image, SurfaceList, Viewport};
 
 use utils::log;
 
@@ -144,6 +144,7 @@ impl Pipeline for GeomPipeline {
         params: &RecordParams,
         _images: &[Image],
         _surfaces: &mut SurfaceList,
+        viewport: &Viewport,
     ) -> bool {
         self.begin_recording(rend, params);
         unsafe {
@@ -159,6 +160,20 @@ impl Pipeline for GeomPipeline {
                 0, // first set
                 &[self.g_desc, rend.r_images_desc],
                 &[], // dynamic offsets
+            );
+
+            // Set our current viewport
+            rend.dev.cmd_set_viewport(
+                params.cbuf,
+                0,
+                &[vk::Viewport {
+                    x: viewport.offset.0,
+                    y: viewport.offset.1,
+                    width: viewport.size.0,
+                    height: viewport.size.1,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                }],
             );
 
             // Here is where everything is actually drawn
@@ -712,7 +727,9 @@ impl GeomPipeline {
 
         // dynamic state specifies what parts of the pipeline will be
         // specified at draw time. (like moving the viewport)
-        // we don't want any of that atm
+        let dynamic_info = vk::PipelineDynamicStateCreateInfo::builder()
+            .dynamic_states(&[vk::DynamicState::VIEWPORT])
+            .build();
 
         let pipeline_info = vk::GraphicsPipelineCreateInfo::builder()
             .stages(&shader_stages)
@@ -723,6 +740,7 @@ impl GeomPipeline {
             .multisample_state(&multisample_info)
             .depth_stencil_state(&depth_info)
             .color_blend_state(&blend_info)
+            .dynamic_state(&dynamic_info)
             .layout(layout)
             .render_pass(pass)
             .build();
