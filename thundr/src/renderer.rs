@@ -614,9 +614,9 @@ impl Renderer {
         let mode = present_modes
             .iter()
             .cloned()
-            .find(|&mode| mode == vk::PresentModeKHR::IMMEDIATE)
+            .find(|&mode| mode == vk::PresentModeKHR::FIFO)
             // fallback to FIFO if the mailbox mode is not available
-            .unwrap_or(vk::PresentModeKHR::IMMEDIATE);
+            .unwrap_or(vk::PresentModeKHR::FIFO);
 
         // we need to check if the surface format supports the
         // storage image type
@@ -1703,7 +1703,13 @@ impl Renderer {
         }
     }
 
-    fn update_window_list_recurse(&mut self, mut surf: Surface, offset: (i32, i32)) {
+    /// Recursively update the shader window parameters for surf
+    ///
+    /// This is used to push all CPU-side thundr data to the GPU for the shader
+    /// to ork with. The offset is used through this to calculate the position of
+    /// the subsurfaces relative to their parent.
+    /// The flush argument forces the surface's data to be written back.
+    fn update_window_list_recurse(&mut self, mut surf: Surface, offset: (i32, i32), flush: bool) {
         {
             // Only draw this surface if it has contents defined. Either
             // an image or a color
@@ -1716,7 +1722,7 @@ impl Renderer {
             }
         }
 
-        if surf.modified() {
+        if surf.modified() || flush {
             self.update_surf_shader_window(&surf, offset);
 
             surf.set_modified(false);
@@ -1729,6 +1735,9 @@ impl Renderer {
             self.update_window_list_recurse(
                 child,
                 (offset.0 + surf_off.0 as i32, offset.1 + surf_off.1 as i32),
+                // If the parent surface was moved, then we need to update all
+                // children, since their positions are out of date.
+                surf.modified() | flush,
             );
         }
     }
@@ -1740,7 +1749,7 @@ impl Renderer {
         self.r_window_order.clear();
 
         for surf in surfaces.iter().rev() {
-            self.update_window_list_recurse(surf.clone(), (0, 0));
+            self.update_window_list_recurse(surf.clone(), (0, 0), false);
         }
     }
 

@@ -593,7 +593,7 @@ impl WindowManager {
     /// WindowManager::end_frame is called.
     fn begin_frame(&mut self) -> Result<()> {
         self.record_draw();
-        let res = self.d_thund.get_resolution();
+        let res = self.wm_thundr.get_resolution();
         let viewport = th::Viewport::new(0.0, 0.0, res.0 as f32, res.1 as f32);
 
         match self.wm_thundr.draw_frame(&mut self.wm_surfaces, &viewport) {
@@ -647,7 +647,13 @@ impl WindowManager {
     /// event: moving something to the top of the window stack
     /// when the user clicks on it and puts it into focus.
     fn move_to_front(&mut self, win: WindowId) -> Result<()> {
-        let surf = self.lookup_app_from_id(win)?.a_surf.clone();
+        // get and use the root window for this subsurface
+        // in case it is a subsurface.
+        let root = match self.wm_atmos.get_root_window(win) {
+            Some(parent) => parent,
+            None => win,
+        };
+        let surf = self.lookup_app_from_id(root)?.a_surf.clone();
 
         match self.wm_surfaces.remove_surface(surf.clone()) {
             Ok(()) => {}

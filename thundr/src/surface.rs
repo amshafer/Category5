@@ -180,6 +180,7 @@ impl Surface {
         (surf.s_rect.r_pos.0, surf.s_rect.r_pos.1)
     }
     pub fn set_pos(&mut self, x: f32, y: f32) {
+        self.set_modified(true);
         let mut surf = self.s_internal.borrow_mut();
         if surf.s_rect.r_pos.0 != x || surf.s_rect.r_pos.1 != y {
             surf.record_damage();
@@ -196,6 +197,7 @@ impl Surface {
     }
 
     pub fn set_size(&mut self, w: f32, h: f32) {
+        self.set_modified(true);
         let mut surf = self.s_internal.borrow_mut();
         if surf.s_rect.r_size.0 != w || surf.s_rect.r_size.1 != h {
             surf.record_damage();
@@ -211,6 +213,7 @@ impl Surface {
     }
 
     pub fn set_color(&mut self, color: (f32, f32, f32, f32)) {
+        self.set_modified(true);
         let mut surf = self.s_internal.borrow_mut();
         assert!(surf.s_image.is_none());
         surf.s_color = Some(color);
