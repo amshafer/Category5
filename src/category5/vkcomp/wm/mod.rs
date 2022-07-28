@@ -355,8 +355,9 @@ impl WindowManager {
         if let Some(damage) = self.wm_atmos.take_surface_damage(info.ufd_id) {
             app.a_surf.damage(damage);
         }
-        self.wm_thundr
-            .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
+        if let Some(image) = app.a_image.as_ref() {
+            self.wm_thundr.bind_image(&mut app.a_surf, image.clone());
+        }
 
         Ok(())
     }
