@@ -545,6 +545,9 @@ impl Atmosphere {
     pub fn mark_changed(&mut self) {
         self.a_hemi.as_mut().unwrap().mark_changed();
     }
+    pub fn clear_changed(&mut self) {
+        self.a_hemi.as_mut().unwrap().clear_changed();
+    }
 
     pub fn get_barsize(&self) -> f32 {
         self.get_resolution().1 as f32 * 0.02
@@ -806,28 +809,25 @@ impl Atmosphere {
     /// Wayland uses these callbacks to tell apps when they should
     /// redraw themselves. If they aren't on screen we don't send
     /// the callback so it doesn't use the power.
-    pub fn signal_frame_callbacks(&mut self) {
+    pub fn send_frame_callbacks_for_surf(&mut self, id: WindowId) {
         // get each valid id in the mapping
-        for id in self.a_window_priv.active_id_iter() {
-            // get the refcell for the surface for this id
-            if let Some(Priv::surface(Some(cell))) =
-                self.a_window_priv.get(id as PropertyId, Priv::SURFACE)
-            {
-                let mut surf = cell.borrow_mut();
-                let cbs = std::mem::take(&mut surf.s_frame_callbacks);
-                for callback in cbs.iter() {
-                    // frame callbacks are signaled in the order that they
-                    // were submitted in
-                    log::debug!("Firing frame callback {:?}", callback);
-                    // frame callbacks return the current time
-                    // in milliseconds.
-                    callback.done(
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .expect("Error getting system time")
-                            .as_millis() as u32,
-                    );
-                }
+        // get the refcell for the surface for this id
+        let WindowId(raw_id) = id;
+        if let Some(Priv::surface(Some(cell))) = self.a_window_priv.get(raw_id, Priv::SURFACE) {
+            let mut surf = cell.borrow_mut();
+            let cbs = std::mem::take(&mut surf.s_frame_callbacks);
+            for callback in cbs.iter() {
+                // frame callbacks are signaled in the order that they
+                // were submitted in
+                log::debug!("Firing frame callback {:?}", callback);
+                // frame callbacks return the current time
+                // in milliseconds.
+                callback.done(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .expect("Error getting system time")
+                        .as_millis() as u32,
+                );
             }
         }
     }
@@ -956,6 +956,9 @@ impl Hemisphere {
 
     fn mark_changed(&mut self) {
         self.h_has_changed = true;
+    }
+    fn clear_changed(&mut self) {
+        self.h_has_changed = false;
     }
 
     // ----------------

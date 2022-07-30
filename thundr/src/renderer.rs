@@ -2550,7 +2550,7 @@ impl Renderer {
         unsafe {
             match self.swapchain_loader.acquire_next_image(
                 self.swapchain,
-                std::u64::MAX,     // use a zero timeout to immediately get the state
+                0,                 // use a zero timeout to immediately get the state
                 self.present_sema, // signals presentation
                 vk::Fence::null(),
             ) {

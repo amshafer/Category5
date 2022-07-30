@@ -515,6 +515,9 @@ impl WindowManager {
             a.a_surf.set_size(surface_size.0, surface_size.1);
             // ----------------------------------------------------------------
 
+            // Send any pending frame callbacks
+            atmos.send_frame_callbacks_for_surf(a.a_id);
+
             // Only display the bar for toplevel surfaces
             // i.e. don't for popups
             //if atmos.get_toplevel(id) {
@@ -607,11 +610,10 @@ impl WindowManager {
         let viewport = th::Viewport::new(0.0, 0.0, res.0 as f32, res.1 as f32);
 
         match self.wm_thundr.draw_frame(&mut self.wm_surfaces, &viewport) {
-            Ok(_) => {}
-            Err(th::ThundrError::OUT_OF_DATE) => {}
-            Err(e) => panic!("Failed to draw frame: {:?}", e),
-        };
-        Ok(())
+            Ok(_) => Ok(()),
+            Err(th::ThundrError::OUT_OF_DATE) => Ok(()),
+            Err(e) => Err(anyhow!(e)),
+        }
     }
 
     /// End a frame
@@ -780,7 +782,7 @@ impl WindowManager {
     }
 
     /// The main event loop of the vkcomp thread
-    pub fn render_frame(&mut self, atmos: &mut Atmosphere) {
+    pub fn render_frame(&mut self, atmos: &mut Atmosphere) -> Result<()> {
         // how much time is spent drawing/presenting
         let mut draw_stop = StopWatch::new();
 
@@ -807,7 +809,7 @@ impl WindowManager {
         log::debug!("_____________________________ FRAME BEGIN");
         // Create a frame out of the hemisphere we got from ways
         draw_stop.start();
-        self.begin_frame(atmos).unwrap();
+        self.begin_frame(atmos)?;
         draw_stop.end();
         log::debug!(
             "spent {} ms drawing this frame",
@@ -818,7 +820,7 @@ impl WindowManager {
 
         // present our frame
         draw_stop.start();
-        self.end_frame().unwrap();
+        self.end_frame()?;
         draw_stop.end();
 
         log::debug!(
@@ -835,6 +837,8 @@ impl WindowManager {
         atmos.release_consumables();
 
         log::debug!("_____________________________ FRAME END");
+
+        Ok(())
     }
 }
 

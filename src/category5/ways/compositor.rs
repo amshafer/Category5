@@ -9,6 +9,8 @@ extern crate input;
 pub extern crate wayland_server as ws;
 use crate::category5::vkcomp::wm::*;
 use ws::{Filter, Main, Resource};
+extern crate thundr;
+use thundr::ThundrError;
 
 use ws::protocol::{
     wl_compositor as wlci, wl_data_device_manager as wlddm, wl_output, wl_seat, wl_shell, wl_shm,
@@ -438,36 +440,47 @@ impl EventManager {
 
         // reset the timer before we start
         tm.reset();
-        while fdw.wait_for_events(tm.time_remaining()) {
+        let mut needs_render = true;
+        while fdw.wait_for_events(0) || needs_render {
             log::profiling!("starting loop");
             // First thing to do is to dispatch libinput
             // It has time sensitive operations which need to take
             // place as soon as the fd is readable
             self.em_input.borrow_mut().dispatch();
 
-            // TODO: This might not be the most accurate
-            if tm.is_overdue() {
-                log::profiling!("timer out");
-                // TODO: fix frame timings to prevent the current state of
-                // 3 frames of latency
-                //
-                // The input subsystem has batched the changes to the window
-                // due to resizing, we need to send those changes now
-                self.em_input.borrow_mut().update_from_eventloop();
+            // TODO: fix frame timings to prevent the current state of
+            // 3 frames of latency
+            //
+            // The input subsystem has batched the changes to the window
+            // due to resizing, we need to send those changes now
+            self.em_input.borrow_mut().update_from_eventloop();
 
+            {
                 // Try to flip hemispheres to push our updates to vkcomp
                 // If we can't recieve it, vkcomp isn't ready, and we should
                 // continue processing wayland updates so the system
                 // doesn't lag
                 let mut atmos = self.em_atmos.borrow_mut();
                 if atmos.is_changed() {
-                    log::profiling!("finished frame");
-                    self.em_wm.render_frame(&mut *atmos);
-                    // reset our timer
-                    tm.reset();
-                    // it has been roughly one frame, so fire the frame callbacks
-                    // so clients can draw
-                    atmos.signal_frame_callbacks();
+                    atmos.clear_changed();
+                    needs_render = true;
+                }
+
+                if needs_render {
+                    log::profiling!("trying to render frame");
+                    match self.em_wm.render_frame(&mut *atmos) {
+                        Ok(()) => needs_render = false,
+                        Err(e) => {
+                            if let Some(err) = e.downcast_ref::<ThundrError>() {
+                                if *err == ThundrError::NOT_READY || *err == ThundrError::TIMEOUT {
+                                    // ignore the timeout, start our loop over
+                                    log::profiling!("Next frame isn't ready, continuing");
+                                } else {
+                                    panic!("Rendering a frame failed with {:?}", e);
+                                }
+                            }
+                        }
+                    };
                 }
             }
 

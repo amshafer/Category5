@@ -105,7 +105,7 @@ use thiserror::Error;
 
 /// Thundr error codes
 /// These signify that action should be taken by the app.
-#[derive(Error, Debug)]
+#[derive(Error, Eq, PartialEq, Debug)]
 #[allow(non_camel_case_types)]
 pub enum ThundrError {
     #[error("Operation timed out")]
