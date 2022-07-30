@@ -312,7 +312,7 @@ impl Input {
     ///
     /// Generates the wl_pointer.axis event.
     fn handle_pointer_axis(&mut self, a: &Axis) {
-        let atmos = self.i_atmos.borrow_mut();
+        let mut atmos = self.i_atmos.borrow_mut();
 
         // Find the active window
         if let Some(id) = self.i_pointer_focus {
@@ -332,6 +332,10 @@ impl Input {
                             pointer.axis(time, wl_pointer::Axis::VerticalScroll, a.a_vert_val);
                         }
                         Self::send_pointer_frame(pointer);
+                        // Mark the atmosphere as changed so that it fires frame throttling
+                        // callbacks. Otherwise we may end up sending scroll events but not
+                        // telling the app to redraw, causing sutters.
+                        atmos.mark_changed();
                     }
                 }
             }

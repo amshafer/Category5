@@ -610,7 +610,7 @@ impl Atmosphere {
         }
     }
 
-    fn mark_changed(&mut self) {
+    pub fn mark_changed(&mut self) {
         self.a_hemi.as_mut().unwrap().mark_changed();
     }
 
@@ -882,20 +882,19 @@ impl Atmosphere {
                 self.a_window_priv.get(id as PropertyId, Priv::SURFACE)
             {
                 let mut surf = cell.borrow_mut();
-                if surf.s_frame_callbacks.len() > 0 {
+                let cbs = std::mem::take(&mut surf.s_frame_callbacks);
+                for callback in cbs.iter() {
                     // frame callbacks are signaled in the order that they
                     // were submitted in
-                    if let Some(callback) = surf.s_frame_callbacks.pop_front() {
-                        log::debug!("Firing frame callback {:?}", callback);
-                        // frame callbacks return the current time
-                        // in milliseconds.
-                        callback.done(
-                            SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .expect("Error getting system time")
-                                .as_millis() as u32,
-                        );
-                    }
+                    log::debug!("Firing frame callback {:?}", callback);
+                    // frame callbacks return the current time
+                    // in milliseconds.
+                    callback.done(
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .expect("Error getting system time")
+                            .as_millis() as u32,
+                    );
                 }
             }
         }
