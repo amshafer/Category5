@@ -133,7 +133,6 @@ use utils::{log, ClientId, WindowId};
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
-use std::sync::mpsc::{Receiver, Sender};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::vec::Vec;
 
@@ -308,10 +307,6 @@ impl Property for ClientPriv {
 /// exclusive to subsystems will be held by said subsystem
 #[allow(dead_code)]
 pub struct Atmosphere {
-    /// transfer channel
-    a_tx: Sender<Box<Hemisphere>>,
-    /// receive channel
-    a_rx: Receiver<Box<Hemisphere>>,
     /// The current hemisphere
     ///
     /// While this is held we will retain ownership of the
@@ -355,10 +350,8 @@ impl Atmosphere {
     /// also be passed to the other subsystem.
     /// One subsystem must be setup as index 0 and the other
     /// as index 1
-    pub fn new(tx: Sender<Box<Hemisphere>>, rx: Receiver<Box<Hemisphere>>) -> Atmosphere {
+    pub fn new() -> Atmosphere {
         let mut atmos = Atmosphere {
-            a_tx: tx,
-            a_rx: rx,
             a_hemi: Some(Box::new(Hemisphere::new())),
             // TODO: only do this for ways
             a_window_priv: PropertyMap::new(),
@@ -510,31 +503,6 @@ impl Atmosphere {
         hemi.commit();
     }
 
-    /// Must be called before recv_hemisphere
-    pub fn send_hemisphere(&mut self) {
-        // first grab our own hemi
-        if let Some(mut h) = self.a_hemi.take() {
-            log::info!("sending hemisphere");
-            // second, we need to apply our changes to
-            // our own hemisphere before we send it
-            self.replay(&mut h);
-
-            // actually flip hemispheres
-            self.a_tx.send(h).expect("Could not send hemisphere");
-        }
-    }
-
-    /// Must be called after send_hemisphere
-    /// returns Some if we were able to get the other hemisphere
-    /// if returns None, this needs to be called again
-    pub fn recv_hemisphere(&mut self) -> Option<Box<Hemisphere>> {
-        log::info!("trying to recv hemisphere");
-        match self.a_rx.recv() {
-            Ok(h) => Some(h),
-            Err(_) => None,
-        }
-    }
-
     fn set_new_hemisphere(&mut self, mut new_hemi: Box<Hemisphere>) {
         log::info!("recieved hemisphere");
 
@@ -550,42 +518,6 @@ impl Atmosphere {
         self.a_global_patches.clear();
         self.a_client_patches.clear();
         self.a_window_patches.clear();
-    }
-
-    /// Try to exchange hemispheres between the two subsystems
-    ///
-    /// same as `flip_hemispheres`, but returns false if failed
-    /// and could not recv.
-    ///
-    /// This is used by ways only
-    pub fn try_flip_hemispheres(&mut self) -> bool {
-        match self.recv_hemisphere() {
-            Some(new_hemi) => {
-                // Now that we got the hemi (from vkcomp), we
-                // can send ours.
-                self.send_hemisphere();
-                self.set_new_hemisphere(new_hemi);
-
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// Exchange hemispheres between the two subsystems
-    ///
-    /// This is in charge of sending and receiving hemisphere
-    /// boxes over the channels. It also organizes the replays
-    /// and clears the patches
-    pub fn flip_hemispheres(&mut self) {
-        self.send_hemisphere();
-        // Loop while we retry recving from the
-        loop {
-            if let Some(new_hemi) = self.recv_hemisphere() {
-                self.set_new_hemisphere(new_hemi);
-                break;
-            }
-        }
     }
 
     /// This releases any resources that exist for only one frame, such

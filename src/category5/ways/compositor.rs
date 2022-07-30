@@ -7,6 +7,7 @@
 // Austin Shafer - 2019
 extern crate input;
 pub extern crate wayland_server as ws;
+use crate::category5::vkcomp::wm::*;
 use ws::{Filter, Main, Resource};
 
 use ws::protocol::{
@@ -25,14 +26,13 @@ use super::{
     wl_shell::wl_shell_handle_request, wl_subcompositor::wl_subcompositor_handle_request,
     xdg_shell::xdg_wm_base_handle_request,
 };
-use crate::category5::atmosphere::{Atmosphere, Hemisphere};
+use crate::category5::atmosphere::Atmosphere;
 use crate::category5::input::Input;
 use cat5_utils::{fdwatch::FdWatch, log, timing::*};
 
 use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
-use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
 /// A wayland compositor wrapper
@@ -58,6 +58,7 @@ pub struct Compositor {
 #[allow(dead_code)]
 pub struct EventManager {
     em_atmos: Rc<RefCell<Atmosphere>>,
+    em_wm: WindowManager,
     /// The wayland display object, this is the core
     /// global singleton for libwayland
     em_display: ws::Display,
@@ -140,14 +141,14 @@ impl EventManager {
     ///
     /// This kicks off the global callback chain, starting with
     ///    Compositor::bind_compositor_callback
-    pub fn new(tx: Sender<Box<Hemisphere>>, rx: Receiver<Box<Hemisphere>>) -> Box<EventManager> {
+    pub fn new() -> Box<EventManager> {
         let mut display = ws::Display::new();
         display
             .add_socket_auto()
             .expect("Failed to add a socket to the wayland server");
 
         // Do some teraforming and generate an atmosphere
-        let atmos = Rc::new(RefCell::new(Atmosphere::new(tx, rx)));
+        let atmos = Rc::new(RefCell::new(Atmosphere::new()));
 
         // Later moved into the closure
         let comp_cell = Rc::new(RefCell::new(Compositor {
@@ -156,6 +157,7 @@ impl EventManager {
 
         let mut evman = Box::new(EventManager {
             em_atmos: atmos.clone(),
+            em_wm: WindowManager::new(&mut atmos.clone().borrow_mut()),
             em_display: display,
             em_input: Rc::new(RefCell::new(Input::new(atmos))),
             em_pointer_dx: 0.0,
@@ -457,17 +459,15 @@ impl EventManager {
                 // If we can't recieve it, vkcomp isn't ready, and we should
                 // continue processing wayland updates so the system
                 // doesn't lag
-                if self.em_atmos.borrow_mut().is_changed() {
+                let mut atmos = self.em_atmos.borrow_mut();
+                if atmos.is_changed() {
                     log::profiling!("finished frame");
-                    if self.em_atmos.borrow_mut().try_flip_hemispheres() {
-                        log::debug!("[ways]_____________________________ RECV HEMI");
-                        log::debug!("[ways]_____________________________ SENT HEMI");
-                        // reset our timer
-                        tm.reset();
-                        // it has been roughly one frame, so fire the frame callbacks
-                        // so clients can draw
-                        self.em_atmos.borrow_mut().signal_frame_callbacks();
-                    }
+                    self.em_wm.render_frame(&mut *atmos);
+                    // reset our timer
+                    tm.reset();
+                    // it has been roughly one frame, so fire the frame callbacks
+                    // so clients can draw
+                    atmos.signal_frame_callbacks();
                 }
             }
 

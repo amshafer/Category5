@@ -51,8 +51,6 @@ pub mod task;
 use super::release_info::DmabufReleaseInfo;
 use task::*;
 
-use std::sync::mpsc::{Receiver, Sender};
-
 #[cfg(feature = "renderdoc")]
 extern crate renderdoc;
 #[cfg(feature = "renderdoc")]
@@ -105,8 +103,6 @@ pub struct App {
 /// as notifications. Sprites are not owned by a client
 /// whereas windows are.
 pub struct WindowManager {
-    /// The channel to recieve work over
-    wm_atmos: Atmosphere,
     /// The vulkan renderer. It implements the draw logic,
     /// whereas WindowManager implements organizational logic
     wm_thundr: th::Thundr,
@@ -191,7 +187,7 @@ impl WindowManager {
     /// This will create all the graphical resources needed for
     /// the compositor. The WindowManager will create and own
     /// the Thundr, thereby readying the display to draw.
-    pub fn new(tx: Sender<Box<Hemisphere>>, rx: Receiver<Box<Hemisphere>>) -> WindowManager {
+    pub fn new(atmos: &mut Atmosphere) -> WindowManager {
         #[cfg(feature = "renderdoc")]
         let doc = RenderDoc::new().unwrap();
 
@@ -204,7 +200,6 @@ impl WindowManager {
         list.push(cursor.as_ref().unwrap().clone());
 
         let mut wm = WindowManager {
-            wm_atmos: Atmosphere::new(tx, rx),
             wm_titlebar: WindowManager::get_default_titlebar(&mut rend),
             wm_cursor: cursor,
             wm_thundr: rend,
@@ -219,9 +214,21 @@ impl WindowManager {
 
         // Tell the atmosphere rend's resolution
         let res = wm.wm_thundr.get_resolution();
-        wm.wm_atmos.set_resolution(res.0, res.1);
+        atmos.set_resolution(res.0, res.1);
         let (major, minor) = wm.wm_thundr.get_drm_dev();
-        wm.wm_atmos.set_drm_dev(major, minor);
+        atmos.set_drm_dev(major, minor);
+        // first set the background
+        let img = image::open("images/beach.png").unwrap().to_bgra8();
+        let dims = img.dimensions();
+        let pixels: Vec<u8> = img.into_vec();
+        wm.set_background_from_mem(
+            pixels.as_slice(),
+            // dimensions of the texture
+            dims.0,
+            dims.1,
+        )
+        .unwrap();
+
         return wm;
     }
 
@@ -269,7 +276,7 @@ impl WindowManager {
         // This surface will have its dimensions updated during recording
         let surf = self.wm_thundr.create_surface(0.0, 0.0, 8.0, 8.0);
         // The bar should be a percentage of the screen height
-        //let barsize = self.wm_atmos.get_barsize();
+        //let barsize = atmos.get_barsize();
 
         // TODO: Server side decorations
         // draw buttons on the titlebar
@@ -316,6 +323,7 @@ impl WindowManager {
     /// Creates a new image if one doesn't exist yet.
     fn update_window_contents_from_dmabuf(
         &mut self,
+        atmos: &mut Atmosphere,
         info: &UpdateWindowContentsFromDmabuf,
     ) -> Result<()> {
         log::debug!("Updating window {:?} with {:#?}", info.ufd_id, info);
@@ -349,10 +357,10 @@ impl WindowManager {
             );
         }
 
-        if let Some(damage) = self.wm_atmos.take_buffer_damage(info.ufd_id) {
+        if let Some(damage) = atmos.take_buffer_damage(info.ufd_id) {
             app.a_image.as_mut().map(|i| i.reset_damage(damage));
         }
-        if let Some(damage) = self.wm_atmos.take_surface_damage(info.ufd_id) {
+        if let Some(damage) = atmos.take_surface_damage(info.ufd_id) {
             app.a_surf.damage(damage);
         }
         if let Some(image) = app.a_image.as_ref() {
@@ -368,6 +376,7 @@ impl WindowManager {
     /// Creates a new image if one doesn't exist yet.
     fn update_window_contents_from_mem(
         &mut self,
+        atmos: &mut Atmosphere,
         info: &UpdateWindowContentsFromMem,
     ) -> Result<()> {
         log::debug!("Updating window {:?} with {:#?}", info.id, info);
@@ -379,8 +388,8 @@ impl WindowManager {
             None => return Err(anyhow!("Could not find id {:?}", info.id)),
         };
 
-        let buffer_damage = self.wm_atmos.take_buffer_damage(info.id);
-        let surface_damage = self.wm_atmos.take_surface_damage(info.id);
+        let buffer_damage = atmos.take_buffer_damage(info.id);
+        let surface_damage = atmos.take_surface_damage(info.id);
         // Damage the image
         if let Some(damage) = buffer_damage {
             app.a_image.as_mut().map(|i| i.reset_damage(damage));
@@ -447,10 +456,10 @@ impl WindowManager {
     ///
     /// params: a private info structure for the Thundr. It holds all
     /// the data about what we are recording.
-    fn record_draw(&mut self) {
+    fn record_draw(&mut self, atmos: &mut Atmosphere) {
         // get the latest cursor position
         // ----------------------------------------------------------------
-        let (cursor_x, cursor_y) = self.wm_atmos.get_cursor_pos();
+        let (cursor_x, cursor_y) = atmos.get_cursor_pos();
         log::profiling!("Drawing cursor at ({}, {})", cursor_x, cursor_y);
         if let Some(cursor) = self.wm_cursor.as_mut() {
             cursor.set_pos(cursor_x as f32, cursor_y as f32);
@@ -467,7 +476,7 @@ impl WindowManager {
         // This helps us avoid nasty borrow checker stuff by avoiding recursion
         // ----------------------------------------------------------------
         let aids = &mut self.wm_atmos_ids;
-        self.wm_atmos.map_inorder_on_surfs(|id| {
+        atmos.map_inorder_on_surfs(|id| {
             aids.push(id);
             return true;
         });
@@ -492,14 +501,14 @@ impl WindowManager {
             };
             // If this window has been closed or if it is not ready for
             // rendering, ignore it
-            if a.a_marked_for_death || !self.wm_atmos.get_window_in_use(a.a_id) {
+            if a.a_marked_for_death || !atmos.get_window_in_use(a.a_id) {
                 return;
             }
 
             // get parameters
             // ----------------------------------------------------------------
-            let surface_pos = self.wm_atmos.get_surface_pos(a.a_id);
-            let surface_size = self.wm_atmos.get_surface_size(a.a_id);
+            let surface_pos = atmos.get_surface_pos(a.a_id);
+            let surface_size = atmos.get_surface_size(a.a_id);
 
             // update the th::Surface pos and size
             a.a_surf.set_pos(surface_pos.0, surface_pos.1);
@@ -508,9 +517,9 @@ impl WindowManager {
 
             // Only display the bar for toplevel surfaces
             // i.e. don't for popups
-            //if self.wm_atmos.get_toplevel(id) {
+            //if atmos.get_toplevel(id) {
             //    // The bar should be a percentage of the screen height
-            //    let barsize = self.wm_atmos.get_barsize();
+            //    let barsize = atmos.get_barsize();
 
             //    // Each toplevel window has two subsurfaces (in thundr): the
             //    // window bar and the window dot. If it's toplevel we are drawing SSD,
@@ -592,8 +601,8 @@ impl WindowManager {
     ///
     /// The frame is not presented to the display until
     /// WindowManager::end_frame is called.
-    fn begin_frame(&mut self) -> Result<()> {
-        self.record_draw();
+    fn begin_frame(&mut self, atmos: &mut Atmosphere) -> Result<()> {
+        self.record_draw(atmos);
         let res = self.wm_thundr.get_resolution();
         let viewport = th::Viewport::new(0.0, 0.0, res.0 as f32, res.1 as f32);
 
@@ -647,10 +656,10 @@ impl WindowManager {
     /// There is really only one toplevel window movement
     /// event: moving something to the top of the window stack
     /// when the user clicks on it and puts it into focus.
-    fn move_to_front(&mut self, win: WindowId) -> Result<()> {
+    fn move_to_front(&mut self, atmos: &mut Atmosphere, win: WindowId) -> Result<()> {
         // get and use the root window for this subsurface
         // in case it is a subsurface.
-        let root = match self.wm_atmos.get_root_window(win) {
+        let root = match atmos.get_root_window(win) {
             Some(parent) => parent,
             None => win,
         };
@@ -693,25 +702,35 @@ impl WindowManager {
     ///
     /// win will be placed above other. The parent will be looked up by
     /// searching the root window from atmos.
-    fn subsurf_place_above(&mut self, win: WindowId, other: WindowId) -> Result<()> {
-        self.subsurf_reorder_common(th::SubsurfaceOrder::Above, win, other)
+    fn subsurf_place_above(
+        &mut self,
+        atmos: &mut Atmosphere,
+        win: WindowId,
+        other: WindowId,
+    ) -> Result<()> {
+        self.subsurf_reorder_common(atmos, th::SubsurfaceOrder::Above, win, other)
     }
 
     /// Same as above, but place the subsurface below other.
-    fn subsurf_place_below(&mut self, win: WindowId, other: WindowId) -> Result<()> {
-        self.subsurf_reorder_common(th::SubsurfaceOrder::Below, win, other)
+    fn subsurf_place_below(
+        &mut self,
+        atmos: &mut Atmosphere,
+        win: WindowId,
+        other: WindowId,
+    ) -> Result<()> {
+        self.subsurf_reorder_common(atmos, th::SubsurfaceOrder::Below, win, other)
     }
 
     fn subsurf_reorder_common(
         &mut self,
+        atmos: &mut Atmosphere,
         order: th::SubsurfaceOrder,
         win: WindowId,
         other: WindowId,
     ) -> Result<()> {
         let surf = self.lookup_app_from_id(win)?.a_surf.clone();
         let other_surf = self.lookup_app_from_id(other)?.a_surf.clone();
-        let root = self
-            .wm_atmos
+        let root = atmos
             .get_root_window(win)
             .expect("The window should have a root since it is a subsurface");
         let mut root_surf = self.lookup_app_from_id(root)?.a_surf.clone();
@@ -721,35 +740,37 @@ impl WindowManager {
         Ok(())
     }
 
-    pub fn process_task(&mut self, task: &Task) {
+    pub fn process_task(&mut self, atmos: &mut Atmosphere, task: &Task) {
         log::info!("wm: got task {:?}", task);
         let err = match task {
-            Task::begin_frame => self.begin_frame().context("Task: Starting a frame"),
+            Task::begin_frame => self.begin_frame(atmos).context("Task: Starting a frame"),
             Task::end_frame => self.end_frame().context("Task: Ending a frame"),
             // set background from mem
             Task::sbfm(sb) => self.set_background_from_mem(sb.pixels.as_ref(), sb.width, sb.height),
             // create new window
             Task::create_window(id) => self.create_window(*id).context("Task: create_window"),
-            Task::move_to_front(id) => self.move_to_front(*id).context("Task: close_window"),
+            Task::move_to_front(id) => self.move_to_front(atmos, *id).context("Task: close_window"),
             Task::new_subsurface { id, parent } => self
                 .new_subsurface(*id, *parent)
                 .context("Task: new_subsurface"),
             Task::place_subsurface_above { id, other } => self
-                .subsurf_place_above(*id, *other)
+                .subsurf_place_above(atmos, *id, *other)
                 .context("Task: place_subsurface_above"),
             Task::place_subsurface_below { id, other } => self
-                .subsurf_place_below(*id, *other)
+                .subsurf_place_below(atmos, *id, *other)
                 .context("Task: place_subsurface_below"),
             Task::close_window(id) => self.close_window(*id).context("Task: close_window"),
             // update window from gpu buffer
             Task::uwcfd(uw) => self
-                .update_window_contents_from_dmabuf(uw)
+                .update_window_contents_from_dmabuf(atmos, uw)
                 .context(format!("Task: Updating window {:?} from dmabuf", uw.ufd_id)),
             // update window from shm
-            Task::uwcfm(uw) => self.update_window_contents_from_mem(uw).context(format!(
-                "Task: Updating window {:?} from shared memory",
-                uw.id
-            )),
+            Task::uwcfm(uw) => self
+                .update_window_contents_from_mem(atmos, uw)
+                .context(format!(
+                    "Task: Updating window {:?} from shared memory",
+                    uw.id
+                )),
         };
 
         match err {
@@ -759,81 +780,61 @@ impl WindowManager {
     }
 
     /// The main event loop of the vkcomp thread
-    pub fn worker_thread(&mut self) {
-        // first set the background
-        let img = image::open("images/beach.png").unwrap().to_bgra8();
-        let dims = img.dimensions();
-        let pixels: Vec<u8> = img.into_vec();
-        self.set_background_from_mem(
-            pixels.as_slice(),
-            // dimensions of the texture
-            dims.0,
-            dims.1,
-        )
-        .unwrap();
-
+    pub fn render_frame(&mut self, atmos: &mut Atmosphere) {
         // how much time is spent drawing/presenting
         let mut draw_stop = StopWatch::new();
 
-        loop {
-            // Now that we have completed the previous frame, we can
-            // release all the resources used to construct it while
-            // we wait for our draw calls
-            // note: -bad- this probably calls wayland locks
-            self.wm_thundr.release_pending_resources();
+        // Now that we have completed the previous frame, we can
+        // release all the resources used to construct it while
+        // we wait for our draw calls
+        // note: -bad- this probably calls wayland locks
+        self.wm_thundr.release_pending_resources();
 
-            // Flip hemispheres to push our updates to vkcomp
-            // this must be terrible for the local fauna
-            //
-            // This is a synchronization point. It will block
-            self.wm_atmos.flip_hemispheres();
-
-            #[cfg(feature = "renderdoc")]
-            if self.wm_atmos.get_renderdoc_recording() {
-                self.wm_renderdoc
-                    .start_frame_capture(std::ptr::null(), std::ptr::null());
-            }
-
-            // iterate through all the tasks that ways left
-            // us in this hemisphere
-            //  (aka process the work queue)
-            while let Some(task) = self.wm_atmos.get_next_wm_task() {
-                self.process_task(&task);
-            }
-
-            // start recording how much time we spent doing graphics
-            log::debug!("_____________________________ FRAME BEGIN");
-            // Create a frame out of the hemisphere we got from ways
-            draw_stop.start();
-            self.begin_frame().unwrap();
-            draw_stop.end();
-            log::debug!(
-                "spent {} ms drawing this frame",
-                draw_stop.get_duration().as_millis()
-            );
-
-            self.wm_atmos.print_surface_tree();
-
-            // present our frame
-            draw_stop.start();
-            self.end_frame().unwrap();
-            draw_stop.end();
-
-            log::debug!(
-                "spent {} ms presenting this frame",
-                draw_stop.get_duration().as_millis()
-            );
-
-            #[cfg(feature = "renderdoc")]
-            if self.wm_atmos.get_renderdoc_recording() {
-                self.wm_renderdoc
-                    .end_frame_capture(std::ptr::null(), std::ptr::null());
-            }
-            self.reap_dead_windows();
-            self.wm_atmos.release_consumables();
-
-            log::debug!("_____________________________ FRAME END");
+        #[cfg(feature = "renderdoc")]
+        if atmos.get_renderdoc_recording() {
+            self.wm_renderdoc
+                .start_frame_capture(std::ptr::null(), std::ptr::null());
         }
+
+        // iterate through all the tasks that ways left
+        // us in this hemisphere
+        //  (aka process the work queue)
+        while let Some(task) = atmos.get_next_wm_task() {
+            self.process_task(atmos, &task);
+        }
+
+        // start recording how much time we spent doing graphics
+        log::debug!("_____________________________ FRAME BEGIN");
+        // Create a frame out of the hemisphere we got from ways
+        draw_stop.start();
+        self.begin_frame(atmos).unwrap();
+        draw_stop.end();
+        log::debug!(
+            "spent {} ms drawing this frame",
+            draw_stop.get_duration().as_millis()
+        );
+
+        atmos.print_surface_tree();
+
+        // present our frame
+        draw_stop.start();
+        self.end_frame().unwrap();
+        draw_stop.end();
+
+        log::debug!(
+            "spent {} ms presenting this frame",
+            draw_stop.get_duration().as_millis()
+        );
+
+        #[cfg(feature = "renderdoc")]
+        if atmos.get_renderdoc_recording() {
+            self.wm_renderdoc
+                .end_frame_capture(std::ptr::null(), std::ptr::null());
+        }
+        self.reap_dead_windows();
+        atmos.release_consumables();
+
+        log::debug!("_____________________________ FRAME END");
     }
 }
 
