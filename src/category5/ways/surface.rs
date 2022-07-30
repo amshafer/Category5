@@ -290,7 +290,9 @@ impl Surface {
 
         // Commit our frame callbacks
         // move the callback list from attached to the current callback list
-        self.s_frame_callbacks = std::mem::take(&mut self.s_attached_frame_callbacks);
+        self.s_frame_callbacks
+            .extend_from_slice(self.s_attached_frame_callbacks.as_slice());
+        self.s_attached_frame_callbacks.clear();
 
         // update the surface size of this id so that vkcomp knows what
         // size of buffer it is compositing
