@@ -810,6 +810,7 @@ impl Atmosphere {
     /// redraw themselves. If they aren't on screen we don't send
     /// the callback so it doesn't use the power.
     pub fn send_frame_callbacks_for_surf(&mut self, id: WindowId) {
+        log::debug!("Sending frame callbacks for Surf {:?}", id);
         // get each valid id in the mapping
         // get the refcell for the surface for this id
         let WindowId(raw_id) = id;

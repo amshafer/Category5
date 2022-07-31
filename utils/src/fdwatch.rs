@@ -67,10 +67,9 @@ impl FdWatch {
             .expect("Could not register watch event with kqueue");
     }
 
-    // timeout in ms
     // returns true if something is ready to be read
-    pub fn wait_for_events(&mut self, timeout: usize) -> bool {
-        kevent(self.fdw_kq, &[], self.fdw_events.as_mut_slice(), timeout).is_ok()
+    pub fn wait_for_events(&mut self) -> bool {
+        kevent_ts(self.fdw_kq, &[], self.fdw_events.as_mut_slice(), None).is_ok()
     }
 }
 

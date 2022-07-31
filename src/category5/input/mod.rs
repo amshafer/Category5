@@ -47,7 +47,7 @@ use utils::{log, timing::*, WindowId};
 
 use input::event::keyboard::{KeyState, KeyboardEvent, KeyboardEventTrait};
 use input::event::pointer;
-use input::event::pointer::{ButtonState, PointerEvent, PointerScrollEvent};
+use input::event::pointer::{ButtonState, PointerEvent};
 use input::event::Event;
 use input::{Libinput, LibinputInterface};
 
@@ -236,6 +236,23 @@ impl Input {
         }
     }
 
+    fn get_scroll_event(&self, ev: &dyn pointer::PointerScrollEvent) -> Axis {
+        let mut ret = Axis {
+            a_hori_val: 0.0,
+            a_vert_val: 0.0,
+            a_source: 0,
+        };
+        if ev.has_axis(pointer::Axis::Horizontal) {
+            ret.a_hori_val = ev.scroll_value(pointer::Axis::Horizontal);
+        }
+        if ev.has_axis(pointer::Axis::Vertical) {
+            ret.a_vert_val = ev.scroll_value(pointer::Axis::Vertical);
+        }
+
+        log::debug!("scrolling by {:?}", ret);
+        return ret;
+    }
+
     /// Get the next available event from libinput
     ///
     /// Dispatch should be called before this so libinput can
@@ -257,28 +274,14 @@ impl Input {
             // high-res and wheel click behavior. For ScrollFinger we
             // should handle kinetic scrolling
             Some(Event::Pointer(PointerEvent::ScrollFinger(sf))) => {
-                log::debug!(
-                    "scrolling by ({}, {})",
-                    sf.scroll_value(pointer::Axis::Horizontal),
-                    sf.scroll_value(pointer::Axis::Vertical),
-                );
-
-                return Some(InputEvent::axis(Axis {
-                    a_hori_val: sf.scroll_value(pointer::Axis::Horizontal),
-                    a_vert_val: sf.scroll_value(pointer::Axis::Vertical),
-                }));
+                let mut ax = self.get_scroll_event(&sf);
+                ax.a_source = AXIS_SOURCE_FINGER;
+                return Some(InputEvent::axis(ax));
             }
             Some(Event::Pointer(PointerEvent::ScrollWheel(sw))) => {
-                log::debug!(
-                    "scrolling by ({}, {})",
-                    sw.scroll_value(pointer::Axis::Horizontal),
-                    sw.scroll_value(pointer::Axis::Vertical),
-                );
-
-                return Some(InputEvent::axis(Axis {
-                    a_hori_val: sw.scroll_value(pointer::Axis::Horizontal),
-                    a_vert_val: sw.scroll_value(pointer::Axis::Vertical),
-                }));
+                let mut ax = self.get_scroll_event(&sw);
+                ax.a_source = AXIS_SOURCE_WHEEL;
+                return Some(InputEvent::axis(ax));
             }
             Some(Event::Pointer(PointerEvent::Button(b))) => {
                 log::debug!("pointer button {:?}", b.button());
@@ -330,6 +333,10 @@ impl Input {
 
                         if a.a_vert_val != 0.0 {
                             pointer.axis(time, wl_pointer::Axis::VerticalScroll, a.a_vert_val);
+                        }
+                        if pointer.as_ref().version() >= 5 {
+                            pointer
+                                .axis_source(wl_pointer::AxisSource::from_raw(a.a_source).unwrap());
                         }
                         Self::send_pointer_frame(pointer);
                         // Mark the atmosphere as changed so that it fires frame throttling

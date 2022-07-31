@@ -198,6 +198,10 @@ impl Surface {
                 .borrow_mut()
                 .should_commit(self, atmos, parent_commit_in_progress)
             {
+                log::debug!(
+                    "Surf {:?} not committing due to subsurface rules",
+                    self.s_id
+                );
                 return;
             }
         }
@@ -221,7 +225,7 @@ impl Surface {
         // Once the attached buffer is committed, the logic unifies again: the surface
         // size is obtained (either from the new buf or from atmos) and we can start
         // calling down the chain to xdg/wl_subcompositor/wl_shell
-        let surf_size = if let Some(_) = self.s_attached_buffer.as_ref() {
+        let surf_size = if self.s_attached_buffer.is_some() {
             // now we can commit the attached state
             self.s_committed_buffer = self.s_attached_buffer.take();
 
@@ -293,6 +297,11 @@ impl Surface {
         self.s_frame_callbacks
             .extend_from_slice(self.s_attached_frame_callbacks.as_slice());
         self.s_attached_frame_callbacks.clear();
+        log::debug!(
+            "Surface {:?} New frame callbacks = {:?}",
+            self.s_id,
+            self.s_frame_callbacks
+        );
 
         // update the surface size of this id so that vkcomp knows what
         // size of buffer it is compositing
@@ -333,6 +342,11 @@ impl Surface {
     fn frame(&mut self, callback: Main<wl_callback::WlCallback>) {
         // Add this call to our current state, which will
         // be called at the appropriate time
+        log::debug!(
+            "Surf {:?} attaching frame callback {:?}",
+            self.s_id,
+            callback
+        );
         self.s_attached_frame_callbacks.push(callback);
     }
 

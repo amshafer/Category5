@@ -12,6 +12,7 @@ use ws::protocol::wl_keyboard;
 //
 // It is translated from libinput, and allows us to map
 // keycodes to any input without modifying other subsystems
+#[derive(Debug)]
 pub enum InputEvent {
     pointer_move(PointerMove),
     click(Click),
@@ -21,12 +22,14 @@ pub enum InputEvent {
 
 // Movement of the pointer relative to
 // the previous position
+#[derive(Debug)]
 pub struct PointerMove {
     pub pm_dx: f64,
     pub pm_dy: f64,
 }
 
 // Pressing or unpressing a mouse button
+#[derive(Debug)]
 pub struct Click {
     // from the codes mod
     pub c_code: u32,
@@ -34,14 +37,21 @@ pub struct Click {
 }
 
 // Represents a scrolling motion in one of two directions
+#[derive(Debug)]
 pub struct Axis {
     // horizontal motion
     pub a_hori_val: f64,
     // vertical motion
     pub a_vert_val: f64,
+    // The axis source.
+    pub a_source: u32,
 }
 
+pub const AXIS_SOURCE_WHEEL: u32 = 0;
+pub const AXIS_SOURCE_FINGER: u32 = 1;
+
 // represents using the keyboard
+#[derive(Debug)]
 pub struct Key {
     pub k_code: u32,
     pub k_state: KeyState,

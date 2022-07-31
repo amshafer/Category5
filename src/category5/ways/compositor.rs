@@ -441,7 +441,7 @@ impl EventManager {
         // reset the timer before we start
         tm.reset();
         let mut needs_render = true;
-        while fdw.wait_for_events(0) || needs_render {
+        while needs_render || fdw.wait_for_events() {
             log::profiling!("starting loop");
             // First thing to do is to dispatch libinput
             // It has time sensitive operations which need to take
