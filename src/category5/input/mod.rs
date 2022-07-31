@@ -334,6 +334,23 @@ impl Input {
                         if a.a_vert_val != 0.0 {
                             pointer.axis(time, wl_pointer::Axis::VerticalScroll, a.a_vert_val);
                         }
+
+                        // If neither axis has a non-zero value, then we should
+                        // tell the application that the axis series has stopped. This
+                        // is needed for firefox, not having it means scrolling stops working
+                        // when you load a page for the first time.
+                        if a.a_vert_val == 0.0
+                            && a.a_hori_val == 0.0
+                            && pointer.as_ref().version() >= 5
+                        {
+                            pointer.axis_stop(time, wl_pointer::Axis::VerticalScroll);
+                            pointer.axis_stop(time, wl_pointer::Axis::HorizontalScroll);
+                        }
+
+                        // Send the source of this input event. This will for now be either
+                        // finger scrolling on a touchpad or scroll wheel scrolling. Firefox
+                        // breaks scrolling without this, I think it wants it to decide if
+                        // it should do kinetic scrolling or not.
                         if pointer.as_ref().version() >= 5 {
                             pointer
                                 .axis_source(wl_pointer::AxisSource::from_raw(a.a_source).unwrap());
