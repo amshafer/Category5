@@ -1886,28 +1886,27 @@ impl Renderer {
     /// All operations in the `record_fn` argument will be
     /// submitted in the command buffer `cbuf`. This aims to make
     /// constructing buffers more ergonomic.
-    pub(crate) fn cbuf_onetime<F: FnOnce(&Renderer, vk::CommandBuffer)>(
+    pub(crate) fn cbuf_submit_and_wait(
         &self,
         cbuf: vk::CommandBuffer,
         queue: vk::Queue,
         wait_stages: &[vk::PipelineStageFlags],
         wait_semas: &[vk::Semaphore],
         signal_semas: &[vk::Semaphore],
-        record_fn: F,
     ) {
-        self.cbuf_begin_recording(cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-
-        record_fn(self, cbuf);
-
         self.cbuf_end_recording(cbuf);
 
         unsafe {
             // once the one-time buffer has been recorded we can submit
             // it for execution.
+            // Interesting: putting the cbuf into a list in the builder
+            // struct makes it segfault in release mode... Deep dive
+            // needed...
+            let cbufs = [cbuf];
             let submit_info = vk::SubmitInfo::builder()
                 .wait_semaphores(wait_semas)
                 .wait_dst_stage_mask(wait_stages)
-                .command_buffers(&[cbuf])
+                .command_buffers(&cbufs)
                 .signal_semaphores(signal_semas)
                 .build();
 

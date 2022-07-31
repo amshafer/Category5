@@ -905,55 +905,55 @@ impl GeomPipeline {
         // allocate a new cbuf for us to work with
         let new_cbuf = Renderer::create_command_buffers(&rend.dev, rend.pool, 1)[0]; // only get one
 
+        rend.cbuf_begin_recording(new_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
         // the depth image and view have already been created by new
         // we need to execute a cbuf to set up the memory we are
         // going to use later
-        rend.cbuf_onetime(
+        // We need to initialize the depth attachment by
+        // performing a layout transition to the optimal
+        // depth layout
+        //
+        // we do not use rend.transition_image_layout since that
+        // is specific to texture images
+        let layout_barrier = vk::ImageMemoryBarrier::builder()
+            .image(self.depth_image)
+            // access patern for the resulting layout
+            .dst_access_mask(
+                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            )
+            // go from an undefined old layout to whatever the
+            // driver decides is the optimal depth layout
+            .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .subresource_range(
+                vk::ImageSubresourceRange::builder()
+                    .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                    .layer_count(1)
+                    .level_count(1)
+                    .build(),
+            )
+            .build();
+
+        // process the barrier we created, which will perform
+        // the actual transition.
+        rend.dev.cmd_pipeline_barrier(
+            new_cbuf,
+            vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+            vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[layout_barrier],
+        );
+
+        rend.cbuf_submit_and_wait(
             new_cbuf,
             rend.present_queue,
             &[], // wait_stages
             &[], // wait_semas
             &[], // signal_semas
-            // this closure will be the contents of the cbuf
-            |rend, cbuf| {
-                // We need to initialize the depth attachment by
-                // performing a layout transition to the optimal
-                // depth layout
-                //
-                // we do not use rend.transition_image_layout since that
-                // is specific to texture images
-                let layout_barrier = vk::ImageMemoryBarrier::builder()
-                    .image(self.depth_image)
-                    // access patern for the resulting layout
-                    .dst_access_mask(
-                        vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
-                            | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                    )
-                    // go from an undefined old layout to whatever the
-                    // driver decides is the optimal depth layout
-                    .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                    .old_layout(vk::ImageLayout::UNDEFINED)
-                    .subresource_range(
-                        vk::ImageSubresourceRange::builder()
-                            .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                            .layer_count(1)
-                            .level_count(1)
-                            .build(),
-                    )
-                    .build();
-
-                // process the barrier we created, which will perform
-                // the actual transition.
-                rend.dev.cmd_pipeline_barrier(
-                    cbuf,
-                    vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                    vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &[layout_barrier],
-                );
-            },
         );
     }
 }
