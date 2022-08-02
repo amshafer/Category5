@@ -30,17 +30,17 @@ pub struct SeatInstance {
     // the seat object itself
     pub si_seat: Main<wl_seat::WlSeat>,
     // wl_keyboard handle
-    pub si_keyboard: Option<Main<wl_keyboard::WlKeyboard>>,
+    pub si_keyboards: Vec<Main<wl_keyboard::WlKeyboard>>,
     // wl_pointer handle
-    pub si_pointer: Option<Main<wl_pointer::WlPointer>>,
+    pub si_pointers: Vec<Main<wl_pointer::WlPointer>>,
 }
 
 impl SeatInstance {
     pub fn new(seat: Main<wl_seat::WlSeat>) -> Self {
         Self {
             si_seat: seat,
-            si_keyboard: None,
-            si_pointer: None,
+            si_keyboards: Vec::new(),
+            si_pointers: Vec::new(),
         }
     }
 
@@ -96,7 +96,7 @@ impl SeatInstance {
         }
 
         // add the keyboard to this seat
-        self.si_keyboard = Some(keyboard.clone());
+        self.si_keyboards.push(keyboard.clone());
 
         // If we are in focus, then we should go ahead and generate
         // the enter event
@@ -119,7 +119,7 @@ impl SeatInstance {
 
     /// Register a wl_pointer to this seat
     fn get_pointer(&mut self, parent: &mut Seat, pointer: Main<wl_pointer::WlPointer>) {
-        self.si_pointer = Some(pointer.clone());
+        self.si_pointers.push(pointer.clone());
         pointer.quick_assign(move |p, r, _| {
             wl_pointer_handle_request(r, p);
         });

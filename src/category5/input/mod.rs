@@ -324,7 +324,7 @@ impl Input {
                 let seat = cell.borrow();
                 // Get the pointer
                 for si in seat.s_proxies.borrow().iter() {
-                    if let Some(pointer) = &si.si_pointer {
+                    for pointer in si.si_pointers.iter() {
                         let time = get_current_millis();
                         // deliver the axis events, one for each direction
                         if a.a_hori_val != 0.0 {
@@ -408,7 +408,7 @@ impl Input {
             // The client may have allocated multiple seats, and we should
             // deliver events to all of them
             for si in seat.s_proxies.borrow().iter() {
-                if let Some(keyboard) = &si.si_keyboard {
+                for keyboard in si.si_keyboards.iter() {
                     if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                         keyboard.enter(
                             seat.s_serial,
@@ -434,7 +434,7 @@ impl Input {
             // The client may have allocated multiple seats, and we should
             // deliver events to all of them
             for si in seat.s_proxies.borrow().iter() {
-                if let Some(keyboard) = &si.si_keyboard {
+                for keyboard in si.si_keyboards.iter() {
                     if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                         keyboard.leave(seat.s_serial, &surf);
                     }
@@ -459,7 +459,7 @@ impl Input {
                     // The client may have allocated multiple seats, and we should
                     // deliver events to all of them
                     for si in seat.s_proxies.borrow().iter() {
-                        if let Some(pointer) = &si.si_pointer {
+                        for pointer in si.si_pointers.iter() {
                             pointer.enter(
                                 seat.s_serial,
                                 &surf,
@@ -487,7 +487,7 @@ impl Input {
             // The client may have allocated multiple seats, and we should
             // deliver events to all of them
             for si in seat.s_proxies.borrow().iter() {
-                if let Some(pointer) = &si.si_pointer {
+                for pointer in si.si_pointers.iter() {
                     if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                         pointer.leave(seat.s_serial, &surf);
                         Self::send_pointer_frame(pointer);
@@ -538,7 +538,7 @@ impl Input {
                 let seat = cell.borrow();
                 // Get the pointer
                 for si in seat.s_proxies.borrow().iter() {
-                    if let Some(pointer) = &si.si_pointer {
+                    for pointer in si.si_pointers.iter() {
                         // If the pointer is over this surface
                         if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
                             // deliver the motion event
@@ -676,7 +676,7 @@ impl Input {
                 if let Some(cell) = atmos.get_seat_from_window_id(id) {
                     let seat = cell.borrow_mut();
                     for si in seat.s_proxies.borrow().iter() {
-                        if let Some(pointer) = &si.si_pointer {
+                        for pointer in si.si_pointers.iter() {
                             // Trigger a button event
                             pointer.button(
                                 seat.s_serial,
@@ -770,7 +770,7 @@ impl Input {
             if let Some(cell) = atmos.get_seat_from_client_id(id) {
                 let mut seat = cell.borrow_mut();
                 for si in seat.s_proxies.borrow().iter() {
-                    if let Some(keyboard) = &si.si_keyboard {
+                    for keyboard in si.si_keyboards.iter() {
                         if let Some((depressed, latched, locked, layout)) = mods {
                             // Finally fire the wayland event
                             log::debug!("Sending modifiers to window {:?}", id);
