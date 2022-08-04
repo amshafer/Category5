@@ -3,7 +3,6 @@
 //
 // Austin Shafer - 2020
 #![allow(dead_code, non_camel_case_types)]
-use serde::{Deserialize, Serialize};
 
 use cgmath::{Matrix4, Vector2, Vector3};
 
@@ -15,7 +14,7 @@ use std::mem;
 use ash::{util, vk};
 
 use super::Pipeline;
-use crate::renderer::{RecordParams, Renderer};
+use crate::renderer::{PushConstants, RecordParams, Renderer};
 use crate::{Image, SurfaceList, Viewport};
 
 use utils::log;
@@ -111,27 +110,6 @@ struct ShaderConstants {
     pub height: f32,
 }
 
-/// Push constants are used for small bits of data
-/// which are changed often. We will use them to
-/// transform the default square into the size of
-/// the client window.
-///
-/// This should to be less than 128 bytes to guarantee
-/// that there will be enough push constant space.
-#[derive(Clone, Copy, Serialize, Deserialize)]
-#[repr(C)]
-pub struct PushConstants {
-    pub color: (f32, f32, f32, f32),
-    pub use_color: u32,
-    /// the z-ordering of the window being drawn
-    pub order: f32,
-    /// this is [0,resolution]
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    pub height: f32,
-}
-
 impl Pipeline for GeomPipeline {
     fn is_ready(&self) -> bool {
         true
@@ -160,6 +138,22 @@ impl Pipeline for GeomPipeline {
                 0, // first set
                 &[self.g_desc, rend.r_images_desc],
                 &[], // dynamic offsets
+            );
+
+            // Now update our cbuf constants. This is how we pass in
+            // the viewport information
+            let consts = rend.get_push_constants(viewport);
+            rend.dev.cmd_push_constants(
+                params.cbuf,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                0, // offset
+                // Get the raw bytes for our push constants without doing any
+                // expensinve serialization
+                std::slice::from_raw_parts(
+                    &consts as *const _ as *const u8,
+                    std::mem::size_of::<PushConstants>(),
+                ),
             );
 
             // Set our current viewport

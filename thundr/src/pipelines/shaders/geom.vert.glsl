@@ -15,6 +15,12 @@ layout(binding = 0) uniform ShaderConstants {
  float height;
 } ubo;
 
+layout(push_constant) uniform PushConstants {
+ mat4 model;
+ float width;
+ float height;
+} push;
+
 struct Rect {
  ivec2 start;
  ivec2 size;
@@ -66,16 +72,19 @@ void main() {
  //    should take up. Any 1's in loc will be scaled by this amount.
  // 4. add the (x,y) offset for the window.
  // 5. also multiply the base by 2 for the same reason
+ //
+ // Use viewport size here instead of the total resolution size. We want
+ // to scale around our display area, not the entire thing.
  vec2 adjusted = loc
   * vec2(2, 2)
-  * (windows[window_index].dims.size / vec2(ubo.width, ubo.height))
-  + (windows[window_index].dims.start / vec2(ubo.width, ubo.height))
+  * (windows[window_index].dims.size / vec2(push.width, push.height))
+  + (windows[window_index].dims.start / vec2(push.width, push.height))
   * vec2(2, 2);
 
  // The model transform will align x,y = (0, 0) with the top left of
  // the screen. It should stubtract 1.0 from x and y.
  float order = 0.0 + (float(window_count - gl_InstanceIndex) * 0.0000001);
- gl_Position = ubo.model * vec4(adjusted, order, 1.0);
+ gl_Position = ubo.model * push.model * vec4(adjusted, order, 1.0);
 
  fragcoord = coord;
 }

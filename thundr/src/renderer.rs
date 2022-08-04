@@ -5,6 +5,8 @@
 //
 // Austin Shafer - 2020
 #![allow(dead_code, non_camel_case_types)]
+use cgmath::{Matrix4, Vector3};
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::ffi::{CStr, CString};
 use std::marker::Copy;
@@ -19,9 +21,7 @@ use crate::display::Display;
 use crate::list::SurfaceList;
 use crate::pipelines::PipelineType;
 use crate::platform::VKDeviceFeatures;
-use crate::{Image, Surface};
-
-use serde::{Deserialize, Serialize};
+use crate::{Image, Surface, Viewport};
 
 extern crate utils as cat5_utils;
 use crate::{CreateInfo, Damage};
@@ -244,6 +244,19 @@ pub struct Window {
 pub struct RecordParams {
     pub cbuf: vk::CommandBuffer,
     pub image_num: usize,
+}
+
+/// Shader push constants
+///
+/// These will be updated when we record the per-viewport draw commands
+/// and will contain the scrolling model transformation of all content
+/// within a viewport.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PushConstants {
+    pub model: Matrix4<f32>,
+    pub width: f32,
+    pub height: f32,
 }
 
 // Most of the functions below will be unsafe. Only the safe functions
@@ -1812,6 +1825,22 @@ impl Renderer {
         self.transfer_buf_len = transfer_buf_len as usize;
         self.transfer_buf = buffer;
         self.transfer_mem = buf_mem;
+    }
+
+    /// Helper for getting the push constants
+    ///
+    /// This will be where we calculate the viewport scroll amount
+    pub fn get_push_constants(&mut self, viewport: &Viewport) -> PushConstants {
+        // transform from blender's coordinate system to vulkan
+        PushConstants {
+            model: Matrix4::from_translation(Vector3::new(
+                viewport.scroll_offset.0,
+                viewport.scroll_offset.1,
+                0.0,
+            )),
+            width: viewport.size.0,
+            height: viewport.size.1,
+        }
     }
 
     pub fn upload_memimage_to_transfer(&mut self, memimg: &MemImage) {

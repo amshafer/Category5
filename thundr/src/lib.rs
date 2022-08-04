@@ -148,8 +148,14 @@ pub struct Thundr {
 /// The viewport will control what section of the screen is rendered
 /// to. You will specify it when performing draw calls.
 pub struct Viewport {
+    /// This is the position of the viewport on the output
     pub offset: (f32, f32),
+    /// Size of the viewport within the output
     pub size: (f32, f32),
+    /// This is the amount to offset everything within this viewport by. It
+    /// can be used to move around all internal elements without updating
+    /// them.
+    pub scroll_offset: (f32, f32),
 }
 
 impl Viewport {
@@ -157,7 +163,12 @@ impl Viewport {
         Self {
             offset: (x, y),
             size: (width, height),
+            scroll_offset: (0.0, 0.0),
         }
+    }
+
+    pub fn set_scroll_amount(&mut self, x: f32, y: f32) {
+        self.scroll_offset = (x, y);
     }
 }
 
