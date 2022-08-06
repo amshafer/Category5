@@ -8,6 +8,7 @@ use std::iter::DoubleEndedIterator;
 use std::ops::Index;
 use utils::log;
 
+#[derive(Debug)]
 pub struct SurfaceList {
     /// This will get cleared during Thundr::draw
     pub(crate) l_changed: bool,

@@ -18,7 +18,7 @@ use std::rc::Rc;
 /// A surface represents a geometric region that will be
 /// drawn. It needs to have an image attached. The same
 /// image can be bound to multiple surfaces.
-#[derive(PartialEq, Default)]
+#[derive(PartialEq, Debug, Default)]
 pub(crate) struct SurfaceInternal {
     /// The position and size of the surface.
     pub s_rect: Rect<f32>,
@@ -98,7 +98,7 @@ impl SurfaceInternal {
 /// Surfaces are placed into `SurfaceLists`, which are proccessed and rendered
 /// by Thundr. A surface should only ever be used with one `SurfaceList`. If you would
 /// like to show the same image on multiple lists, then create multiple surfaces per-list.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Surface {
     /// The Thundr window list Id. This is an ECS ID to track surface updates
     /// in the shader's list.
