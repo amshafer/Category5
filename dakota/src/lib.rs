@@ -849,15 +849,12 @@ impl<'a> Dakota<'a> {
         }
 
         // construct layout tree with sizes of all boxes
-        // create our thundr surfaces while we are at it.
-        let num_children = dom.layout.root_element.borrow().children.len() as u32;
-
         let root_node_id = self.calculate_sizes(
             &mut dom.layout.root_element.borrow_mut(),
             &LayoutSpace {
                 avail_width: self.d_window_dims.unwrap().0 as f32, // available width
                 avail_height: self.d_window_dims.unwrap().1 as f32, // available height
-                children_at_this_level: num_children,
+                children_at_this_level: 1,                         // Only one child, the root node
             },
         )?;
         // Manually mark the root node as a viewport node. It always is, and it will
