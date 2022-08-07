@@ -636,6 +636,9 @@ impl Pipeline for CompPipeline {
         true
     }
 
+    fn begin_record(&mut self, _rend: &mut Renderer, _params: &RecordParams) {}
+    fn end_record(&mut self, _rend: &mut Renderer, _params: &RecordParams) {}
+
     fn draw(
         &mut self,
         rend: &mut Renderer,

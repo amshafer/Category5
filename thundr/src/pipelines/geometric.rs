@@ -115,15 +115,7 @@ impl Pipeline for GeomPipeline {
         true
     }
 
-    /// Our implementation of drawing one frame using geometry
-    fn draw(
-        &mut self,
-        rend: &mut Renderer,
-        params: &RecordParams,
-        _images: &[Image],
-        _surfaces: &mut SurfaceList,
-        viewport: &Viewport,
-    ) -> bool {
+    fn begin_record(&mut self, rend: &mut Renderer, params: &RecordParams) {
         self.begin_recording(rend, params);
         unsafe {
             // Descriptor sets can be updated elsewhere, but
@@ -139,7 +131,19 @@ impl Pipeline for GeomPipeline {
                 &[self.g_desc, rend.r_images_desc],
                 &[], // dynamic offsets
             );
+        }
+    }
 
+    /// Our implementation of drawing one frame using geometry
+    fn draw(
+        &mut self,
+        rend: &mut Renderer,
+        params: &RecordParams,
+        _images: &[Image],
+        _surfaces: &mut SurfaceList,
+        viewport: &Viewport,
+    ) -> bool {
+        unsafe {
             // Now update our cbuf constants. This is how we pass in
             // the viewport information
             let consts = rend.get_push_constants(viewport);
@@ -182,17 +186,21 @@ impl Pipeline for GeomPipeline {
                 0,                                // first instance
             );
             log::info!("Drawing {} objects", rend.r_window_order.len());
+        }
 
+        return true;
+    }
+
+    fn end_record(&mut self, rend: &mut Renderer, params: &RecordParams) {
+        unsafe {
             // make sure to end recording
             rend.dev.cmd_end_render_pass(params.cbuf);
             // Sync our dmabuf images
             //rend.add_image_barriers_for_dmabuf_images(params.cbuf, images);
             rend.cbuf_end_recording(params.cbuf);
         }
-
         // now submit the cbuf
-        self.begin_frame(rend);
-        return true;
+        self.submit_frame(rend);
     }
 
     fn debug_frame_print(&self) {
@@ -448,7 +456,7 @@ impl GeomPipeline {
     /// Think of this as the "main" rendering operation. It will draw
     /// all geometry to the current framebuffer. Presentation is
     /// done later, in case operations need to occur inbetween.
-    fn begin_frame(&mut self, rend: &Renderer) {
+    fn submit_frame(&mut self, rend: &Renderer) {
         // Submit the recorded cbuf to perform the draw calls
         rend.cbuf_submit(
             // submit the cbuf for the current image

@@ -841,6 +841,11 @@ impl<'a> Dakota<'a> {
             viewport.v_surfaces.push(root_surf.clone());
         }
 
+        for i in 0..self.d_viewport_nodes[&id].v_children.len() {
+            let child_viewport = self.d_viewport_nodes[&id].v_children[i].clone();
+            self.calculate_thundr_surfaces(child_viewport)?;
+        }
+
         Ok(())
     }
 
@@ -936,6 +941,15 @@ impl<'a> Dakota<'a> {
         self.d_event_sys.get_events()
     }
 
+    fn flush_viewports(&mut self, viewport: ViewportId) -> th::Result<()> {
+        for i in 0..self.d_viewport_nodes[&viewport].v_children.len() {
+            self.flush_viewports(self.d_viewport_nodes[&viewport].v_children[i].clone())?;
+        }
+
+        let node = &mut self.d_viewport_nodes[&viewport];
+        self.d_thund.flush_surface_data(&mut node.v_surfaces)
+    }
+
     fn draw_viewports(&mut self, viewport: ViewportId) -> th::Result<()> {
         for i in 0..self.d_viewport_nodes[&viewport].v_children.len() {
             self.draw_viewports(self.d_viewport_nodes[&viewport].v_children[i].clone())?;
@@ -943,15 +957,20 @@ impl<'a> Dakota<'a> {
 
         let node = &mut self.d_viewport_nodes[&viewport];
         self.d_thund
-            .draw_frame(&mut node.v_surfaces, &node.v_viewport)?;
-
-        Ok(())
+            .draw_surfaces(&mut node.v_surfaces, &node.v_viewport)
     }
 
     fn draw_surfacelists(&mut self) -> th::Result<()> {
-        if let Some(root_viewport) = self.d_root_viewport.clone() {
-            self.draw_viewports(root_viewport)?;
-        }
+        let root_viewport = self
+            .d_root_viewport
+            .clone()
+            .expect("Dakota bug: root viewport not valid");
+
+        self.flush_viewports(root_viewport.clone())?;
+
+        self.d_thund.begin_recording()?;
+        self.draw_viewports(root_viewport)?;
+        self.d_thund.end_recording()?;
 
         Ok(())
     }

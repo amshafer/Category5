@@ -43,6 +43,8 @@ pub trait Pipeline {
     /// it is ready.
     fn is_ready(&self) -> bool;
 
+    fn begin_record(&mut self, rend: &mut Renderer, params: &RecordParams);
+
     /// Our function which records the cbufs used to draw
     /// a frame. `params` tells us which cbufs/image we are
     /// recording for. We need to generate draw calls to update
@@ -58,6 +60,8 @@ pub trait Pipeline {
         surfaces: &mut SurfaceList,
         viewport: &Viewport,
     ) -> bool;
+
+    fn end_record(&mut self, rend: &mut Renderer, params: &RecordParams);
 
     /// This helper prints out any per-frame statistics for debug
     /// info, such as the window positions and the attached images.

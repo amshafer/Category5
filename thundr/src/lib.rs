@@ -84,6 +84,8 @@ pub use list::SurfaceList;
 pub use renderer::Renderer;
 pub use surface::{SubsurfaceOrder, Surface};
 
+use renderer::RecordParams;
+
 // Re-export some things from utils so clients
 // can use them
 extern crate utils;
@@ -126,6 +128,10 @@ pub enum ThundrError {
     COMPOSITION_TYPE_NOT_SPECIFIED,
     #[error("Vulkan surface or subsurface could not be found")]
     SURFACE_NOT_FOUND,
+    #[error("Thundr Usage Bug: Recording already in progress")]
+    RECORDING_ALREADY_IN_PROGRESS,
+    #[error("Thundr Usage Bug: Recording has not been started")]
+    RECORDING_NOT_IN_PROGRESS,
 }
 
 pub struct Thundr {
@@ -141,6 +147,9 @@ pub struct Thundr {
     /// the original initialization
     pub(crate) th_pipe_type: PipelineType,
     pub(crate) th_pipe: Box<dyn Pipeline>,
+
+    /// The current draw calls parameters
+    th_params: Option<RecordParams>,
 }
 
 /// A region to display to
@@ -273,6 +282,7 @@ impl Thundr {
             th_image_list: Vec::new(),
             th_pipe_type: ty,
             th_pipe: pipe,
+            th_params: None,
         })
     }
 
@@ -457,10 +467,36 @@ impl Thundr {
         unsafe { self.th_rend.get_drm_dev() }
     }
 
-    // draw_frame
-    pub fn draw_frame(&mut self, surfaces: &mut SurfaceList, viewport: &Viewport) -> Result<()> {
+    /// Flushes all surface updates to the GPU
+    ///
+    /// This should be called immediately for all surface lists right before beginning the
+    /// draw sequence. This cannot happen during drawing since it will update the window
+    /// and image lists and Vulkan may already have references too them.
+    pub fn flush_surface_data(&mut self, surfaces: &mut SurfaceList) -> Result<()> {
+        if self.th_params.is_some() {
+            return Err(ThundrError::RECORDING_ALREADY_IN_PROGRESS);
+        }
+
+        // TODO: check and see if the image list has been changed, or if
+        // any images have been updated.
+        self.th_rend
+            .refresh_window_resources(self.th_image_list.as_slice(), surfaces);
+
+        Ok(())
+    }
+
+    /// Begin recording a frame
+    ///
+    /// This is first called when trying to draw a frame. It will set
+    /// up the command buffers and resources that Thundr will use while
+    /// recording draw commands.
+    pub fn begin_recording(&mut self) -> Result<()> {
+        if self.th_params.is_some() {
+            return Err(ThundrError::RECORDING_ALREADY_IN_PROGRESS);
+        }
+
         // record rendering commands
-        let params = match self.th_rend.begin_recording_one_frame(surfaces) {
+        let params = match self.th_rend.begin_recording_one_frame() {
             Ok(params) => params,
             Err(ThundrError::OUT_OF_DATE) => {
                 self.handle_ood();
@@ -468,10 +504,25 @@ impl Thundr {
             }
             Err(e) => return Err(e),
         };
-        // TODO: check and see if the image list has been changed, or if
-        // any images have been updated.
-        self.th_rend
-            .refresh_window_resources(self.th_image_list.as_slice(), surfaces);
+
+        self.th_pipe.begin_record(&mut self.th_rend, &params);
+        self.th_params = Some(params);
+
+        Ok(())
+    }
+
+    /// Draw a set of surfaces within a viewport
+    ///
+    /// This is the function for recording drawing of a set of surfaces. The surfaces
+    /// in the list will be rendered withing the region specified by viewport.
+    pub fn draw_surfaces(&mut self, surfaces: &mut SurfaceList, viewport: &Viewport) -> Result<()> {
+        let params = self
+            .th_params
+            .as_ref()
+            .ok_or(ThundrError::RECORDING_NOT_IN_PROGRESS)?;
+
+        self.th_rend.add_damage_for_list(surfaces)?;
+
         self.th_rend.draw_call_submitted = self.th_pipe.draw(
             &mut self.th_rend,
             &params,
@@ -481,8 +532,33 @@ impl Thundr {
         );
         // Now that we have processed this surfacelist, unmark it as changed
         surfaces.l_changed = false;
-        self.clear_damage_on_all_images();
+        self.draw_surfaces_debug_prints(surfaces, viewport);
 
+        Ok(())
+    }
+
+    /// This finishes all recording operations and submits the work to the GPU.
+    ///
+    /// This should only be called after a proper begin_recording + draw_surfaces sequence.
+    pub fn end_recording(&mut self) -> Result<()> {
+        let params = self
+            .th_params
+            .as_ref()
+            .ok_or(ThundrError::RECORDING_NOT_IN_PROGRESS)?;
+
+        self.th_pipe.end_record(&mut self.th_rend, params);
+        self.clear_damage_on_all_images();
+        self.th_params = None;
+
+        Ok(())
+    }
+
+    // present
+    pub fn present(&mut self) -> Result<()> {
+        self.th_rend.present()
+    }
+
+    pub fn draw_surfaces_debug_prints(&mut self, surfaces: &mut SurfaceList, _viewport: &Viewport) {
         // Debugging stats
         #[cfg(debug_assertions)]
         {
@@ -538,13 +614,6 @@ impl Thundr {
 
         self.th_pipe.debug_frame_print();
         log::debug!("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
-
-        Ok(())
-    }
-
-    // present
-    pub fn present(&mut self) -> Result<()> {
-        self.th_rend.present()
     }
 }
 

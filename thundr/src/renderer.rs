@@ -128,6 +128,9 @@ pub struct Renderer {
     /// allows us to only present the changed regions. This is calculated
     /// from the damages present in the `SurfaceList`.
     pub(crate) damage_regions: VecDeque<Vec<vk::RectLayerKHR>>,
+    /// This is the compiled damage regions from all surfacelists rendered. it
+    /// will be added to global damage sources and placed in current_damage
+    surfacelist_regions: Vec<vk::RectLayerKHR>,
     /// This is the final compiled set of damages for this frame.
     pub(crate) current_damage: Vec<vk::RectLayerKHR>,
 
@@ -1671,6 +1674,7 @@ impl Renderer {
                 swap_ages: std::iter::repeat(0).take(images.len()).collect(),
                 damage_regions: damage_regs,
                 current_damage: Vec::new(),
+                surfacelist_regions: Vec::new(),
                 images: images,
                 image_sampler: sampler,
                 views: image_views,
@@ -2081,7 +2085,7 @@ impl Renderer {
         }
     }
 
-    pub fn get_recording_parameters(&self) -> RecordParams {
+    pub fn get_recording_parameters(&mut self) -> RecordParams {
         RecordParams {
             cbuf: self.cbufs[self.current_image as usize],
             image_num: self.current_image as usize,
@@ -2089,7 +2093,7 @@ impl Renderer {
     }
 
     /// Adds damage to `regions` without modifying the damage
-    fn aggregate_damage(&self, damage: &Damage, regions: &mut Vec<vk::RectLayerKHR>) {
+    fn aggregate_damage(&mut self, damage: &Damage) {
         let swapchain_extent = Rect::new(
             0,
             0,
@@ -2116,7 +2120,7 @@ impl Renderer {
                 )
                 .build();
 
-            regions.push(rect);
+            self.surfacelist_regions.push(rect);
         }
     }
 
@@ -2132,17 +2136,11 @@ impl Renderer {
     ///
     /// This adds to the current_damage that has been set by surface moving
     /// and mapping.
-    pub fn begin_recording_one_frame(
-        &mut self,
-        surfaces: &mut SurfaceList,
-    ) -> Result<RecordParams> {
+    pub fn begin_recording_one_frame(&mut self) -> Result<RecordParams> {
         // At least wait for any image copies to complete
         self.wait_for_copy();
         // get the next frame to draw into
         self.get_next_swapchain_image()?;
-
-        // TODO: redo the way I track swap ages. The order the images are acquired
-        // isn't guaranteed to be constant
 
         // Now combine the first n lists (depending on the current
         // image's age) into one list for vkPresentRegionsKHR (and `gen_tile_list`)
@@ -2183,38 +2181,45 @@ impl Renderer {
                 );
                 self.damage_regions.truncate(next_oldest);
             }
-            let mut regions = Vec::new();
-
-            for surf_rc in surfaces.iter_mut() {
-                // add the new damage to the list of damages
-                // If the surface does not have damage attached, then don't generate tiles
-                if let Some(damage) = surf_rc.get_global_damage() {
-                    self.aggregate_damage(&damage, &mut regions);
-                }
-
-                // now we have to consider damage caused by moving the surface
-                //
-                // We don't have to correct the position based on the surface pos
-                // since the damage was already recorded for the surface
-                if let Some(damage) = surf_rc.take_surface_damage() {
-                    self.aggregate_damage(&damage, &mut regions);
-                }
-            }
-
-            // Finally we add any damage that the surfacelist has
-            for damage in surfaces.damage() {
-                self.aggregate_damage(damage, &mut regions);
-            }
-            surfaces.clear_damage();
-
-            self.current_damage.extend(&regions);
-            self.damage_regions.push_front(regions);
-
-            // Only update the ages after we have processed them
-            self.update_buffer_ages();
         }
 
         Ok(self.get_recording_parameters())
+    }
+
+    pub fn add_damage_for_list(&mut self, surfaces: &mut SurfaceList) -> Result<()> {
+        for surf_rc in surfaces.iter_mut() {
+            // add the new damage to the list of damages
+            // If the surface does not have damage attached, then don't generate tiles
+            if let Some(damage) = surf_rc.get_global_damage() {
+                self.aggregate_damage(&damage);
+            }
+
+            // now we have to consider damage caused by moving the surface
+            //
+            // We don't have to correct the position based on the surface pos
+            // since the damage was already recorded for the surface
+            if let Some(damage) = surf_rc.take_surface_damage() {
+                self.aggregate_damage(&damage);
+            }
+        }
+
+        // Finally we add any damage that the surfacelist has
+        for damage in surfaces.damage() {
+            self.aggregate_damage(damage);
+        }
+        surfaces.clear_damage();
+
+        Ok(())
+    }
+
+    pub fn end_recording_one_frame(&mut self) {
+        self.current_damage.extend(&self.surfacelist_regions);
+        let mut regions = Vec::new();
+        std::mem::swap(&mut regions, &mut self.surfacelist_regions);
+        self.damage_regions.push_front(regions);
+
+        // Only update the ages after we have processed them
+        self.update_buffer_ages();
     }
 
     /// Allocate a descriptor set for each layout in `layouts`
@@ -2669,6 +2674,7 @@ impl Renderer {
         }
         // Now that this frame's damage has been consumed, clear it
         self.current_damage.clear();
+        self.surfacelist_regions.clear();
 
         unsafe {
             match self
