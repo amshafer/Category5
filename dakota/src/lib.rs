@@ -499,7 +499,7 @@ impl<'a> Dakota<'a> {
                         &mut |inst: &mut FontInstance, thund, glyph_id, offset| {
                             let size = inst.get_glyph_thundr_size(thund, glyph_id);
                             let new_id = ecs_inst.mint_new_id();
-                            layouts[&new_id] = LayoutNode::new(
+                            let child_size = LayoutNode::new(
                                 None,
                                 Some(glyph_id),
                                 dom::Offset {
@@ -511,6 +511,17 @@ impl<'a> Dakota<'a> {
                                     height: size.1,
                                 },
                             );
+
+                            // Test if the text exceeds the parent space. If so then we need
+                            // to mark this node as a viewport node
+                            if child_size.l_offset.x + child_size.l_size.width > node.l_size.width
+                                || child_size.l_offset.y + child_size.l_size.height
+                                    > node.l_size.height
+                            {
+                                node.l_is_viewport = true;
+                            }
+
+                            layouts[&new_id] = child_size;
                             node.add_child(new_id);
                         },
                     );
@@ -680,7 +691,7 @@ impl<'a> Dakota<'a> {
         self.d_viewport_nodes[&id].v_surfaces.clear();
 
         for i in 0..self.d_viewport_nodes[&id].v_children.len() {
-            let child = self.d_layout_nodes[&id].l_children[i].clone();
+            let child = self.d_viewport_nodes[&id].v_children[i].clone();
             self.clear_viewports(child);
         }
     }
@@ -801,11 +812,12 @@ impl<'a> Dakota<'a> {
             node.l_size
         );
         log::verbose!(
-            "{}    resource={:?}, glyph_id={:?}, num_children={}",
+            "{}    resource={:?}, glyph_id={:?}, num_children={}, is_viewport={}",
             spaces,
             node.l_resource,
             node.l_glyph_id,
             node.l_children.len(),
+            node.l_is_viewport,
         );
 
         for child in node.l_children.iter() {
