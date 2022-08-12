@@ -32,11 +32,11 @@
 //! // use this id to access its data in one of our collections
 //! table[&first_id] = String::from("Hello ECS!");
 //!
-//! assert!(table[&first_id] == "Hello ECS!".to_owned());
+//! assert!(table.get(&first_id) == Some("Hello ECS!".to_owned()));
 //! ```
 // Austin Shafer - 2022
 use std::cell::RefCell;
-use std::ops::{Drop, Index, IndexMut};
+use std::ops::Drop;
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -177,14 +177,23 @@ pub type ECSId = Rc<ECSIdInternal>;
 /// Multiple tables can be created inside of one instance, you
 /// should create a new table for each type of data you would
 /// like to track for an entity.
+///
+/// Usage begins with the `set` method, which will create an initial
+/// value for this property. This must be called first to query
+/// valid values for the Id.
+///
+/// This table of properties can be queried using the `get` and
+/// `get_mut` methods. They will perform the O(1) lookup within
+/// the ECSTable, returning None if this property has not been
+/// set for the requested Id.
 #[derive(Debug)]
-pub struct ECSTable<T: Default> {
+pub struct ECSTable<T> {
     pub ect_inst: ECSInstance,
     /// This is a component set, it will be indexed by ECSId
-    pub ect_data: Vec<T>,
+    pub ect_data: Vec<Option<T>>,
 }
 
-impl<T: Default> ECSTable<T> {
+impl<T> ECSTable<T> {
     pub fn new(inst: ECSInstance) -> Self {
         Self {
             ect_inst: inst,
@@ -198,7 +207,7 @@ impl<T: Default> ECSTable<T> {
 
         // First handle any resizing that needs to occur
         if id >= self.ect_data.len() {
-            self.ect_data.resize_with(id + 1, || T::default());
+            self.ect_data.resize_with(id + 1, || None);
         }
     }
 
@@ -208,39 +217,58 @@ impl<T: Default> ECSTable<T> {
             eti_cur: 0,
         }
     }
-}
 
-impl<T: Default> Index<&ECSId> for ECSTable<T> {
-    type Output = T;
-
+    /// Get the value corresponding to id
+    ///
+    /// This performs a shared lookup, returning a reference that can
+    /// be used to interact with the data placed in the table. Will
+    /// panic if the Id passed is invalid.
+    ///
+    /// This returns None if the Id does not have a value
     #[inline]
-    fn index(&self, id: &ECSId) -> &T {
+    pub fn get<'a>(&'a self, id: &ECSId) -> Option<&'a T> {
         assert!(id.ecs_id < self.ect_data.len());
-        &self.ect_data[id.ecs_id]
+        self.ect_data[id.ecs_id].as_ref()
     }
-}
 
-impl<T: Default> IndexMut<&ECSId> for ECSTable<T> {
+    /// Get a mutable reference to the value corresponding to id
+    ///
+    /// This performs a shared lookup, returning a mut  reference that can
+    /// be used to interact with the data placed in the table. Will
+    /// panic if the Id passed is invalid.
+    ///
+    /// This returns None if the Id does not have a value
     #[inline]
-    fn index_mut(&mut self, id: &ECSId) -> &mut T {
+    pub fn get_mut<'a>(&'a mut self, id: &ECSId) -> Option<&'a mut T> {
         self.ensure_space_for_id(id);
-        &mut self.ect_data[id.ecs_id]
+        self.ect_data[id.ecs_id].as_mut()
+    }
+
+    /// Create the initial value for an Id
+    ///
+    /// This will fill in the table's entry for a particular Id for the
+    /// first time. After this has been used the value can be queried with
+    /// the getter methods.
+    #[inline]
+    pub fn set(&mut self, id: &ECSId, val: T) {
+        self.ensure_space_for_id(id);
+        self.ect_data[id.ecs_id] = Some(val);
     }
 }
 
-pub struct ECSTableIterator<'a, T: Default> {
+pub struct ECSTableIterator<'a, T> {
     eti_table: &'a ECSTable<T>,
     eti_cur: usize,
 }
 
-impl<'a, T: Default> Iterator for ECSTableIterator<'a, T> {
-    type Item = &'a T;
+impl<'a, T> Iterator for ECSTableIterator<'a, T> {
+    type Item = Option<&'a T>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.eti_cur >= self.eti_table.ect_data.len() {
             return None;
         }
-        let ret = &self.eti_table.ect_data[self.eti_cur];
+        let ret = self.eti_table.ect_data[self.eti_cur].as_ref();
         self.eti_cur += 1;
 
         return Some(ret);

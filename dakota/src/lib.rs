@@ -68,7 +68,6 @@ pub struct Dakota<'a> {
     d_font_inst: FontInstance<'a>,
 }
 
-#[derive(Debug)]
 struct ViewportNode {
     v_parent: Option<ViewportId>,
     v_children: Vec<ViewportId>,
@@ -167,7 +166,7 @@ impl LayoutNode {
         };
 
         for child_id in self.l_children.iter() {
-            let other = &dakota.d_layout_nodes[child_id];
+            let other = &dakota.d_layout_nodes.get(child_id).unwrap();
 
             // add any offsets to our size
             self.l_size.width += other.l_offset.x + other.l_size.width;
@@ -316,7 +315,7 @@ impl<'a> Dakota<'a> {
             // num_children_at_this_level was set earlier to 0 when we
             // created the common child space
             let child_id = self.calculate_sizes(&mut child.borrow_mut(), &space)?;
-            let mut child_size = &mut self.d_layout_nodes[&child_id];
+            let child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
             // At this point the size of the is calculated
             // and we can determine the offset. We want to center the
             // box, so that's the center point of the parent minus
@@ -358,7 +357,7 @@ impl<'a> Dakota<'a> {
 
         for child in el.children.iter() {
             let child_id = self.calculate_sizes(&mut child.borrow_mut(), &space)?;
-            let mut child_size = &mut self.d_layout_nodes[&child_id];
+            let child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
 
             // now the child size has been made, but it still needs to find
             // the proper position inside the parent container. If the child
@@ -521,7 +520,7 @@ impl<'a> Dakota<'a> {
                                 node.l_is_viewport = true;
                             }
 
-                            layouts[&new_id] = child_size;
+                            layouts.set(&new_id, child_size);
                             node.add_child(new_id);
                         },
                     );
@@ -536,8 +535,8 @@ impl<'a> Dakota<'a> {
             log::info!("Dumping children of node");
             for l in node.l_children.iter() {
                 log::info!("Child");
-                log::info!("{:#?}", self.d_layout_nodes[l].l_offset);
-                log::info!("{:#?}", self.d_layout_nodes[l].l_size);
+                log::info!("{:#?}", self.d_layout_nodes.get(l).unwrap().l_offset);
+                log::info!("{:#?}", self.d_layout_nodes.get(l).unwrap().l_size);
             }
             log::info!("{:#?}", text);
         }
@@ -558,7 +557,8 @@ impl<'a> Dakota<'a> {
         size: dom::Size<f32>,
     ) -> LayoutId {
         let new_id = self.d_layout_ecs_inst.mint_new_id();
-        self.d_layout_nodes[&new_id] = LayoutNode::new(res, glyph_id, off, size);
+        self.d_layout_nodes
+            .set(&new_id, LayoutNode::new(res, glyph_id, off, size));
 
         new_id
     }
@@ -638,7 +638,7 @@ impl<'a> Dakota<'a> {
 
         log::debug!("Final offset of element is {:?}", ret.l_offset);
         log::debug!("Final size of element is {:?}", ret.l_size);
-        self.d_layout_nodes[&new_id] = ret;
+        self.d_layout_nodes.set(&new_id, ret);
 
         return Ok(new_id);
     }
@@ -649,7 +649,7 @@ impl<'a> Dakota<'a> {
         mut parent_viewport: Option<ViewportId>,
     ) -> Option<ViewportId> {
         {
-            let node = &mut self.d_layout_nodes[&id];
+            let node = self.d_layout_nodes.get_mut(&id).unwrap();
 
             if node.l_is_viewport {
                 let new_id = self.d_viewport_ecs_inst.mint_new_id();
@@ -657,30 +657,34 @@ impl<'a> Dakota<'a> {
                 // Add this as a child of the parent
                 // Do this first to please the borrow checker
                 if let Some(parent) = parent_viewport.as_ref() {
-                    self.d_viewport_nodes[&parent]
+                    self.d_viewport_nodes
+                        .get_mut(&parent)
+                        .unwrap()
                         .v_children
                         .push(new_id.clone());
                 }
 
-                let viewport = &mut self.d_viewport_nodes[&new_id];
-                viewport.v_root_node = Some(id.clone());
-                viewport.v_parent = parent_viewport;
-
-                viewport.v_viewport = th::Viewport::new(
-                    node.l_offset.x,
-                    node.l_offset.y,
-                    node.l_size.width,
-                    node.l_size.height,
-                );
-                viewport.v_surfaces = th::SurfaceList::new();
+                let viewport = ViewportNode {
+                    v_root_node: Some(id.clone()),
+                    v_parent: parent_viewport,
+                    v_viewport: th::Viewport::new(
+                        node.l_offset.x,
+                        node.l_offset.y,
+                        node.l_size.width,
+                        node.l_size.height,
+                    ),
+                    v_children: Vec::new(),
+                    v_surfaces: th::SurfaceList::new(),
+                };
+                self.d_viewport_nodes.set(&new_id, viewport);
 
                 node.l_viewport = Some(new_id.clone());
                 parent_viewport = Some(new_id);
             }
         }
 
-        for i in 0..self.d_layout_nodes[&id].l_children.len() {
-            let child = self.d_layout_nodes[&id].l_children[i].clone();
+        for i in 0..self.d_layout_nodes.get(&id).unwrap().l_children.len() {
+            let child = self.d_layout_nodes.get(&id).unwrap().l_children[i].clone();
             self.calculate_viewports(child.clone(), parent_viewport.clone());
         }
 
@@ -688,10 +692,14 @@ impl<'a> Dakota<'a> {
     }
 
     fn clear_viewports(&mut self, id: ViewportId) {
-        self.d_viewport_nodes[&id].v_surfaces.clear();
+        self.d_viewport_nodes
+            .get_mut(&id)
+            .unwrap()
+            .v_surfaces
+            .clear();
 
-        for i in 0..self.d_viewport_nodes[&id].v_children.len() {
-            let child = self.d_viewport_nodes[&id].v_children[i].clone();
+        for i in 0..self.d_viewport_nodes.get(&id).unwrap().v_children.len() {
+            let child = self.d_viewport_nodes.get(&id).unwrap().v_children[i].clone();
             self.clear_viewports(child);
         }
     }
@@ -720,7 +728,7 @@ impl<'a> Dakota<'a> {
     /// This does not cross viewport boundaries. This function will be called on
     /// the root node for every viewport.
     fn create_thundr_surf_for_el(&mut self, node: LayoutId) -> Result<th::Surface> {
-        let layout = &self.d_layout_nodes[&node];
+        let layout = self.d_layout_nodes.get(&node).unwrap();
 
         // first create a surface for this element
         // This starts as an empty unbound surface but may be assigned content below
@@ -782,12 +790,12 @@ impl<'a> Dakota<'a> {
         let num_children = layout.l_children.len();
         for i in 0..num_children {
             let child_id = {
-                let layout = &self.d_layout_nodes[&node];
+                let layout = self.d_layout_nodes.get(&node).unwrap();
                 layout.l_children[i].clone()
             };
             // add the new child surface as a subsurface
             // don't do this if this is a viewport boundary
-            if !self.d_layout_nodes[&child_id].l_is_viewport {
+            if !self.d_layout_nodes.get(&child_id).unwrap().l_is_viewport {
                 let child_surf = self.create_thundr_surf_for_el(child_id.clone())?;
                 surf.add_subsurface(child_surf);
             }
@@ -821,7 +829,7 @@ impl<'a> Dakota<'a> {
         );
 
         for child in node.l_children.iter() {
-            let child = &self.d_layout_nodes[&child];
+            let child = &self.d_layout_nodes.get(&child).unwrap();
             self.print_node(child, indent_level + 1);
         }
     }
@@ -829,7 +837,7 @@ impl<'a> Dakota<'a> {
     /// This pass recursively generates the surfacelists for each
     /// Viewport in the scene.
     fn calculate_thundr_surfaces(&mut self, id: ViewportId) -> Result<()> {
-        if let Some(root_node_id) = self.d_viewport_nodes[&id].v_root_node.clone() {
+        if let Some(root_node_id) = self.d_viewport_nodes.get(&id).unwrap().v_root_node.clone() {
             // Create our thundr surface and add it to the list
             //
             // TODO: go through each viewport and populate its surface list
@@ -837,12 +845,12 @@ impl<'a> Dakota<'a> {
                 .create_thundr_surf_for_el(root_node_id)
                 .context("Could not construct Thundr surface tree")?;
 
-            let viewport = &mut self.d_viewport_nodes[&id];
+            let viewport = &mut self.d_viewport_nodes.get_mut(&id).unwrap();
             viewport.v_surfaces.push(root_surf.clone());
         }
 
-        for i in 0..self.d_viewport_nodes[&id].v_children.len() {
-            let child_viewport = self.d_viewport_nodes[&id].v_children[i].clone();
+        for i in 0..self.d_viewport_nodes.get(&id).unwrap().v_children.len() {
+            let child_viewport = self.d_viewport_nodes.get(&id).unwrap().v_children[i].clone();
             self.calculate_thundr_surfaces(child_viewport)?;
         }
 
@@ -876,7 +884,10 @@ impl<'a> Dakota<'a> {
         )?;
         // Manually mark the root node as a viewport node. It always is, and it will
         // always have the root viewport.
-        self.d_layout_nodes[&root_node_id].l_is_viewport = true;
+        self.d_layout_nodes
+            .get_mut(&root_node_id)
+            .unwrap()
+            .l_is_viewport = true;
 
         // Perform our viewport pass
         //
@@ -887,7 +898,7 @@ impl<'a> Dakota<'a> {
         #[cfg(debug_assertions)]
         {
             if let Some(root_id) = self.d_layout_tree_root.as_ref() {
-                self.print_node(&self.d_layout_nodes[&root_id], 0);
+                self.print_node(&self.d_layout_nodes.get(&root_id).unwrap(), 0);
             }
         }
 
@@ -942,20 +953,36 @@ impl<'a> Dakota<'a> {
     }
 
     fn flush_viewports(&mut self, viewport: ViewportId) -> th::Result<()> {
-        for i in 0..self.d_viewport_nodes[&viewport].v_children.len() {
-            self.flush_viewports(self.d_viewport_nodes[&viewport].v_children[i].clone())?;
+        for i in 0..self
+            .d_viewport_nodes
+            .get(&viewport)
+            .unwrap()
+            .v_children
+            .len()
+        {
+            self.flush_viewports(
+                self.d_viewport_nodes.get(&viewport).unwrap().v_children[i].clone(),
+            )?;
         }
 
-        let node = &mut self.d_viewport_nodes[&viewport];
+        let node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
         self.d_thund.flush_surface_data(&mut node.v_surfaces)
     }
 
     fn draw_viewports(&mut self, viewport: ViewportId) -> th::Result<()> {
-        for i in 0..self.d_viewport_nodes[&viewport].v_children.len() {
-            self.draw_viewports(self.d_viewport_nodes[&viewport].v_children[i].clone())?;
+        for i in 0..self
+            .d_viewport_nodes
+            .get(&viewport)
+            .unwrap()
+            .v_children
+            .len()
+        {
+            self.draw_viewports(
+                self.d_viewport_nodes.get(&viewport).unwrap().v_children[i].clone(),
+            )?;
         }
 
-        let node = &mut self.d_viewport_nodes[&viewport];
+        let node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
         self.d_thund
             .draw_surfaces(&mut node.v_surfaces, &node.v_viewport)
     }

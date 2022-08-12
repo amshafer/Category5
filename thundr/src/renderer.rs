@@ -1835,24 +1835,27 @@ impl Renderer {
             None => (-1, true),
         };
 
-        self.r_windows[&surf_rc.s_window_id] = Window {
-            w_id: (image_id, use_color as i32, 0, 0),
-            w_color: match surf.s_color {
-                Some((r, g, b, a)) => (r, g, b, a),
-                // magic value so it's easy to debug
-                // this is clear, since we don't have a color
-                // assigned and we may not have an image bound.
-                // In that case, we want this surface to be clear.
-                None => (0.0, 50.0, 100.0, 0.0),
+        self.r_windows.set(
+            &surf_rc.s_window_id,
+            Window {
+                w_id: (image_id, use_color as i32, 0, 0),
+                w_color: match surf.s_color {
+                    Some((r, g, b, a)) => (r, g, b, a),
+                    // magic value so it's easy to debug
+                    // this is clear, since we don't have a color
+                    // assigned and we may not have an image bound.
+                    // In that case, we want this surface to be clear.
+                    None => (0.0, 50.0, 100.0, 0.0),
+                },
+                w_dims: Rect::new(
+                    offset.0 + surf.s_rect.r_pos.0 as i32,
+                    offset.1 + surf.s_rect.r_pos.1 as i32,
+                    surf.s_rect.r_size.0 as i32,
+                    surf.s_rect.r_size.1 as i32,
+                ),
+                w_opaque: opaque_reg,
             },
-            w_dims: Rect::new(
-                offset.0 + surf.s_rect.r_pos.0 as i32,
-                offset.1 + surf.s_rect.r_pos.1 as i32,
-                surf.s_rect.r_size.0 as i32,
-                surf.s_rect.r_size.1 as i32,
-            ),
-            w_opaque: opaque_reg,
-        };
+        );
     }
 
     fn initialize_transfer_mem(&mut self) {
@@ -2420,6 +2423,34 @@ impl Renderer {
         self.dev.unmap_memory(memory);
     }
 
+    pub(crate) unsafe fn update_memory_from_callback<T: Copy, F: FnOnce(&mut [T])>(
+        &self,
+        memory: vk::DeviceMemory,
+        offset: isize,
+        len: usize,
+        callback: F,
+    ) {
+        // Now we copy our data into the buffer
+        let data_size = std::mem::size_of::<T>();
+        let ptr = self
+            .dev
+            .map_memory(
+                memory,
+                offset as u64, // offset
+                (data_size * len) as u64,
+                vk::MemoryMapFlags::empty(),
+            )
+            .unwrap();
+
+        // rust doesn't have a raw memcpy, so we need to transform the void
+        // ptr to a slice. This is unsafe as the length needs to be correct
+        let dst = std::slice::from_raw_parts_mut(ptr as *mut T, len);
+
+        callback(dst);
+
+        self.dev.unmap_memory(memory);
+    }
+
     /// allocates a buffer/memory pair and fills it with `data`
     ///
     /// There are two components to a memory backed resource in vulkan:
@@ -2601,12 +2632,26 @@ impl Renderer {
         // the tile/window updates in the mapped GPU memory
         // (requires benchmark)
         unsafe {
+            log::debug!(
+                "raw window list is {:#?}",
+                self.r_windows.ect_data.as_slice()
+            );
             // Shader expects struct WindowList { int count; Window windows[] }
             self.update_memory(self.r_windows_mem, 0, &[self.r_windows.ect_data.len()]);
-            self.update_memory(
+            self.update_memory_from_callback(
                 self.r_windows_mem,
                 WINDOW_LIST_GLSL_OFFSET,
-                self.r_windows.ect_data.as_slice(),
+                self.r_windows.ect_data.len(),
+                |dst| {
+                    // For each valid window entry, extract the Window
+                    // type from the option so that we can write it to
+                    // the Vulkan memory
+                    for (i, win) in self.r_windows.iter().enumerate() {
+                        if let Some(w) = win {
+                            dst[i] = *w;
+                        }
+                    }
+                },
             );
 
             // Turn our vec of ECSIds into a vec of actual ids.

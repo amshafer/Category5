@@ -558,7 +558,11 @@ impl Thundr {
         self.th_rend.present()
     }
 
-    pub fn draw_surfaces_debug_prints(&mut self, surfaces: &mut SurfaceList, _viewport: &Viewport) {
+    pub fn draw_surfaces_debug_prints(
+        &mut self,
+        _surfaces: &mut SurfaceList,
+        _viewport: &Viewport,
+    ) {
         // Debugging stats
         #[cfg(debug_assertions)]
         {
@@ -566,7 +570,7 @@ impl Thundr {
             log::debug!(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
             log::debug!("Surface List:");
             log::debug!("--------------------------------");
-            for (i, s) in surfaces.iter().enumerate() {
+            for (i, s) in _surfaces.iter().enumerate() {
                 let img = s.get_image();
                 log::debug!(
                     "[{}] Image={}, Pos={:?}, Size={:?}",
@@ -599,16 +603,18 @@ impl Thundr {
             }
 
             log::debug!("Window list:");
-            for (i, w) in self.th_rend.r_windows.iter().enumerate() {
-                log::debug!(
-                    "[{}] Image={}, Pos={:?}, Size={:?}, Opaque(Pos={:?}, Size={:?})",
-                    i,
-                    w.w_id.0,
-                    w.w_dims.r_pos,
-                    w.w_dims.r_size,
-                    w.w_opaque.r_pos,
-                    w.w_opaque.r_size
-                );
+            for (i, val) in self.th_rend.r_windows.iter().enumerate() {
+                if let Some(w) = val {
+                    log::debug!(
+                        "[{}] Image={}, Pos={:?}, Size={:?}, Opaque(Pos={:?}, Size={:?})",
+                        i,
+                        w.w_id.0,
+                        w.w_dims.r_pos,
+                        w.w_dims.r_size,
+                        w.w_opaque.r_pos,
+                        w.w_opaque.r_size
+                    );
+                }
             }
         }
 
