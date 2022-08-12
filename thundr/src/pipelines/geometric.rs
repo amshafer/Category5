@@ -128,7 +128,7 @@ impl Pipeline for GeomPipeline {
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline_layout,
                 0, // first set
-                &[self.g_desc, rend.r_images_desc],
+                &[self.g_desc, rend.r_order_desc, rend.r_images_desc],
                 &[], // dynamic offsets
             );
         }
@@ -297,6 +297,7 @@ impl GeomPipeline {
             // These are the layout recognized by the pipeline
             let descriptor_layouts = &[
                 ubo_layout, // set 0
+                rend.r_order_desc_layout,
                 rend.r_images_desc_layout,
             ];
 

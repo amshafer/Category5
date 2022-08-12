@@ -182,6 +182,11 @@ pub struct Renderer {
     pub(crate) r_images_desc_layout: vk::DescriptorSetLayout,
     pub(crate) r_images_desc: vk::DescriptorSet,
 
+    /// The window order descriptor
+    pub(crate) r_order_desc: vk::DescriptorSet,
+    pub(crate) r_order_desc_layout: vk::DescriptorSetLayout,
+    pub(crate) r_order_desc_pool: vk::DescriptorPool,
+
     /// The list of window dimensions that is passed to the shader
     pub r_windows: ECSTable<Window>,
     pub r_windows_buf: vk::Buffer,
@@ -1332,16 +1337,57 @@ impl Renderer {
         (image, view, img_mem)
     }
 
+    unsafe fn allocate_order_resources(
+        dev: &Device,
+    ) -> (vk::DescriptorPool, vk::DescriptorSetLayout) {
+        let size = [vk::DescriptorPoolSize::builder()
+            .ty(vk::DescriptorType::STORAGE_BUFFER)
+            .descriptor_count(1)
+            .build()];
+        let info = vk::DescriptorPoolCreateInfo::builder()
+            .pool_sizes(&size)
+            .max_sets(1);
+        let bindless_pool = dev.create_descriptor_pool(&info, None).unwrap();
+
+        let bindings = [
+            // the window order list
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(
+                    vk::ShaderStageFlags::COMPUTE
+                        | vk::ShaderStageFlags::VERTEX
+                        | vk::ShaderStageFlags::FRAGMENT,
+                )
+                .descriptor_count(1)
+                .build(),
+        ];
+        let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
+
+        let bindless_layout = dev.create_descriptor_set_layout(&info, None).unwrap();
+
+        (bindless_pool, bindless_layout)
+    }
+
+    fn allocate_order_desc(
+        dev: &Device,
+        pool: vk::DescriptorPool,
+        layouts: &[vk::DescriptorSetLayout],
+    ) -> vk::DescriptorSet {
+        let info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(pool)
+            .set_layouts(layouts)
+            .build();
+
+        unsafe { dev.allocate_descriptor_sets(&info).unwrap()[0] }
+    }
+
     unsafe fn allocate_bindless_resources(
         dev: &Device,
         max_image_count: u32,
     ) -> (vk::DescriptorPool, vk::DescriptorSetLayout) {
         // create the bindless desc set resources
         let size = [
-            vk::DescriptorPoolSize::builder()
-                .ty(vk::DescriptorType::STORAGE_BUFFER)
-                .descriptor_count(1)
-                .build(),
             vk::DescriptorPoolSize::builder()
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(1)
@@ -1370,20 +1416,9 @@ impl Renderer {
                 )
                 .descriptor_count(1)
                 .build(),
-            // the window order list
-            vk::DescriptorSetLayoutBinding::builder()
-                .binding(1)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(
-                    vk::ShaderStageFlags::COMPUTE
-                        | vk::ShaderStageFlags::VERTEX
-                        | vk::ShaderStageFlags::FRAGMENT,
-                )
-                .descriptor_count(1)
-                .build(),
             // the variable image list
             vk::DescriptorSetLayoutBinding::builder()
-                .binding(2)
+                .binding(1)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .stage_flags(
                     vk::ShaderStageFlags::COMPUTE
@@ -1403,7 +1438,6 @@ impl Renderer {
         let usage_info = vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT::builder()
             .binding_flags(&[
                 vk::DescriptorBindingFlags::empty(), // the winlist
-                vk::DescriptorBindingFlags::empty(), // the window order list
                 Self::get_bindless_desc_flags(),     // The unbounded array of images
             ])
             .build();
@@ -1633,6 +1667,9 @@ impl Renderer {
             let bindless_desc =
                 Self::allocate_bindless_desc(&dev, bindless_pool, &[bindless_layout], 1);
 
+            let (order_pool, order_layout) = Self::allocate_order_resources(&dev);
+            let order_desc = Self::allocate_order_desc(&dev, order_pool, &[order_layout]);
+
             let (tmp, tmp_view, tmp_mem) = Self::create_image(
                 &dev,
                 &mem_props,
@@ -1705,6 +1742,9 @@ impl Renderer {
                 r_order_buf: vk::Buffer::null(),
                 r_order_mem: vk::DeviceMemory::null(),
                 r_order_capacity: 8,
+                r_order_desc: order_desc,
+                r_order_desc_pool: order_pool,
+                r_order_desc_layout: order_layout,
                 tmp_image: tmp,
                 tmp_image_view: tmp_view,
                 tmp_image_mem: tmp_mem,
@@ -2451,6 +2491,13 @@ impl Renderer {
                         vk::DescriptorPoolResetFlags::empty(),
                     )
                     .unwrap();
+
+                self.dev
+                    .reset_descriptor_pool(
+                        self.r_order_desc_pool,
+                        vk::DescriptorPoolResetFlags::empty(),
+                    )
+                    .unwrap();
             }
 
             self.r_images_desc = Self::allocate_bindless_desc(
@@ -2458,6 +2505,12 @@ impl Renderer {
                 self.r_images_desc_pool,
                 &[self.r_images_desc_layout],
                 images.len() as u32,
+            );
+
+            self.r_order_desc = Self::allocate_order_desc(
+                &self.dev,
+                self.r_order_desc_pool,
+                &[self.r_order_desc_layout],
             );
         }
 
@@ -2503,8 +2556,8 @@ impl Renderer {
                     .build()])
                 .build(),
             vk::WriteDescriptorSet::builder()
-                .dst_set(self.r_images_desc)
-                .dst_binding(1)
+                .dst_set(self.r_order_desc)
+                .dst_binding(0)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&[vk::DescriptorBufferInfo::builder()
@@ -2515,7 +2568,7 @@ impl Renderer {
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.r_images_desc)
-                .dst_binding(2)
+                .dst_binding(1)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .image_info(self.r_image_infos.as_slice())
@@ -2719,6 +2772,11 @@ impl Drop for Renderer {
             self.dev.destroy_sampler(self.image_sampler, None);
             self.dev
                 .destroy_descriptor_set_layout(self.r_images_desc_layout, None);
+
+            self.dev
+                .destroy_descriptor_set_layout(self.r_order_desc_layout, None);
+            self.dev
+                .destroy_descriptor_pool(self.r_order_desc_pool, None);
 
             self.dev
                 .destroy_descriptor_pool(self.r_images_desc_pool, None);

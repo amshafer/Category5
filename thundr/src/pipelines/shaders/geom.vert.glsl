@@ -41,13 +41,13 @@ struct Window {
 };
 
 /* the position/size/damage of our windows */
-layout(set = 1, binding = 0, std140) buffer window_list
+layout(set = 2, binding = 0, std140) buffer window_list
 {
  layout(offset = 0) int total_window_count;
  layout(offset = 16) Window windows[];
 };
 
-layout(set = 1, binding = 1, std140) buffer order_list
+layout(set = 1, binding = 0, std140) buffer order_list
 {
  layout(offset = 0) int window_count;
  /*
@@ -59,7 +59,7 @@ layout(set = 1, binding = 1, std140) buffer order_list
 };
 
 /* The array of textures that are the window contents */
-layout(set = 1, binding = 2) uniform sampler2D images[];
+layout(set = 2, binding = 1) uniform sampler2D images[];
 
 void main() {
  int vec_offset = gl_InstanceIndex / 4;
