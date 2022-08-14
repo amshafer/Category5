@@ -13,7 +13,7 @@ use super::surface::*;
 
 extern crate utils as cat5_utils;
 use crate::category5::atmosphere::Atmosphere;
-use cat5_utils::log;
+use cat5_utils::{log, region::Rect};
 
 use std::cell::RefCell;
 use std::clone::Clone;
@@ -184,7 +184,7 @@ pub fn xdg_wm_base_handle_request(
                 p_offset: None,
                 p_width: 0,
                 p_height: 0,
-                p_anchor_rect: (0, 0, 0, 0),
+                p_anchor_rect: Rect::new(0, 0, 0, 0),
                 p_anchor: xdg_positioner::Anchor::None,
                 p_gravity: xdg_positioner::Gravity::None,
                 p_constraint: xdg_positioner::ConstraintAdjustment::None,
@@ -275,7 +275,7 @@ struct Positioner {
     p_width: i32, // from set_size
     p_height: i32,
     // (x, y, width, height) of the anchor rectangle
-    p_anchor_rect: (i32, i32, i32, i32),
+    p_anchor_rect: Rect<i32>,
     p_anchor: xdg_positioner::Anchor,
     p_gravity: xdg_positioner::Gravity,
     p_constraint: xdg_positioner::ConstraintAdjustment,
@@ -291,12 +291,44 @@ impl Positioner {
     /// This should be called to reevaluate the end result of the popup location.
     fn get_loc(&self) -> (i32, i32) {
         // The spec states that we MUST have a non-zero anchor rect, and a size
-        let mut ret = (self.p_anchor_rect.0, self.p_anchor_rect.1);
+        let mut ret = (0, 0);
 
+        // First start off with an offset, if we have one
         if let Some((x, y)) = self.p_offset {
             ret.0 += x;
             ret.1 += y;
         }
+
+        // Now add in the anchor rectangle and the anchor point
+        //
+        // The anchor rectangle will be positioned somewhere inside the parent. We then
+        // need to calculate a position on one of the edges of the anchor rectangle. Unless
+        // none is specified, we add the offset to the anchor rect's top left, then add some
+        // more based on the size to match the position on the edge that was requested.
+        let rect = &self.p_anchor_rect;
+        let anchor_offset = match self.p_anchor {
+            xdg_positioner::Anchor::None => (0, 0),
+            xdg_positioner::Anchor::Top => (rect.r_pos.0 + rect.r_size.0 / 2, rect.r_pos.1),
+            xdg_positioner::Anchor::Bottom => (
+                rect.r_pos.0 + rect.r_size.0 / 2,
+                rect.r_pos.1 + rect.r_size.1,
+            ),
+            xdg_positioner::Anchor::Left => (rect.r_pos.0, rect.r_pos.1 + rect.r_size.1 / 2),
+            xdg_positioner::Anchor::Right => (
+                rect.r_pos.0 + rect.r_size.0,
+                rect.r_pos.1 + rect.r_size.1 / 2,
+            ),
+            xdg_positioner::Anchor::TopLeft => (rect.r_pos.0, rect.r_pos.1),
+            xdg_positioner::Anchor::BottomLeft => (rect.r_pos.0, rect.r_pos.1 + rect.r_size.1),
+            xdg_positioner::Anchor::TopRight => (rect.r_pos.0 + rect.r_size.0, rect.r_pos.1),
+            xdg_positioner::Anchor::BottomRight => {
+                (rect.r_pos.0 + rect.r_size.0, rect.r_pos.1 + rect.r_size.1)
+            }
+        };
+        ret.0 += anchor_offset.0;
+        ret.1 += anchor_offset.1;
+
+        // TODO: subtract on each side to handle gravity
 
         // TODO: add the rest of the positioner elements
         return ret;
@@ -331,7 +363,7 @@ fn xdg_positioner_handle_request(
             width,
             height,
         } => {
-            pos.p_anchor_rect = (x, y, width, height);
+            pos.p_anchor_rect = Rect::new(x, y, width, height);
         }
         xdg_positioner::Request::SetAnchor { anchor } => pos.p_anchor = anchor,
         xdg_positioner::Request::SetGravity { gravity } => pos.p_gravity = gravity,
@@ -782,7 +814,6 @@ impl ShellSurface {
     }
 
     fn popup_done(&mut self) {
-        // getting the xdg_popup::Destroy event is making firefox destroy the dmabuf I think...
         self.ss_surface
             .borrow_mut()
             .destroy(&mut self.ss_atmos.borrow_mut());

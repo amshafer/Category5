@@ -330,7 +330,7 @@ pub mod xdg_wm_base {
         type Request = Request;
         type Event = Event;
         const NAME: &'static str = "xdg_wm_base";
-        const VERSION: u32 = 4;
+        const VERSION: u32 = 5;
         fn c_interface() -> *const wl_interface {
             unsafe { &xdg_wm_base_interface }
         }
@@ -390,7 +390,7 @@ pub mod xdg_wm_base {
     #[doc = r" C representation of this interface, for interop"]
     pub static mut xdg_wm_base_interface: wl_interface = wl_interface {
         name: b"xdg_wm_base\0" as *const u8 as *const c_char,
-        version: 4,
+        version: 5,
         request_count: 4,
         requests: unsafe { &xdg_wm_base_requests as *const _ },
         event_count: 1,
@@ -934,7 +934,7 @@ pub mod xdg_positioner {
         type Request = Request;
         type Event = Event;
         const NAME: &'static str = "xdg_positioner";
-        const VERSION: u32 = 4;
+        const VERSION: u32 = 5;
         fn c_interface() -> *const wl_interface {
             unsafe { &xdg_positioner_interface }
         }
@@ -1016,7 +1016,7 @@ pub mod xdg_positioner {
     #[doc = r" C representation of this interface, for interop"]
     pub static mut xdg_positioner_interface: wl_interface = wl_interface {
         name: b"xdg_positioner\0" as *const u8 as *const c_char,
-        version: 4,
+        version: 5,
         request_count: 10,
         requests: unsafe { &xdg_positioner_requests as *const _ },
         event_count: 0,
@@ -1421,7 +1421,7 @@ pub mod xdg_surface {
         type Request = Request;
         type Event = Event;
         const NAME: &'static str = "xdg_surface";
-        const VERSION: u32 = 4;
+        const VERSION: u32 = 5;
         fn c_interface() -> *const wl_interface {
             unsafe { &xdg_surface_interface }
         }
@@ -1489,7 +1489,7 @@ pub mod xdg_surface {
     #[doc = r" C representation of this interface, for interop"]
     pub static mut xdg_surface_interface: wl_interface = wl_interface {
         name: b"xdg_surface\0" as *const u8 as *const c_char,
-        version: 4,
+        version: 5,
         request_count: 5,
         requests: unsafe { &xdg_surface_requests as *const _ },
         event_count: 1,
@@ -1597,12 +1597,39 @@ pub mod xdg_toplevel {
             *self as u32
         }
     }
+    #[repr(u32)]
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[non_exhaustive]
+    pub enum WmCapabilities {
+        #[doc = "show_window_menu is available"]
+        WindowMenu = 1,
+        #[doc = "set_maximized and unset_maximized are available"]
+        Maximize = 2,
+        #[doc = "set_fullscreen and unset_fullscreen are available"]
+        Fullscreen = 3,
+        #[doc = "set_minimized is available"]
+        Minimize = 4,
+    }
+    impl WmCapabilities {
+        pub fn from_raw(n: u32) -> Option<WmCapabilities> {
+            match n {
+                1 => Some(WmCapabilities::WindowMenu),
+                2 => Some(WmCapabilities::Maximize),
+                3 => Some(WmCapabilities::Fullscreen),
+                4 => Some(WmCapabilities::Minimize),
+                _ => Option::None,
+            }
+        }
+        pub fn to_raw(&self) -> u32 {
+            *self as u32
+        }
+    }
     #[derive(Debug)]
     #[non_exhaustive]
     pub enum Request {
         #[doc = "destroy the xdg_toplevel\n\nThis request destroys the role surface and unmaps the surface;\nsee \"Unmapping\" behavior in interface section for details.\n\nThis is a destructor, once received this object cannot be used any longer."]
         Destroy,
-        #[doc = "set the parent of this surface\n\nSet the \"parent\" of this surface. This surface should be stacked\nabove the parent surface and all other ancestor surfaces.\n\nParent windows should be set on dialogs, toolboxes, or other\n\"auxiliary\" surfaces, so that the parent is raised when the dialog\nis raised.\n\nSetting a null parent for a child window removes any parent-child\nrelationship for the child. Setting a null parent for a window which\ncurrently has no parent is a no-op.\n\nIf the parent is unmapped then its children are managed as\nthough the parent of the now-unmapped parent has become the\nparent of this surface. If no parent exists for the now-unmapped\nparent then the children are managed as though they have no\nparent surface."]
+        #[doc = "set the parent of this surface\n\nSet the \"parent\" of this surface. This surface should be stacked\nabove the parent surface and all other ancestor surfaces.\n\nParent surfaces should be set on dialogs, toolboxes, or other\n\"auxiliary\" surfaces, so that the parent is raised when the dialog\nis raised.\n\nSetting a null parent for a child surface unsets its parent. Setting\na null parent for a surface which currently has no parent is a no-op.\n\nOnly mapped surfaces can have child surfaces. Setting a parent which\nis not mapped is equivalent to setting a null parent. If a surface\nbecomes unmapped, its children's parent is set to the parent of\nthe now-unmapped surface. If the now-unmapped surface has no parent,\nits children's parent is unset. If the now-unmapped surface becomes\nmapped again, its parent-child relationship is not restored."]
         SetParent {
             parent: Option<super::xdg_toplevel::XdgToplevel>,
         },
@@ -2105,6 +2132,8 @@ pub mod xdg_toplevel {
         Close,
         #[doc = "recommended window geometry bounds\n\nThe configure_bounds event may be sent prior to a xdg_toplevel.configure\nevent to communicate the bounds a window geometry size is recommended\nto constrain to.\n\nThe passed width and height are in surface coordinate space. If width\nand height are 0, it means bounds is unknown and equivalent to as if no\nconfigure_bounds event was ever sent for this surface.\n\nThe bounds can for example correspond to the size of a monitor excluding\nany panels or other shell components, so that a surface isn't created in\na way that it cannot fit.\n\nThe bounds may change at any point, and in such a case, a new\nxdg_toplevel.configure_bounds will be sent, followed by\nxdg_toplevel.configure and xdg_surface.configure.\n\nOnly available since version 4 of the interface"]
         ConfigureBounds { width: i32, height: i32 },
+        #[doc = "compositor capabilities\n\nThis event advertises the capabilities supported by the compositor. If\na capability isn't supported, clients should hide or disable the UI\nelements that expose this functionality. For instance, if the\ncompositor doesn't advertise support for minimized toplevels, a button\ntriggering the set_minimized request should not be displayed.\n\nThe compositor will ignore requests it doesn't support. For instance,\na compositor which doesn't advertise support for minimized will ignore\nset_minimized requests.\n\nCompositors must send this event once before the first\nxdg_surface.configure event. When the capabilities change, compositors\nmust send this event again and then send an xdg_surface.configure\nevent.\n\nThe configured state should not be applied immediately. See\nxdg_surface.configure for details.\n\nThe capabilities are sent as an array of 32-bit unsigned integers in\nnative endianness.\n\nOnly available since version 5 of the interface"]
+        WmCapabilities { capabilities: Vec<u8> },
     }
     impl super::MessageGroup for Event {
         const MESSAGES: &'static [super::MessageDesc] = &[
@@ -2130,6 +2159,12 @@ pub mod xdg_toplevel {
                 signature: &[super::ArgumentType::Int, super::ArgumentType::Int],
                 destructor: false,
             },
+            super::MessageDesc {
+                name: "wm_capabilities",
+                since: 5,
+                signature: &[super::ArgumentType::Array],
+                destructor: false,
+            },
         ];
         type Map = super::ResourceMap;
         fn is_destructor(&self) -> bool {
@@ -2142,6 +2177,7 @@ pub mod xdg_toplevel {
                 Event::Configure { .. } => 0,
                 Event::Close => 1,
                 Event::ConfigureBounds { .. } => 2,
+                Event::WmCapabilities { .. } => 3,
             }
         }
         fn since(&self) -> u32 {
@@ -2149,6 +2185,7 @@ pub mod xdg_toplevel {
                 Event::Configure { .. } => 1,
                 Event::Close => 1,
                 Event::ConfigureBounds { .. } => 4,
+                Event::WmCapabilities { .. } => 5,
             }
         }
         fn child<Meta: ObjectMetadata>(
@@ -2187,6 +2224,11 @@ pub mod xdg_toplevel {
                     sender_id: sender_id,
                     opcode: 2,
                     args: smallvec![Argument::Int(width), Argument::Int(height),],
+                },
+                Event::WmCapabilities { capabilities } => Message {
+                    sender_id: sender_id,
+                    opcode: 3,
+                    args: smallvec![Argument::Array(Box::new(capabilities)),],
                 },
             }
         }
@@ -2228,6 +2270,16 @@ pub mod xdg_toplevel {
                     _args_array[1].i = height;
                     f(2, &mut _args_array)
                 }
+                Event::WmCapabilities { capabilities } => {
+                    let mut _args_array: [wl_argument; 1] = unsafe { ::std::mem::zeroed() };
+                    let _arg_0 = wl_array {
+                        size: capabilities.len(),
+                        alloc: capabilities.capacity(),
+                        data: capabilities.as_ptr() as *mut _,
+                    };
+                    _args_array[0].a = &_arg_0;
+                    f(3, &mut _args_array)
+                }
             }
         }
     }
@@ -2260,7 +2312,7 @@ pub mod xdg_toplevel {
         type Request = Request;
         type Event = Event;
         const NAME: &'static str = "xdg_toplevel";
-        const VERSION: u32 = 4;
+        const VERSION: u32 = 5;
         fn c_interface() -> *const wl_interface {
             unsafe { &xdg_toplevel_interface }
         }
@@ -2285,6 +2337,13 @@ pub mod xdg_toplevel {
             let msg = Event::ConfigureBounds {
                 width: width,
                 height: height,
+            };
+            self.0.send(msg);
+        }
+        #[doc = "compositor capabilities\n\nThis event advertises the capabilities supported by the compositor. If\na capability isn't supported, clients should hide or disable the UI\nelements that expose this functionality. For instance, if the\ncompositor doesn't advertise support for minimized toplevels, a button\ntriggering the set_minimized request should not be displayed.\n\nThe compositor will ignore requests it doesn't support. For instance,\na compositor which doesn't advertise support for minimized will ignore\nset_minimized requests.\n\nCompositors must send this event once before the first\nxdg_surface.configure event. When the capabilities change, compositors\nmust send this event again and then send an xdg_surface.configure\nevent.\n\nThe configured state should not be applied immediately. See\nxdg_surface.configure for details.\n\nThe capabilities are sent as an array of 32-bit unsigned integers in\nnative endianness.\n\nOnly available since version 5 of the interface."]
+        pub fn wm_capabilities(&self, capabilities: Vec<u8>) -> () {
+            let msg = Event::WmCapabilities {
+                capabilities: capabilities,
             };
             self.0.send(msg);
         }
@@ -2323,6 +2382,8 @@ pub mod xdg_toplevel {
     pub const EVT_CLOSE_SINCE: u32 = 1u32;
     #[doc = r" The minimal object version supporting this event"]
     pub const EVT_CONFIGURE_BOUNDS_SINCE: u32 = 4u32;
+    #[doc = r" The minimal object version supporting this event"]
+    pub const EVT_WM_CAPABILITIES_SINCE: u32 = 5u32;
     static mut xdg_toplevel_requests_set_parent_types: [*const wl_interface; 1] =
         [unsafe { &super::xdg_toplevel::xdg_toplevel_interface as *const wl_interface }];
     static mut xdg_toplevel_requests_show_window_menu_types: [*const wl_interface; 4] = [
@@ -2416,7 +2477,7 @@ pub mod xdg_toplevel {
         },
     ];
     #[doc = r" C-representation of the messages of this interface, for interop"]
-    pub static mut xdg_toplevel_events: [wl_message; 3] = [
+    pub static mut xdg_toplevel_events: [wl_message; 4] = [
         wl_message {
             name: b"configure\0" as *const u8 as *const c_char,
             signature: b"iia\0" as *const u8 as *const c_char,
@@ -2432,14 +2493,19 @@ pub mod xdg_toplevel {
             signature: b"4ii\0" as *const u8 as *const c_char,
             types: unsafe { &types_null as *const _ },
         },
+        wl_message {
+            name: b"wm_capabilities\0" as *const u8 as *const c_char,
+            signature: b"5a\0" as *const u8 as *const c_char,
+            types: unsafe { &types_null as *const _ },
+        },
     ];
     #[doc = r" C representation of this interface, for interop"]
     pub static mut xdg_toplevel_interface: wl_interface = wl_interface {
         name: b"xdg_toplevel\0" as *const u8 as *const c_char,
-        version: 4,
+        version: 5,
         request_count: 14,
         requests: unsafe { &xdg_toplevel_requests as *const _ },
-        event_count: 3,
+        event_count: 4,
         events: unsafe { &xdg_toplevel_events as *const _ },
     };
 }
@@ -2475,7 +2541,7 @@ pub mod xdg_popup {
     pub enum Request {
         #[doc = "remove xdg_popup interface\n\nThis destroys the popup. Explicitly destroying the xdg_popup\nobject will also dismiss the popup, and unmap the surface.\n\nIf this xdg_popup is not the \"topmost\" popup, a protocol error\nwill be sent.\n\nThis is a destructor, once received this object cannot be used any longer."]
         Destroy,
-        #[doc = "make the popup take an explicit grab\n\nThis request makes the created popup take an explicit grab. An explicit\ngrab will be dismissed when the user dismisses the popup, or when the\nclient destroys the xdg_popup. This can be done by the user clicking\noutside the surface, using the keyboard, or even locking the screen\nthrough closing the lid or a timeout.\n\nIf the compositor denies the grab, the popup will be immediately\ndismissed.\n\nThis request must be used in response to some sort of user action like a\nbutton press, key press, or touch down event. The serial number of the\nevent should be passed as 'serial'.\n\nThe parent of a grabbing popup must either be an xdg_toplevel surface or\nanother xdg_popup with an explicit grab. If the parent is another\nxdg_popup it means that the popups are nested, with this popup now being\nthe topmost popup.\n\nNested popups must be destroyed in the reverse order they were created\nin, e.g. the only popup you are allowed to destroy at all times is the\ntopmost one.\n\nWhen compositors choose to dismiss a popup, they may dismiss every\nnested grabbing popup as well. When a compositor dismisses popups, it\nwill follow the same dismissing order as required from the client.\n\nThe parent of a grabbing popup must either be another xdg_popup with an\nactive explicit grab, or an xdg_popup or xdg_toplevel, if there are no\nexplicit grabs already taken.\n\nIf the topmost grabbing popup is destroyed, the grab will be returned to\nthe parent of the popup, if that parent previously had an explicit grab.\n\nIf the parent is a grabbing popup which has already been dismissed, this\npopup will be immediately dismissed. If the parent is a popup that did\nnot take an explicit grab, an error will be raised.\n\nDuring a popup grab, the client owning the grab will receive pointer\nand touch events for all their surfaces as normal (similar to an\n\"owner-events\" grab in X11 parlance), while the top most grabbing popup\nwill always have keyboard focus."]
+        #[doc = "make the popup take an explicit grab\n\nThis request makes the created popup take an explicit grab. An explicit\ngrab will be dismissed when the user dismisses the popup, or when the\nclient destroys the xdg_popup. This can be done by the user clicking\noutside the surface, using the keyboard, or even locking the screen\nthrough closing the lid or a timeout.\n\nIf the compositor denies the grab, the popup will be immediately\ndismissed.\n\nThis request must be used in response to some sort of user action like a\nbutton press, key press, or touch down event. The serial number of the\nevent should be passed as 'serial'.\n\nThe parent of a grabbing popup must either be an xdg_toplevel surface or\nanother xdg_popup with an explicit grab. If the parent is another\nxdg_popup it means that the popups are nested, with this popup now being\nthe topmost popup.\n\nNested popups must be destroyed in the reverse order they were created\nin, e.g. the only popup you are allowed to destroy at all times is the\ntopmost one.\n\nWhen compositors choose to dismiss a popup, they may dismiss every\nnested grabbing popup as well. When a compositor dismisses popups, it\nwill follow the same dismissing order as required from the client.\n\nIf the topmost grabbing popup is destroyed, the grab will be returned to\nthe parent of the popup, if that parent previously had an explicit grab.\n\nIf the parent is a grabbing popup which has already been dismissed, this\npopup will be immediately dismissed. If the parent is a popup that did\nnot take an explicit grab, an error will be raised.\n\nDuring a popup grab, the client owning the grab will receive pointer\nand touch events for all their surfaces as normal (similar to an\n\"owner-events\" grab in X11 parlance), while the top most grabbing popup\nwill always have keyboard focus."]
         Grab {
             seat: super::wl_seat::WlSeat,
             serial: u32,
@@ -2787,7 +2853,7 @@ pub mod xdg_popup {
         type Request = Request;
         type Event = Event;
         const NAME: &'static str = "xdg_popup";
-        const VERSION: u32 = 4;
+        const VERSION: u32 = 5;
         fn c_interface() -> *const wl_interface {
             unsafe { &xdg_popup_interface }
         }
@@ -2873,7 +2939,7 @@ pub mod xdg_popup {
     #[doc = r" C representation of this interface, for interop"]
     pub static mut xdg_popup_interface: wl_interface = wl_interface {
         name: b"xdg_popup\0" as *const u8 as *const c_char,
-        version: 4,
+        version: 5,
         request_count: 3,
         requests: unsafe { &xdg_popup_requests as *const _ },
         event_count: 3,
