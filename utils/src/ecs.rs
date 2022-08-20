@@ -65,6 +65,16 @@ impl Clone for ECSInstance {
     }
 }
 
+impl std::fmt::Display for ECSInstance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ECSInstance {{ eci_total_num_ids: {}, eci_valid_ids=... }}",
+            self.ecs_internal.borrow().eci_total_num_ids,
+        )
+    }
+}
+
 impl ECSInstance {
     pub fn new() -> Self {
         Self {
@@ -167,6 +177,12 @@ impl Drop for ECSIdInternal {
 /// ```
 pub type ECSId = Rc<ECSIdInternal>;
 
+impl std::fmt::Display for ECSIdInternal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ECSId({})", self.get_raw_id())
+    }
+}
+
 /// A collection of data associated with entities
 ///
 /// This is essentially a big vector that is indexed by ECSId.
@@ -191,6 +207,18 @@ pub struct ECSTable<T> {
     pub ect_inst: ECSInstance,
     /// This is a component set, it will be indexed by ECSId
     pub ect_data: Vec<Option<T>>,
+}
+
+impl<T: std::fmt::Debug> std::fmt::Display for ECSTable<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, entry) in self.ect_data.iter().enumerate() {
+            if let Some(data) = entry {
+                write!(f, "{{ id = ECSId({}), value = {:?} }}", i, data)?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl<T> ECSTable<T> {
