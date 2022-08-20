@@ -229,6 +229,13 @@ impl<T> ECSTable<T> {
         }
     }
 
+    /// Get the number of valid ids in the system.
+    ///
+    /// This is the same as the parent ECSInstance's num_entities.
+    pub fn num_entities(&self) -> usize {
+        self.ect_inst.num_entities()
+    }
+
     fn ensure_space_for_id(&mut self, ecs_id: &ECSId) {
         let id = ecs_id.ecs_id;
         self.ect_inst.assert_id_is_valid(ecs_id);

@@ -1741,7 +1741,7 @@ impl Renderer {
     fn update_window_list(&mut self, surfaces: &mut SurfaceList) {
         surfaces.l_window_order.clear();
 
-        for i in surfaces.len()..0 {
+        for i in (0..surfaces.len()).rev() {
             let s = surfaces[i as usize].clone();
             self.update_window_list_recurse(surfaces, s, (0, 0), false);
         }
@@ -2552,23 +2552,27 @@ impl Renderer {
                 "raw window list is {:#?}",
                 self.r_windows.ect_data.as_slice()
             );
-            // Shader expects struct WindowList { int count; Window windows[] }
-            self.update_memory(self.r_windows_mem, 0, &[self.r_windows.ect_data.len()]);
-            self.update_memory_from_callback(
-                self.r_windows_mem,
-                WINDOW_LIST_GLSL_OFFSET,
-                self.r_windows.ect_data.len(),
-                |dst| {
-                    // For each valid window entry, extract the Window
-                    // type from the option so that we can write it to
-                    // the Vulkan memory
-                    for (i, win) in self.r_windows.iter().enumerate() {
-                        if let Some(w) = win {
-                            dst[i] = *w;
+
+            // Don't update vulkan memory unless we have more than one valid id.
+            if self.r_windows.num_entities() > 0 && self.r_windows.ect_data.len() > 0 {
+                // Shader expects struct WindowList { int count; Window windows[] }
+                self.update_memory(self.r_windows_mem, 0, &[self.r_windows.ect_data.len()]);
+                self.update_memory_from_callback(
+                    self.r_windows_mem,
+                    WINDOW_LIST_GLSL_OFFSET,
+                    self.r_windows.ect_data.len(),
+                    |dst| {
+                        // For each valid window entry, extract the Window
+                        // type from the option so that we can write it to
+                        // the Vulkan memory
+                        for (i, win) in self.r_windows.iter().enumerate() {
+                            if let Some(w) = win {
+                                dst[i] = *w;
+                            }
                         }
-                    }
-                },
-            );
+                    },
+                );
+            }
         }
 
         surfaces.update_window_order_buf(self);

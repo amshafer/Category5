@@ -67,12 +67,14 @@ impl SurfaceList {
             log::debug!("Window order is {:?}", window_order);
 
             self.reallocate_order_buf_with_cap(rend, self.l_window_order.len());
-            rend.update_memory(self.l_order_mem, 0, &[self.l_window_order.len()]);
-            rend.update_memory(
-                self.l_order_mem,
-                WINDOW_LIST_GLSL_OFFSET,
-                window_order.as_slice(),
-            );
+            if window_order.len() > 0 {
+                rend.update_memory(self.l_order_mem, 0, &[self.l_window_order.len()]);
+                rend.update_memory(
+                    self.l_order_mem,
+                    WINDOW_LIST_GLSL_OFFSET,
+                    window_order.as_slice(),
+                );
+            }
         }
     }
 

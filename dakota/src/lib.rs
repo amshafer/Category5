@@ -644,12 +644,9 @@ impl<'a> Dakota<'a> {
 
                 // Add this as a child of the parent
                 // Do this first to please the borrow checker
-                if let Some(parent) = parent_viewport.as_ref() {
-                    self.d_viewport_nodes
-                        .get_mut(&parent)
-                        .unwrap()
-                        .v_children
-                        .push(new_id.clone());
+                if let Some(parent_id) = parent_viewport.as_ref() {
+                    let parent = self.d_viewport_nodes.get_mut(&parent_id).unwrap();
+                    parent.v_children.push(new_id.clone());
                 }
 
                 let viewport = ViewportNode {
@@ -941,6 +938,9 @@ impl<'a> Dakota<'a> {
     }
 
     fn flush_viewports(&mut self, viewport: ViewportId) -> th::Result<()> {
+        let node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
+        self.d_thund.flush_surface_data(&mut node.v_surfaces)?;
+
         for i in 0..self
             .d_viewport_nodes
             .get(&viewport)
@@ -953,11 +953,14 @@ impl<'a> Dakota<'a> {
             )?;
         }
 
-        let node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
-        self.d_thund.flush_surface_data(&mut node.v_surfaces)
+        Ok(())
     }
 
     fn draw_viewports(&mut self, viewport: ViewportId) -> th::Result<()> {
+        let node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
+        self.d_thund
+            .draw_surfaces(&mut node.v_surfaces, &node.v_viewport)?;
+
         for i in 0..self
             .d_viewport_nodes
             .get(&viewport)
@@ -970,9 +973,7 @@ impl<'a> Dakota<'a> {
             )?;
         }
 
-        let node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
-        self.d_thund
-            .draw_surfaces(&mut node.v_surfaces, &node.v_viewport)
+        Ok(())
     }
 
     fn draw_surfacelists(&mut self) -> th::Result<()> {
