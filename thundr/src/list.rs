@@ -3,9 +3,13 @@
 // Austin Shafer - 2020
 
 use super::surface::Surface;
+use crate::renderer::{Renderer, WINDOW_LIST_GLSL_OFFSET};
+use crate::Thundr;
 use crate::{Damage, Result};
+use ash::vk;
 use std::iter::DoubleEndedIterator;
 use std::ops::Index;
+use utils::ecs::ECSId;
 use utils::log;
 
 #[derive(Debug)]
@@ -15,15 +19,142 @@ pub struct SurfaceList {
     l_vec: Vec<Surface>,
     /// List of damage caused by removing/adding surfaces
     pub(crate) l_damage: Vec<Damage>,
+    /// The order of windows to be drawn. References r_windows.
+    ///
+    /// This is sorted back to front, where back comes first. i.e. the
+    /// things you want to draw first should be in front of things that
+    /// you want to be able to blend overtop of.
+    pub l_window_order: Vec<ECSId>,
+    pub l_order_buf: vk::Buffer,
+    pub l_order_mem: vk::DeviceMemory,
+    pub l_order_capacity: usize,
+    /// The window order descriptor
+    pub(crate) l_order_desc: vk::DescriptorSet,
+    pub(crate) l_order_desc_pool: vk::DescriptorPool,
 }
 
 impl SurfaceList {
-    pub fn new() -> Self {
-        Self {
+    pub fn new(thund: &mut Thundr) -> Self {
+        let rend = &mut thund.th_rend;
+
+        let mut ret = Self {
             l_changed: false,
             l_vec: Vec::new(),
             l_damage: Vec::new(),
+            l_window_order: Vec::new(),
+            l_order_buf: vk::Buffer::null(),
+            l_order_mem: vk::DeviceMemory::null(),
+            l_order_capacity: 8,
+            l_order_desc_pool: vk::DescriptorPool::null(),
+            l_order_desc: vk::DescriptorSet::null(),
+        };
+
+        unsafe {
+            ret.reallocate_order_buf_with_cap(rend, ret.l_order_capacity);
+            ret.allocate_order_resources(rend);
         }
+
+        return ret;
+    }
+
+    pub fn update_window_order_buf(&mut self, rend: &Renderer) {
+        unsafe {
+            // Turn our vec of ECSIds into a vec of actual ids.
+            let mut window_order = Vec::new();
+            for ecs in self.l_window_order.iter() {
+                window_order.push(ecs.get_raw_id() as i32);
+            }
+            log::debug!("Window order is {:?}", window_order);
+
+            self.reallocate_order_buf_with_cap(rend, self.l_window_order.len());
+            rend.update_memory(self.l_order_mem, 0, &[self.l_window_order.len()]);
+            rend.update_memory(
+                self.l_order_mem,
+                WINDOW_LIST_GLSL_OFFSET,
+                window_order.as_slice(),
+            );
+        }
+    }
+
+    /// This is a helper for reallocating the vulkan resources of the window order list
+    unsafe fn reallocate_order_buf_with_cap(&mut self, rend: &Renderer, capacity: usize) {
+        rend.wait_for_prev_submit();
+
+        rend.dev.destroy_buffer(self.l_order_buf, None);
+        rend.free_memory(self.l_order_mem);
+
+        // create our data and a storage buffer for the window list
+        let (wl_storage, wl_storage_mem) = rend.create_buffer_with_size(
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            vk::SharingMode::EXCLUSIVE,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL
+                | vk::MemoryPropertyFlags::HOST_VISIBLE
+                | vk::MemoryPropertyFlags::HOST_COHERENT,
+            (std::mem::size_of::<i32>() * 4 * (capacity / 4 + 1)) as u64
+                + WINDOW_LIST_GLSL_OFFSET as u64,
+        );
+        rend.dev
+            .bind_buffer_memory(wl_storage, wl_storage_mem, 0)
+            .unwrap();
+        self.l_order_buf = wl_storage;
+        self.l_order_mem = wl_storage_mem;
+        self.l_order_capacity = capacity;
+    }
+
+    /// Alloce the window order list's vulkan resources
+    ///
+    /// This will allocate the descriptor pool and descriptor layout
+    /// and store them in self.
+    unsafe fn allocate_order_resources(&mut self, rend: &Renderer) {
+        // First make the descriptor pool and layout
+        let size = [vk::DescriptorPoolSize::builder()
+            .ty(vk::DescriptorType::STORAGE_BUFFER)
+            .descriptor_count(1)
+            .build()];
+        let info = vk::DescriptorPoolCreateInfo::builder()
+            .pool_sizes(&size)
+            .max_sets(1);
+        let order_pool = rend.dev.create_descriptor_pool(&info, None).unwrap();
+
+        self.l_order_desc_pool = order_pool;
+        self.allocate_order_desc(rend);
+    }
+
+    /// Update the window order descriptor
+    ///
+    /// This descriptor keeps a list of the window ids that need to be presented.
+    /// These will each be rendered, and index into the global window list which
+    /// contains their details.
+    pub unsafe fn allocate_order_desc(&mut self, rend: &Renderer) {
+        rend.dev
+            .reset_descriptor_pool(
+                self.l_order_desc_pool,
+                vk::DescriptorPoolResetFlags::empty(),
+            )
+            .unwrap();
+
+        // Now allocate our descriptor
+        let info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(self.l_order_desc_pool)
+            .set_layouts(&[rend.r_order_desc_layout])
+            .build();
+        self.l_order_desc = rend.dev.allocate_descriptor_sets(&info).unwrap()[0];
+
+        let write_info = &[vk::WriteDescriptorSet::builder()
+            .dst_set(self.l_order_desc)
+            .dst_binding(0)
+            .dst_array_element(0)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .buffer_info(&[vk::DescriptorBufferInfo::builder()
+                .buffer(self.l_order_buf)
+                .offset(0)
+                .range(vk::WHOLE_SIZE)
+                .build()])
+            .build()];
+        rend.dev.update_descriptor_sets(
+            write_info, // descriptor writes
+            &[],        // descriptor copies
+        );
     }
 
     fn damage_removed_surf(&mut self, mut surf: Surface) {
@@ -140,6 +271,15 @@ impl SurfaceList {
         });
 
         count
+    }
+
+    pub fn destroy(&mut self, rend: &mut Renderer) {
+        unsafe {
+            rend.dev.destroy_buffer(self.l_order_buf, None);
+            rend.free_memory(self.l_order_mem);
+            rend.dev
+                .destroy_descriptor_pool(self.l_order_desc_pool, None);
+        }
     }
 }
 

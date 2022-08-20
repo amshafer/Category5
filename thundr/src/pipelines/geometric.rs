@@ -117,6 +117,17 @@ impl Pipeline for GeomPipeline {
 
     fn begin_record(&mut self, rend: &mut Renderer, params: &RecordParams) {
         self.begin_recording(rend, params);
+    }
+
+    /// Our implementation of drawing one frame using geometry
+    fn draw(
+        &mut self,
+        rend: &mut Renderer,
+        params: &RecordParams,
+        _images: &[Image],
+        surfaces: &mut SurfaceList,
+        viewport: &Viewport,
+    ) -> bool {
         unsafe {
             // Descriptor sets can be updated elsewhere, but
             // they must be bound before drawing
@@ -128,22 +139,10 @@ impl Pipeline for GeomPipeline {
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline_layout,
                 0, // first set
-                &[self.g_desc, rend.r_order_desc, rend.r_images_desc],
+                &[self.g_desc, surfaces.l_order_desc, rend.r_images_desc],
                 &[], // dynamic offsets
             );
-        }
-    }
 
-    /// Our implementation of drawing one frame using geometry
-    fn draw(
-        &mut self,
-        rend: &mut Renderer,
-        params: &RecordParams,
-        _images: &[Image],
-        _surfaces: &mut SurfaceList,
-        viewport: &Viewport,
-    ) -> bool {
-        unsafe {
             // Now update our cbuf constants. This is how we pass in
             // the viewport information
             let consts = rend.get_push_constants(viewport);
@@ -178,14 +177,14 @@ impl Pipeline for GeomPipeline {
             // technically 3 vertices are being drawn
             // by the shader
             rend.dev.cmd_draw_indexed(
-                params.cbuf,                      // drawing command buffer
-                self.vert_count,                  // number of verts
-                rend.r_window_order.len() as u32, // number of instances
-                0,                                // first vertex
-                0,                                // vertex offset
-                0,                                // first instance
+                params.cbuf,                          // drawing command buffer
+                self.vert_count,                      // number of verts
+                surfaces.l_window_order.len() as u32, // number of instances
+                0,                                    // first vertex
+                0,                                    // vertex offset
+                0,                                    // first instance
             );
-            log::info!("Drawing {} objects", rend.r_window_order.len());
+            log::info!("Drawing {} objects", surfaces.l_window_order.len());
         }
 
         return true;

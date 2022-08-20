@@ -34,12 +34,12 @@ extern crate nvidia_aftermath_rs as aftermath;
 #[cfg(feature = "aftermath")]
 use aftermath::Aftermath;
 
-use utils::ecs::{ECSId, ECSInstance, ECSTable};
+use utils::ecs::{ECSInstance, ECSTable};
 
 /// This is the offset from the base of the winlist buffer to the
 /// window array in the actual ssbo. This needs to match the `offset`
 /// field in the `layout` qualifier in the shaders
-const WINDOW_LIST_GLSL_OFFSET: isize = 16;
+pub const WINDOW_LIST_GLSL_OFFSET: isize = 16;
 
 // this happy little debug callback is from the ash examples
 // all it does is print any errors/warnings thrown.
@@ -58,6 +58,9 @@ unsafe extern "system" fn vulkan_debug_callback(
     println!();
     vk::FALSE
 }
+
+// TODO: make a "reduced" vulkan resource manager that can be Rc'ed
+// so many structs can reference it on drop
 
 /// Common bits of a vulkan renderer
 ///
@@ -182,10 +185,8 @@ pub struct Renderer {
     pub(crate) r_images_desc_layout: vk::DescriptorSetLayout,
     pub(crate) r_images_desc: vk::DescriptorSet,
 
-    /// The window order descriptor
-    pub(crate) r_order_desc: vk::DescriptorSet,
-    pub(crate) r_order_desc_layout: vk::DescriptorSetLayout,
-    pub(crate) r_order_desc_pool: vk::DescriptorPool,
+    /// The descriptor layout for the surface list's window order desc
+    pub r_order_desc_layout: vk::DescriptorSetLayout,
 
     /// The list of window dimensions that is passed to the shader
     pub r_windows: ECSTable<Window>,
@@ -193,15 +194,6 @@ pub struct Renderer {
     pub r_windows_mem: vk::DeviceMemory,
     /// The number of Windows that r_winlist_mem was allocate to hold
     pub r_windows_capacity: usize,
-    /// The order of windows to be drawn. References r_windows.
-    ///
-    /// This is sorted back to front, where back comes first. i.e. the
-    /// things you want to draw first should be in front of things that
-    /// you want to be able to blend overtop of.
-    pub r_window_order: Vec<ECSId>,
-    pub r_order_buf: vk::Buffer,
-    pub r_order_mem: vk::DeviceMemory,
-    pub r_order_capacity: usize,
 
     /// Temporary image to bind to the image list when
     /// no images are attached.
@@ -1337,51 +1329,6 @@ impl Renderer {
         (image, view, img_mem)
     }
 
-    unsafe fn allocate_order_resources(
-        dev: &Device,
-    ) -> (vk::DescriptorPool, vk::DescriptorSetLayout) {
-        let size = [vk::DescriptorPoolSize::builder()
-            .ty(vk::DescriptorType::STORAGE_BUFFER)
-            .descriptor_count(1)
-            .build()];
-        let info = vk::DescriptorPoolCreateInfo::builder()
-            .pool_sizes(&size)
-            .max_sets(1);
-        let bindless_pool = dev.create_descriptor_pool(&info, None).unwrap();
-
-        let bindings = [
-            // the window order list
-            vk::DescriptorSetLayoutBinding::builder()
-                .binding(0)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(
-                    vk::ShaderStageFlags::COMPUTE
-                        | vk::ShaderStageFlags::VERTEX
-                        | vk::ShaderStageFlags::FRAGMENT,
-                )
-                .descriptor_count(1)
-                .build(),
-        ];
-        let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
-
-        let bindless_layout = dev.create_descriptor_set_layout(&info, None).unwrap();
-
-        (bindless_pool, bindless_layout)
-    }
-
-    fn allocate_order_desc(
-        dev: &Device,
-        pool: vk::DescriptorPool,
-        layouts: &[vk::DescriptorSetLayout],
-    ) -> vk::DescriptorSet {
-        let info = vk::DescriptorSetAllocateInfo::builder()
-            .descriptor_pool(pool)
-            .set_layouts(layouts)
-            .build();
-
-        unsafe { dev.allocate_descriptor_sets(&info).unwrap()[0] }
-    }
-
     unsafe fn allocate_bindless_resources(
         dev: &Device,
         max_image_count: u32,
@@ -1486,31 +1433,6 @@ impl Renderer {
         self.r_windows_buf = wl_storage;
         self.r_windows_mem = wl_storage_mem;
         self.r_windows_capacity = capacity;
-    }
-
-    /// This is a helper for reallocating the vulkan resources of the window order list
-    unsafe fn reallocate_order_buf_with_cap(&mut self, capacity: usize) {
-        self.wait_for_prev_submit();
-
-        self.dev.destroy_buffer(self.r_order_buf, None);
-        self.free_memory(self.r_order_mem);
-
-        // create our data and a storage buffer for the window list
-        let (wl_storage, wl_storage_mem) = self.create_buffer_with_size(
-            vk::BufferUsageFlags::STORAGE_BUFFER,
-            vk::SharingMode::EXCLUSIVE,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL
-                | vk::MemoryPropertyFlags::HOST_VISIBLE
-                | vk::MemoryPropertyFlags::HOST_COHERENT,
-            (std::mem::size_of::<i32>() * 4 * (capacity / 4 + 1)) as u64
-                + WINDOW_LIST_GLSL_OFFSET as u64,
-        );
-        self.dev
-            .bind_buffer_memory(wl_storage, wl_storage_mem, 0)
-            .unwrap();
-        self.r_order_buf = wl_storage;
-        self.r_order_mem = wl_storage_mem;
-        self.r_order_capacity = capacity;
     }
 
     /// Create a new Vulkan Renderer
@@ -1667,9 +1589,6 @@ impl Renderer {
             let bindless_desc =
                 Self::allocate_bindless_desc(&dev, bindless_pool, &[bindless_layout], 1);
 
-            let (order_pool, order_layout) = Self::allocate_order_resources(&dev);
-            let order_desc = Self::allocate_order_desc(&dev, order_pool, &[order_layout]);
-
             let (tmp, tmp_view, tmp_mem) = Self::create_image(
                 &dev,
                 &mem_props,
@@ -1683,6 +1602,23 @@ impl Renderer {
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
                 vk::ImageTiling::LINEAR,
             );
+
+            // Allocate our window order desc layout
+            let bindings = [
+                // the window order list
+                vk::DescriptorSetLayoutBinding::builder()
+                    .binding(0)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .stage_flags(
+                        vk::ShaderStageFlags::COMPUTE
+                            | vk::ShaderStageFlags::VERTEX
+                            | vk::ShaderStageFlags::FRAGMENT,
+                    )
+                    .descriptor_count(1)
+                    .build(),
+            ];
+            let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
+            let order_layout = dev.create_descriptor_set_layout(&info, None).unwrap();
 
             // you are now the proud owner of a half complete
             // rendering context
@@ -1738,12 +1674,6 @@ impl Renderer {
                 r_windows_buf: vk::Buffer::null(),
                 r_windows_mem: vk::DeviceMemory::null(),
                 r_windows_capacity: 8,
-                r_window_order: Vec::new(),
-                r_order_buf: vk::Buffer::null(),
-                r_order_mem: vk::DeviceMemory::null(),
-                r_order_capacity: 8,
-                r_order_desc: order_desc,
-                r_order_desc_pool: order_pool,
                 r_order_desc_layout: order_layout,
                 tmp_image: tmp,
                 tmp_image_view: tmp_view,
@@ -1754,7 +1684,6 @@ impl Renderer {
                 r_aftermath: aftermath,
             };
             rend.reallocate_windows_buf_with_cap(rend.r_windows_capacity);
-            rend.reallocate_order_buf_with_cap(rend.r_order_capacity);
 
             return Ok(rend);
         }
@@ -1766,7 +1695,13 @@ impl Renderer {
     /// to ork with. The offset is used through this to calculate the position of
     /// the subsurfaces relative to their parent.
     /// The flush argument forces the surface's data to be written back.
-    fn update_window_list_recurse(&mut self, mut surf: Surface, offset: (i32, i32), flush: bool) {
+    fn update_window_list_recurse(
+        &mut self,
+        list: &mut SurfaceList,
+        mut surf: Surface,
+        offset: (i32, i32),
+        flush: bool,
+    ) {
         {
             // Only draw this surface if it has contents defined. Either
             // an image or a color
@@ -1775,7 +1710,7 @@ impl Renderer {
             // first so that any alpha in the children will see this underneath
             let internal = surf.s_internal.borrow();
             if internal.s_image.is_some() || internal.s_color.is_some() {
-                self.r_window_order.push(surf.s_window_id.clone());
+                list.l_window_order.push(surf.s_window_id.clone());
             }
         }
 
@@ -1790,6 +1725,7 @@ impl Renderer {
             let child = surf.get_subsurface(i);
 
             self.update_window_list_recurse(
+                list,
                 child,
                 (offset.0 + surf_off.0 as i32, offset.1 + surf_off.1 as i32),
                 // If the parent surface was moved, then we need to update all
@@ -1802,11 +1738,12 @@ impl Renderer {
     /// Extract information for shaders from a surface list
     ///
     /// This includes dimensions, the image bound, etc.
-    fn update_window_list(&mut self, surfaces: &SurfaceList) {
-        self.r_window_order.clear();
+    fn update_window_list(&mut self, surfaces: &mut SurfaceList) {
+        surfaces.l_window_order.clear();
 
-        for surf in surfaces.iter().rev() {
-            self.update_window_list_recurse(surf.clone(), (0, 0), false);
+        for i in surfaces.len()..0 {
+            let s = surfaces[i as usize].clone();
+            self.update_window_list_recurse(surfaces, s, (0, 0), false);
         }
     }
 
@@ -1815,7 +1752,7 @@ impl Renderer {
     /// The shader needs a contiguous list of surfaces, so we turn our surfaces
     /// into a bunch of "windows". These windows will have their size and offset
     /// populated, along with any other drawing data. These live in r_windows, and
-    /// the order is set by r_window_order.
+    /// the order is set by the surfacelist's l_window_order.
     ///
     /// The offset parameter comes from the offset of this window due to its
     /// surface being a subsurface.
@@ -2522,13 +2459,6 @@ impl Renderer {
                         vk::DescriptorPoolResetFlags::empty(),
                     )
                     .unwrap();
-
-                self.dev
-                    .reset_descriptor_pool(
-                        self.r_order_desc_pool,
-                        vk::DescriptorPoolResetFlags::empty(),
-                    )
-                    .unwrap();
             }
 
             self.r_images_desc = Self::allocate_bindless_desc(
@@ -2536,12 +2466,6 @@ impl Renderer {
                 self.r_images_desc_pool,
                 &[self.r_images_desc_layout],
                 images.len() as u32,
-            );
-
-            self.r_order_desc = Self::allocate_order_desc(
-                &self.dev,
-                self.r_order_desc_pool,
-                &[self.r_order_desc_layout],
             );
         }
 
@@ -2587,17 +2511,6 @@ impl Renderer {
                     .build()])
                 .build(),
             vk::WriteDescriptorSet::builder()
-                .dst_set(self.r_order_desc)
-                .dst_binding(0)
-                .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&[vk::DescriptorBufferInfo::builder()
-                    .buffer(self.r_order_buf)
-                    .offset(0)
-                    .range(vk::WHOLE_SIZE)
-                    .build()])
-                .build(),
-            vk::WriteDescriptorSet::builder()
                 .dst_set(self.r_images_desc)
                 .dst_binding(1)
                 .dst_array_element(0)
@@ -2611,6 +2524,10 @@ impl Renderer {
                 write_infos, // descriptor writes
                 &[],         // descriptor copies
             );
+
+            // We also need to tell the surface list to update its window
+            // order resource
+            surfaces.allocate_order_desc(self);
         }
     }
 
@@ -2623,7 +2540,6 @@ impl Renderer {
         // surfaces might have. We need to copy the new values for
         // any changed
         self.update_window_list(surfaces);
-
         self.ensure_window_capacity(self.r_windows.ect_data.len());
 
         log::info!("Window List: {:#?}", self.r_windows);
@@ -2653,24 +2569,9 @@ impl Renderer {
                     }
                 },
             );
-
-            // Turn our vec of ECSIds into a vec of actual ids.
-            let mut window_order = Vec::new();
-            for ecs in self.r_window_order.iter() {
-                window_order.push(ecs.get_raw_id() as i32);
-            }
-            log::debug!("Window order is {:?}", window_order);
-
-            self.reallocate_order_buf_with_cap(self.r_window_order.len());
-            self.update_memory(self.r_order_mem, 0, &[self.r_window_order.len()]);
-            self.update_memory(
-                self.r_order_mem,
-                WINDOW_LIST_GLSL_OFFSET,
-                window_order.as_slice(),
-            );
-
-            self.dev.device_wait_idle().unwrap();
         }
+
+        surfaces.update_window_order_buf(self);
     }
 
     /// Update self.current_image with the swapchain image to render to
@@ -2821,14 +2722,9 @@ impl Drop for Renderer {
             self.dev
                 .destroy_descriptor_set_layout(self.r_order_desc_layout, None);
             self.dev
-                .destroy_descriptor_pool(self.r_order_desc_pool, None);
-
-            self.dev
                 .destroy_descriptor_pool(self.r_images_desc_pool, None);
             self.dev.destroy_buffer(self.r_windows_buf, None);
             self.free_memory(self.r_windows_mem);
-            self.dev.destroy_buffer(self.r_order_buf, None);
-            self.free_memory(self.r_order_mem);
 
             self.destroy_swapchain();
 

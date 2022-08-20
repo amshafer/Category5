@@ -76,18 +76,6 @@ struct ViewportNode {
     v_surfaces: th::SurfaceList,
 }
 
-impl Default for ViewportNode {
-    fn default() -> Self {
-        Self {
-            v_parent: None,
-            v_children: Vec::new(),
-            v_root_node: None,
-            v_viewport: th::Viewport::new(0.0, 0.0, 0.0, 0.0),
-            v_surfaces: th::SurfaceList::new(),
-        }
-    }
-}
-
 /// The elements of the layout tree.
 /// This will be constructed from the Elements in the DOM
 #[derive(Debug)]
@@ -674,7 +662,7 @@ impl<'a> Dakota<'a> {
                         node.l_size.height,
                     ),
                     v_children: Vec::new(),
-                    v_surfaces: th::SurfaceList::new(),
+                    v_surfaces: th::SurfaceList::new(&mut self.d_thund),
                 };
                 self.d_viewport_nodes.set(&new_id, viewport);
 
