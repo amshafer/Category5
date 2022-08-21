@@ -1714,11 +1714,8 @@ impl Renderer {
             }
         }
 
-        if surf.modified() || flush {
-            self.update_surf_shader_window(&surf, offset);
-
-            surf.set_modified(false);
-        }
+        self.update_surf_shader_window(&surf, offset);
+        surf.set_modified(false);
 
         let surf_off = surf.get_pos();
         for i in 0..surf.get_subsurface_count() {
@@ -2548,11 +2545,6 @@ impl Renderer {
         // the tile/window updates in the mapped GPU memory
         // (requires benchmark)
         unsafe {
-            log::debug!(
-                "raw window list is {:#?}",
-                self.r_windows.ect_data.as_slice()
-            );
-
             // Don't update vulkan memory unless we have more than one valid id.
             if self.r_windows.num_entities() > 0 && self.r_windows.ect_data.len() > 0 {
                 // Shader expects struct WindowList { int count; Window windows[] }
