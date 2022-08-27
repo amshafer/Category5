@@ -19,6 +19,7 @@ layout(push_constant) uniform PushConstants {
  mat4 model;
  float width;
  float height;
+ float starting_depth;
 } push;
 
 struct Rect {
@@ -83,7 +84,7 @@ void main() {
 
  // The model transform will align x,y = (0, 0) with the top left of
  // the screen. It should stubtract 1.0 from x and y.
- float order = 0.0 + (float(window_count - gl_InstanceIndex) * 0.0000001);
+ float order = push.starting_depth - (float(gl_InstanceIndex) * 0.0000001);
  gl_Position = ubo.model * push.model * vec4(adjusted, order, 1.0);
 
  fragcoord = coord;

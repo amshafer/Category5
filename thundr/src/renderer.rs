@@ -244,6 +244,15 @@ pub struct Window {
 pub struct RecordParams {
     pub cbuf: vk::CommandBuffer,
     pub image_num: usize,
+    /// This calculates the depth we should use when starting to draw
+    /// a set of surfaces in a viewport.
+    ///
+    /// This will start at 1.0, the max depth. Every surface will draw
+    /// itself starting_depth - (gl_InstanceIndex * 0.00000001) away from the max
+    /// depth. We will update this after every draw to calculate the
+    /// new depth to offset from, so we don't collide with previously drawn
+    /// surfaces in a different viewport.
+    pub starting_depth: f32,
 }
 
 /// Shader push constants
@@ -257,6 +266,7 @@ pub struct PushConstants {
     pub model: Matrix4<f32>,
     pub width: f32,
     pub height: f32,
+    pub starting_depth: f32,
 }
 
 // Most of the functions below will be unsafe. Only the safe functions
@@ -1710,12 +1720,14 @@ impl Renderer {
             // first so that any alpha in the children will see this underneath
             let internal = surf.s_internal.borrow();
             if internal.s_image.is_some() || internal.s_color.is_some() {
-                list.l_window_order.push(surf.s_window_id.clone());
+                list.l_window_order.push(surf.get_ecs_id().clone());
             }
         }
 
-        self.update_surf_shader_window(&surf, offset);
-        surf.set_modified(false);
+        if surf.modified() || flush {
+            self.update_surf_shader_window(&surf, offset);
+            surf.set_modified(false);
+        }
 
         let surf_off = surf.get_pos();
         for i in 0..surf.get_subsurface_count() {
@@ -1811,7 +1823,11 @@ impl Renderer {
     /// Helper for getting the push constants
     ///
     /// This will be where we calculate the viewport scroll amount
-    pub fn get_push_constants(&mut self, viewport: &Viewport) -> PushConstants {
+    pub fn get_push_constants(
+        &mut self,
+        params: &RecordParams,
+        viewport: &Viewport,
+    ) -> PushConstants {
         // transform from blender's coordinate system to vulkan
         PushConstants {
             model: Matrix4::from_translation(Vector3::new(
@@ -1821,6 +1837,7 @@ impl Renderer {
             )),
             width: viewport.size.0,
             height: viewport.size.1,
+            starting_depth: params.starting_depth,
         }
     }
 
@@ -2066,6 +2083,8 @@ impl Renderer {
         RecordParams {
             cbuf: self.cbufs[self.current_image as usize],
             image_num: self.current_image as usize,
+            // Start at max depth of 1.0 and go to zero
+            starting_depth: 1.0,
         }
     }
 
@@ -2559,6 +2578,7 @@ impl Renderer {
                         // the Vulkan memory
                         for (i, win) in self.r_windows.iter().enumerate() {
                             if let Some(w) = win {
+                                log::error!("Winlist index {}: writing window {:?}", i, win);
                                 dst[i] = *w;
                             }
                         }

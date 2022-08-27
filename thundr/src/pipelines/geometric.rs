@@ -145,7 +145,7 @@ impl Pipeline for GeomPipeline {
 
             // Now update our cbuf constants. This is how we pass in
             // the viewport information
-            let consts = rend.get_push_constants(viewport);
+            let consts = rend.get_push_constants(params, viewport);
             rend.dev.cmd_push_constants(
                 params.cbuf,
                 self.pipeline_layout,

@@ -831,6 +831,7 @@ impl<'a> Dakota<'a> {
                 .context("Could not construct Thundr surface tree")?;
 
             let viewport = &mut self.d_viewport_nodes.get_mut(&id).unwrap();
+            viewport.v_surfaces.clear();
             viewport.v_surfaces.push(root_surf.clone());
         }
 

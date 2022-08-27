@@ -518,7 +518,7 @@ impl Thundr {
     pub fn draw_surfaces(&mut self, surfaces: &mut SurfaceList, viewport: &Viewport) -> Result<()> {
         let params = self
             .th_params
-            .as_ref()
+            .as_mut()
             .ok_or(ThundrError::RECORDING_NOT_IN_PROGRESS)?;
 
         self.th_rend.add_damage_for_list(surfaces)?;
@@ -530,6 +530,13 @@ impl Thundr {
             surfaces,
             viewport,
         );
+
+        // Update the amount of depth used while drawing this surface list. This
+        // is the depth we should start subtracting from when drawing the next
+        // viewport.
+        // This magic 0.0000001 must match geom.vert.glsl
+        params.starting_depth -= surfaces.l_window_order.len() as f32 * 0.0000001;
+
         // Now that we have processed this surfacelist, unmark it as changed
         surfaces.l_changed = false;
         self.draw_surfaces_debug_prints(surfaces, viewport);
