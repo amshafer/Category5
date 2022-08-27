@@ -715,11 +715,18 @@ impl<'a> Dakota<'a> {
     fn create_thundr_surf_for_el(&mut self, node: LayoutId) -> Result<th::Surface> {
         let layout = self.d_layout_nodes.get(&node).unwrap();
 
+        // If this node is a viewport then ignore its offset since its surface
+        // is going to be added to a different surfacelist
+        let offset = match layout.l_is_viewport {
+            true => (0.0, 0.0),
+            false => (layout.l_offset.x, layout.l_offset.y),
+        };
+
         // first create a surface for this element
         // This starts as an empty unbound surface but may be assigned content below
         let mut surf = self.d_thund.create_surface(
-            layout.l_offset.x,
-            layout.l_offset.y,
+            offset.0,
+            offset.1,
             layout.l_size.width,
             layout.l_size.height,
         );

@@ -1847,7 +1847,6 @@ impl Renderer {
             // wait for that if its the case
             self.wait_for_copy();
             if memimg.as_slice().len() > self.transfer_buf_len {
-                // WHY DOES COMMENTING THESE OUT FIX THINGS??
                 self.free_memory(self.transfer_mem);
                 self.dev.destroy_buffer(self.transfer_buf, None);
                 let (buffer, buf_mem) = self.create_buffer(
