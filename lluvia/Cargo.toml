@@ -1,0 +1,10 @@
+[package]
+name = "lluvia"
+version = "0.0.1"
+edition = "2021"
+authors = ["Austin Shafer <ashafer@badland.io>"]
+description = "A stripped down Entity Component System that allows for no-nonsense data storage in finite time."
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
