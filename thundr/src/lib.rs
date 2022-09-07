@@ -64,6 +64,8 @@
 #![allow(dyn_drop)]
 
 extern crate lazy_static;
+extern crate lluvia;
+use lluvia as ll;
 
 // Austin Shafer - 2020
 use std::marker::PhantomData;
@@ -91,7 +93,7 @@ use renderer::RecordParams;
 extern crate utils;
 pub use crate::utils::region::Rect;
 pub use crate::utils::{anyhow, Context, Dmabuf, MemImage};
-use utils::{ecs::ECSInstance, log};
+use utils::log;
 
 pub type Result<T> = std::result::Result<T, ThundrError>;
 
@@ -112,6 +114,8 @@ use thiserror::Error;
 pub enum ThundrError {
     #[error("Operation timed out")]
     TIMEOUT,
+    #[error("Allocation failure")]
+    OUT_OF_MEMORY,
     #[error("Operation is not ready, it needs to be redone")]
     NOT_READY,
     #[error("Failed to acquire the next swapchain image")]
@@ -137,7 +141,7 @@ pub enum ThundrError {
 pub struct Thundr {
     th_rend: Renderer,
     /// This is the system used to track all Thundr resources
-    th_ecs_inst: ECSInstance,
+    th_ecs_inst: ll::Instance,
 
     /// We keep a list of all the images allocated by this context
     /// so that Pipeline::draw doesn't have to dedup the surfacelist's images
@@ -253,11 +257,11 @@ impl<'a> CreateInfoBuilder<'a> {
 impl Thundr {
     // TODO: make get_available_params and add customization
     pub fn new(info: &CreateInfo) -> Result<Thundr> {
-        let ecs = ECSInstance::new();
+        let mut ecs = ll::Instance::new();
 
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
-        let mut rend = Renderer::new(&info, &ecs)?;
+        let mut rend = Renderer::new(&info, &mut ecs)?;
 
         // Create the pipeline(s) requested
         // Record the type we are using so that we know which type to regenerate
@@ -422,7 +426,7 @@ impl Thundr {
     /// drawn. It needs to have an image attached. The same
     /// image can be bound to multiple surfaces.
     pub fn create_surface(&mut self, x: f32, y: f32, width: f32, height: f32) -> Surface {
-        let id = self.th_ecs_inst.mint_new_id();
+        let id = self.th_ecs_inst.add_entity();
         let surf = Surface::create_surface(id, x, y, width, height);
         let ecs_capacity = self.th_ecs_inst.num_entities();
 

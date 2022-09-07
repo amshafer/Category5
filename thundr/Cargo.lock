@@ -407,6 +407,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "lluvia"
+version = "0.0.1"
+
+[[package]]
 name = "log"
 version = "0.4.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -919,6 +923,7 @@ dependencies = [
  "cgmath",
  "image",
  "lazy_static",
+ "lluvia",
  "memoffset 0.5.6",
  "nix 0.24.1",
  "nvidia-aftermath-rs",

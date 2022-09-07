@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 lazy_static="1.4"
+lluvia={path="../lluvia"}
 utils={path="../utils"}
 ash={version="0.37", features=["linked"]}
 bitflags="1.3"

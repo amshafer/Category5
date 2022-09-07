@@ -34,7 +34,7 @@ extern crate nvidia_aftermath_rs as aftermath;
 #[cfg(feature = "aftermath")]
 use aftermath::Aftermath;
 
-use utils::ecs::{ECSInstance, ECSTable};
+use lluvia as ll;
 
 /// This is the offset from the base of the winlist buffer to the
 /// window array in the actual ssbo. This needs to match the `offset`
@@ -177,6 +177,9 @@ pub struct Renderer {
     /// The type of pipeline(s) being in use
     pub(crate) r_pipe_type: PipelineType,
 
+    /// Our ECS
+    pub r_ecs: ll::Instance,
+
     /// We keep a list of image views from the surface list's images
     /// to be passed as our unsized image array in our shader. This needs
     /// to be regenerated any time a change to the surfacelist is made
@@ -189,7 +192,8 @@ pub struct Renderer {
     pub r_order_desc_layout: vk::DescriptorSetLayout,
 
     /// The list of window dimensions that is passed to the shader
-    pub r_windows: ECSTable<Window>,
+    pub r_window_component: ll::Component<Window>,
+    pub r_windows: ll::Session<Window>,
     pub r_windows_buf: vk::Buffer,
     pub r_windows_mem: vk::DeviceMemory,
     /// The number of Windows that r_winlist_mem was allocate to hold
@@ -1455,7 +1459,7 @@ impl Renderer {
     /// All methods called after this only need to take a mutable reference to
     /// self, avoiding any nasty argument lists like the functions above.
     /// The goal is to have this make dealing with the api less wordy.
-    pub fn new(info: &CreateInfo, ecs: &ECSInstance) -> Result<Renderer> {
+    pub fn new(info: &CreateInfo, ecs: &mut ll::Instance) -> Result<Renderer> {
         unsafe {
             let (entry, inst) = Renderer::create_instance(info);
 
@@ -1630,6 +1634,11 @@ impl Renderer {
             let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
             let order_layout = dev.create_descriptor_set_layout(&info, None).unwrap();
 
+            let win_comp = ecs.add_component();
+            let sesh = ecs
+                .open_session(win_comp)
+                .ok_or(ThundrError::OUT_OF_MEMORY)?;
+
             // you are now the proud owner of a half complete
             // rendering context
             // p.s. you still need a Pipeline
@@ -1676,11 +1685,13 @@ impl Renderer {
                 transfer_buf_len: 0,
                 draw_call_submitted: false,
                 r_pipe_type: pipe_type,
+                r_ecs: ecs.clone(),
                 r_image_infos: Vec::new(),
                 r_images_desc_pool: bindless_pool,
                 r_images_desc_layout: bindless_layout,
                 r_images_desc: bindless_desc,
-                r_windows: ECSTable::new(ecs.clone()),
+                r_window_component: win_comp,
+                r_windows: sesh,
                 r_windows_buf: vk::Buffer::null(),
                 r_windows_mem: vk::DeviceMemory::null(),
                 r_windows_capacity: 8,
@@ -2555,7 +2566,8 @@ impl Renderer {
         // surfaces might have. We need to copy the new values for
         // any changed
         self.update_window_list(surfaces);
-        self.ensure_window_capacity(self.r_windows.ect_data.len());
+        let num_entities = self.r_ecs.capacity();
+        self.ensure_window_capacity(num_entities);
 
         log::info!("Window List: {:#?}", self.r_windows);
 
@@ -2564,21 +2576,21 @@ impl Renderer {
         // (requires benchmark)
         unsafe {
             // Don't update vulkan memory unless we have more than one valid id.
-            if self.r_windows.num_entities() > 0 && self.r_windows.ect_data.len() > 0 {
+            if self.r_ecs.num_entities() > 0 && num_entities > 0 {
                 // Shader expects struct WindowList { int count; Window windows[] }
-                self.update_memory(self.r_windows_mem, 0, &[self.r_windows.ect_data.len()]);
+                self.update_memory(self.r_windows_mem, 0, &[num_entities]);
                 self.update_memory_from_callback(
                     self.r_windows_mem,
                     WINDOW_LIST_GLSL_OFFSET,
-                    self.r_windows.ect_data.len(),
+                    num_entities,
                     |dst| {
                         // For each valid window entry, extract the Window
                         // type from the option so that we can write it to
                         // the Vulkan memory
                         for (i, win) in self.r_windows.iter().enumerate() {
-                            if let Some(w) = win {
+                            if let Some(ref w) = win {
                                 log::error!("Winlist index {}: writing window {:?}", i, win);
-                                dst[i] = *w;
+                                dst[i] = **w;
                             }
                         }
                     },

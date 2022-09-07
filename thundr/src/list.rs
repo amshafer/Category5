@@ -7,9 +7,9 @@ use crate::renderer::{Renderer, WINDOW_LIST_GLSL_OFFSET};
 use crate::Thundr;
 use crate::{Damage, Result};
 use ash::vk;
+use lluvia as ll;
 use std::iter::DoubleEndedIterator;
 use std::ops::Index;
-use utils::ecs::ECSId;
 use utils::log;
 
 #[derive(Debug)]
@@ -24,7 +24,7 @@ pub struct SurfaceList {
     /// This is sorted back to front, where back comes first. i.e. the
     /// things you want to draw first should be in front of things that
     /// you want to be able to blend overtop of.
-    pub l_window_order: Vec<ECSId>,
+    pub l_window_order: Vec<ll::Entity>,
     pub l_order_buf: vk::Buffer,
     pub l_order_mem: vk::DeviceMemory,
     pub l_order_capacity: usize,
@@ -59,7 +59,7 @@ impl SurfaceList {
 
     pub fn update_window_order_buf(&mut self, rend: &Renderer) {
         unsafe {
-            // Turn our vec of ECSIds into a vec of actual ids.
+            // Turn our vec of ll::Entitys into a vec of actual ids.
             let mut window_order = Vec::new();
             for ecs in self.l_window_order.iter() {
                 window_order.push(ecs.get_raw_id() as i32);

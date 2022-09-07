@@ -53,6 +53,7 @@
 
 use std::any::Any;
 use std::cell::{Ref, RefCell, RefMut};
+use std::fmt;
 use std::marker::PhantomData;
 use std::rc::Rc;
 
@@ -62,6 +63,14 @@ mod tests;
 pub struct EntityInternal {
     ecs_inst: Instance,
     ecs_id: usize,
+}
+
+impl fmt::Debug for EntityInternal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EntityInternal")
+            .field("ecs_id", &self.ecs_id)
+            .finish()
+    }
 }
 
 impl EntityInternal {
@@ -119,10 +128,12 @@ trait ComponentTable {
 /// A table containing a series of optional values.
 ///
 /// This is indexed by the Entity.ecs_id field.
+#[derive(Debug)]
 pub struct TableInternal<T: 'static> {
     t_entity: Vec<Option<T>>,
 }
 
+#[derive(Debug)]
 pub struct Table<T: 'static> {
     t_internal: Rc<RefCell<TableInternal<T>>>,
 }
@@ -140,6 +151,9 @@ impl<T: 'static> ComponentTable for Table<T> {
         let _val = {
             // Take the data and don't drop it until we have dropped our RefMut
             let mut internal = self.t_internal.borrow_mut();
+            if id >= internal.t_entity.len() {
+                return;
+            }
             internal.t_entity[id].take()
         };
     }
@@ -250,6 +264,13 @@ impl Instance {
     /// This returns the number of "live" ids
     pub fn num_entities(&self) -> usize {
         self.i_internal.borrow().i_total_num_ids
+    }
+
+    /// Get the largest entity value
+    ///
+    /// This is essentially the capacity of the entity array
+    pub fn capacity(&self) -> usize {
+        self.i_internal.borrow().i_valid_ids.len()
     }
 
     /// Allocate a new component table
@@ -372,6 +393,7 @@ impl Instance {
                 s_inst: new_inst,
                 _s_phantom: PhantomData,
                 s_table: table.clone(),
+                s_component: component,
             });
         }
         None
@@ -397,7 +419,16 @@ impl Instance {
 pub struct Session<T: 'static> {
     s_inst: Instance,
     _s_phantom: PhantomData<T>,
+    s_component: Component<T>,
     s_table: Table<T>,
+}
+
+impl<T: 'static> fmt::Debug for Session<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Session")
+            .field("s_component", &self.s_component.c_index)
+            .finish()
+    }
 }
 
 impl<T: 'static> Session<T> {
@@ -482,5 +513,44 @@ impl<T: 'static> Session<T> {
 
         let mut table_internal = self.s_table.t_internal.borrow_mut();
         table_internal.t_entity[entity.ecs_id].take()
+    }
+
+    /// Create an iterator over all values in this component table
+    ///
+    /// This will return Option values for each entry in the internal
+    /// component array. None values can be returned by the iterator,
+    /// as it allows for you to use `.enumerate()` to mirror the
+    /// component table into other resources.
+    pub fn iter<'a>(&'a self) -> SessionIterator<'a, T> {
+        SessionIterator {
+            si_session: self,
+            si_cur: 0,
+        }
+    }
+}
+
+pub struct SessionIterator<'a, T: 'static> {
+    si_session: &'a Session<T>,
+    si_cur: usize,
+}
+
+impl<'a, T: 'static> Iterator for SessionIterator<'a, T> {
+    type Item = Option<Ref<'a, T>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let table_internal = self.si_session.s_table.t_internal.borrow();
+        let cur = self.si_cur;
+        self.si_cur += 1;
+
+        if cur >= table_internal.t_entity.len() {
+            return None;
+        }
+        if table_internal.t_entity[cur].is_none() {
+            return Some(None);
+        }
+
+        let ret = Ref::map(table_internal, |t| t.t_entity[cur].as_ref().unwrap());
+
+        return Some(Some(ret));
     }
 }

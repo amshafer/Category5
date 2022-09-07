@@ -8,9 +8,10 @@
 #![allow(dead_code)]
 extern crate nix;
 use crate::{Damage, Result, ThundrError};
+use lluvia as ll;
 
 use super::image::Image;
-use utils::{ecs::ECSId, log, region::Rect};
+use utils::{log, region::Rect};
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -102,7 +103,7 @@ impl SurfaceInternal {
 pub struct Surface {
     /// The Thundr window list Id. This is an ECS ID to track surface updates
     /// in the shader's list.
-    pub s_window_id: ECSId,
+    pub s_window_id: ll::Entity,
     pub(crate) s_internal: Rc<RefCell<SurfaceInternal>>,
 }
 
@@ -113,7 +114,13 @@ impl PartialEq for Surface {
 }
 
 impl Surface {
-    pub(crate) fn create_surface(id: ECSId, x: f32, y: f32, width: f32, height: f32) -> Surface {
+    pub(crate) fn create_surface(
+        id: ll::Entity,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> Surface {
         Surface {
             s_window_id: id,
             s_internal: Rc::new(RefCell::new(SurfaceInternal {
@@ -134,7 +141,7 @@ impl Surface {
     }
 
     /// Get the ECS Id tracking this resource
-    pub fn get_ecs_id(&self) -> ECSId {
+    pub fn get_ecs_id(&self) -> ll::Entity {
         self.s_window_id.clone()
     }
 
