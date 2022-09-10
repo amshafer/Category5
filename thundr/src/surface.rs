@@ -53,6 +53,15 @@ pub(crate) struct SurfaceInternal {
     s_modified: bool,
 }
 
+impl Drop for SurfaceInternal {
+    fn drop(&mut self) {
+        // Remove all references to this in the subsurface's parent fields
+        for surf in self.s_subsurfaces.iter() {
+            surf.s_internal.borrow_mut().s_parent = None;
+        }
+    }
+}
+
 impl SurfaceInternal {
     /// adjusts from image-coords to surface-coords.
     pub fn get_opaque(&self) -> Option<Rect<i32>> {
@@ -393,6 +402,18 @@ impl Surface {
             .ok_or(ThundrError::SURFACE_NOT_FOUND)?;
         internal.s_subsurfaces.remove(pos);
         Ok(())
+    }
+
+    /// Recursively unbind all subsurfaces in this surface tree
+    pub fn remove_all_subsurfaces(&mut self) {
+        let mut internal = self.s_internal.borrow_mut();
+
+        for surf in internal.s_subsurfaces.iter_mut() {
+            surf.remove_all_subsurfaces();
+        }
+
+        internal.s_subsurfaces.clear();
+        internal.s_parent = None;
     }
 
     pub fn get_parent(&self) -> Option<Surface> {

@@ -190,11 +190,6 @@ impl<T: 'static> Table<T> {
         // First handle any resizing that needs to occur
         if entity.ecs_id >= internal.t_entity.len() {
             let new_size = (entity.ecs_id + 1).next_power_of_two();
-            println!(
-                "Old size is {}, new size is {}",
-                internal.t_entity.len(),
-                new_size
-            );
             internal.t_entity.resize_with(new_size, || None);
         }
     }
@@ -314,6 +309,7 @@ impl Instance {
                 for (i, is_valid) in internal.i_valid_ids.iter().enumerate().rev() {
                     if !*is_valid {
                         index = Some(i);
+                        break;
                     }
                 }
             }

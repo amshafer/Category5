@@ -1,7 +1,6 @@
 use crate::serde::{Deserialize, Serialize};
 use crate::utils::{anyhow, Result};
-use crate::{LayoutId, LayoutSpace};
-use lluvia as ll;
+use crate::LayoutSpace;
 
 use std::cell::RefCell;
 use std::cmp::{Ord, PartialOrd};
@@ -261,10 +260,7 @@ pub struct Element {
     pub bounds: Option<Edges>,
     #[serde(rename = "el", default)]
     pub children: Vec<Rc<RefCell<Element>>>,
-    // TODO: stop being dumb and just put LayoutNode here
-    /// The LayoutNode backing this Element
-    #[serde(skip)]
-    pub layout_id: Option<LayoutId>,
+    // TODO: return Element to user as an ECS id
 }
 
 #[derive(Serialize, Deserialize, Debug)]

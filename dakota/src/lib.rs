@@ -70,7 +70,6 @@ pub struct Dakota<'a> {
 }
 
 struct ViewportNode {
-    v_parent: Option<ViewportId>,
     v_children: Vec<ViewportId>,
     v_root_node: Option<LayoutId>,
     v_viewport: th::Viewport,
@@ -98,7 +97,6 @@ struct LayoutNode {
     /// itself, and this node is a scrolling region. if this is true the
     /// associated viewport is the handler for this node.
     l_is_viewport: bool,
-    l_viewport: Option<ViewportId>,
 }
 
 impl Default for LayoutNode {
@@ -111,7 +109,6 @@ impl Default for LayoutNode {
             l_size: dom::Size::new(0.0, 0.0),
             l_children: Vec::with_capacity(0),
             l_is_viewport: false,
-            l_viewport: None,
         }
     }
 }
@@ -131,7 +128,6 @@ impl LayoutNode {
             l_size: size,
             l_children: Vec::with_capacity(0),
             l_is_viewport: false,
-            l_viewport: None,
         }
     }
 
@@ -571,7 +567,6 @@ impl<'a> Dakota<'a> {
     /// now.
     fn calculate_sizes(&mut self, el: &mut dom::Element, space: &LayoutSpace) -> Result<LayoutId> {
         let new_id = self.d_layout_ecs_inst.add_entity();
-        el.layout_id = Some(new_id.clone());
         let mut ret = LayoutNode::new(
             el.resource.clone(),
             None,
@@ -644,7 +639,7 @@ impl<'a> Dakota<'a> {
         mut parent_viewport: Option<ViewportId>,
     ) -> Option<ViewportId> {
         {
-            let mut node = self.d_layout_nodes.get_mut(&id).unwrap();
+            let node = self.d_layout_nodes.get_mut(&id).unwrap();
 
             if node.l_is_viewport {
                 let new_id = self.d_viewport_ecs_inst.add_entity();
@@ -658,7 +653,6 @@ impl<'a> Dakota<'a> {
 
                 let viewport = ViewportNode {
                     v_root_node: Some(id.clone()),
-                    v_parent: parent_viewport,
                     v_viewport: th::Viewport::new(
                         node.l_offset.x,
                         node.l_offset.y,
@@ -670,7 +664,6 @@ impl<'a> Dakota<'a> {
                 };
                 self.d_viewport_nodes.set(&new_id, viewport);
 
-                node.l_viewport = Some(new_id.clone());
                 parent_viewport = Some(new_id);
             }
         }
@@ -881,6 +874,12 @@ impl<'a> Dakota<'a> {
                 .set_output_params(&dom.window, self.d_window_dims.unwrap())?;
         }
 
+        // reset our thundr surface list. If the set of resources has
+        // changed, then we should have called clear_thundr to do so by now.
+        self.clear_thundr_surfaces();
+        self.d_root_viewport = None;
+        self.d_layout_tree_root = None;
+
         // construct layout tree with sizes of all boxes
         let root_node_id = self.calculate_sizes(
             &mut dom.layout.root_element.borrow_mut(),
@@ -909,10 +908,6 @@ impl<'a> Dakota<'a> {
                 self.print_node(&self.d_layout_nodes.get(&root_id).unwrap(), 0);
             }
         }
-
-        // reset our thundr surface list. If the set of resources has
-        // changed, then we should have called clear_thundr to do so by now.
-        self.clear_thundr_surfaces();
 
         // Perform the Thundr pass
         //

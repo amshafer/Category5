@@ -2589,7 +2589,7 @@ impl Renderer {
                         // the Vulkan memory
                         for (i, win) in self.r_windows.iter().enumerate() {
                             if let Some(ref w) = win {
-                                log::error!("Winlist index {}: writing window {:?}", i, win);
+                                log::verbose!("Winlist index {}: writing window {:?}", i, win);
                                 dst[i] = **w;
                             }
                         }

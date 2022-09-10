@@ -250,13 +250,20 @@ impl SurfaceList {
     pub fn clear(&mut self) {
         self.l_changed = true;
         // Get the damage from all removed surfaces
-        for mut surf in self.l_vec.drain(..) {
+        for surf in self.l_vec.iter_mut() {
             surf.record_damage();
             match surf.take_surface_damage() {
                 Some(d) => self.l_damage.push(d),
                 None => {}
             };
         }
+
+        for surf in self.l_vec.iter_mut() {
+            surf.remove_all_subsurfaces();
+        }
+
+        self.l_window_order.clear();
+        self.l_vec.clear();
     }
 
     /// The length only considering immediate surfaces in the list
@@ -276,12 +283,19 @@ impl SurfaceList {
     }
 
     pub fn destroy(&mut self, rend: &mut Renderer) {
+        self.clear();
         unsafe {
             rend.dev.destroy_buffer(self.l_order_buf, None);
             rend.free_memory(self.l_order_mem);
             rend.dev
                 .destroy_descriptor_pool(self.l_order_desc_pool, None);
         }
+    }
+}
+
+impl Drop for SurfaceList {
+    fn drop(&mut self) {
+        self.clear();
     }
 }
 
