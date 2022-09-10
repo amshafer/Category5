@@ -28,7 +28,7 @@ fn main() {
     let surf_type = SurfaceType::SDL2(&video_subsystem, &window);
 
     let info = CreateInfo::builder()
-        .enable_compute_composition()
+        //.enable_compute_composition()
         .surface_type(surf_type)
         .build();
     let mut thund = Thundr::new(&info).unwrap();
@@ -63,7 +63,7 @@ fn main() {
     thund.bind_image(&mut bg_surf, bg_image);
 
     // ----------- create list of surfaces
-    let mut list = thundr::SurfaceList::new();
+    let mut list = thundr::SurfaceList::new(&mut thund);
     list.push(cursor_surf.clone());
     list.push(bg_surf);
 
@@ -113,12 +113,16 @@ fn main() {
         let viewport = th::Viewport::new(0.0, 0.0, ws.0 as f32, ws.1 as f32);
 
         stop.start();
+        thund.flush_surface_data(&mut list).unwrap();
+
+        thund.begin_recording().unwrap();
         // ----------- Perform draw calls
-        match thund.draw_frame(&mut list, &viewport) {
+        match thund.draw_surfaces(&mut list, &viewport) {
             Ok(_) => {}
             Err(th::ThundrError::OUT_OF_DATE) => continue,
             Err(e) => panic!("failed to draw frame: {:?}", e),
         };
+        thund.end_recording().unwrap();
 
         // ----------- Present to screen
         match thund.present() {
