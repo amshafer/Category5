@@ -57,7 +57,7 @@ pub trait Pipeline {
         rend: &mut Renderer,
         params: &RecordParams,
         images: &[Image],
-        surfaces: &mut SurfaceList,
+        surfaces: &SurfaceList,
         viewport: &Viewport,
     ) -> bool;
 

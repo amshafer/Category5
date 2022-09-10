@@ -125,7 +125,7 @@ impl Pipeline for GeomPipeline {
         rend: &mut Renderer,
         params: &RecordParams,
         _images: &[Image],
-        surfaces: &mut SurfaceList,
+        surfaces: &SurfaceList,
         viewport: &Viewport,
     ) -> bool {
         unsafe {

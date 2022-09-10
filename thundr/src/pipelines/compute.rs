@@ -644,7 +644,7 @@ impl Pipeline for CompPipeline {
         rend: &mut Renderer,
         _params: &RecordParams,
         _images: &[Image],
-        _surfaces: &mut SurfaceList,
+        _surfaces: &SurfaceList,
         _viewport: &Viewport,
     ) -> bool {
         unsafe {

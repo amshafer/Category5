@@ -481,10 +481,15 @@ impl Thundr {
             return Err(ThundrError::RECORDING_ALREADY_IN_PROGRESS);
         }
 
+        self.th_rend.add_damage_for_list(surfaces)?;
+
         // TODO: check and see if the image list has been changed, or if
         // any images have been updated.
         self.th_rend
             .refresh_window_resources(self.th_image_list.as_slice(), surfaces);
+
+        // Now that we have processed this surfacelist, unmark it as changed
+        surfaces.l_changed = false;
 
         Ok(())
     }
@@ -519,13 +524,11 @@ impl Thundr {
     ///
     /// This is the function for recording drawing of a set of surfaces. The surfaces
     /// in the list will be rendered withing the region specified by viewport.
-    pub fn draw_surfaces(&mut self, surfaces: &mut SurfaceList, viewport: &Viewport) -> Result<()> {
+    pub fn draw_surfaces(&mut self, surfaces: &SurfaceList, viewport: &Viewport) -> Result<()> {
         let params = self
             .th_params
             .as_mut()
             .ok_or(ThundrError::RECORDING_NOT_IN_PROGRESS)?;
-
-        self.th_rend.add_damage_for_list(surfaces)?;
 
         self.th_rend.draw_call_submitted = self.th_pipe.draw(
             &mut self.th_rend,
@@ -541,8 +544,6 @@ impl Thundr {
         // This magic 0.0000001 must match geom.vert.glsl
         params.starting_depth -= surfaces.l_window_order.len() as f32 * 0.0000001;
 
-        // Now that we have processed this surfacelist, unmark it as changed
-        surfaces.l_changed = false;
         self.draw_surfaces_debug_prints(surfaces, viewport);
 
         Ok(())
@@ -569,11 +570,7 @@ impl Thundr {
         self.th_rend.present()
     }
 
-    pub fn draw_surfaces_debug_prints(
-        &mut self,
-        _surfaces: &mut SurfaceList,
-        _viewport: &Viewport,
-    ) {
+    pub fn draw_surfaces_debug_prints(&mut self, _surfaces: &SurfaceList, _viewport: &Viewport) {
         // Debugging stats
         #[cfg(debug_assertions)]
         {

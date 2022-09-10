@@ -1,4 +1,5 @@
 extern crate image;
+extern crate lluvia as ll;
 extern crate serde;
 extern crate thundr as th;
 pub use th::ThundrError as DakotaError;
@@ -8,7 +9,7 @@ extern crate bitflags;
 extern crate lazy_static;
 extern crate utils;
 use utils::log;
-pub use utils::{anyhow, ecs::*, region::Rect, Context, Error, MemImage, Result};
+pub use utils::{anyhow, region::Rect, Context, Error, MemImage, Result};
 
 pub mod dom;
 pub mod input;
@@ -38,10 +39,10 @@ struct ResMapEntry {
     rme_color: Option<dom::Color>,
 }
 
-pub type LayoutId = ECSId;
+pub type LayoutId = ll::Entity;
 // Since there are significantly fewer viewports we will give them
 // their own ECS system so we don't waste space.
-pub type ViewportId = ECSId;
+pub type ViewportId = ll::Entity;
 
 pub struct Dakota<'a> {
     // GROSS: we need thund to be before plat so that it gets dropped first
@@ -54,11 +55,11 @@ pub struct Dakota<'a> {
     d_plat: platform::SDL2Plat,
     d_resmap: HashMap<String, ResMapEntry>,
     /// This is one ECS that is composed of multiple tables
-    d_layout_ecs_inst: ECSInstance,
+    d_layout_ecs_inst: ll::Instance,
     /// This is one such ECS table, that holds all the layout nodes
-    d_layout_nodes: ECSTable<LayoutNode>,
-    d_viewport_ecs_inst: ECSInstance,
-    d_viewport_nodes: ECSTable<ViewportNode>,
+    d_layout_nodes: ll::Session<LayoutNode>,
+    d_viewport_ecs_inst: ll::Instance,
+    d_viewport_nodes: ll::Session<ViewportNode>,
     /// This is the root node in the scene tree
     d_layout_tree_root: Option<LayoutId>,
     d_root_viewport: Option<ViewportId>,
@@ -134,7 +135,7 @@ impl LayoutNode {
         }
     }
 
-    fn add_child(&mut self, other: ECSId) {
+    fn add_child(&mut self, other: ll::Entity) {
         self.l_children.push(other);
     }
 
@@ -209,10 +210,16 @@ impl<'a> Dakota<'a> {
 
         let thundr = th::Thundr::new(&info).context("Failed to initialize Thundr")?;
 
-        let layout_ecs = ECSInstance::new();
-        let layout_table = ECSTable::new(layout_ecs.clone());
-        let viewport_ecs = ECSInstance::new();
-        let viewport_table = ECSTable::new(viewport_ecs.clone());
+        let mut layout_ecs = ll::Instance::new();
+        let layout_comp = layout_ecs.add_component();
+        let layout_table = layout_ecs
+            .open_session(layout_comp)
+            .ok_or(anyhow!("Could not create an ECS session"))?;
+        let mut viewport_ecs = ll::Instance::new();
+        let viewport_comp = viewport_ecs.add_component();
+        let viewport_table = viewport_ecs
+            .open_session(viewport_comp)
+            .ok_or(anyhow!("Could not create an ECS session"))?;
 
         let inst = FontInstance::new("./Ubuntu-Regular.ttf", thundr.get_dpi() as u32, 11.0);
 
@@ -303,7 +310,7 @@ impl<'a> Dakota<'a> {
             // num_children_at_this_level was set earlier to 0 when we
             // created the common child space
             let child_id = self.calculate_sizes(&mut child.borrow_mut(), &space)?;
-            let child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
+            let mut child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
             // At this point the size of the is calculated
             // and we can determine the offset. We want to center the
             // box, so that's the center point of the parent minus
@@ -345,7 +352,7 @@ impl<'a> Dakota<'a> {
 
         for child in el.children.iter() {
             let child_id = self.calculate_sizes(&mut child.borrow_mut(), &space)?;
-            let child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
+            let mut child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
 
             // now the child size has been made, but it still needs to find
             // the proper position inside the parent container. If the child
@@ -485,7 +492,7 @@ impl<'a> Dakota<'a> {
                         &trim,
                         &mut |inst: &mut FontInstance, thund, glyph_id, offset| {
                             let size = inst.get_glyph_thundr_size(thund, glyph_id);
-                            let new_id = ecs_inst.mint_new_id();
+                            let new_id = ecs_inst.add_entity();
                             let child_size = LayoutNode::new(
                                 None,
                                 Some(glyph_id),
@@ -544,7 +551,7 @@ impl<'a> Dakota<'a> {
         off: dom::Offset<f32>,
         size: dom::Size<f32>,
     ) -> LayoutId {
-        let new_id = self.d_layout_ecs_inst.mint_new_id();
+        let new_id = self.d_layout_ecs_inst.add_entity();
         self.d_layout_nodes
             .set(&new_id, LayoutNode::new(res, glyph_id, off, size));
 
@@ -563,7 +570,7 @@ impl<'a> Dakota<'a> {
     /// us from having to do more recursion later since everything is calculated
     /// now.
     fn calculate_sizes(&mut self, el: &mut dom::Element, space: &LayoutSpace) -> Result<LayoutId> {
-        let new_id = self.d_layout_ecs_inst.mint_new_id();
+        let new_id = self.d_layout_ecs_inst.add_entity();
         el.layout_id = Some(new_id.clone());
         let mut ret = LayoutNode::new(
             el.resource.clone(),
@@ -637,15 +644,15 @@ impl<'a> Dakota<'a> {
         mut parent_viewport: Option<ViewportId>,
     ) -> Option<ViewportId> {
         {
-            let node = self.d_layout_nodes.get_mut(&id).unwrap();
+            let mut node = self.d_layout_nodes.get_mut(&id).unwrap();
 
             if node.l_is_viewport {
-                let new_id = self.d_viewport_ecs_inst.mint_new_id();
+                let new_id = self.d_viewport_ecs_inst.add_entity();
 
                 // Add this as a child of the parent
                 // Do this first to please the borrow checker
                 if let Some(parent_id) = parent_viewport.as_ref() {
-                    let parent = self.d_viewport_nodes.get_mut(&parent_id).unwrap();
+                    let mut parent = self.d_viewport_nodes.get_mut(&parent_id).unwrap();
                     parent.v_children.push(new_id.clone());
                 }
 
@@ -668,7 +675,8 @@ impl<'a> Dakota<'a> {
             }
         }
 
-        for i in 0..self.d_layout_nodes.get(&id).unwrap().l_children.len() {
+        let num_children = self.d_layout_nodes.get(&id).unwrap().l_children.len();
+        for i in 0..num_children {
             let child = self.d_layout_nodes.get(&id).unwrap().l_children[i].clone();
             self.calculate_viewports(child.clone(), parent_viewport.clone());
         }
@@ -683,7 +691,8 @@ impl<'a> Dakota<'a> {
             .v_surfaces
             .clear();
 
-        for i in 0..self.d_viewport_nodes.get(&id).unwrap().v_children.len() {
+        let num_children = self.d_viewport_nodes.get(&id).unwrap().v_children.len();
+        for i in 0..num_children {
             let child = self.d_viewport_nodes.get(&id).unwrap().v_children[i].clone();
             self.clear_viewports(child);
         }
@@ -713,73 +722,77 @@ impl<'a> Dakota<'a> {
     /// This does not cross viewport boundaries. This function will be called on
     /// the root node for every viewport.
     fn create_thundr_surf_for_el(&mut self, node: LayoutId) -> Result<th::Surface> {
-        let layout = self.d_layout_nodes.get(&node).unwrap();
+        let mut surf = {
+            let layout = self.d_layout_nodes.get(&node).unwrap();
 
-        // If this node is a viewport then ignore its offset since its surface
-        // is going to be added to a different surfacelist
-        let offset = match layout.l_is_viewport {
-            true => (0.0, 0.0),
-            false => (layout.l_offset.x, layout.l_offset.y),
-        };
-
-        // first create a surface for this element
-        // This starts as an empty unbound surface but may be assigned content below
-        let mut surf = self.d_thund.create_surface(
-            offset.0,
-            offset.1,
-            layout.l_size.width,
-            layout.l_size.height,
-        );
-
-        // Handle binding images
-        if let Some(resname) = layout.l_resource.as_ref() {
-            // We need to get the resource's content from our resource map, get
-            // the thundr image for it, and bind it to our new surface.
-            let rme = match self.d_resmap.get(resname) {
-                Some(rme) => rme,
-                None => {
-                    return Err(anyhow!(
-                        "This Element references resource {:?}, which does not exist",
-                        resname
-                    ))
-                }
+            // If this node is a viewport then ignore its offset since its surface
+            // is going to be added to a different surfacelist
+            let offset = match layout.l_is_viewport {
+                true => (0.0, 0.0),
+                false => (layout.l_offset.x, layout.l_offset.y),
             };
 
-            // Assert that only one content type is set
-            let mut content_num = 0;
-            if rme.rme_image.is_some() {
-                content_num += 1;
-            }
-            if rme.rme_color.is_some() {
-                content_num += 1;
-            }
-            assert!(content_num == 1);
-
-            if let Some(image) = rme.rme_image.as_ref() {
-                self.d_thund.bind_image(&mut surf, image.clone());
-            }
-            if let Some(color) = rme.rme_color.as_ref() {
-                surf.set_color((color.r, color.g, color.b, color.a));
-            }
-        } else if let Some(glyph_id) = layout.l_glyph_id {
-            // If this path is hit, then this layout node is really a glyph in a
-            // larger block of text. It has been created as a child, and isn't
-            // a real element. We ask the font code to give us a surface for
-            // it that we can display.
-            let surf = self.d_font_inst.get_thundr_surf_for_glyph(
-                &mut self.d_thund,
-                glyph_id,
-                layout.l_offset,
+            // first create a surface for this element
+            // This starts as an empty unbound surface but may be assigned content below
+            let mut surf = self.d_thund.create_surface(
+                offset.0,
+                offset.1,
+                layout.l_size.width,
+                layout.l_size.height,
             );
 
-            return Ok(surf);
-        }
+            // Handle binding images
+            if let Some(resname) = layout.l_resource.as_ref() {
+                // We need to get the resource's content from our resource map, get
+                // the thundr image for it, and bind it to our new surface.
+                let rme = match self.d_resmap.get(resname) {
+                    Some(rme) => rme,
+                    None => {
+                        return Err(anyhow!(
+                            "This Element references resource {:?}, which does not exist",
+                            resname
+                        ))
+                    }
+                };
+
+                // Assert that only one content type is set
+                let mut content_num = 0;
+                if rme.rme_image.is_some() {
+                    content_num += 1;
+                }
+                if rme.rme_color.is_some() {
+                    content_num += 1;
+                }
+                assert!(content_num == 1);
+
+                if let Some(image) = rme.rme_image.as_ref() {
+                    self.d_thund.bind_image(&mut surf, image.clone());
+                }
+                if let Some(color) = rme.rme_color.as_ref() {
+                    surf.set_color((color.r, color.g, color.b, color.a));
+                }
+            } else if let Some(glyph_id) = layout.l_glyph_id {
+                // If this path is hit, then this layout node is really a glyph in a
+                // larger block of text. It has been created as a child, and isn't
+                // a real element. We ask the font code to give us a surface for
+                // it that we can display.
+                let surf = self.d_font_inst.get_thundr_surf_for_glyph(
+                    &mut self.d_thund,
+                    glyph_id,
+                    layout.l_offset,
+                );
+
+                return Ok(surf);
+            }
+
+            surf
+        };
 
         // now iterate through all of it's children, and recursively do the same
         // This is written kind of weird to work around some annoying borrow checker
         // bits. By not referencing self in the for loop we can avoid double
         // mut reffing self and hitting borrow checker issues
-        let num_children = layout.l_children.len();
+        let num_children = self.d_layout_nodes.get(&node).unwrap().l_children.len();
         for i in 0..num_children {
             let child_id = {
                 let layout = self.d_layout_nodes.get(&node).unwrap();
@@ -829,7 +842,8 @@ impl<'a> Dakota<'a> {
     /// This pass recursively generates the surfacelists for each
     /// Viewport in the scene.
     fn calculate_thundr_surfaces(&mut self, id: ViewportId) -> Result<()> {
-        if let Some(root_node_id) = self.d_viewport_nodes.get(&id).unwrap().v_root_node.clone() {
+        let root_node_raw = self.d_viewport_nodes.get(&id).unwrap().v_root_node.clone();
+        if let Some(root_node_id) = root_node_raw {
             // Create our thundr surface and add it to the list
             //
             // TODO: go through each viewport and populate its surface list
@@ -842,7 +856,8 @@ impl<'a> Dakota<'a> {
             viewport.v_surfaces.push(root_surf.clone());
         }
 
-        for i in 0..self.d_viewport_nodes.get(&id).unwrap().v_children.len() {
+        let num_children = self.d_viewport_nodes.get(&id).unwrap().v_children.len();
+        for i in 0..num_children {
             let child_viewport = self.d_viewport_nodes.get(&id).unwrap().v_children[i].clone();
             self.calculate_thundr_surfaces(child_viewport)?;
         }
@@ -946,39 +961,41 @@ impl<'a> Dakota<'a> {
     }
 
     fn flush_viewports(&mut self, viewport: ViewportId) -> th::Result<()> {
-        let node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
-        self.d_thund.flush_surface_data(&mut node.v_surfaces)?;
+        {
+            let mut node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
+            self.d_thund.flush_surface_data(&mut node.v_surfaces)?;
+        }
 
-        for i in 0..self
+        let num_children = self
             .d_viewport_nodes
             .get(&viewport)
             .unwrap()
             .v_children
-            .len()
-        {
-            self.flush_viewports(
-                self.d_viewport_nodes.get(&viewport).unwrap().v_children[i].clone(),
-            )?;
+            .len();
+        for i in 0..num_children {
+            let child_id = self.d_viewport_nodes.get(&viewport).unwrap().v_children[i].clone();
+            self.flush_viewports(child_id)?;
         }
 
         Ok(())
     }
 
     fn draw_viewports(&mut self, viewport: ViewportId) -> th::Result<()> {
-        let node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
-        self.d_thund
-            .draw_surfaces(&mut node.v_surfaces, &node.v_viewport)?;
+        {
+            let node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
+            self.d_thund
+                .draw_surfaces(&node.v_surfaces, &node.v_viewport)?;
+        }
 
-        for i in 0..self
+        let num_children = self
             .d_viewport_nodes
             .get(&viewport)
             .unwrap()
             .v_children
-            .len()
-        {
-            self.draw_viewports(
-                self.d_viewport_nodes.get(&viewport).unwrap().v_children[i].clone(),
-            )?;
+            .len();
+        for i in 0..num_children {
+            let child_id = self.d_viewport_nodes.get(&viewport).unwrap().v_children[i].clone();
+            self.draw_viewports(child_id)?;
         }
 
         Ok(())

@@ -5,8 +5,8 @@
 use crate::dom;
 use crate::dom::DakotaDOM;
 use crate::input::{Keycode, Mods, MouseButton};
+use lluvia as ll;
 use std::rc::Rc;
-use utils::ecs::{ECSId, ECSInstance};
 
 pub struct EventSystem {
     /// The global event queue
@@ -15,15 +15,15 @@ pub struct EventSystem {
     /// next dispatch
     es_global_event_queue: Vec<Event>,
     /// The compiled set of event handlers.
-    es_handler_ecs_inst: ECSInstance,
+    es_handler_ecs_inst: ll::Instance,
     /// Ties a string name to a handler id
     /// (name, Id)
-    es_name_to_handler_map: Vec<(String, ECSId)>,
+    es_name_to_handler_map: Vec<(String, ll::Entity)>,
 }
 
 impl EventSystem {
     pub fn new() -> Self {
-        let handler_ecs = ECSInstance::new();
+        let handler_ecs = ll::Instance::new();
 
         Self {
             es_global_event_queue: Vec::new(),
@@ -76,14 +76,14 @@ impl EventSystem {
     ///
     /// This is used to go from the human name the app gave the handler to
     /// the O(1) integer id of the handler that dakota will use.
-    pub fn get_handler_id_from_name(&mut self, name: String) -> ECSId {
+    pub fn get_handler_id_from_name(&mut self, name: String) -> ll::Entity {
         // first, get the ECS id for this name
         // check if this event handler has already been defined
         match self.es_name_to_handler_map.iter().find(|(n, _)| *n == name) {
             Some((_, ecs_id)) => ecs_id.clone(),
             // otherwise make a new id for it, it's a new name
             None => {
-                let ecs_id = self.es_handler_ecs_inst.mint_new_id();
+                let ecs_id = self.es_handler_ecs_inst.add_entity();
                 self.es_name_to_handler_map
                     .push((name.clone(), ecs_id.clone()));
                 ecs_id

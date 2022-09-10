@@ -1,6 +1,7 @@
 use crate::serde::{Deserialize, Serialize};
-use crate::utils::{anyhow, ecs::ECSId, Result};
+use crate::utils::{anyhow, Result};
 use crate::{LayoutId, LayoutSpace};
+use lluvia as ll;
 
 use std::cell::RefCell;
 use std::cmp::{Ord, PartialOrd};
@@ -203,7 +204,7 @@ pub struct Event {
     #[serde(rename = "group", default)]
     pub groups: Vec<String>,
     #[serde(skip)]
-    pub id: Option<ECSId>,
+    pub id: Option<ll::Entity>,
     #[serde(rename = "arg", default)]
     pub args: Rc<Vec<String>>,
 }

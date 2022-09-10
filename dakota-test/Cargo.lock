@@ -255,6 +255,7 @@ dependencies = [
  "harfbuzz_rs",
  "image",
  "lazy_static",
+ "lluvia",
  "quick-xml",
  "regex",
  "sdl2",
