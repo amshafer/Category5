@@ -569,6 +569,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "lluvia"
+version = "0.0.1"
+
+[[package]]
 name = "lock_api"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1163,6 +1167,7 @@ dependencies = [
  "bitflags",
  "cgmath",
  "lazy_static",
+ "lluvia",
  "memoffset 0.5.4",
  "nix 0.24.1",
  "nvidia-aftermath-rs",

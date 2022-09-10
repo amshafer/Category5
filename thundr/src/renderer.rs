@@ -2569,6 +2569,8 @@ impl Renderer {
         let num_entities = self.r_ecs.capacity();
         self.ensure_window_capacity(num_entities);
 
+        surfaces.update_window_order_buf(self);
+
         log::info!("Window List: {:#?}", self.r_windows);
 
         // TODO: don't even use CPU copies of the datastructs and perform
@@ -2587,18 +2589,16 @@ impl Renderer {
                         // For each valid window entry, extract the Window
                         // type from the option so that we can write it to
                         // the Vulkan memory
-                        for (i, win) in self.r_windows.iter().enumerate() {
-                            if let Some(ref w) = win {
-                                log::verbose!("Winlist index {}: writing window {:?}", i, win);
-                                dst[i] = **w;
-                            }
+                        for id in surfaces.l_window_order.iter() {
+                            let i = id.get_raw_id();
+                            let win = self.r_windows.get(&id).unwrap();
+                            log::verbose!("Winlist index {}: writing window {:?}", i, win);
+                            dst[i] = *win;
                         }
                     },
                 );
             }
         }
-
-        surfaces.update_window_order_buf(self);
     }
 
     /// Update self.current_image with the swapchain image to render to
