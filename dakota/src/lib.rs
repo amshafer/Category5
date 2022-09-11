@@ -959,17 +959,20 @@ impl<'a> Dakota<'a> {
         let node = self.d_viewport_nodes.get(&id).unwrap();
         let viewport = &node.v_viewport;
 
+        // Since the viewport tree is back to front, process the children first. If one
+        // of them is a match, it is the top-most viewport and we should return it. Otherwise
+        // we can test if this viewport matches
+        for child in node.v_children.iter() {
+            if let Some(ret) = self.viewport_at_pos_recursive(child.clone(), x, y) {
+                return Some(ret);
+            }
+        }
+
         let x_range = viewport.offset.0..(viewport.offset.0 + viewport.size.0);
         let y_range = viewport.offset.1..(viewport.offset.1 + viewport.size.1);
 
         if x_range.contains(&(x as f32)) && y_range.contains(&(y as f32)) {
             return Some(id);
-        }
-
-        for child in node.v_children.iter() {
-            if let Some(ret) = self.viewport_at_pos_recursive(child.clone(), x, y) {
-                return Some(ret);
-            }
         }
 
         None
@@ -1005,7 +1008,8 @@ impl<'a> Dakota<'a> {
 
                     // set its scrolling offset to be used for the next draw
                     let mut node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
-                    node.v_viewport.scroll_offset = (*x, *y);
+                    node.v_viewport.scroll_offset.0 += *x;
+                    node.v_viewport.scroll_offset.1 += *y;
                     self.d_needs_redraw = true;
                 }
                 // Ignore all other events for now

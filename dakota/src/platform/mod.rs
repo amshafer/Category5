@@ -13,6 +13,8 @@ use crate::input::*;
 #[cfg(any(unix, macos))]
 use sdl2::event::{Event, WindowEvent};
 
+const SCROLL_SENSITIVITY: f32 = 32.0;
+
 pub trait Platform {
     fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType>;
 
@@ -156,9 +158,11 @@ impl Platform for SDL2Plat {
                     let button = convert_sdl_mouse_to_dakota(mouse_btn);
                     evsys.add_event_mouse_button_up(button, x, y);
                 }
-                Event::MouseWheel { x, y, .. } => {
-                    evsys.add_event_scroll(*mouse_pos, x as f32 * 0.001, y as f32 * 0.001)
-                }
+                Event::MouseWheel { x, y, .. } => evsys.add_event_scroll(
+                    *mouse_pos,
+                    x as f32 * SCROLL_SENSITIVITY,
+                    y as f32 * SCROLL_SENSITIVITY,
+                ),
 
                 Event::MouseMotion { x, y, .. } => {
                     mouse_pos.0 = x;

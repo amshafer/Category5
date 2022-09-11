@@ -5,7 +5,6 @@
 //
 // Austin Shafer - 2020
 #![allow(dead_code, non_camel_case_types)]
-use cgmath::{Matrix4, Vector3};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::ffi::{CStr, CString};
