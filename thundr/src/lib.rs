@@ -166,9 +166,15 @@ pub struct Viewport {
     pub offset: (f32, f32),
     /// Size of the viewport within the output
     pub size: (f32, f32),
+    /// The scrolling region of this viewport, basically the maximum bounds
+    /// within which it is valid to update `scroll_offset`. This is similar to
+    /// the panning region in X11.
+    pub scroll_region: (f32, f32),
     /// This is the amount to offset everything within this viewport by. It
     /// can be used to move around all internal elements without updating
     /// them.
+    ///
+    /// This may be in the [0, scroll_region] range
     pub scroll_offset: (f32, f32),
 }
 
@@ -177,12 +183,51 @@ impl Viewport {
         Self {
             offset: (x, y),
             size: (width, height),
+            scroll_region: (width, height),
             scroll_offset: (0.0, 0.0),
         }
     }
 
+    /// Update the valid scrolling region within this viewport
+    pub fn set_scroll_region(&mut self, x: f32, y: f32) {
+        self.scroll_region = (x, y);
+    }
+
+    /// Set the scrolling within this viewport. This is a global transform
+    ///
+    /// This performs bounds checking of `x` and `y` to ensure the are within
+    /// `scroll_region`. If they are not, then no scrolling is performed.
     pub fn set_scroll_amount(&mut self, x: f32, y: f32) {
-        self.scroll_offset = (x, y);
+        // The min and max bounds here are weird. Think of it like moving the
+        // scroll region, not moving the scroll area. It looks like this:
+        //
+        // R: scroll region
+        // A: scroll area
+        //
+        // Here they are at zero, content has just been loaded:
+        //              0
+        //              R--------------------R
+        //              A-------------A
+        //
+        // Now here they are with the scroll all the way complete:
+        //              0
+        //       R--------------------R
+        //              A-------------A
+        //
+        // The offset is actually from [-(R - A), 0]
+        let min_x = -1.0 * (self.scroll_region.0 - self.size.0);
+        let max_x = 0.0;
+        // now get the new offset
+        let x_offset = self.scroll_offset.0 + x;
+        // clamp this offset within our bounds
+        let x_clamped = x_offset.clamp(min_x, max_x);
+
+        let min_y = -1.0 * (self.scroll_region.1 - self.size.1);
+        let max_y = 0.0;
+        let y_offset = self.scroll_offset.1 + y;
+        let y_clamped = y_offset.clamp(min_y, max_y);
+
+        self.scroll_offset = (x_clamped, y_clamped);
     }
 }
 

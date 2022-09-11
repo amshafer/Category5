@@ -4,9 +4,18 @@
   <resource>
    <name>grey</name>
    <color>
-    <r>0.33</r>
-    <g>0.33</g>
-    <b>0.33</b>
+    <r>0.1725</r>
+    <g>0.1843</g>
+    <b>0.2</b>
+    <a>1</a>
+   </color>
+  </resource>
+  <resource>
+   <name>dark_grey</name>
+   <color>
+    <r>0.1372</r>
+    <g>0.1529</g>
+    <b>0.1647</b>
     <a>1</a>
    </color>
   </resource>
@@ -21,107 +30,119 @@
   <el>
    <content>
     <el>
-     <resource>grey</resource>
-     <el>
-      <text>
-       <p>
-        Here is
-        my
-       </p>
-       <b>example</b>
-       <p> text</p>
-       <p>
-        España, también denominado Reino de España,nota 1 es un país soberano
-        transcontinental, miembro de la Unión Europea, constituido en Estado
-        social y democrático de derecho y cuya forma de gobierno es la
-        monarquía parlamentaria. Su territorio, con capital en Madrid,30 está
-        organizado en diecisiete comunidades autónomas, formadas a su vez por
-        cincuenta provincias; y dos ciudades autónomas.
+     <resource>dark_grey</resource>
+     <content>
+      <el>
+       <resource>grey</resource>
+       <relativeOffset>
+        <x>0.15</x><y>0.15</y>
+       </relativeOffset>
+       <relativeSize>
+        <width>0.7</width>
+        <height>0.7</height>
+       </relativeSize>
+       <el>
+        <text>
+         <p>
+          Here is
+          my
+         </p>
+         <b>example</b>
+         <p> text</p>
+         <p>
+          España, también denominado Reino de España,nota 1 es un país soberano
+          transcontinental, miembro de la Unión Europea, constituido en Estado
+          social y democrático de derecho y cuya forma de gobierno es la
+          monarquía parlamentaria. Su territorio, con capital en Madrid,30 está
+          organizado en diecisiete comunidades autónomas, formadas a su vez por
+          cincuenta provincias; y dos ciudades autónomas.
 
-        España se sitúa tanto al sur de Europa Occidental como en el norte de
-        África. En Europa, ocupa la mayor parte de la península ibérica,
-        conocida como España peninsular, y las islas Baleares (en el mar
-        Mediterráneo occidental); en África se hallan los municipios de Ceuta
-        (en la península tingitana) y Melilla (en el cabo de Tres Forcas), las
-        islas Canarias (en el océano Atlántico nororiental) y otras posesiones
-        mediterráneas denominadas «plazas de soberanía». El municipio de
-        Llivia, en los Pirineos, constituye un exclave rodeado totalmente por
-        territorio francés. Completa el conjunto de territorios una serie de
-        islas e islotes frente a las propias costas peninsulares. Tiene una
-        extensión de 505 370 km²,11 por lo que es el cuarto país más extenso
-        del continente, tras Rusia, Ucrania y Francia,nota 2 y con una altitud
-        media de 650 metros sobre el nivel del mar, uno de los países más
-        montañosos de Europa. Su población supera los 47 millones de
-        habitantes, aunque la densidad de población es reducida.1331
-        Concretamente, la población durante 2021 se redujo en 65 688
-        habitantes, llegando hasta los 47 385 107, tras cuatro años de
-        subida.32 El territorio peninsular comparte fronteras terrestres con
-        Francia y con Andorra al norte, con Portugal al oeste y con el
-        territorio británico de Gibraltar al sur. En sus territorios africanos,
-        comparte fronteras terrestres y marítimas con Marruecos. Comparte con
-        Francia la soberanía sobre la isla de los Faisanes en la desembocadura
-        del río Bidasoa y cinco facerías pirenaicas
-       </p>
-      </text>
-     </el>
-     <el>
-      <text>
-       <p>
-        Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed at
-        faucibus mi, a condimentum ligula.  Maecenas eu ligula dapibus,
-        volutpat metus ac, facilisis turpis. Morbi at rhoncus elit. Nullam sed
-        urna augue. Duis posuere aliquam dui, ac fermentum justo maximus ut.
-        Maecenas nisi leo, vestibulum eget lorem et, bibendum hendrerit nunc.
-        Donec tortor turpis, sollicitudin a malesuada ac, ornare sit amet quam.
-        Phasellus dignissim, nulla et lacinia tempus, urna arcu finibus neque,
-        ut faucibus elit massa et leo.  Nulla sagittis nibh a ullamcorper
-        condimentum.  Fusce non venenatis urna.  Nunc ac pharetra dui.  Vivamus
-        laoreet, nisi vitae fringilla euismod, turpis massa malesuada elit, et
-        blandit nunc tortor in ipsum. Curabitur ac hendrerit sem. 
-        Nam et urna mi. Aliquam hendrerit ipsum at fringilla venenatis. Vivamus
-        ultricies id metus at eleifend. In vitae enim purus. Phasellus lobortis
-        convallis nulla, eget efficitur magna molestie vitae. Nulla facilisi.
-        Sed rutrum, risus quis dignissim maximus, nisl justo eleifend lorem, in
-        semper massa nisl et elit. Suspendisse rhoncus enim vitae urna laoreet
-        dignissim. Vivamus tincidunt aliquet pharetra.
+          España se sitúa tanto al sur de Europa Occidental como en el norte de
+          África. En Europa, ocupa la mayor parte de la península ibérica,
+          conocida como España peninsular, y las islas Baleares (en el mar
+          Mediterráneo occidental); en África se hallan los municipios de Ceuta
+          (en la península tingitana) y Melilla (en el cabo de Tres Forcas), las
+          islas Canarias (en el océano Atlántico nororiental) y otras posesiones
+          mediterráneas denominadas «plazas de soberanía». El municipio de
+          Llivia, en los Pirineos, constituye un exclave rodeado totalmente por
+          territorio francés. Completa el conjunto de territorios una serie de
+          islas e islotes frente a las propias costas peninsulares. Tiene una
+          extensión de 505 370 km²,11 por lo que es el cuarto país más extenso
+          del continente, tras Rusia, Ucrania y Francia,nota 2 y con una altitud
+          media de 650 metros sobre el nivel del mar, uno de los países más
+          montañosos de Europa. Su población supera los 47 millones de
+          habitantes, aunque la densidad de población es reducida.1331
+          Concretamente, la población durante 2021 se redujo en 65 688
+          habitantes, llegando hasta los 47 385 107, tras cuatro años de
+          subida.32 El territorio peninsular comparte fronteras terrestres con
+          Francia y con Andorra al norte, con Portugal al oeste y con el
+          territorio británico de Gibraltar al sur. En sus territorios africanos,
+          comparte fronteras terrestres y marítimas con Marruecos. Comparte con
+          Francia la soberanía sobre la isla de los Faisanes en la desembocadura
+          del río Bidasoa y cinco facerías pirenaicas
+         </p>
+        </text>
+       </el>
+       <el>
+        <text>
+         <p>
+          Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed at
+          faucibus mi, a condimentum ligula.  Maecenas eu ligula dapibus,
+          volutpat metus ac, facilisis turpis. Morbi at rhoncus elit. Nullam sed
+          urna augue. Duis posuere aliquam dui, ac fermentum justo maximus ut.
+          Maecenas nisi leo, vestibulum eget lorem et, bibendum hendrerit nunc.
+          Donec tortor turpis, sollicitudin a malesuada ac, ornare sit amet quam.
+          Phasellus dignissim, nulla et lacinia tempus, urna arcu finibus neque,
+          ut faucibus elit massa et leo.  Nulla sagittis nibh a ullamcorper
+          condimentum.  Fusce non venenatis urna.  Nunc ac pharetra dui.  Vivamus
+          laoreet, nisi vitae fringilla euismod, turpis massa malesuada elit, et
+          blandit nunc tortor in ipsum. Curabitur ac hendrerit sem. 
+          Nam et urna mi. Aliquam hendrerit ipsum at fringilla venenatis. Vivamus
+          ultricies id metus at eleifend. In vitae enim purus. Phasellus lobortis
+          convallis nulla, eget efficitur magna molestie vitae. Nulla facilisi.
+          Sed rutrum, risus quis dignissim maximus, nisl justo eleifend lorem, in
+          semper massa nisl et elit. Suspendisse rhoncus enim vitae urna laoreet
+          dignissim. Vivamus tincidunt aliquet pharetra.
 
-        Morbi ut lectus quis eros tincidunt sagittis sed sit amet ipsum.
-        Phasellus nec fringilla ante, vel volutpat libero. Vestibulum consequat
-        felis lorem. Aenean sit amet nisi consectetur, aliquet turpis sit amet,
-        varius felis. Suspendisse rutrum pretium nisi, vitae euismod dui
-        commodo in. Integer maximus urna eget laoreet aliquet. In tincidunt,
-        dui tincidunt tincidunt dictum, urna urna rutrum ligula, a scelerisque
-        leo ligula quis sapien. Integer eu mauris dignissim sapien dictum
-        ultrices. Suspendisse eu sollicitudin lectus. Quisque facilisis libero
-        nec velit rutrum fermentum. Nulla cursus mi sit amet sapien efficitur
-        faucibus. Nulla gravida in nisl eu fermentum. Quisque vel magna ante.
-        Nullam vestibulum, augue non dignissim blandit, dui risus vulputate
-        nulla, eu tristique lorem metus non massa. Maecenas id ante tempor,
-        vestibulum lacus non, interdum velit. Proin egestas leo lectus, non
-        vehicula erat tempus vitae.
+          Morbi ut lectus quis eros tincidunt sagittis sed sit amet ipsum.
+          Phasellus nec fringilla ante, vel volutpat libero. Vestibulum consequat
+          felis lorem. Aenean sit amet nisi consectetur, aliquet turpis sit amet,
+          varius felis. Suspendisse rutrum pretium nisi, vitae euismod dui
+          commodo in. Integer maximus urna eget laoreet aliquet. In tincidunt,
+          dui tincidunt tincidunt dictum, urna urna rutrum ligula, a scelerisque
+          leo ligula quis sapien. Integer eu mauris dignissim sapien dictum
+          ultrices. Suspendisse eu sollicitudin lectus. Quisque facilisis libero
+          nec velit rutrum fermentum. Nulla cursus mi sit amet sapien efficitur
+          faucibus. Nulla gravida in nisl eu fermentum. Quisque vel magna ante.
+          Nullam vestibulum, augue non dignissim blandit, dui risus vulputate
+          nulla, eu tristique lorem metus non massa. Maecenas id ante tempor,
+          vestibulum lacus non, interdum velit. Proin egestas leo lectus, non
+          vehicula erat tempus vitae.
 
-        Mauris aliquam tellus vel pharetra tempus. Integer non velit est. Sed
-        consequat tempor nulla, vitae pharetra tellus aliquet eget. Quisque at
-        magna eu neque blandit molestie. Ut dapibus suscipit porttitor.
-        Pellentesque suscipit quis risus tempus consequat. Quisque augue urna,
-        elementum non orci ut, blandit egestas ligula. Nunc malesuada justo
-        volutpat bibendum bibendum. Duis quis ipsum in felis euismod commodo id
-        ac erat. Fusce non sapien malesuada, sodales dui in, porttitor turpis.
-        Proin varius justo sed odio vehicula, non iaculis eros bibendum. Morbi
-        efficitur, leo ac vehicula rutrum, mauris risus porttitor tellus, vel
-        pulvinar nisl dui nec nunc.
+          Mauris aliquam tellus vel pharetra tempus. Integer non velit est. Sed
+          consequat tempor nulla, vitae pharetra tellus aliquet eget. Quisque at
+          magna eu neque blandit molestie. Ut dapibus suscipit porttitor.
+          Pellentesque suscipit quis risus tempus consequat. Quisque augue urna,
+          elementum non orci ut, blandit egestas ligula. Nunc malesuada justo
+          volutpat bibendum bibendum. Duis quis ipsum in felis euismod commodo id
+          ac erat. Fusce non sapien malesuada, sodales dui in, porttitor turpis.
+          Proin varius justo sed odio vehicula, non iaculis eros bibendum. Morbi
+          efficitur, leo ac vehicula rutrum, mauris risus porttitor tellus, vel
+          pulvinar nisl dui nec nunc.
 
-        Vivamus eu eros est. Nunc ex leo, lacinia non nibh non, ornare
-        hendrerit lacus. Etiam bibendum est et sodales eleifend. Nulla non
-        libero nisi. Vivamus in iaculis diam, non dictum lectus. Nullam est
-        urna, lobortis nec congue eu, semper nec lectus. Fusce accumsan sit
-        amet risus vitae blandit. Proin molestie tristique nibh ac vehicula.
-        Vestibulum ante ipsum primis in faucibus orci luctus et ultrices
-        posuere cubilia curae; Proin accumsan gravida augue eu mattis. Nam quis
-        massa at est posuere dignissim. Curabitur quis hendrerit purus.
-       </p>
-      </text>
-     </el>
+          Vivamus eu eros est. Nunc ex leo, lacinia non nibh non, ornare
+          hendrerit lacus. Etiam bibendum est et sodales eleifend. Nulla non
+          libero nisi. Vivamus in iaculis diam, non dictum lectus. Nullam est
+          urna, lobortis nec congue eu, semper nec lectus. Fusce accumsan sit
+          amet risus vitae blandit. Proin molestie tristique nibh ac vehicula.
+          Vestibulum ante ipsum primis in faucibus orci luctus et ultrices
+          posuere cubilia curae; Proin accumsan gravida augue eu mattis. Nam quis
+          massa at est posuere dignissim. Curabitur quis hendrerit purus.
+         </p>
+        </text>
+       </el>
+      </el>
+     </content>
     </el>
    </content>
   </el>

@@ -633,15 +633,38 @@ impl<'a> Dakota<'a> {
         return Ok(new_id);
     }
 
+    /// Get the total internal size for this layout node. This is used to calculate
+    /// the scrolling region within this node, useful if it is a viewport node.
+    fn get_node_internal_size(&self, id: LayoutId) -> (f32, f32) {
+        let node = self.d_layout_nodes.get(&id).unwrap();
+        let mut ret = (
+            node.l_offset.x + node.l_size.width,
+            node.l_offset.y + node.l_size.height,
+        );
+
+        for child_id in node.l_children.iter() {
+            let child = self.d_layout_nodes.get(&child_id).unwrap();
+
+            // If this childs end position is larger, adjust our returning size
+            // accordingly
+            ret.0 = ret.0.max(child.l_offset.x + child.l_size.width);
+            ret.1 = ret.1.max(child.l_offset.y + child.l_size.height);
+        }
+
+        return ret;
+    }
+
     fn calculate_viewports(
         &mut self,
         id: LayoutId,
         mut parent_viewport: Option<ViewportId>,
     ) -> Option<ViewportId> {
         {
-            let node = self.d_layout_nodes.get_mut(&id).unwrap();
+            if self.d_layout_nodes.get_mut(&id).unwrap().l_is_viewport {
+                // Do this first before we mutably borrow node
+                let scroll_region = self.get_node_internal_size(id.clone());
 
-            if node.l_is_viewport {
+                let node = self.d_layout_nodes.get_mut(&id).unwrap();
                 let new_id = self.d_viewport_ecs_inst.add_entity();
 
                 // Add this as a child of the parent
@@ -651,14 +674,17 @@ impl<'a> Dakota<'a> {
                     parent.v_children.push(new_id.clone());
                 }
 
+                let mut th_viewport = th::Viewport::new(
+                    node.l_offset.x,
+                    node.l_offset.y,
+                    node.l_size.width,
+                    node.l_size.height,
+                );
+                th_viewport.set_scroll_region(scroll_region.0, scroll_region.1);
+
                 let viewport = ViewportNode {
                     v_root_node: Some(id.clone()),
-                    v_viewport: th::Viewport::new(
-                        node.l_offset.x,
-                        node.l_offset.y,
-                        node.l_size.width,
-                        node.l_size.height,
-                    ),
+                    v_viewport: th_viewport,
                     v_children: Vec::new(),
                     v_surfaces: th::SurfaceList::new(&mut self.d_thund),
                 };
@@ -1008,8 +1034,8 @@ impl<'a> Dakota<'a> {
 
                     // set its scrolling offset to be used for the next draw
                     let mut node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
-                    node.v_viewport.scroll_offset.0 += *x;
-                    node.v_viewport.scroll_offset.1 += *y;
+
+                    node.v_viewport.set_scroll_amount(*x, *y);
                     self.d_needs_redraw = true;
                 }
                 // Ignore all other events for now
