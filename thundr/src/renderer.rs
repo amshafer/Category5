@@ -267,7 +267,8 @@ pub struct RecordParams {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PushConstants {
-    pub model: Matrix4<f32>,
+    pub scroll_x: f32,
+    pub scroll_y: f32,
     pub width: f32,
     pub height: f32,
     pub starting_depth: f32,
@@ -1841,11 +1842,8 @@ impl Renderer {
     ) -> PushConstants {
         // transform from blender's coordinate system to vulkan
         PushConstants {
-            model: Matrix4::from_translation(Vector3::new(
-                viewport.scroll_offset.0,
-                viewport.scroll_offset.1,
-                0.0,
-            )),
+            scroll_x: viewport.scroll_offset.0,
+            scroll_y: viewport.scroll_offset.1,
             width: viewport.size.0,
             height: viewport.size.1,
             starting_depth: params.starting_depth,

@@ -159,6 +159,8 @@ impl Pipeline for GeomPipeline {
                 ),
             );
 
+            log::error!("Viewport is : {:?}", viewport);
+
             // Set our current viewport
             rend.dev.cmd_set_viewport(
                 params.cbuf,

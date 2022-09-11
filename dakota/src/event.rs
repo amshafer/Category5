@@ -14,6 +14,9 @@ pub struct EventSystem {
     /// must be cleared (all events handled) before the
     /// next dispatch
     es_global_event_queue: Vec<Event>,
+    /// These are dakota-only events, which the user doesn't
+    /// have to worry about and Dakota itself will handle
+    pub(crate) es_dakota_event_queue: Vec<Event>,
     /// The compiled set of event handlers.
     es_handler_ecs_inst: ll::Instance,
     /// Ties a string name to a handler id
@@ -27,6 +30,7 @@ impl EventSystem {
 
         Self {
             es_global_event_queue: Vec::new(),
+            es_dakota_event_queue: Vec::new(),
             es_handler_ecs_inst: handler_ecs,
             es_name_to_handler_map: Vec::new(),
         }
@@ -64,6 +68,12 @@ pub enum Event {
         button: MouseButton,
         x: i32,
         y: i32,
+    },
+    InputScroll {
+        mouse_x: i32,
+        mouse_y: i32,
+        x: f32,
+        y: f32,
     },
 }
 
@@ -149,26 +159,20 @@ impl EventSystem {
         });
     }
 
-    pub fn add_event_key_down(&mut self, _dom: &DakotaDOM, key: Keycode, mods: Mods) {
+    pub fn add_event_key_down(&mut self, key: Keycode, mods: Mods) {
         self.es_global_event_queue.push(Event::InputKeyDown {
             key: key,
             modifiers: mods,
         });
     }
-    pub fn add_event_key_up(&mut self, _dom: &DakotaDOM, key: Keycode, mods: Mods) {
+    pub fn add_event_key_up(&mut self, key: Keycode, mods: Mods) {
         self.es_global_event_queue.push(Event::InputKeyUp {
             key: key,
             modifiers: mods,
         });
     }
 
-    pub fn add_event_mouse_button_down(
-        &mut self,
-        _dom: &DakotaDOM,
-        button: MouseButton,
-        x: i32,
-        y: i32,
-    ) {
+    pub fn add_event_mouse_button_down(&mut self, button: MouseButton, x: i32, y: i32) {
         self.es_global_event_queue
             .push(Event::InputMouseButtonDown {
                 button: button,
@@ -176,15 +180,27 @@ impl EventSystem {
                 y: y,
             });
     }
-    pub fn add_event_mouse_button_up(
-        &mut self,
-        _dom: &DakotaDOM,
-        button: MouseButton,
-        x: i32,
-        y: i32,
-    ) {
+    pub fn add_event_mouse_button_up(&mut self, button: MouseButton, x: i32, y: i32) {
         self.es_global_event_queue.push(Event::InputMouseButtonUp {
             button: button,
+            x: x,
+            y: y,
+        });
+    }
+
+    pub fn add_event_scroll(&mut self, mouse_pos: (i32, i32), x: f32, y: f32) {
+        self.es_global_event_queue.push(Event::InputScroll {
+            mouse_x: mouse_pos.0,
+            mouse_y: mouse_pos.1,
+            x: x,
+            y: y,
+        });
+
+        // We also want to handle scrolling ourselves, so put this event on the
+        // dakota queue as well
+        self.es_dakota_event_queue.push(Event::InputScroll {
+            mouse_x: mouse_pos.0,
+            mouse_y: mouse_pos.1,
             x: x,
             y: y,
         });

@@ -67,6 +67,8 @@ pub struct SDL2Plat {
     sdl_video_sys: sdl2::VideoSubsystem,
     sdl_window: sdl2::video::Window,
     sdl_event_pump: sdl2::EventPump,
+    /// Cached mouse position for event reporting
+    sdl_mouse_pos: (i32, i32),
 }
 
 #[cfg(feature = "sdl")]
@@ -87,6 +89,7 @@ impl SDL2Plat {
             sdl_video_sys: video_subsystem,
             sdl_event_pump: event_pump,
             sdl_window: window,
+            sdl_mouse_pos: (0, 0),
         })
     }
 }
@@ -113,7 +116,11 @@ impl Platform for SDL2Plat {
         timeout: Option<u32>,
     ) -> std::result::Result<(), DakotaError> {
         // Returns Result<bool, DakotaError>, true if we should terminate
-        let mut handle_event = |event| {
+        //
+        // We have to pass in the mouse position (aka self.sdl_mouse_pos) due
+        // to the borrow checker. We are referencing other parts of self and using
+        // self here will bind the entire self obj in this closure
+        let mut handle_event = |event, mouse_pos: &mut (i32, i32)| {
             match event {
                 // Tell the window to exit if the user closed it
                 Event::Quit { .. } => evsys.add_event_window_closed(dom),
@@ -127,27 +134,35 @@ impl Platform for SDL2Plat {
                 } => {
                     let key = convert_sdl_keycode_to_dakota(keycode.unwrap());
                     let mods = convert_sdl_mods_to_dakota(keymod);
-                    evsys.add_event_key_down(dom, key, mods);
+                    evsys.add_event_key_down(key, mods);
                 }
                 Event::KeyUp {
                     keycode, keymod, ..
                 } => {
                     let key = convert_sdl_keycode_to_dakota(keycode.unwrap());
                     let mods = convert_sdl_mods_to_dakota(keymod);
-                    evsys.add_event_key_up(dom, key, mods);
+                    evsys.add_event_key_up(key, mods);
                 }
                 // handle pointer inputs. This just looks like the above keyboard
                 Event::MouseButtonDown {
                     mouse_btn, x, y, ..
                 } => {
                     let button = convert_sdl_mouse_to_dakota(mouse_btn);
-                    evsys.add_event_mouse_button_down(dom, button, x, y);
+                    evsys.add_event_mouse_button_down(button, x, y);
                 }
                 Event::MouseButtonUp {
                     mouse_btn, x, y, ..
                 } => {
                     let button = convert_sdl_mouse_to_dakota(mouse_btn);
-                    evsys.add_event_mouse_button_up(dom, button, x, y);
+                    evsys.add_event_mouse_button_up(button, x, y);
+                }
+                Event::MouseWheel { x, y, .. } => {
+                    evsys.add_event_scroll(*mouse_pos, x as f32 * 0.001, y as f32 * 0.001)
+                }
+
+                Event::MouseMotion { x, y, .. } => {
+                    mouse_pos.0 = x;
+                    mouse_pos.1 = y;
                 }
 
                 // Now we have window events. There's really only one we need to
@@ -171,22 +186,25 @@ impl Platform for SDL2Plat {
         };
 
         // First block for the next event
-        handle_event(match timeout {
-            // If we are waiting a certain amount of time, tell SDL. If
-            // it returns an event, great, handle it.
-            // If not, then just return without handling.
-            Some(timeout) => match self.sdl_event_pump.wait_event_timeout(timeout) {
-                Some(event) => event,
-                None => return Ok(()),
+        handle_event(
+            match timeout {
+                // If we are waiting a certain amount of time, tell SDL. If
+                // it returns an event, great, handle it.
+                // If not, then just return without handling.
+                Some(timeout) => match self.sdl_event_pump.wait_event_timeout(timeout) {
+                    Some(event) => event,
+                    None => return Ok(()),
+                },
+                // No timeout was given, so we wait indefinitely
+                None => self.sdl_event_pump.wait_event(),
             },
-            // No timeout was given, so we wait indefinitely
-            None => self.sdl_event_pump.wait_event(),
-        })?;
+            &mut self.sdl_mouse_pos,
+        )?;
 
         // Now drain the available events before returning
         // control to the main dakota dispatch loop.
         for event in self.sdl_event_pump.poll_iter() {
-            handle_event(event)?
+            handle_event(event, &mut self.sdl_mouse_pos)?
         }
         Ok(())
     }

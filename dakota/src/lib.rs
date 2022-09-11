@@ -955,6 +955,68 @@ impl<'a> Dakota<'a> {
         self.d_event_sys.get_events()
     }
 
+    fn viewport_at_pos_recursive(&self, id: ViewportId, x: i32, y: i32) -> Option<ViewportId> {
+        let node = self.d_viewport_nodes.get(&id).unwrap();
+        let viewport = &node.v_viewport;
+
+        let x_range = viewport.offset.0..(viewport.offset.0 + viewport.size.0);
+        let y_range = viewport.offset.1..(viewport.offset.1 + viewport.size.1);
+
+        if x_range.contains(&(x as f32)) && y_range.contains(&(y as f32)) {
+            return Some(id);
+        }
+
+        for child in node.v_children.iter() {
+            if let Some(ret) = self.viewport_at_pos_recursive(child.clone(), x, y) {
+                return Some(ret);
+            }
+        }
+
+        None
+    }
+
+    /// Walks the viewport tree and returns the ECS id of the
+    /// viewport at this location. Note there will always be a viewport
+    /// because the entire window surface is at the very least, the root viewport
+    fn viewport_at_pos(&self, x: i32, y: i32) -> ViewportId {
+        assert!(self.d_root_viewport.is_some());
+        let root_node = self.d_root_viewport.clone().unwrap();
+
+        match self.viewport_at_pos_recursive(root_node.clone(), x, y) {
+            Some(v) => v,
+            None => root_node,
+        }
+    }
+
+    /// Handle dakota-only events coming from the event system
+    ///
+    /// Most notably this handles scrolling
+    fn handle_private_events(&mut self) -> Result<()> {
+        for ev in self.d_event_sys.es_dakota_event_queue.iter() {
+            match ev {
+                Event::InputScroll {
+                    mouse_x,
+                    mouse_y,
+                    x,
+                    y,
+                } => {
+                    // Find viewport at this location
+                    let viewport = self.viewport_at_pos(*mouse_x, *mouse_y);
+
+                    // set its scrolling offset to be used for the next draw
+                    let mut node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
+                    node.v_viewport.scroll_offset = (*x, *y);
+                    self.d_needs_redraw = true;
+                }
+                // Ignore all other events for now
+                _ => {}
+            }
+        }
+
+        self.d_event_sys.es_dakota_event_queue.clear();
+        Ok(())
+    }
+
     fn flush_viewports(&mut self, viewport: ViewportId) -> th::Result<()> {
         {
             let mut node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
@@ -1047,6 +1109,9 @@ impl<'a> Dakota<'a> {
             }
             Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
         };
+
+        // Now handle events like scrolling before we calculate sizes
+        self.handle_private_events()?;
 
         // if needs redraw, then tell thundr to draw and present a frame
         // At every step of the way we check if the drawable has been resized

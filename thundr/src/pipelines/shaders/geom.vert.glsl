@@ -16,7 +16,7 @@ layout(binding = 0) uniform ShaderConstants {
 } ubo;
 
 layout(push_constant) uniform PushConstants {
- mat4 model;
+ vec2 viewport_offset;
  float width;
  float height;
  float starting_depth;
@@ -67,6 +67,9 @@ void main() {
  window_index = ordered_windows[vec_offset][gl_InstanceIndex % 4];
  image_index = windows[window_index].image_id;
 
+ // Add our viewport offset to the location
+ vec2 position = windows[window_index].dims.start + push.viewport_offset;
+
  // 1. loc should ALWAYS be 0,1 for the default quad.
  // 2. multiply by two since the axis are over the range (-1,1).
  // 3. multiply by the percentage of the screen that the window
@@ -79,13 +82,13 @@ void main() {
  vec2 adjusted = loc
   * vec2(2, 2)
   * (windows[window_index].dims.size / vec2(push.width, push.height))
-  + (windows[window_index].dims.start / vec2(push.width, push.height))
+  + (position / vec2(push.width, push.height))
   * vec2(2, 2);
 
  // The model transform will align x,y = (0, 0) with the top left of
  // the screen. It should stubtract 1.0 from x and y.
  float order = push.starting_depth - (float(gl_InstanceIndex) * 0.0000001);
- gl_Position = ubo.model * push.model * vec4(adjusted, order, 1.0);
+ gl_Position = ubo.model * vec4(adjusted, order, 1.0);
 
  fragcoord = coord;
 }
