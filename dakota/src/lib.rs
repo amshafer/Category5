@@ -564,27 +564,20 @@ impl<'a> Dakota<'a> {
             dom::Size::new(0.0, 0.0),
         );
 
-        // This space is what the children/content will use
-        // it is restricted in size to this element (their parent)
-        let mut child_space = LayoutSpace {
-            avail_width: space.avail_width,
-            avail_height: space.avail_height,
-            children_at_this_level: 0,
-        };
-
-        // check if this element has its size set, shrink the available space
-        // to match.
-        if let Some(size) = el.size.as_ref() {
-            child_space.avail_width = size.width as f32;
-            child_space.avail_height = size.height as f32;
-        }
-
         // ------------------------------------------
         // HANDLE THIS ELEMENT
         // ------------------------------------------
         // Must be done before anything referencing the size of this element
         self.calculate_sizes_el(el, &mut ret, space)
             .context("Layout Tree Calculation: processing element")?;
+
+        // This space is what the children/content will use
+        // it is restricted in size to this element (their parent)
+        let mut child_space = LayoutSpace {
+            avail_width: ret.l_size.width,
+            avail_height: ret.l_size.height,
+            children_at_this_level: 0,
+        };
 
         // ------------------------------------------
         // HANDLE TEXT
