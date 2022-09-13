@@ -270,6 +270,7 @@ version = "0.1.0"
 dependencies = [
  "dakota",
  "sdl2",
+ "utils",
 ]
 
 [[package]]

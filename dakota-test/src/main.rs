@@ -2,9 +2,11 @@ extern crate dakota;
 use dakota::event::Event;
 use dakota::Dakota;
 
+extern crate utils;
 use std::env;
 use std::fs::File;
 use std::io::BufReader;
+use utils::timing::StopWatch;
 
 fn main() {
     println!("Starting dakota");
@@ -20,9 +22,16 @@ fn main() {
         .load_xml_reader(reader)
         .expect("Could not parse XML dakota file");
     dak.refresh_full(&dom).unwrap();
+    let mut stop = StopWatch::new();
 
     loop {
+        stop.start();
         dak.dispatch(&dom, None).unwrap();
+        stop.end();
+        println!(
+            "Dakota spent {} ms drawing this frame",
+            stop.get_duration().as_millis()
+        );
 
         for event in dak.get_events().iter() {
             // Exit if the window is closed, else do nothing

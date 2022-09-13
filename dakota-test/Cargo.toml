@@ -9,4 +9,5 @@ edition = "2018"
 [dependencies]
 dakota={path="../dakota", features=["sdl"]}
 sdl2="0.35"
+utils={path="../utils"}
 
