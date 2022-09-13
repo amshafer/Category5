@@ -521,16 +521,6 @@ impl<'a> Dakota<'a> {
             }
         }
 
-        #[cfg(debug_assertions)]
-        {
-            log::info!("Dumping children of node");
-            for l in node.l_children.iter() {
-                log::info!("Child");
-                log::info!("{:#?}", self.d_layout_nodes.get(l).unwrap().l_offset);
-                log::info!("{:#?}", self.d_layout_nodes.get(l).unwrap().l_size);
-            }
-            log::info!("{:#?}", text);
-        }
         Ok(())
     }
 
@@ -928,12 +918,12 @@ impl<'a> Dakota<'a> {
         // to represent the different scrolling regions within the scene.
         self.d_root_viewport = self.calculate_viewports(root_node_id.clone(), None);
 
-        #[cfg(debug_assertions)]
-        {
-            if let Some(root_id) = self.d_layout_tree_root.as_ref() {
-                self.print_node(&self.d_layout_nodes.get(&root_id).unwrap(), 0);
-            }
-        }
+        //#[cfg(debug_assertions)]
+        //{
+        //    if let Some(root_id) = self.d_layout_tree_root.as_ref() {
+        //        self.print_node(&self.d_layout_nodes.get(&root_id).unwrap(), 0);
+        //    }
+        //}
 
         // Perform the Thundr pass
         //
