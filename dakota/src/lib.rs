@@ -465,12 +465,16 @@ impl<'a> Dakota<'a> {
         // through text formatting in the dakota file.
         for item in text.items.iter_mut() {
             match item {
-                dom::TextItem::p(s) | dom::TextItem::b(s) => {
+                dom::TextItem::p(run) | dom::TextItem::b(run) => {
                     // TODO: we can get the available height from above, pass it to a font instance
                     // and create layout nodes for all character surfaces.
-                    let mut trim = regex_trim_excess_space(s);
+                    let mut trim = regex_trim_excess_space(&run.value);
                     // TODO: Find a better way of adding space around itemized runs
                     trim.push_str(" ");
+
+                    // resize our layout node id cache for this run
+                    run.nodes
+                        .resize_with(trim.len(), || self.d_layout_ecs_inst.add_entity());
 
                     // We need to take references to everything at once before the closure
                     // so that the borrow checker can see we aren't trying to reference all
@@ -479,6 +483,7 @@ impl<'a> Dakota<'a> {
                     let ecs_inst = &mut self.d_layout_ecs_inst;
                     let layouts = &mut self.d_layout_nodes;
 
+                    let mut index = 0;
                     // Record text locations
                     // We will create a whole bunch of sub-nodes which will be assigned
                     // glyph ids. These ids will later be used to get surfaces for.
@@ -488,7 +493,9 @@ impl<'a> Dakota<'a> {
                         &trim,
                         &mut |inst: &mut FontInstance, thund, glyph_id, offset| {
                             let size = inst.get_glyph_thundr_size(thund, glyph_id);
-                            let new_id = ecs_inst.add_entity();
+                            assert!(index < run.nodes.len());
+                            let new_id = run.nodes[index].clone();
+
                             let child_size = LayoutNode::new(
                                 None,
                                 Some(glyph_id),
@@ -511,12 +518,15 @@ impl<'a> Dakota<'a> {
                                 node.l_is_viewport = true;
                             }
 
+                            layouts.take(&new_id);
                             layouts.set(&new_id, child_size);
                             node.add_child(new_id);
+
+                            index += 1;
                         },
                     );
 
-                    *s = trim;
+                    run.value = trim;
                 }
             }
         }
@@ -556,7 +566,15 @@ impl<'a> Dakota<'a> {
     /// us from having to do more recursion later since everything is calculated
     /// now.
     fn calculate_sizes(&mut self, el: &mut dom::Element, space: &LayoutSpace) -> Result<LayoutId> {
-        let new_id = self.d_layout_ecs_inst.add_entity();
+        let new_id = match el.layout_id.clone() {
+            Some(id) => id,
+            None => {
+                let id = self.d_layout_ecs_inst.add_entity();
+                el.layout_id = Some(id.clone());
+                id
+            }
+        };
+
         let mut ret = LayoutNode::new(
             el.resource.clone(),
             None,
@@ -611,6 +629,7 @@ impl<'a> Dakota<'a> {
 
         log::debug!("Final offset of element is {:?}", ret.l_offset);
         log::debug!("Final size of element is {:?}", ret.l_size);
+        self.d_layout_nodes.take(&new_id);
         self.d_layout_nodes.set(&new_id, ret);
 
         return Ok(new_id);

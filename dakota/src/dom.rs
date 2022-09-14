@@ -1,6 +1,7 @@
 use crate::serde::{Deserialize, Serialize};
 use crate::utils::{anyhow, Result};
-use crate::LayoutSpace;
+use crate::{LayoutId, LayoutSpace};
+use lluvia as ll;
 
 use std::cell::RefCell;
 use std::cmp::{Ord, PartialOrd};
@@ -260,18 +261,25 @@ pub struct Element {
     pub bounds: Option<Edges>,
     #[serde(rename = "el", default)]
     pub children: Vec<Rc<RefCell<Element>>>,
-    // TODO: return Element to user as an ECS id
+    /// The LayoutNode backing this Element
+    #[serde(skip)]
+    pub layout_id: Option<ll::Entity>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TextRun {
+    #[serde(rename = "$value")]
+    pub value: String,
+    #[serde(skip)]
+    pub nodes: Vec<LayoutId>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(non_camel_case_types)]
 pub enum TextItem {
-    p(String),
-    b(String),
+    p(TextRun),
+    b(TextRun),
 }
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ItemizedText(Vec<TextItem>);
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Text {
