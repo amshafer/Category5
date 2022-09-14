@@ -641,7 +641,12 @@ impl<'a> Dakota<'a> {
         &mut self,
         id: LayoutId,
         mut parent_viewport: Option<ViewportId>,
+        mut offset: (f32, f32),
     ) -> Option<ViewportId> {
+        let node_offset = self.d_layout_nodes.get_mut(&id).unwrap().l_offset;
+        offset.0 += node_offset.x;
+        offset.1 += node_offset.y;
+
         {
             if self.d_layout_nodes.get_mut(&id).unwrap().l_is_viewport {
                 // Do this first before we mutably borrow node
@@ -657,12 +662,8 @@ impl<'a> Dakota<'a> {
                     parent.v_children.push(new_id.clone());
                 }
 
-                let mut th_viewport = th::Viewport::new(
-                    node.l_offset.x,
-                    node.l_offset.y,
-                    node.l_size.width,
-                    node.l_size.height,
-                );
+                let mut th_viewport =
+                    th::Viewport::new(offset.0, offset.1, node.l_size.width, node.l_size.height);
                 th_viewport.set_scroll_region(scroll_region.0, scroll_region.1);
 
                 let viewport = ViewportNode {
@@ -680,7 +681,7 @@ impl<'a> Dakota<'a> {
         let num_children = self.d_layout_nodes.get(&id).unwrap().l_children.len();
         for i in 0..num_children {
             let child = self.d_layout_nodes.get(&id).unwrap().l_children[i].clone();
-            self.calculate_viewports(child.clone(), parent_viewport.clone());
+            self.calculate_viewports(child.clone(), parent_viewport.clone(), offset);
         }
 
         return parent_viewport;
@@ -909,7 +910,7 @@ impl<'a> Dakota<'a> {
         //
         // This will go through the layout tree and create a tree of ViewportNodes
         // to represent the different scrolling regions within the scene.
-        self.d_root_viewport = self.calculate_viewports(root_node_id.clone(), None);
+        self.d_root_viewport = self.calculate_viewports(root_node_id.clone(), None, (0.0, 0.0));
 
         //#[cfg(debug_assertions)]
         //{
