@@ -164,20 +164,18 @@ impl<'a> FontInstance<'a> {
     pub fn get_thundr_surf_for_glyph(
         &mut self,
         thund: &mut Thundr,
+        surf: &mut th::Surface,
         id: u16,
         pos: dom::Offset<f32>,
-    ) -> th::Surface {
+    ) {
         self.ensure_glyph_exists(thund, id);
         let glyph = self.f_glyphs[id as usize]
             .as_ref()
             .expect("Bug: Glyph not created for this character");
-        let mut surf =
-            thund.create_surface(pos.x, pos.y, glyph.g_bitmap_size.0, glyph.g_bitmap_size.1);
+        surf.reset_surface(pos.x, pos.y, glyph.g_bitmap_size.0, glyph.g_bitmap_size.1);
         if let Some(image) = glyph.g_image.as_ref() {
-            thund.bind_image(&mut surf, image.clone());
+            thund.bind_image(surf, image.clone());
         }
-
-        return surf;
     }
 
     /// Handle one line of text

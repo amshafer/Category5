@@ -56,8 +56,12 @@ pub struct Dakota<'a> {
     d_resmap: HashMap<String, ResMapEntry>,
     /// This is one ECS that is composed of multiple tables
     d_layout_ecs_inst: ll::Instance,
-    /// This is one such ECS table, that holds all the layout nodes
+    /// This is all of the LayoutNodes in the system, each corresponding to
+    /// an Element or a subcomponent of an Element. Indexed by LayoutId.
     d_layout_nodes: ll::Session<LayoutNode>,
+    /// This is the corresponding thundr surface for each LayoutNode. Also
+    /// indexed by LayoutId.
+    d_layout_node_surfaces: ll::Session<th::Surface>,
     d_viewport_ecs_inst: ll::Instance,
     d_viewport_nodes: ll::Session<ViewportNode>,
     /// This is the root node in the scene tree
@@ -208,9 +212,14 @@ impl<'a> Dakota<'a> {
 
         let mut layout_ecs = ll::Instance::new();
         let layout_comp = layout_ecs.add_component();
+        let surface_comp = layout_ecs.add_component();
         let layout_table = layout_ecs
             .open_session(layout_comp)
             .ok_or(anyhow!("Could not create an ECS session"))?;
+        let surface_table = layout_ecs
+            .open_session(surface_comp)
+            .ok_or(anyhow!("Could not create an ECS session"))?;
+
         let mut viewport_ecs = ll::Instance::new();
         let viewport_comp = viewport_ecs.add_component();
         let viewport_table = viewport_ecs
@@ -225,6 +234,7 @@ impl<'a> Dakota<'a> {
             d_resmap: HashMap::new(),
             d_layout_ecs_inst: layout_ecs,
             d_layout_nodes: layout_table,
+            d_layout_node_surfaces: surface_table,
             d_viewport_ecs_inst: viewport_ecs,
             d_viewport_nodes: viewport_table,
             d_layout_tree_root: None,
@@ -480,7 +490,6 @@ impl<'a> Dakota<'a> {
                     // so that the borrow checker can see we aren't trying to reference all
                     // of self
                     let font_inst = &mut self.d_font_inst;
-                    let ecs_inst = &mut self.d_layout_ecs_inst;
                     let layouts = &mut self.d_layout_nodes;
 
                     let mut index = 0;
@@ -754,14 +763,29 @@ impl<'a> Dakota<'a> {
                 false => (layout.l_offset.x, layout.l_offset.y),
             };
 
-            // first create a surface for this element
+            // first create a surface for this element, or get an existing one
             // This starts as an empty unbound surface but may be assigned content below
-            let mut surf = self.d_thund.create_surface(
-                offset.0,
-                offset.1,
-                layout.l_size.width,
-                layout.l_size.height,
-            );
+            let mut surf = if self.d_layout_node_surfaces.get_mut(&node).is_some() {
+                // Do this here to avoid hogging the borrow with the above line
+                let mut surf = self.d_layout_node_surfaces.get_mut(&node).unwrap();
+                surf.reset_surface(
+                    offset.0,
+                    offset.1,
+                    layout.l_size.width,
+                    layout.l_size.height,
+                );
+                surf.clone()
+            } else {
+                let surf = self.d_thund.create_surface(
+                    offset.0,
+                    offset.1,
+                    layout.l_size.width,
+                    layout.l_size.height,
+                );
+                // Set and get this to match the RefMut in the first if branch
+                self.d_layout_node_surfaces.set(&node, surf.clone());
+                surf
+            };
 
             // Handle binding images
             if let Some(resname) = layout.l_resource.as_ref() {
@@ -798,8 +822,9 @@ impl<'a> Dakota<'a> {
                 // larger block of text. It has been created as a child, and isn't
                 // a real element. We ask the font code to give us a surface for
                 // it that we can display.
-                let surf = self.d_font_inst.get_thundr_surf_for_glyph(
+                self.d_font_inst.get_thundr_surf_for_glyph(
                     &mut self.d_thund,
+                    &mut surf,
                     glyph_id,
                     layout.l_offset,
                 );

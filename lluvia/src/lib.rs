@@ -183,6 +183,10 @@ impl<T: 'static> Table<T> {
         self.t_internal.borrow().t_entity.len()
     }
 
+    fn has_space_for_id(&self, entity: &Entity) -> bool {
+        entity.ecs_id < self.t_internal.borrow().t_entity.len()
+    }
+
     /// Helper to grow our internal array to fit entity
     fn ensure_space_for_id(&mut self, entity: &Entity) {
         let mut internal = self.t_internal.borrow_mut();
@@ -440,7 +444,7 @@ impl<T: 'static> Session<T> {
     ///
     /// If this entity has not had a value set, None will be returned.
     pub fn get(&self, entity: &Entity) -> Option<Ref<T>> {
-        if !self.s_inst.id_is_valid(entity) {
+        if !self.s_inst.id_is_valid(entity) || !self.s_table.has_space_for_id(entity) {
             return None;
         }
 
@@ -465,7 +469,7 @@ impl<T: 'static> Session<T> {
     /// value of the entity for this property cannot be determined and None
     /// will be returned.
     pub fn get_mut(&mut self, entity: &Entity) -> Option<RefMut<T>> {
-        if !self.s_inst.id_is_valid(entity) {
+        if !self.s_inst.id_is_valid(entity) || !self.s_table.has_space_for_id(entity) {
             return None;
         }
 

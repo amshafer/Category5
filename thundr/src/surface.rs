@@ -63,6 +63,23 @@ impl Drop for SurfaceInternal {
 }
 
 impl SurfaceInternal {
+    fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self {
+            s_rect: Rect::new(x, y, width, height),
+            s_image: None,
+            s_color: None,
+            s_damage: None,
+            s_surf_damage: None,
+            s_was_damaged: false,
+            s_subsurfaces: Vec::with_capacity(0), // this keeps us from allocating
+            s_parent: None,
+            // When the surface is first created we don't send its size to
+            // the GPU. We mark it as modified and the first time it is used
+            // it will be flushed
+            s_modified: true,
+        }
+    }
+
     /// adjusts from image-coords to surface-coords.
     pub fn get_opaque(&self) -> Option<Rect<i32>> {
         if let Some(image_rc) = self.s_image.as_ref() {
@@ -131,22 +148,17 @@ impl Surface {
         height: f32,
     ) -> Surface {
         Surface {
-            s_window_id: id,
-            s_internal: Rc::new(RefCell::new(SurfaceInternal {
-                s_rect: Rect::new(x, y, width, height),
-                s_image: None,
-                s_color: None,
-                s_damage: None,
-                s_surf_damage: None,
-                s_was_damaged: false,
-                s_subsurfaces: Vec::with_capacity(0), // this keeps us from allocating
-                s_parent: None,
-                // When the surface is first created we don't send its size to
-                // the GPU. We mark it as modified and the first time it is used
-                // it will be flushed
-                s_modified: true,
-            })),
+            s_window_id: id.clone(),
+            s_internal: Rc::new(RefCell::new(SurfaceInternal::new(x, y, width, height))),
         }
+    }
+
+    /// Remove all state from this surface, resetting it to the specified parameters
+    ///
+    /// This does not remove this surface from its parent
+    pub fn reset_surface(&mut self, x: f32, y: f32, width: f32, height: f32) {
+        let mut internal = self.s_internal.borrow_mut();
+        *internal = SurfaceInternal::new(x, y, width, height);
     }
 
     /// Get the ECS Id tracking this resource
