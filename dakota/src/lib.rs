@@ -69,6 +69,7 @@ pub struct Dakota<'a> {
     d_root_viewport: Option<ViewportId>,
     d_window_dims: Option<(u32, u32)>,
     d_needs_redraw: bool,
+    d_needs_refresh: bool,
     d_event_sys: EventSystem,
     d_font_inst: FontInstance<'a>,
 }
@@ -241,6 +242,7 @@ impl<'a> Dakota<'a> {
             d_root_viewport: None,
             d_window_dims: None,
             d_needs_redraw: false,
+            d_needs_refresh: false,
             d_event_sys: EventSystem::new(),
             d_font_inst: inst,
         })
@@ -997,6 +999,7 @@ impl<'a> Dakota<'a> {
         );
 
         self.d_needs_redraw = true;
+        self.d_needs_refresh = true;
         self.d_window_dims = Some(new_res);
         self.refresh_elements(dom)
     }
@@ -1163,13 +1166,16 @@ impl<'a> Dakota<'a> {
                 // to tell Thundr to do OOD itself
                 self.d_thund.handle_ood();
                 self.handle_ood(dom)?;
-                return Ok(());
             }
             Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
         };
 
         // Now handle events like scrolling before we calculate sizes
         self.handle_private_events()?;
+
+        if self.d_needs_refresh {
+            self.refresh_elements(dom)?;
+        }
 
         // if needs redraw, then tell thundr to draw and present a frame
         // At every step of the way we check if the drawable has been resized

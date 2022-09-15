@@ -117,6 +117,8 @@ impl Platform for SDL2Plat {
         dom: &DakotaDOM,
         timeout: Option<u32>,
     ) -> std::result::Result<(), DakotaError> {
+        let mut is_ood = false;
+
         // Returns Result<bool, DakotaError>, true if we should terminate
         //
         // We have to pass in the mouse position (aka self.sdl_mouse_pos) due
@@ -180,7 +182,8 @@ impl Platform for SDL2Plat {
                     win_event,
                 } => match win_event {
                     // check redraw requested?
-                    WindowEvent::Resized { .. } => return Err(DakotaError::OUT_OF_DATE),
+                    WindowEvent::Resized { .. } => is_ood = true,
+                    WindowEvent::SizeChanged { .. } => is_ood = true,
                     _ => {}
                 },
                 _ => {}
@@ -210,6 +213,10 @@ impl Platform for SDL2Plat {
         for event in self.sdl_event_pump.poll_iter() {
             handle_event(event, &mut self.sdl_mouse_pos)?
         }
-        Ok(())
+
+        match is_ood {
+            true => Err(DakotaError::OUT_OF_DATE),
+            false => Ok(()),
+        }
     }
 }
