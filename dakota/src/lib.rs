@@ -1149,61 +1149,75 @@ impl<'a> Dakota<'a> {
     /// Returns true if we should terminate i.e. the window was closed.
     /// Timeout is in milliseconds, and is the timeout to wait for
     /// window system events.
-    pub fn dispatch(&mut self, dom: &DakotaDOM, timeout: Option<u32>) -> Result<()> {
+    pub fn dispatch(&mut self, dom: &DakotaDOM, mut timeout: Option<u32>) -> Result<()> {
         // first clear the event queue, the app already had a chance to
         // handle them
         self.d_event_sys.clear_event_queue();
 
-        // First run our window system code. This will check if wayland/X11
-        // notified us of a resize, closure, or need to redraw
-        match self.d_plat.run(&mut self.d_event_sys, dom, timeout) {
-            Ok(()) => {}
-            Err(th::ThundrError::OUT_OF_DATE) => {
-                // This is a weird one
-                // So the above OUT_OF_DATEs are returned from thundr, where we
-                // can expect it will handle OOD itself. But here we have
-                // OUT_OF_DATE returned from our SDL2 backend, so we need
-                // to tell Thundr to do OOD itself
-                self.d_thund.handle_ood();
-                self.handle_ood(dom)?;
+        let mut first_loop = true;
+
+        loop {
+            if !first_loop {
+                timeout = Some(0);
             }
-            Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
-        };
+            first_loop = false;
 
-        // Now handle events like scrolling before we calculate sizes
-        self.handle_private_events()?;
-
-        if self.d_needs_refresh {
-            self.refresh_elements(dom)?;
-        }
-
-        // if needs redraw, then tell thundr to draw and present a frame
-        // At every step of the way we check if the drawable has been resized
-        // and will return that to the dakota user so they have a chance to resize
-        // anything they want
-        if self.d_needs_redraw {
-            match self.draw_surfacelists() {
+            // First run our window system code. This will check if wayland/X11
+            // notified us of a resize, closure, or need to redraw
+            match self.d_plat.run(&mut self.d_event_sys, dom, timeout) {
                 Ok(()) => {}
                 Err(th::ThundrError::OUT_OF_DATE) => {
+                    log::error!("Platform reported OOD");
+                    // This is a weird one
+                    // So the above OUT_OF_DATEs are returned from thundr, where we
+                    // can expect it will handle OOD itself. But here we have
+                    // OUT_OF_DATE returned from our SDL2 backend, so we need
+                    // to tell Thundr to do OOD itself
+                    self.d_thund.handle_ood();
                     self.handle_ood(dom)?;
-                    return Ok(());
-                }
-                Err(e) => return Err(Error::from(e).context("Thundr: drawing failed with error")),
-            };
-            match self.d_thund.present() {
-                Ok(()) => {}
-                Err(th::ThundrError::OUT_OF_DATE) => {
-                    self.handle_ood(dom)?;
-                    return Ok(());
+                    continue;
                 }
                 Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
             };
-            self.d_needs_redraw = false;
 
-            // Notify the app that we just drew a frame and it should prepare the next one
-            self.d_event_sys.add_event_window_redraw_complete(dom);
+            // Now handle events like scrolling before we calculate sizes
+            self.handle_private_events()?;
+
+            if self.d_needs_refresh {
+                self.refresh_elements(dom)?;
+            }
+
+            // if needs redraw, then tell thundr to draw and present a frame
+            // At every step of the way we check if the drawable has been resized
+            // and will return that to the dakota user so they have a chance to resize
+            // anything they want
+            if self.d_needs_redraw {
+                match self.draw_surfacelists() {
+                    Ok(()) => {}
+                    Err(th::ThundrError::OUT_OF_DATE) => {
+                        self.handle_ood(dom)?;
+                        continue;
+                    }
+                    Err(e) => {
+                        return Err(Error::from(e).context("Thundr: drawing failed with error"))
+                    }
+                };
+                match self.d_thund.present() {
+                    Ok(()) => {}
+                    Err(th::ThundrError::OUT_OF_DATE) => {
+                        self.handle_ood(dom)?;
+                        continue;
+                    }
+                    Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
+                };
+                log::error!("Finally redrew");
+                self.d_needs_redraw = false;
+
+                // Notify the app that we just drew a frame and it should prepare the next one
+                self.d_event_sys.add_event_window_redraw_complete(dom);
+            }
+
+            return Ok(());
         }
-
-        return Ok(());
     }
 }

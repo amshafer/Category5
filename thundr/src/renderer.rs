@@ -565,6 +565,7 @@ impl Renderer {
         // will be the current size of the surface in use. We should
         // also update Display.d_resolution while we are at it.
         let new_res = self.display.get_vulkan_drawable_size(self.pdev);
+        // TODO: clamp resolution here
         self.display.d_resolution = new_res;
         self.resolution = new_res;
 
