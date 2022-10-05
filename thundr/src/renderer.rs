@@ -560,7 +560,6 @@ impl Renderer {
     pub unsafe fn recreate_swapchain(&mut self) {
         // first wait for the device to finish working
         self.dev.device_wait_idle().unwrap();
-        self.destroy_swapchain();
 
         // We need to get the updated size of our swapchain. This
         // will be the current size of the surface in use. We should
@@ -569,7 +568,7 @@ impl Renderer {
         self.display.d_resolution = new_res;
         self.resolution = new_res;
 
-        self.swapchain = Renderer::create_swapchain(
+        let new_swapchain = Renderer::create_swapchain(
             &self.inst,
             &self.swapchain_loader,
             &self.display.d_surface_loader,
@@ -580,7 +579,12 @@ impl Renderer {
             &self.resolution,
             &self.dev_features,
             self.r_pipe_type,
+            Some(self.swapchain), // oldSwapChain
         );
+
+        // Now that we recreated the swapchain destroy the old one
+        self.destroy_swapchain();
+        self.swapchain = new_swapchain;
 
         let (images, views) = Renderer::select_images_and_views(
             &self.inst,
@@ -616,6 +620,7 @@ impl Renderer {
         resolution: &vk::Extent2D,
         dev_features: &VKDeviceFeatures,
         _pipe_type: PipelineType,
+        old_swapchain: Option<vk::SwapchainKHR>,
     ) -> vk::SwapchainKHR {
         // how many images we want the swapchain to contain
         let mut desired_image_count = surface_caps.min_image_count + 1;
@@ -695,7 +700,11 @@ impl Renderer {
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
             .present_mode(mode)
             .clipped(true)
-            .image_array_layers(1);
+            .image_array_layers(1)
+            .old_swapchain(match old_swapchain {
+                Some(s) => s,
+                None => vk::SwapchainKHR::null(),
+            });
 
         if use_mut_swapchain {
             // specifying the mutable format flag also requires that we add a
@@ -1550,6 +1559,7 @@ impl Renderer {
                 &surface_resolution,
                 &dev_features,
                 pipe_type,
+                None,
             );
 
             let (images, image_views) = Renderer::select_images_and_views(
