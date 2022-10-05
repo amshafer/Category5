@@ -973,6 +973,7 @@ impl<'a> Dakota<'a> {
         self.calculate_thundr_surfaces(self.d_root_viewport.clone().unwrap())?;
 
         self.d_layout_tree_root = Some(root_node_id);
+        self.d_needs_refresh = false;
 
         Ok(())
     }
@@ -1001,7 +1002,7 @@ impl<'a> Dakota<'a> {
         self.d_needs_redraw = true;
         self.d_needs_refresh = true;
         self.d_window_dims = Some(new_res);
-        self.refresh_elements(dom)
+        Ok(())
     }
 
     /// Get the slice of currently unhandled events
