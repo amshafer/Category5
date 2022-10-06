@@ -72,6 +72,7 @@ pub struct Dakota<'a> {
     d_needs_refresh: bool,
     d_event_sys: EventSystem,
     d_font_inst: FontInstance<'a>,
+    d_ood_counter: usize,
 }
 
 struct ViewportNode {
@@ -245,6 +246,7 @@ impl<'a> Dakota<'a> {
             d_needs_refresh: false,
             d_event_sys: EventSystem::new(),
             d_font_inst: inst,
+            d_ood_counter: 30,
         })
     }
 
@@ -1001,6 +1003,7 @@ impl<'a> Dakota<'a> {
 
         self.d_needs_redraw = true;
         self.d_needs_refresh = true;
+        self.d_ood_counter = 30;
         self.d_window_dims = Some(new_res);
         Ok(())
     }
@@ -1158,8 +1161,10 @@ impl<'a> Dakota<'a> {
         let mut first_loop = true;
 
         loop {
-            if !first_loop {
+            if !first_loop || self.d_ood_counter > 0 {
                 timeout = Some(0);
+                self.d_ood_counter -= 1;
+                self.d_needs_redraw = true;
             }
             first_loop = false;
 

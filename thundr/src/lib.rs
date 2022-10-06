@@ -149,7 +149,7 @@ pub struct Thundr {
 
     /// Application specific stuff that will be set up after
     /// the original initialization
-    pub(crate) th_pipe_type: PipelineType,
+    pub(crate) _th_pipe_type: PipelineType,
     pub(crate) th_pipe: Box<dyn Pipeline>,
 
     /// The current draw calls parameters
@@ -329,7 +329,7 @@ impl Thundr {
             th_rend: rend,
             th_ecs_inst: ecs,
             th_image_list: Vec::new(),
-            th_pipe_type: ty,
+            _th_pipe_type: ty,
             th_pipe: pipe,
             th_params: None,
         })
