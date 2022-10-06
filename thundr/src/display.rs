@@ -35,6 +35,8 @@ pub struct Display {
     pub d_surface_loader: khr::Surface,
     pub d_resolution: vk::Extent2D,
     d_back: Box<dyn Backend>,
+    /// Cache the present mode here so we don't re-request it
+    pub d_present_mode: vk::PresentModeKHR,
 }
 
 trait Backend {
@@ -104,11 +106,25 @@ impl Display {
         }
         .unwrap();
 
+        // the best mode for presentation is FIFO (with triple buffering)
+        // as this is recommended by the samsung developer page, which
+        // I am *assuming* is a good reference for low power apps
+        let present_modes = s_loader
+            .get_physical_device_surface_present_modes(pdev, surf)
+            .unwrap();
+        let mode = present_modes
+            .iter()
+            .cloned()
+            .find(|&mode| mode == vk::PresentModeKHR::FIFO)
+            // fallback to FIFO if the mailbox mode is not available
+            .unwrap_or(vk::PresentModeKHR::FIFO);
+
         Self {
             d_surface_loader: s_loader,
             d_back: back,
             d_surface: surf,
             d_resolution: res,
+            d_present_mode: mode,
         }
     }
 

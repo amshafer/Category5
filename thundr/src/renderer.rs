@@ -572,8 +572,6 @@ impl Renderer {
         let new_swapchain = Renderer::create_swapchain(
             &self.inst,
             &self.swapchain_loader,
-            &self.display.d_surface_loader,
-            self.pdev,
             self.display.d_surface,
             &self.surface_caps,
             self.surface_format,
@@ -581,6 +579,7 @@ impl Renderer {
             &self.dev_features,
             self.r_pipe_type,
             Some(self.swapchain), // oldSwapChain
+            self.display.d_present_mode,
         );
 
         // Now that we recreated the swapchain destroy the old one
@@ -613,8 +612,6 @@ impl Renderer {
     unsafe fn create_swapchain(
         _inst: &Instance,
         swapchain_loader: &khr::Swapchain,
-        surface_loader: &khr::Surface,
-        pdev: vk::PhysicalDevice,
         surface: vk::SurfaceKHR,
         surface_caps: &vk::SurfaceCapabilitiesKHR,
         surface_format: vk::SurfaceFormatKHR,
@@ -622,6 +619,7 @@ impl Renderer {
         dev_features: &VKDeviceFeatures,
         _pipe_type: PipelineType,
         old_swapchain: Option<vk::SwapchainKHR>,
+        present_mode: vk::PresentModeKHR,
     ) -> vk::SwapchainKHR {
         // how many images we want the swapchain to contain
         let mut desired_image_count = surface_caps.min_image_count + 1;
@@ -637,19 +635,6 @@ impl Renderer {
         } else {
             surface_caps.current_transform
         };
-
-        // the best mode for presentation is FIFO (with triple buffering)
-        // as this is recommended by the samsung developer page, which
-        // I am *assuming* is a good reference for low power apps
-        let present_modes = surface_loader
-            .get_physical_device_surface_present_modes(pdev, surface)
-            .unwrap();
-        let mode = present_modes
-            .iter()
-            .cloned()
-            .find(|&mode| mode == vk::PresentModeKHR::FIFO)
-            // fallback to FIFO if the mailbox mode is not available
-            .unwrap_or(vk::PresentModeKHR::FIFO);
 
         // we need to check if the surface format supports the
         // storage image type
@@ -699,7 +684,7 @@ impl Renderer {
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-            .present_mode(mode)
+            .present_mode(present_mode)
             .clipped(true)
             .image_array_layers(1)
             .old_swapchain(match old_swapchain {
@@ -1552,8 +1537,6 @@ impl Renderer {
             let swapchain = Renderer::create_swapchain(
                 &inst,
                 &swapchain_loader,
-                &display.d_surface_loader,
-                pdev,
                 display.d_surface,
                 &surface_caps,
                 surface_format,
@@ -1561,6 +1544,7 @@ impl Renderer {
                 &dev_features,
                 pipe_type,
                 None,
+                display.d_present_mode,
             );
 
             let (images, image_views) = Renderer::select_images_and_views(
