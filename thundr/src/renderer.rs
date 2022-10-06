@@ -2318,10 +2318,8 @@ impl Renderer {
 
         let buffer = self.dev.create_buffer(&create_info, None).unwrap();
         let req = self.dev.get_buffer_memory_requirements(buffer);
-        // get the memory types for this pdev
-        let props = Renderer::get_pdev_mem_properties(&self.inst, self.pdev);
         // find the memory type that best suits our requirements
-        let index = Renderer::find_memory_type_index(&props, &req, flags).unwrap();
+        let index = Renderer::find_memory_type_index(&self.mem_props, &req, flags).unwrap();
 
         // now we need to allocate memory to back the buffer
         let alloc_info = vk::MemoryAllocateInfo {
