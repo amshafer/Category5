@@ -828,6 +828,9 @@ impl Pipeline for CompPipeline {
         log::debug!("---------------------------------");
     }
 
+    #[allow(dead_code)]
+    fn handle_ood(&mut self, _rend: &mut Renderer) {}
+
     fn destroy(&mut self, rend: &mut Renderer) {
         unsafe {
             rend.dev.destroy_buffer(self.cp_tiles_buf, None);

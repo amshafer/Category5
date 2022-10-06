@@ -67,6 +67,12 @@ pub trait Pipeline {
     /// info, such as the window positions and the attached images.
     fn debug_frame_print(&self);
 
+    /// Handle swapchain out of date
+    ///
+    /// This call tells the pipeline to recreate any resources that
+    /// depend on the swapchain/screen size. i.e. VkFramebuffers
+    fn handle_ood(&mut self, rend: &mut Renderer);
+
     fn destroy(&mut self, rend: &mut Renderer);
 }
 

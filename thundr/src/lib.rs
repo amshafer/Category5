@@ -501,15 +501,10 @@ impl Thundr {
     pub fn handle_ood(&mut self) {
         self.th_rend.wait_for_prev_submit();
         self.th_rend.wait_for_copy();
-        self.th_pipe.destroy(&mut self.th_rend);
         unsafe {
             self.th_rend.recreate_swapchain();
         }
-        self.th_pipe = match self.th_pipe_type {
-            PipelineType::GEOMETRIC => Box::new(GeomPipeline::new(&mut self.th_rend)),
-            PipelineType::COMPUTE => Box::new(CompPipeline::new(&mut self.th_rend)),
-            _ => unimplemented!("Allow for multiple pipes"),
-        };
+        self.th_pipe.handle_ood(&mut self.th_rend);
     }
 
     pub fn get_drm_dev(&self) -> (i64, i64) {

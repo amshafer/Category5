@@ -174,6 +174,20 @@ impl Pipeline for GeomPipeline {
                     max_depth: 1.0,
                 }],
             );
+            rend.dev.cmd_set_scissor(
+                params.cbuf,
+                0,
+                &[vk::Rect2D {
+                    offset: vk::Offset2D {
+                        x: viewport.offset.0 as i32,
+                        y: viewport.offset.1 as i32,
+                    },
+                    extent: vk::Extent2D {
+                        width: viewport.size.0 as u32,
+                        height: viewport.size.1 as u32,
+                    },
+                }],
+            );
 
             // Here is where everything is actually drawn
             // technically 3 vertices are being drawn
@@ -208,6 +222,42 @@ impl Pipeline for GeomPipeline {
         log::debug!("Geometric Pipeline Debug Statistics:");
         log::debug!("---------------------------------");
         log::debug!("---------------------------------");
+    }
+
+    fn handle_ood(&mut self, rend: &mut Renderer) {
+        unsafe {
+            rend.free_memory(self.depth_image_mem);
+            rend.dev.destroy_image_view(self.depth_image_view, None);
+            rend.dev.destroy_image(self.depth_image, None);
+            for f in self.framebuffers.iter() {
+                rend.dev.destroy_framebuffer(*f, None);
+            }
+
+            let consts = GeomPipeline::get_shader_constants(rend.resolution);
+            rend.update_memory(self.uniform_buffers_memory, 0, &[consts]);
+
+            // the depth attachment needs to have its own resources
+            let (depth_image, depth_image_view, depth_image_mem) = Renderer::create_image(
+                &rend.dev,
+                &rend.mem_props,
+                &rend.resolution,
+                vk::Format::D16_UNORM,
+                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                vk::ImageAspectFlags::DEPTH,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                vk::ImageTiling::OPTIMAL,
+            );
+            self.depth_image = depth_image;
+            self.depth_image_view = depth_image_view;
+            self.depth_image_mem = depth_image_mem;
+
+            self.framebuffers = GeomPipeline::create_framebuffers(
+                rend,
+                self.pass,
+                rend.resolution,
+                self.depth_image_view,
+            );
+        }
     }
 
     fn destroy(&mut self, rend: &mut Renderer) {
@@ -732,7 +782,7 @@ impl GeomPipeline {
         // dynamic state specifies what parts of the pipeline will be
         // specified at draw time. (like moving the viewport)
         let dynamic_info = vk::PipelineDynamicStateCreateInfo::builder()
-            .dynamic_states(&[vk::DynamicState::VIEWPORT])
+            .dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR])
             .build();
 
         let pipeline_info = vk::GraphicsPipelineCreateInfo::builder()
