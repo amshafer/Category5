@@ -58,14 +58,14 @@ fn main() {
     let mut bg_image = thund.create_image_from_bits(&mimg, None).unwrap();
     bg_image.set_damage(0, 0, 512, 512);
     //let ws = window.inner_size();
-    let ws = thund.get_resolution();
+    let mut ws = thund.get_resolution();
     let mut bg_surf = thund.create_surface(0.0, 0.0, ws.0 as f32, ws.1 as f32);
     thund.bind_image(&mut bg_surf, bg_image);
 
     // ----------- create list of surfaces
     let mut list = thundr::SurfaceList::new(&mut thund);
     list.push(cursor_surf.clone());
-    list.push(bg_surf);
+    list.push(bg_surf.clone());
 
     let mut dx = 2.0;
     let mut dy = 2.0;
@@ -82,7 +82,12 @@ fn main() {
                     window_id: _,
                     win_event,
                 } => match win_event {
-                    WindowEvent::Resized { .. } => thund.handle_ood(),
+                    WindowEvent::Resized { .. } => {
+                        thund.handle_ood();
+                        let new_res = thund.get_resolution();
+                        bg_surf.set_size(new_res.0 as f32, new_res.1 as f32);
+                        ws = thund.get_resolution();
+                    }
                     _ => {}
                 },
                 Event::Quit { .. }
