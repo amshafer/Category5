@@ -9,7 +9,7 @@ extern crate bitflags;
 extern crate lazy_static;
 extern crate utils;
 use utils::log;
-pub use utils::{anyhow, region::Rect, Context, Error, MemImage, Result};
+pub use utils::{anyhow, region::Rect, timing::StopWatch, Context, Error, MemImage, Result};
 
 pub mod dom;
 pub mod input;
@@ -1154,6 +1154,7 @@ impl<'a> Dakota<'a> {
     /// Timeout is in milliseconds, and is the timeout to wait for
     /// window system events.
     pub fn dispatch(&mut self, dom: &DakotaDOM, mut timeout: Option<u32>) -> Result<()> {
+        let mut stop = StopWatch::new();
         // first clear the event queue, the app already had a chance to
         // handle them
         self.d_event_sys.clear_event_queue();
@@ -1173,7 +1174,6 @@ impl<'a> Dakota<'a> {
             match self.d_plat.run(&mut self.d_event_sys, dom, timeout) {
                 Ok(()) => {}
                 Err(th::ThundrError::OUT_OF_DATE) => {
-                    log::error!("Platform reported OOD");
                     // This is a weird one
                     // So the above OUT_OF_DATEs are returned from thundr, where we
                     // can expect it will handle OOD itself. But here we have
@@ -1185,12 +1185,20 @@ impl<'a> Dakota<'a> {
                 }
                 Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
             };
+            stop.start();
 
             // Now handle events like scrolling before we calculate sizes
             self.handle_private_events()?;
 
             if self.d_needs_refresh {
+                let mut layout_stop = StopWatch::new();
+                layout_stop.start();
                 self.refresh_elements(dom)?;
+                layout_stop.end();
+                log::error!(
+                    "Dakota spent {} ms refreshing the layout",
+                    layout_stop.get_duration().as_millis()
+                );
             }
 
             // if needs redraw, then tell thundr to draw and present a frame
@@ -1216,11 +1224,15 @@ impl<'a> Dakota<'a> {
                     }
                     Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
                 };
-                log::error!("Finally redrew");
                 self.d_needs_redraw = false;
 
                 // Notify the app that we just drew a frame and it should prepare the next one
                 self.d_event_sys.add_event_window_redraw_complete(dom);
+                stop.end();
+                log::error!(
+                    "Dakota spent {} ms drawing this frame",
+                    stop.get_duration().as_millis()
+                );
             }
 
             return Ok(());

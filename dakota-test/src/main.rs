@@ -28,10 +28,6 @@ fn main() {
         stop.start();
         dak.dispatch(&dom, None).unwrap();
         stop.end();
-        println!(
-            "Dakota spent {} ms drawing this frame",
-            stop.get_duration().as_millis()
-        );
 
         for event in dak.get_events().iter() {
             // Exit if the window is closed, else do nothing
