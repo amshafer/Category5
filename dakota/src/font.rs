@@ -2,9 +2,10 @@ extern crate freetype as ft;
 extern crate harfbuzz_rs as hb;
 extern crate harfbuzz_sys as hb_sys;
 
-use crate::dom;
 use crate::th::Thundr;
 use crate::utils::MemImage;
+use crate::{dom, LayoutId};
+use lluvia as ll;
 
 #[repr(C)]
 #[derive(Clone)]
@@ -52,6 +53,23 @@ fn scale_hb_positions(position: &hb::GlyphPosition) -> (f32, f32, f32, f32) {
     let y_advance = position.y_advance as f32 / buzz_scale;
 
     (x_offset, y_offset, x_advance, y_advance)
+}
+
+/// This struct caches the per-character layout information performed while laying
+/// out text.
+///
+/// This prevents us from recalling freetype and recreating layout nodes and such.
+#[derive(Debug)]
+pub struct CachedChar {
+    /// The layout node that represents this character
+    pub node: LayoutId,
+    /// The glyph id to be used to test which character this is
+    pub glyph_id: u16,
+    /// The final offset calculated by freetype/harfbuzz that we will add to the
+    /// cursor when laying out text.
+    pub cursor_advance: (f32, f32),
+    /// This is the offset from the cursor position to place this char
+    pub offset: (f32, f32),
 }
 
 pub struct FontInstance<'a> {
@@ -188,13 +206,11 @@ impl<'a> FontInstance<'a> {
         &mut self,
         thund: &mut Thundr,
         cursor: &mut Cursor,
-        _text: &str,
-        infos: &[hb::GlyphInfo],
-        positions: &[hb::GlyphPosition],
+        text: &[CachedChar],
         glyph_callback: &mut F,
     ) -> bool
     where
-        F: FnMut(&mut Self, &mut Thundr, u16, (f32, f32)),
+        F: FnMut(&mut Self, &mut Thundr, &mut Cursor, &CachedChar),
     {
         let mut ret = false;
         let mut end_index = cursor.c_i + 1;
@@ -205,12 +221,11 @@ impl<'a> FontInstance<'a> {
         let mut line_pos = cursor.c_x;
 
         // First find the last glyph we should include on this line
-        for i in cursor.c_i..infos.len() {
-            let glyph_id = infos[i].codepoint as u16;
-            let (_, _, x_advance, _) = scale_hb_positions(&positions[i]);
+        for i in cursor.c_i..text.len() {
+            let glyph_id = text[i].glyph_id;
 
             // Move the cursor
-            line_pos += x_advance;
+            line_pos += text[i].cursor_advance.0;
             end_index = i + 1;
 
             // check for word breaks
@@ -247,25 +262,13 @@ impl<'a> FontInstance<'a> {
         for i in cursor.c_i..end_of_line {
             // move to the next char
             cursor.c_i += 1;
+            self.ensure_glyph_exists(thund, text[i].glyph_id);
 
-            let glyph_id = infos[i].codepoint as u16;
-            self.ensure_glyph_exists(thund, glyph_id);
-            let glyph = self.f_glyphs[glyph_id as usize]
-                .as_ref()
-                .expect("Bug: No Glyph created for this character");
-
-            let (x_offset, y_offset, x_advance, y_advance) = scale_hb_positions(&positions[i]);
-
-            let offset = (
-                cursor.c_x + x_offset + glyph.g_bitmap_left,
-                cursor.c_y + y_offset - glyph.g_bitmap_top,
-            );
-
-            glyph_callback(self, thund, glyph_id, offset);
+            glyph_callback(self, thund, cursor, &text[i]);
 
             // Move the cursor
-            cursor.c_x += x_advance;
-            cursor.c_y += y_advance;
+            cursor.c_x += text[i].cursor_advance.0;
+            cursor.c_y += text[i].cursor_advance.1;
         }
 
         return ret;
@@ -282,24 +285,22 @@ impl<'a> FontInstance<'a> {
         &mut self,
         thund: &mut Thundr,
         cursor: &mut Cursor,
-        text: &str,
-        infos: &[hb::GlyphInfo],
-        positions: &[hb::GlyphPosition],
+        text: &[CachedChar],
         glyph_callback: &mut F,
     ) where
-        F: FnMut(&mut Self, &mut Thundr, u16, (f32, f32)),
+        F: FnMut(&mut Self, &mut Thundr, &mut Cursor, &CachedChar),
     {
         let line_space = self.get_vertical_line_spacing();
 
         loop {
-            if self.for_one_line(thund, cursor, text, infos, positions, glyph_callback) {
+            if self.for_one_line(thund, cursor, text, glyph_callback) {
                 // Move down to the next line
                 cursor.c_x = cursor.c_min;
                 cursor.c_y += line_space;
             }
 
             // Break out of this text item span if we are at the end of the infos
-            if cursor.c_i >= infos.len() {
+            if cursor.c_i >= text.len() {
                 return;
             }
         }
@@ -328,23 +329,54 @@ impl<'a> FontInstance<'a> {
         &mut self,
         thund: &mut Thundr,
         cursor: &mut Cursor,
-        text: &str,
+        text: &[CachedChar],
         glyph_callback: &mut F,
     ) where
-        F: FnMut(&mut Self, &mut Thundr, u16, (f32, f32)),
+        F: FnMut(&mut Self, &mut Thundr, &mut Cursor, &CachedChar),
     {
-        // Set up our HarfBuzz buffers
-        let buffer = hb::UnicodeBuffer::new().add_str(text);
-
-        // Now the big call to get the shaping information
-        let glyph_buffer = hb::shape(&self.f_hb_font, buffer, Vec::with_capacity(0).as_slice());
-        let infos = glyph_buffer.get_glyph_infos();
-        let positions = glyph_buffer.get_glyph_positions();
         // For each itemized text run we need to reset the index that
         // the cursor is using, since we will be using a different infos
         // array and we may accidentally use an old size
         cursor.c_i = 0;
 
-        self.for_each_text_block(thund, cursor, text, infos, positions, glyph_callback);
+        self.for_each_text_block(thund, cursor, text, glyph_callback)
+    }
+
+    pub fn initialize_cached_chars(
+        &mut self,
+        thund: &mut Thundr,
+        inst: &mut ll::Instance,
+        text: &str,
+    ) -> Vec<CachedChar> {
+        // Set up our HarfBuzz buffers
+        let buffer = hb::UnicodeBuffer::new().add_str(text);
+        let mut ret = Vec::new();
+
+        // Now the big call to get the shaping information
+        let glyph_buffer = hb::shape(&self.f_hb_font, buffer, Vec::with_capacity(0).as_slice());
+        let infos = glyph_buffer.get_glyph_infos();
+        let positions = glyph_buffer.get_glyph_positions();
+
+        for i in 0..infos.len() {
+            let glyph_id = infos[i].codepoint as u16;
+            self.ensure_glyph_exists(thund, glyph_id);
+            let glyph = self.f_glyphs[glyph_id as usize]
+                .as_ref()
+                .expect("Bug: No Glyph created for this character");
+
+            let (x_offset, y_offset, x_advance, y_advance) = scale_hb_positions(&positions[i]);
+
+            ret.push(CachedChar {
+                node: inst.add_entity(),
+                glyph_id: glyph_id,
+                cursor_advance: (x_advance, y_advance),
+                offset: (
+                    x_offset + glyph.g_bitmap_left,
+                    y_offset - glyph.g_bitmap_top,
+                ),
+            });
+        }
+
+        return ret;
     }
 }

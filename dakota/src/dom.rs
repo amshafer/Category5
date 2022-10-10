@@ -1,6 +1,7 @@
+use crate::font::CachedChar;
 use crate::serde::{Deserialize, Serialize};
 use crate::utils::{anyhow, Result};
-use crate::{LayoutId, LayoutSpace};
+use crate::LayoutSpace;
 use lluvia as ll;
 
 use std::cell::RefCell;
@@ -266,14 +267,19 @@ pub struct Element {
     pub layout_id: Option<ll::Entity>,
 }
 
+/// A run of characters of the same format type
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TextRun {
     #[serde(rename = "$value")]
     pub value: String,
     #[serde(skip)]
-    pub nodes: Vec<LayoutId>,
+    pub cache: Option<Vec<CachedChar>>,
 }
 
+/// Represents a contiguous run of similarly formatted text.
+///
+/// An item is something like a paragraph, or a sentence that is bolded. It will
+/// consist of a run of characters that share this format.
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(non_camel_case_types)]
 pub enum TextItem {
@@ -281,6 +287,10 @@ pub enum TextItem {
     b(TextRun),
 }
 
+/// Represnts a collection of text items
+///
+/// Items are assembled here into paragraphs of mixed fonts and formats. This
+/// tracks on big "block" of text.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Text {
     #[serde(rename = "$value")]

@@ -85,24 +85,24 @@ struct ViewportNode {
 /// The elements of the layout tree.
 /// This will be constructed from the Elements in the DOM
 #[derive(Debug)]
-struct LayoutNode {
+pub(crate) struct LayoutNode {
     /// Has this element been assigned a resource?
-    l_resource: Option<String>,
+    pub l_resource: Option<String>,
     /// Is this element a glyph subsurface. If so it is one character
     /// in a block of text. This is really an index into the font.
-    l_glyph_id: Option<u16>,
+    pub l_glyph_id: Option<u16>,
     /// True if the dakota file specified an offset for this el
-    l_offset_specified: bool,
-    l_offset: dom::Offset<f32>,
-    l_size: dom::Size<f32>,
+    pub l_offset_specified: bool,
+    pub l_offset: dom::Offset<f32>,
+    pub l_size: dom::Size<f32>,
     /// Ids of the children that this layout node has
-    l_children: Vec<LayoutId>,
+    pub l_children: Vec<LayoutId>,
     /// Is this node a viewport boundary.
     ///
     /// This signifies that this node's children are larger than the node
     /// itself, and this node is a scrolling region. if this is true the
     /// associated viewport is the handler for this node.
-    l_is_viewport: bool,
+    pub l_is_viewport: bool,
 }
 
 impl Default for LayoutNode {
@@ -480,41 +480,43 @@ impl<'a> Dakota<'a> {
         for item in text.items.iter_mut() {
             match item {
                 dom::TextItem::p(run) | dom::TextItem::b(run) => {
-                    // TODO: we can get the available height from above, pass it to a font instance
-                    // and create layout nodes for all character surfaces.
-                    let mut trim = regex_trim_excess_space(&run.value);
-                    // TODO: Find a better way of adding space around itemized runs
-                    trim.push_str(" ");
-
-                    // resize our layout node id cache for this run
-                    run.nodes
-                        .resize_with(trim.len(), || self.d_layout_ecs_inst.add_entity());
-
                     // We need to take references to everything at once before the closure
                     // so that the borrow checker can see we aren't trying to reference all
                     // of self
                     let font_inst = &mut self.d_font_inst;
                     let layouts = &mut self.d_layout_nodes;
 
-                    let mut index = 0;
+                    if run.cache.is_none() {
+                        // TODO: we can get the available height from above, pass it to a font instance
+                        // and create layout nodes for all character surfaces.
+                        let mut trim = regex_trim_excess_space(&run.value);
+                        // TODO: Find a better way of adding space around itemized runs
+                        trim.push_str(" ");
+
+                        run.cache = Some(font_inst.initialize_cached_chars(
+                            &mut self.d_thund,
+                            &mut self.d_layout_ecs_inst,
+                            &trim,
+                        ));
+                    }
+
                     // Record text locations
                     // We will create a whole bunch of sub-nodes which will be assigned
                     // glyph ids. These ids will later be used to get surfaces for.
                     font_inst.layout_text(
                         &mut self.d_thund,
                         &mut cursor,
-                        &trim,
-                        &mut |inst: &mut FontInstance, thund, glyph_id, offset| {
-                            let size = inst.get_glyph_thundr_size(thund, glyph_id);
-                            assert!(index < run.nodes.len());
-                            let new_id = run.nodes[index].clone();
+                        run.cache.as_ref().unwrap(),
+                        &mut |inst: &mut FontInstance, thund, curse, ch| {
+                            // --- calculate sizes for the character surfaces ---
+                            let size = inst.get_glyph_thundr_size(thund, ch.glyph_id);
 
                             let child_size = LayoutNode::new(
                                 None,
-                                Some(glyph_id),
+                                Some(ch.glyph_id),
                                 dom::Offset {
-                                    x: offset.0,
-                                    y: offset.1,
+                                    x: curse.c_x + ch.offset.0,
+                                    y: curse.c_y + ch.offset.1,
                                 },
                                 dom::Size {
                                     width: size.0,
@@ -531,15 +533,11 @@ impl<'a> Dakota<'a> {
                                 node.l_is_viewport = true;
                             }
 
-                            layouts.take(&new_id);
-                            layouts.set(&new_id, child_size);
-                            node.add_child(new_id);
-
-                            index += 1;
+                            layouts.take(&ch.node);
+                            layouts.set(&ch.node, child_size);
+                            node.add_child(ch.node.clone());
                         },
                     );
-
-                    run.value = trim;
                 }
             }
         }
