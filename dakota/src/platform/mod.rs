@@ -20,13 +20,13 @@ pub trait Platform {
 
     fn set_output_params(&mut self, win: &dom::Window, dims: (u32, u32)) -> Result<()>;
 
-    /// Returns true if we should terminate i.e. the window has been closed.
+    /// Returns true if we should redraw the app
     fn run(
         &mut self,
         evsys: &mut EventSystem,
         dom: &DakotaDOM,
         timeout: Option<u32>,
-    ) -> std::result::Result<(), DakotaError>;
+    ) -> std::result::Result<bool, DakotaError>;
 }
 
 #[cfg(feature = "wayland")]
@@ -116,8 +116,9 @@ impl Platform for SDL2Plat {
         evsys: &mut EventSystem,
         dom: &DakotaDOM,
         timeout: Option<u32>,
-    ) -> std::result::Result<(), DakotaError> {
+    ) -> std::result::Result<bool, DakotaError> {
         let mut is_ood = false;
+        let mut needs_redraw = false;
 
         // Returns Result<bool, DakotaError>, true if we should terminate
         //
@@ -184,6 +185,7 @@ impl Platform for SDL2Plat {
                     // check redraw requested?
                     WindowEvent::Resized { .. } => is_ood = true,
                     WindowEvent::SizeChanged { .. } => is_ood = true,
+                    WindowEvent::Exposed { .. } => needs_redraw = true,
                     _ => {}
                 },
                 _ => {}
@@ -200,7 +202,7 @@ impl Platform for SDL2Plat {
                 // If not, then just return without handling.
                 Some(timeout) => match self.sdl_event_pump.wait_event_timeout(timeout) {
                     Some(event) => event,
-                    None => return Ok(()),
+                    None => return Ok(needs_redraw),
                 },
                 // No timeout was given, so we wait indefinitely
                 None => self.sdl_event_pump.wait_event(),
@@ -216,7 +218,7 @@ impl Platform for SDL2Plat {
 
         match is_ood {
             true => Err(DakotaError::OUT_OF_DATE),
-            false => Ok(()),
+            false => Ok(needs_redraw),
         }
     }
 }

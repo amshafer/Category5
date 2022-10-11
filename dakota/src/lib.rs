@@ -523,6 +523,7 @@ impl<'a> Dakota<'a> {
                                     height: size.1,
                                 },
                             );
+                            log::error!("Character size is {:?}", size);
 
                             // Test if the text exceeds the parent space. If so then we need
                             // to mark this node as a viewport node
@@ -1170,7 +1171,11 @@ impl<'a> Dakota<'a> {
             // First run our window system code. This will check if wayland/X11
             // notified us of a resize, closure, or need to redraw
             match self.d_plat.run(&mut self.d_event_sys, dom, timeout) {
-                Ok(()) => {}
+                Ok(needs_redraw) => {
+                    if needs_redraw {
+                        self.d_needs_redraw = needs_redraw
+                    }
+                }
                 Err(th::ThundrError::OUT_OF_DATE) => {
                     // This is a weird one
                     // So the above OUT_OF_DATEs are returned from thundr, where we
