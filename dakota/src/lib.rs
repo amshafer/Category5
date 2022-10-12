@@ -523,7 +523,7 @@ impl<'a> Dakota<'a> {
                                     height: size.1,
                                 },
                             );
-                            log::error!("Character size is {:?}", size);
+                            log::info!("Character size is {:?}", size);
 
                             // Test if the text exceeds the parent space. If so then we need
                             // to mark this node as a viewport node

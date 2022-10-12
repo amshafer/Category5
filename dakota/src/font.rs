@@ -187,9 +187,7 @@ impl<'a> FontInstance<'a> {
         pos: dom::Offset<f32>,
     ) {
         self.ensure_glyph_exists(thund, id);
-        let glyph = self.f_glyphs[id as usize]
-            .as_ref()
-            .expect("Bug: Glyph not created for this character");
+        let glyph = self.f_glyphs[id as usize].as_ref().unwrap();
         surf.reset_surface(pos.x, pos.y, glyph.g_bitmap_size.0, glyph.g_bitmap_size.1);
         if let Some(image) = glyph.g_image.as_ref() {
             thund.bind_image(surf, image.clone());
