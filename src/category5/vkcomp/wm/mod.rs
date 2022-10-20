@@ -195,7 +195,7 @@ impl WindowManager {
             .enable_traditional_composition()
             .build();
         let mut rend = th::Thundr::new(&info).unwrap();
-        let mut list = th::SurfaceList::new();
+        let mut list = th::SurfaceList::new(&mut rend);
         let cursor = WindowManager::get_default_cursor(&mut rend);
         list.push(cursor.as_ref().unwrap().clone());
 
@@ -609,7 +609,18 @@ impl WindowManager {
         let res = self.wm_thundr.get_resolution();
         let viewport = th::Viewport::new(0.0, 0.0, res.0 as f32, res.1 as f32);
 
-        match self.wm_thundr.draw_frame(&mut self.wm_surfaces, &viewport) {
+        // First push our CPU data to the GPU
+        self.wm_thundr.flush_surface_data(&mut self.wm_surfaces)?;
+
+        // Now kick off drawing
+        match self.wm_thundr.begin_recording() {
+            Ok(_) => Ok(()),
+            Err(th::ThundrError::OUT_OF_DATE) => Ok(()),
+            Err(e) => Err(anyhow!(e)),
+        }?;
+        self.wm_thundr
+            .draw_surfaces(&mut self.wm_surfaces, &viewport)?;
+        match self.wm_thundr.end_recording() {
             Ok(_) => Ok(()),
             Err(th::ThundrError::OUT_OF_DATE) => Ok(()),
             Err(e) => Err(anyhow!(e)),
