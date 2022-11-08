@@ -88,8 +88,8 @@ impl<'a> FontInstance<'a> {
     /// Create a new font
     ///
     /// This is a particular font from a typeface at a
-    /// particular size. Size is specified in pixels.
-    pub fn new(font_path: &str, _dpi: u32, pixel_size: f32) -> Self {
+    /// particular size. Size is specified in points.
+    pub fn new(font_path: &str, dpi: (u32, u32), point_size: f32) -> Self {
         let ft_lib = ft::Library::init().unwrap();
         let mut ft_face: ft::Face = ft_lib.new_face(font_path, 0).unwrap();
         let hb_font = unsafe {
@@ -103,8 +103,8 @@ impl<'a> FontInstance<'a> {
         // default to matching that size, and defaults to 72 dpi
         // TODO: account for display info
         ft_face
-            //.set_char_size(point_size as isize * 64, 0, dpi, 0)
-            .set_pixel_sizes(pixel_size as u32, pixel_size as u32)
+            .set_char_size(point_size as isize * 64, 0, dpi.0, dpi.1)
+            //.set_point_sizes(point_size as u32, point_size as u32)
             .expect("Could not set freetype char size");
 
         Self {

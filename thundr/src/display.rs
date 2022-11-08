@@ -55,7 +55,7 @@ trait Backend {
     /// This is useful because some upper parts of the stack (dakota
     /// text management) need to know this value to calculate the
     /// resolution of things.
-    fn get_dpi(&self) -> f32;
+    fn get_dpi(&self) -> (f32, f32);
 
     /// Helper for getting the drawable size according to the
     /// display. This will basically just be passed to SDL's
@@ -132,7 +132,7 @@ impl Display {
     ///
     /// For VK_KHR_display we will calculate it ourselves, and for
     /// SDL we will ask SDL to tell us it.
-    pub fn get_dpi(&self) -> f32 {
+    pub fn get_dpi(&self) -> (f32, f32) {
         self.d_back.get_dpi()
     }
 
@@ -414,16 +414,11 @@ impl Backend for PhysicalDisplay {
         }
     }
 
-    fn get_dpi(&self) -> f32 {
-        // TODO: verify this
-        // Use pythagorean theorem to get the diagonal pixel length, then
-        // divide by diagonal mm length
-        let diag_pix =
-            f32::sqrt((self.pd_native_res.width.pow(2) + self.pd_native_res.height.pow(2)) as f32);
-        let diag_mm =
-            f32::sqrt((self.pd_phys_dims.width.pow(2) + self.pd_phys_dims.height.pow(2)) as f32);
+    fn get_dpi(&self) -> (f32, f32) {
+        let dpi_h = self.pd_native_res.width / self.pd_phys_dims.width;
+        let dpi_v = self.pd_native_res.height / self.pd_phys_dims.height;
 
-        diag_pix / diag_mm
+        (dpi_h as f32, dpi_v as f32)
     }
 
     fn get_vulkan_drawable_size(&self) -> Option<vk::Extent2D> {
@@ -520,11 +515,14 @@ impl Backend for SDL2DisplayBackend {
         }
     }
 
-    fn get_dpi(&self) -> f32 {
-        self.sdl_video
+    fn get_dpi(&self) -> (f32, f32) {
+        let dpi = self
+            .sdl_video
             .display_dpi(self.sdl_window.display_index().unwrap())
-            .unwrap()
-            .0
+            .unwrap();
+
+        // return hdpi and vdpi
+        (dpi.1, dpi.2)
     }
 
     fn get_vulkan_drawable_size(&self) -> Option<vk::Extent2D> {

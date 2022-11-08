@@ -339,7 +339,7 @@ impl Thundr {
     ///
     /// For VK_KHR_display we will calculate it ourselves, and for
     /// SDL we will ask SDL to tell us it.
-    pub fn get_dpi(&self) -> f32 {
+    pub fn get_dpi(&self) -> (f32, f32) {
         self.th_rend.display.get_dpi()
     }
 
