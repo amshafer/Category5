@@ -228,7 +228,7 @@ impl<'a> Dakota<'a> {
             .open_session(viewport_comp)
             .ok_or(anyhow!("Could not create an ECS session"))?;
 
-        let inst = FontInstance::new("./JetBrainsMono-Regular.ttf", thundr.get_dpi() as u32, 11.0);
+        let inst = FontInstance::new("./JetBrainsMono-Regular.ttf", thundr.get_dpi() as u32, 16.0);
 
         Ok(Self {
             d_plat: plat,
