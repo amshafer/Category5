@@ -607,7 +607,7 @@ impl WindowManager {
     fn begin_frame(&mut self, atmos: &mut Atmosphere) -> Result<()> {
         self.record_draw(atmos);
         let res = self.wm_thundr.get_resolution();
-        let viewport = th::Viewport::new(0.0, 0.0, res.0 as f32, res.1 as f32);
+        let viewport = th::Viewport::new(0, 0, res.0 as i32, res.1 as i32);
 
         // First push our CPU data to the GPU
         self.wm_thundr.flush_surface_data(&mut self.wm_surfaces)?;

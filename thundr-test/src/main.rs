@@ -115,7 +115,7 @@ fn main() {
 
         cursor_surf.set_pos(curpos.0 + dx, curpos.1 + dy);
 
-        let viewport = th::Viewport::new(0.0, 0.0, ws.0 as f32, ws.1 as f32);
+        let viewport = th::Viewport::new(0, 0, ws.0 as i32, ws.1 as i32);
 
         stop.start();
         thund.flush_surface_data(&mut list).unwrap();

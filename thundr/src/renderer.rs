@@ -1836,10 +1836,10 @@ impl Renderer {
     ) -> PushConstants {
         // transform from blender's coordinate system to vulkan
         PushConstants {
-            scroll_x: viewport.scroll_offset.0,
-            scroll_y: viewport.scroll_offset.1,
-            width: viewport.size.0,
-            height: viewport.size.1,
+            scroll_x: viewport.scroll_offset.0 as f32,
+            scroll_y: viewport.scroll_offset.1 as f32,
+            width: viewport.size.0 as f32,
+            height: viewport.size.1 as f32,
             starting_depth: params.starting_depth,
         }
     }

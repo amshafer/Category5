@@ -515,8 +515,8 @@ impl<'a> Dakota<'a> {
                                 None,
                                 Some(ch.glyph_id),
                                 dom::Offset {
-                                    x: curse.c_x + ch.offset.0,
-                                    y: curse.c_y + ch.offset.1,
+                                    x: (curse.c_x + ch.offset.0).round(),
+                                    y: (curse.c_y + ch.offset.1).round(),
                                 },
                                 dom::Size {
                                     width: size.0,
@@ -693,9 +693,13 @@ impl<'a> Dakota<'a> {
                     parent.v_children.push(new_id.clone());
                 }
 
-                let mut th_viewport =
-                    th::Viewport::new(offset.0, offset.1, node.l_size.width, node.l_size.height);
-                th_viewport.set_scroll_region(scroll_region.0, scroll_region.1);
+                let mut th_viewport = th::Viewport::new(
+                    offset.0 as i32,
+                    offset.1 as i32,
+                    node.l_size.width as i32,
+                    node.l_size.height as i32,
+                );
+                th_viewport.set_scroll_region(scroll_region.0 as i32, scroll_region.1 as i32);
 
                 let viewport = ViewportNode {
                     v_root_node: Some(id.clone()),
@@ -1031,7 +1035,7 @@ impl<'a> Dakota<'a> {
         let x_range = viewport.offset.0..(viewport.offset.0 + viewport.size.0);
         let y_range = viewport.offset.1..(viewport.offset.1 + viewport.size.1);
 
-        if x_range.contains(&(x as f32)) && y_range.contains(&(y as f32)) {
+        if x_range.contains(&x) && y_range.contains(&y) {
             return Some(id);
         }
 
@@ -1069,7 +1073,7 @@ impl<'a> Dakota<'a> {
                     // set its scrolling offset to be used for the next draw
                     let mut node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
 
-                    node.v_viewport.set_scroll_amount(*x, *y);
+                    node.v_viewport.set_scroll_amount(*x as i32, *y as i32);
                     self.d_needs_redraw = true;
                 }
                 // Ignore all other events for now
