@@ -111,9 +111,11 @@ impl<'a> FontInstance<'a> {
     }
 
     fn create_glyph(&mut self, thund: &mut Thundr, id: u16) -> Glyph {
-        self.f_ft_face
-            .load_glyph(id as u32, ft::face::LoadFlag::DEFAULT)
-            .unwrap();
+        let flags = match self.f_ft_face.has_color() {
+            true => ft::face::LoadFlag::COLOR,
+            false => ft::face::LoadFlag::DEFAULT,
+        };
+        self.f_ft_face.load_glyph(id as u32, flags).unwrap();
         let glyph = self.f_ft_face.glyph();
         glyph
             .render_glyph(ft::render_mode::RenderMode::Normal)
@@ -127,13 +129,39 @@ impl<'a> FontInstance<'a> {
                 .into_boxed_slice();
             let width = bitmap.width() as usize;
 
-            // So freetype will give us a bitmap, but we need to turn that into a
-            // memory image. This loop goes through each [0,255] value in the bitmap
-            // and creates a pixel in our shm texture. We then upload that to thundr
-            for (i, v) in bitmap.buffer().iter().enumerate() {
-                let x = i % width;
-                let y = i / width;
-                img[y * width + x] = Pixel(255, 255, 255, *v);
+            let pixel_mode = bitmap.pixel_mode().expect("Failed to query pixel mode");
+
+            if pixel_mode == ft::bitmap::PixelMode::Gray {
+                // Handle Gray Pixels
+                // ------------------
+                //
+                // So freetype will give us a bitmap, but we need to turn that into a
+                // memory image. This loop goes through each [0,255] value in the bitmap
+                // and creates a pixel in our shm texture. We then upload that to thundr
+                for (i, v) in bitmap.buffer().iter().enumerate() {
+                    let x = i % width;
+                    let y = i / width;
+                    img[y * width + x] = Pixel(255, 255, 255, *v);
+                }
+            } else if pixel_mode == ft::bitmap::PixelMode::Bgra {
+                // Handle Colored Pixels
+                // ---------------------
+                //
+                // In this mode if the face supported it we will handle subpixel hinting
+                // through colored bitmaps.
+                for i in 0..img.len() {
+                    let pixel_off = i * 4;
+                    let b = bitmap.buffer();
+                    // copy the four bgra components into our memimage
+                    img[i] = Pixel(
+                        b[pixel_off],
+                        b[pixel_off + 1],
+                        b[pixel_off + 2],
+                        b[pixel_off + 3],
+                    );
+                }
+            } else {
+                unimplemented!("Unimplemented freetype pixel mode {:?}", pixel_mode);
             }
 
             let mimg = MemImage::new(img.as_ptr() as *mut u8, 4, width, bitmap.rows() as usize);
