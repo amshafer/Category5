@@ -36,14 +36,18 @@ pub struct Click {
     pub c_state: ButtonState,
 }
 
-// Represents a scrolling motion in one of two directions
+/// Represents a scrolling motion in one of two directions
 #[derive(Debug)]
 pub struct Axis {
-    // horizontal motion
+    /// horizontal motion
     pub a_hori_val: f64,
-    // vertical motion
+    /// vertical motion
     pub a_vert_val: f64,
-    // The axis source.
+    /// The v120 libinput API value, if it was available
+    /// This should only be set on AXIS_SOURCE_WHEEL input devices
+    /// (horizontal, vertical)
+    pub a_v120_val: Option<(f64, f64)>,
+    /// The axis source.
     pub a_source: u32,
 }
 

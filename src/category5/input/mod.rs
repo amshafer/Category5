@@ -239,6 +239,7 @@ impl Input {
         let mut ret = Axis {
             a_hori_val: 0.0,
             a_vert_val: 0.0,
+            a_v120_val: None,
             a_source: 0,
         };
         if ev.has_axis(pointer::Axis::Horizontal) {
@@ -280,6 +281,14 @@ impl Input {
             Some(Event::Pointer(PointerEvent::ScrollWheel(sw))) => {
                 let mut ax = self.get_scroll_event(&sw);
                 ax.a_source = AXIS_SOURCE_WHEEL;
+
+                // Mouse wheels will be handled with the higher resolution
+                // v120 API for discrete scrolling
+                ax.a_v120_val = Some((
+                    sw.scroll_value_v120(pointer::Axis::Horizontal),
+                    sw.scroll_value_v120(pointer::Axis::Vertical),
+                ));
+
                 return Some(InputEvent::axis(ax));
             }
             Some(Event::Pointer(PointerEvent::Button(b))) => {
@@ -310,6 +319,35 @@ impl Input {
         }
     }
 
+    fn send_axis(
+        pointer: &Main<wl_pointer::WlPointer>,
+        axis_type: wl_pointer::Axis,
+        val: f64,
+        val_discrete: Option<f64>,
+    ) {
+        let time = get_current_millis();
+        // deliver the axis events, one for each direction
+        if val != 0.0 {
+            if let Some(discrete) = val_discrete {
+                if pointer.as_ref().version() >= 8 {
+                    pointer.axis_value120(axis_type, discrete as i32);
+                } else if pointer.as_ref().version() >= 5 {
+                    pointer.axis_discrete(axis_type, discrete as i32);
+                }
+            }
+
+            pointer.axis(time, axis_type, val);
+        } else {
+            // If neither axis has a non-zero value, then we should
+            // tell the application that the axis series has stopped. This
+            // is needed for firefox, not having it means scrolling stops working
+            // when you load a page for the first time.
+            if pointer.as_ref().version() >= 5 {
+                pointer.axis_stop(time, axis_type);
+            }
+        }
+    }
+
     /// Perform a scrolling motion.
     ///
     /// Generates the wl_pointer.axis event.
@@ -324,28 +362,19 @@ impl Input {
                 // Get the pointer
                 for si in seat.s_proxies.borrow().iter() {
                     for pointer in si.si_pointers.iter() {
-                        let time = get_current_millis();
-                        // deliver the axis events, one for each direction
-                        if a.a_hori_val != 0.0 {
-                            pointer.axis(time, wl_pointer::Axis::HorizontalScroll, a.a_hori_val);
-                        }
-
-                        if a.a_vert_val != 0.0 {
-                            pointer.axis(time, wl_pointer::Axis::VerticalScroll, a.a_vert_val);
-                        }
-
-                        // If neither axis has a non-zero value, then we should
-                        // tell the application that the axis series has stopped. This
-                        // is needed for firefox, not having it means scrolling stops working
-                        // when you load a page for the first time.
-                        if a.a_vert_val == 0.0
-                            && a.a_hori_val == 0.0
-                            && pointer.as_ref().version() >= 5
-                        {
-                            pointer.axis_stop(time, wl_pointer::Axis::VerticalScroll);
-                            pointer.axis_stop(time, wl_pointer::Axis::HorizontalScroll);
-                        }
-
+                        Self::send_axis(
+                            pointer,
+                            wl_pointer::Axis::VerticalScroll,
+                            a.a_vert_val,
+                            // convert our Option<tuple> to Option<f64>
+                            a.a_v120_val.map(|a| a.1),
+                        );
+                        Self::send_axis(
+                            pointer,
+                            wl_pointer::Axis::HorizontalScroll,
+                            a.a_hori_val,
+                            a.a_v120_val.map(|a| a.0),
+                        );
                         // Send the source of this input event. This will for now be either
                         // finger scrolling on a touchpad or scroll wheel scrolling. Firefox
                         // breaks scrolling without this, I think it wants it to decide if

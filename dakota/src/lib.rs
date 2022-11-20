@@ -230,7 +230,7 @@ impl<'a> Dakota<'a> {
 
         let dpi = thundr.get_dpi();
         let inst = FontInstance::new(
-            "./JetBrainsMono-Regular.ttf",
+            "./SourceCodePro-Regular.ttf",
             (dpi.0 as u32, dpi.1 as u32),
             12.0,
         );
