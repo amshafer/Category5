@@ -13,6 +13,7 @@ use utils::WindowId;
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 pub fn wl_subcompositor_handle_request(req: wlsc::Request, _: Main<wlsc::WlSubcompositor>) {
     match req {
@@ -59,7 +60,7 @@ pub fn wl_subcompositor_handle_request(req: wlsc::Request, _: Main<wlsc::WlSubco
 /// different rendering logic path.
 #[allow(dead_code)]
 pub struct SubSurface {
-    ss_atmos: Rc<RefCell<Atmosphere>>,
+    ss_atmos: Arc<Mutex<Atmosphere>>,
     ss_proxy: Main<wlss::WlSubsurface>,
     ss_surf: Rc<RefCell<Surface>>,
     ss_parent: Rc<RefCell<Surface>>,
@@ -83,21 +84,19 @@ impl SubSurface {
         surf: Rc<RefCell<Surface>>,
         parent: Rc<RefCell<Surface>>,
     ) -> Self {
-        let atmos = surf.borrow_mut().s_atmos.clone();
+        let atmos_mtx = surf.borrow_mut().s_atmos.clone();
+        {
+            let mut atmos = atmos_mtx.lock().unwrap();
+            // We need to mark this surface as the new top child
+            // of the parent
+            atmos.add_new_top_subsurf(parent.borrow().s_id, surf.borrow().s_id);
 
-        // We need to mark this surface as the new top child
-        // of the parent
-        atmos
-            .borrow_mut()
-            .add_new_top_subsurf(parent.borrow().s_id, surf.borrow().s_id);
-
-        // The synchronized state defaults to true
-        atmos
-            .borrow_mut()
-            .set_subsurface_sync(surf.borrow().s_id, Some(true));
+            // The synchronized state defaults to true
+            atmos.set_subsurface_sync(surf.borrow().s_id, Some(true));
+        }
 
         Self {
-            ss_atmos: atmos,
+            ss_atmos: atmos_mtx,
             ss_proxy: sub,
             ss_surf: surf,
             ss_parent: parent,
@@ -135,11 +134,13 @@ impl SubSurface {
             }
             wlss::Request::SetSync => self
                 .ss_atmos
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .set_subsurface_sync(self.ss_surf.borrow().s_id, Some(true)),
             wlss::Request::SetDesync => self
                 .ss_atmos
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .set_subsurface_sync(self.ss_surf.borrow().s_id, Some(false)),
             _ => (),
         };

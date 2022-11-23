@@ -60,8 +60,7 @@ use std::os::unix::io::RawFd;
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 use std::path::Path;
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use std::mem::drop;
 
@@ -131,7 +130,7 @@ impl LibinputInterface for Inkit {
 /// We will also stash our xkb resources here, and
 /// will consult this before sending out keymaps/syms
 pub struct Input {
-    pub i_atmos: Rc<RefCell<Atmosphere>>,
+    pub i_atmos: Arc<Mutex<Atmosphere>>,
     /// libinput context
     libin: Libinput,
     /// xkb goodies
@@ -168,7 +167,7 @@ impl Input {
     /// Create an input subsystem.
     ///
     /// Setup the libinput library from a udev context
-    pub fn new(atmos: Rc<RefCell<Atmosphere>>) -> Input {
+    pub fn new(atmos: Arc<Mutex<Atmosphere>>) -> Input {
         let kit: Inkit = Inkit { _inner: 0 };
         let mut libin = Libinput::new_with_udev(kit);
 
@@ -315,7 +314,7 @@ impl Input {
     ///
     /// Generates the wl_pointer.axis event.
     fn handle_pointer_axis(&mut self, a: &Axis) {
-        let mut atmos = self.i_atmos.borrow_mut();
+        let mut atmos = self.i_atmos.lock().unwrap();
 
         // Find the active window
         if let Some(id) = self.i_pointer_focus {
@@ -373,7 +372,7 @@ impl Input {
     /// of the current pointer changes that need to have an xdg configure event for them.
     /// This method resets the diff and sends the value to xdg.
     pub fn update_from_eventloop(&mut self) {
-        let mut atmos = self.i_atmos.borrow_mut();
+        let mut atmos = self.i_atmos.lock().unwrap();
         if let Some(id) = atmos.get_resizing() {
             if let Some(cell) = atmos.get_surface_from_id(id) {
                 let surf = cell.borrow();
@@ -502,7 +501,7 @@ impl Input {
     /// Also generates wl_pointer.motion events to the surface
     /// in focus if the cursor is on that surface
     fn handle_pointer_move(&mut self, m: &PointerMove) {
-        let mut atmos = self.i_atmos.borrow_mut();
+        let mut atmos = self.i_atmos.lock().unwrap();
         // Update the atmosphere with the new cursor pos
         atmos.add_cursor_pos(m.pm_dx, m.pm_dy);
 
@@ -561,7 +560,7 @@ impl Input {
     /// If a click is over a background window it is brought into focus
     /// clicking on a background titlebar can also start a grab
     fn handle_click_on_window(&mut self, c: &Click) {
-        let mut atmos = self.i_atmos.borrow_mut();
+        let mut atmos = self.i_atmos.lock().unwrap();
         let cursor = atmos.get_cursor_pos();
         // did our click bring a window into focus?
         let mut set_focus = false;
@@ -697,7 +696,7 @@ impl Input {
 
     // TODO: add gesture recognition
     pub fn handle_compositor_shortcut(&mut self, key: &Key) -> bool {
-        let mut atmos = self.i_atmos.borrow_mut();
+        let mut atmos = self.i_atmos.lock().unwrap();
         // TODO: keysyms::KEY_Meta_L doesn't work? should be 125 for left meta
         if key.k_code == 125 && key.k_state == KeyState::Pressed {
             match atmos.get_renderdoc_recording() {
@@ -717,7 +716,7 @@ impl Input {
             return;
         }
 
-        let atmos = self.i_atmos.borrow_mut();
+        let atmos = self.i_atmos.lock().unwrap();
         // Do the xkbcommon keyboard update first, since it needs to happen
         // even if there isn't a window in focus
         // let xkb keep track of the keyboard state

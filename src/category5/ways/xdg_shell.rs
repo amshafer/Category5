@@ -18,6 +18,7 @@ use cat5_utils::{log, region::Rect};
 use std::cell::RefCell;
 use std::clone::Clone;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 /// This is the set of outstanding
 /// configuration changes which have not
@@ -453,7 +454,7 @@ impl Popup {
 /// dispatches
 #[allow(dead_code)]
 pub struct ShellSurface {
-    ss_atmos: Rc<RefCell<Atmosphere>>,
+    ss_atmos: Arc<Mutex<Atmosphere>>,
     // Category5 surface state object
     ss_surface: Rc<RefCell<Surface>>,
     // the wayland proxy
@@ -653,7 +654,7 @@ impl ShellSurface {
     fn set_win_geom(&mut self, x: i32, y: i32, width: i32, height: i32) {
         let atmos_cell = self.ss_atmos.clone();
         let surf_cell = self.ss_surface.clone();
-        let mut atmos = atmos_cell.borrow_mut();
+        let mut atmos = atmos_cell.lock().unwrap();
         let mut surf = surf_cell.borrow_mut();
 
         // we need to update the *window* position
@@ -725,7 +726,7 @@ impl ShellSurface {
             xdg_toplevel::Request::Move { seat, serial } => {
                 // Moving is NOT double buffered so just grab it now
                 let id = self.ss_surface.borrow().s_id;
-                self.ss_atmos.borrow_mut().set_grabbed(Some(id));
+                self.ss_atmos.lock().unwrap().set_grabbed(Some(id));
             }
             xdg_toplevel::Request::Resize {
                 seat,
@@ -734,7 +735,7 @@ impl ShellSurface {
             } => {
                 // Moving is NOT double buffered so just grab it now
                 let id = self.ss_surface.borrow().s_id;
-                self.ss_atmos.borrow_mut().set_resizing(Some(id));
+                self.ss_atmos.lock().unwrap().set_resizing(Some(id));
                 self.ss_cur_tlstate.tl_resizing = true;
             }
             xdg_toplevel::Request::SetMaxSize { width, height } => {
@@ -816,7 +817,7 @@ impl ShellSurface {
     fn popup_done(&mut self) {
         self.ss_surface
             .borrow_mut()
-            .destroy(&mut self.ss_atmos.borrow_mut());
+            .destroy(&mut self.ss_atmos.lock().unwrap());
         self.ss_xdg_popup.as_ref().unwrap().pu_pop.popup_done();
     }
 

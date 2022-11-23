@@ -1039,6 +1039,7 @@ pub mod xdg_surface {
         NotConstructed = 1,
         AlreadyConstructed = 2,
         UnconfiguredBuffer = 3,
+        InvalidSerial = 4,
     }
     impl Error {
         pub fn from_raw(n: u32) -> Option<Error> {
@@ -1046,6 +1047,7 @@ pub mod xdg_surface {
                 1 => Some(Error::NotConstructed),
                 2 => Some(Error::AlreadyConstructed),
                 3 => Some(Error::UnconfiguredBuffer),
+                4 => Some(Error::InvalidSerial),
                 _ => Option::None,
             }
         }
@@ -1075,7 +1077,7 @@ pub mod xdg_surface {
             width: i32,
             height: i32,
         },
-        #[doc = "ack a configure event\n\nWhen a configure event is received, if a client commits the\nsurface in response to the configure event, then the client\nmust make an ack_configure request sometime before the commit\nrequest, passing along the serial of the configure event.\n\nFor instance, for toplevel surfaces the compositor might use this\ninformation to move a surface to the top left only when the client has\ndrawn itself for the maximized or fullscreen state.\n\nIf the client receives multiple configure events before it\ncan respond to one, it only has to ack the last configure event.\n\nA client is not required to commit immediately after sending\nan ack_configure request - it may even ack_configure several times\nbefore its next surface commit.\n\nA client may send multiple ack_configure requests before committing, but\nonly the last request sent before a commit indicates which configure\nevent the client really is responding to."]
+        #[doc = "ack a configure event\n\nWhen a configure event is received, if a client commits the\nsurface in response to the configure event, then the client\nmust make an ack_configure request sometime before the commit\nrequest, passing along the serial of the configure event.\n\nFor instance, for toplevel surfaces the compositor might use this\ninformation to move a surface to the top left only when the client has\ndrawn itself for the maximized or fullscreen state.\n\nIf the client receives multiple configure events before it\ncan respond to one, it only has to ack the last configure event.\n\nA client is not required to commit immediately after sending\nan ack_configure request - it may even ack_configure several times\nbefore its next surface commit.\n\nA client may send multiple ack_configure requests before committing, but\nonly the last request sent before a commit indicates which configure\nevent the client really is responding to.\n\nSending an ack_configure request consumes the serial number sent with\nthe request, as well as serial numbers sent by all configure events\nsent on this xdg_surface prior to the configure event referenced by\nthe committed serial.\n\nIt is an error to issue multiple ack_configure requests referencing a\nserial from the same configure event, or to issue an ack_configure\nrequest referencing a serial from a configure event issued before the\nevent identified by the last ack_configure request for the same\nxdg_surface. Doing so will raise an invalid_serial error."]
         AckConfigure { serial: u32 },
     }
     impl super::MessageGroup for Request {
@@ -1511,11 +1513,14 @@ pub mod xdg_toplevel {
     pub enum Error {
         #[doc = "provided value is not a valid variant of the resize_edge enum"]
         InvalidResizeEdge = 0,
+        #[doc = "invalid parent toplevel"]
+        InvalidParent = 1,
     }
     impl Error {
         pub fn from_raw(n: u32) -> Option<Error> {
             match n {
                 0 => Some(Error::InvalidResizeEdge),
+                1 => Some(Error::InvalidParent),
                 _ => Option::None,
             }
         }
@@ -1629,7 +1634,7 @@ pub mod xdg_toplevel {
     pub enum Request {
         #[doc = "destroy the xdg_toplevel\n\nThis request destroys the role surface and unmaps the surface;\nsee \"Unmapping\" behavior in interface section for details.\n\nThis is a destructor, once received this object cannot be used any longer."]
         Destroy,
-        #[doc = "set the parent of this surface\n\nSet the \"parent\" of this surface. This surface should be stacked\nabove the parent surface and all other ancestor surfaces.\n\nParent surfaces should be set on dialogs, toolboxes, or other\n\"auxiliary\" surfaces, so that the parent is raised when the dialog\nis raised.\n\nSetting a null parent for a child surface unsets its parent. Setting\na null parent for a surface which currently has no parent is a no-op.\n\nOnly mapped surfaces can have child surfaces. Setting a parent which\nis not mapped is equivalent to setting a null parent. If a surface\nbecomes unmapped, its children's parent is set to the parent of\nthe now-unmapped surface. If the now-unmapped surface has no parent,\nits children's parent is unset. If the now-unmapped surface becomes\nmapped again, its parent-child relationship is not restored."]
+        #[doc = "set the parent of this surface\n\nSet the \"parent\" of this surface. This surface should be stacked\nabove the parent surface and all other ancestor surfaces.\n\nParent surfaces should be set on dialogs, toolboxes, or other\n\"auxiliary\" surfaces, so that the parent is raised when the dialog\nis raised.\n\nSetting a null parent for a child surface unsets its parent. Setting\na null parent for a surface which currently has no parent is a no-op.\n\nOnly mapped surfaces can have child surfaces. Setting a parent which\nis not mapped is equivalent to setting a null parent. If a surface\nbecomes unmapped, its children's parent is set to the parent of\nthe now-unmapped surface. If the now-unmapped surface has no parent,\nits children's parent is unset. If the now-unmapped surface becomes\nmapped again, its parent-child relationship is not restored.\n\nThe parent toplevel must not be one of the child toplevel's\ndescendants, and the parent must be different from the child toplevel,\notherwise the invalid_parent protocol error is raised."]
         SetParent {
             parent: Option<super::xdg_toplevel::XdgToplevel>,
         },

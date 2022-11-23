@@ -100,7 +100,7 @@ impl SeatInstance {
 
         // If we are in focus, then we should go ahead and generate
         // the enter event
-        let atmos = input.i_atmos.borrow();
+        let atmos = input.i_atmos.lock().unwrap();
         if let Some(focus) = atmos.get_client_in_focus() {
             if parent.s_id == focus {
                 if let Some(sid) = atmos.get_win_focus() {
@@ -127,7 +127,7 @@ impl SeatInstance {
         // If we are in focus, then we should go ahead and generate
         // the enter event
         let input = parent.s_input.borrow();
-        let atmos = input.i_atmos.borrow();
+        let atmos = input.i_atmos.lock().unwrap();
         if let Some(sid) = atmos.get_win_focus() {
             if let Some(pointer_focus) = input.i_pointer_focus {
                 // check if the surface is the input sys's focus

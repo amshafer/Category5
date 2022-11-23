@@ -7,8 +7,7 @@ use ws::{Client, Filter};
 use crate::category5::atmosphere::Atmosphere;
 use utils::{log, ClientId};
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 /// Helper method for registering the property id of a client
 ///
@@ -17,10 +16,10 @@ use std::rc::Rc;
 /// we can register the new client with the atmos
 ///
 /// Returns the id created
-pub fn register_new_client(atmos_cell: Rc<RefCell<Atmosphere>>, client: Client) -> ClientId {
+pub fn register_new_client(atmos_cell: Arc<Mutex<Atmosphere>>, client: Client) -> ClientId {
     let id;
     {
-        let mut atmos = atmos_cell.borrow_mut();
+        let mut atmos = atmos_cell.lock().unwrap();
         // make a new client id
         id = atmos.mint_client_id();
 
@@ -33,7 +32,7 @@ pub fn register_new_client(atmos_cell: Rc<RefCell<Atmosphere>>, client: Client) 
     // to free the reserved space
     // TODO add destructor
     client.add_destructor(Filter::new(move |_, _, _| {
-        atmos_cell.borrow_mut().free_client_id(id);
+        atmos_cell.lock().unwrap().free_client_id(id);
     }));
 
     return id;
@@ -45,7 +44,7 @@ pub fn register_new_client(atmos_cell: Rc<RefCell<Atmosphere>>, client: Client) 
 /// we wrap it here so it can change easily
 ///
 /// If the client does not currently have an id, register it
-pub fn get_id_from_client(atmos: Rc<RefCell<Atmosphere>>, client: Client) -> ClientId {
+pub fn get_id_from_client(atmos: Arc<Mutex<Atmosphere>>, client: Client) -> ClientId {
     match client.data_map().get::<ClientId>() {
         Some(id) => *id,
         // The client hasn't been assigned an id

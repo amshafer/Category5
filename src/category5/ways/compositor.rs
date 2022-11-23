@@ -35,6 +35,7 @@ use cat5_utils::{fdwatch::FdWatch, log, timing::*};
 use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// A wayland compositor wrapper
@@ -48,7 +49,7 @@ use std::time::Duration;
 /// for sake of parallelism.
 #[allow(dead_code)]
 pub struct Compositor {
-    c_atmos: Rc<RefCell<Atmosphere>>,
+    c_atmos: Arc<Mutex<Atmosphere>>,
 }
 
 /// The event manager
@@ -59,7 +60,7 @@ pub struct Compositor {
 /// level object in em_display
 #[allow(dead_code)]
 pub struct EventManager {
-    em_atmos: Rc<RefCell<Atmosphere>>,
+    em_atmos: Arc<Mutex<Atmosphere>>,
     em_wm: WindowManager,
     /// The wayland display object, this is the core
     /// global singleton for libwayland
@@ -89,7 +90,7 @@ impl Compositor {
                 .client()
                 .expect("client for this surface seems to have disappeared"),
         );
-        let id = self.c_atmos.borrow_mut().mint_window_id(client);
+        let id = self.c_atmos.lock().unwrap().mint_window_id(client);
         log::debug!("Creating new surface {:?}", id);
 
         // Create a reference counted object
@@ -101,7 +102,7 @@ impl Compositor {
         )));
         // Add the new surface to the atmosphere
         {
-            let mut atmos = self.c_atmos.borrow_mut();
+            let mut atmos = self.c_atmos.lock().unwrap();
             atmos.add_surface(id, new_surface.clone());
             // get the Resource<WlSurface>, turn it into a &WlSurface
             atmos.set_wl_surface(id, surf.as_ref().clone().into());
@@ -127,7 +128,7 @@ impl Compositor {
         let destroy_atmos = self.c_atmos.clone();
         surf.assign_destructor(Filter::new(move |_: Resource<wlsi::WlSurface>, _, _| {
             let mut nsurf = ns_clone.borrow_mut();
-            let mut atmos = destroy_atmos.borrow_mut();
+            let mut atmos = destroy_atmos.lock().unwrap();
             nsurf.destroy(&mut atmos);
         }));
     }
@@ -150,7 +151,7 @@ impl EventManager {
             .expect("Failed to add a socket to the wayland server");
 
         // Do some teraforming and generate an atmosphere
-        let atmos = Rc::new(RefCell::new(Atmosphere::new()));
+        let atmos = Arc::new(Mutex::new(Atmosphere::new()));
 
         // Later moved into the closure
         let comp_cell = Rc::new(RefCell::new(Compositor {
@@ -159,7 +160,7 @@ impl EventManager {
 
         let mut evman = Box::new(EventManager {
             em_atmos: atmos.clone(),
-            em_wm: WindowManager::new(&mut atmos.clone().borrow_mut()),
+            em_wm: WindowManager::new(&mut atmos.clone().lock().unwrap()),
             em_display: display,
             em_input: Rc::new(RefCell::new(Input::new(atmos))),
             em_pointer_dx: 0.0,
@@ -327,7 +328,7 @@ impl EventManager {
     fn create_wl_seat_global(&mut self) {
         // for some reason we need to do two clones to make the lifetime
         // inference happy with the closures below
-        let atmos_rc = self.em_atmos.clone();
+        let atmos_mtx = self.em_atmos.clone();
         let input_sys = self.em_input.clone();
 
         self.em_display.create_global::<wl_seat::WlSeat, _>(
@@ -336,11 +337,11 @@ impl EventManager {
                 // as_ref turns the Main into a Resource
                 let client = res.as_ref().client().unwrap();
                 // get the id representing this client in the atmos
-                let id = utils::get_id_from_client(atmos_rc.clone(), client);
+                let id = utils::get_id_from_client(atmos_mtx.clone(), client);
 
                 // check if a seat exists and add this to it
                 // add a new seat to this client
-                let mut atmos = atmos_rc.borrow_mut();
+                let mut atmos = atmos_mtx.lock().unwrap();
                 let seat = match atmos.get_seat_from_client_id(id) {
                     Some(seat) => {
                         // Re-use the existing seat global
@@ -460,7 +461,7 @@ impl EventManager {
                 // If we can't recieve it, vkcomp isn't ready, and we should
                 // continue processing wayland updates so the system
                 // doesn't lag
-                let mut atmos = self.em_atmos.borrow_mut();
+                let mut atmos = self.em_atmos.lock().unwrap();
                 if atmos.is_changed() {
                     atmos.clear_changed();
                     needs_render = true;

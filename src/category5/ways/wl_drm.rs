@@ -8,8 +8,7 @@
 extern crate wayland_server as ws;
 
 use crate::category5::atmosphere::Atmosphere;
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use utils::log;
 use ws::Main;
 
@@ -83,10 +82,10 @@ fn get_drm_dev_name(atmos: &Atmosphere) -> String {
     format!("/dev/dri/renderD{}", drm_number_in_name)
 }
 
-pub fn wl_drm_setup(atmos_rc: Rc<RefCell<Atmosphere>>, wl_drm: Main<wl_drm::WlDrm>) {
+pub fn wl_drm_setup(atmos_mtx: Arc<Mutex<Atmosphere>>, wl_drm: Main<wl_drm::WlDrm>) {
     println!("LIBC DEV_T = {:?}", std::any::type_name::<libc::dev_t>());
     // Send the name of the DRM device reported by vkcomp
-    let atmos = atmos_rc.borrow();
+    let atmos = atmos_mtx.lock().unwrap();
     let drm_name = get_drm_dev_name(&atmos);
     log::error!("DRM device returned by wl_drm is {}", drm_name);
 

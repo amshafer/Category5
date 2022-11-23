@@ -96,7 +96,7 @@ impl ShellSurface {
         println!("Setting surface {:?} to toplevel", surf.s_id);
 
         {
-            let mut atmos = surf.s_atmos.borrow_mut();
+            let mut atmos = surf.s_atmos.lock().unwrap();
             atmos.set_toplevel(surf.s_id, true);
             // This places the surface at the front of the skiplist, aka
             // makes it in focus

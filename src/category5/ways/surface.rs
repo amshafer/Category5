@@ -21,6 +21,7 @@ use utils::{log, Dmabuf, WindowId};
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 /// Private structure for a wayland surface
 ///
@@ -30,7 +31,7 @@ use std::rc::Rc;
 /// will be displayed to the client when it is committed.
 #[allow(dead_code)]
 pub struct Surface {
-    pub s_atmos: Rc<RefCell<Atmosphere>>,
+    pub s_atmos: Arc<Mutex<Atmosphere>>,
     pub s_surf: Main<wl_surface::WlSurface>,
     pub s_id: WindowId, // The id of the window in the renderer
     /// The currently attached buffer. Will be displayed on commit
@@ -65,7 +66,7 @@ impl Surface {
     // create a new visible surface at coordinates (x,y)
     // from the specified wayland resource
     pub fn new(
-        atmos: Rc<RefCell<Atmosphere>>,
+        atmos: Arc<Mutex<Atmosphere>>,
         surf: Main<wl_surface::WlSurface>,
         id: WindowId,
     ) -> Surface {
@@ -111,7 +112,7 @@ impl Surface {
         // we need to clone the atmosphere to make the borrow checker happy. If we don't,
         // then self will be borrowed both here and during the method calls below
         let atmos_cell = self.s_atmos.clone();
-        let mut atmos = atmos_cell.borrow_mut();
+        let mut atmos = atmos_cell.lock().unwrap();
 
         match req {
             wlsi::Request::Attach { buffer, x, y } => self.attach(surf, buffer, x, y),
@@ -363,8 +364,8 @@ impl Surface {
 
 impl Drop for Surface {
     fn drop(&mut self) {
-        let atmos_rc = self.s_atmos.clone();
-        let mut atmos = atmos_rc.borrow_mut();
+        let atmos_mtx = self.s_atmos.clone();
+        let mut atmos = atmos_mtx.lock().unwrap();
         self.destroy(&mut atmos);
     }
 }
