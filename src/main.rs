@@ -16,7 +16,6 @@
 #![allow(non_camel_case_types)]
 #[macro_use]
 extern crate atmos_gen;
-#[macro_use]
 extern crate bitflags;
 
 extern crate lazy_static;

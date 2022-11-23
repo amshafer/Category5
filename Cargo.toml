@@ -8,8 +8,13 @@ edition = "2018"
 
 [dependencies]
 thundr={path="thundr"}
-wayland-server={version="0.29.5", features=["use_system_lib"]}
-wayland-commons="0.29.5"
+# As of wayland-rs v0.30 we specify the system library feature
+# for the wayland-backend crate and all others will inherit it
+wayland-backend={path="../wayland-rs/wayland-backend/", features=["server_system", "dlopen"]}
+wayland-server={path="../wayland-rs/wayland-server/"}
+wayland-scanner={path="../wayland-rs/wayland-scanner/"}
+wayland-protocols={path="../wayland-rs/wayland-protocols/"}
+wayland-sys={path="../wayland-rs/wayland-sys/"}
 input={version="0.7.1", features=["gen"]}
 udev="0.6"
 libc="0.2"
@@ -22,9 +27,6 @@ utils={path="utils"}
 lazy_static="1.4"
 
 renderdoc={version="0.10", optional=true}
-
-[build-dependencies]
-wayland-scanner="0.29.5"
 
 [features]
 aftermath = ["thundr/aftermath"]
