@@ -52,13 +52,63 @@
 // Austin Shafer - 2022
 
 use std::any::Any;
-use std::cell::{Ref, RefCell, RefMut};
 use std::fmt;
 use std::marker::PhantomData;
-use std::rc::Rc;
+use std::ops::{Deref, DerefMut};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 #[cfg(test)]
 mod tests;
+
+enum TableRefEntityType {
+    /// A reference tracked entity
+    Entity(Entity),
+    /// A offset into the table. This is only to be used for the iterator
+    /// implementations.
+    Offset(usize),
+}
+
+pub struct TableRef<'a, T: 'static> {
+    /// The lock guard returned from the table
+    tr_guard: RwLockReadGuard<'a, TableInternal<T>>,
+    /// The entity we are operating on
+    tr_entity: TableRefEntityType,
+}
+
+impl<'a, T: 'static> Deref for TableRef<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.tr_guard.t_entity[match &self.tr_entity {
+            TableRefEntityType::Entity(entity) => entity.ecs_id,
+            TableRefEntityType::Offset(off) => *off,
+        }]
+        .as_ref()
+        .unwrap()
+    }
+}
+
+pub struct TableRefMut<'a, T: 'static> {
+    /// The lock guard returned from the table
+    tr_guard: RwLockWriteGuard<'a, TableInternal<T>>,
+    /// The entity we are operating on
+    tr_entity: Entity,
+}
+
+impl<'a, T: 'static> Deref for TableRefMut<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.tr_guard.t_entity[self.tr_entity.ecs_id]
+            .as_ref()
+            .unwrap()
+    }
+}
+impl<'a, T: 'static> DerefMut for TableRefMut<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.tr_guard.t_entity[self.tr_entity.ecs_id]
+            .as_mut()
+            .unwrap()
+    }
+}
 
 pub struct EntityInternal {
     ecs_inst: Instance,
@@ -101,7 +151,7 @@ impl Drop for EntityInternal {
 /// // from multiple lifetimes.
 /// let id_dup = id.clone();
 /// ```
-pub type Entity = Rc<EntityInternal>;
+pub type Entity = Arc<EntityInternal>;
 
 #[derive(Copy, Clone)]
 pub struct Component<T: 'static> {
@@ -135,7 +185,7 @@ pub struct TableInternal<T: 'static> {
 
 #[derive(Debug)]
 pub struct Table<T: 'static> {
-    t_internal: Rc<RefCell<TableInternal<T>>>,
+    t_internal: Arc<RwLock<TableInternal<T>>>,
 }
 
 impl<T: 'static> Clone for Table<T> {
@@ -150,7 +200,7 @@ impl<T: 'static> ComponentTable for Table<T> {
     fn clear_entity(&self, id: usize) {
         let _val = {
             // Take the data and don't drop it until we have dropped our RefMut
-            let mut internal = self.t_internal.borrow_mut();
+            let mut internal = self.t_internal.write().unwrap();
             if id >= internal.t_entity.len() {
                 return;
             }
@@ -170,7 +220,7 @@ impl<T: 'static> ComponentTable for Table<T> {
 impl<T: 'static> Table<T> {
     pub fn new() -> Self {
         Self {
-            t_internal: Rc::new(RefCell::new(TableInternal {
+            t_internal: Arc::new(RwLock::new(TableInternal {
                 t_entity: Vec::new(),
             })),
         }
@@ -180,16 +230,16 @@ impl<T: 'static> Table<T> {
     ///
     /// This is the same as the parent ECSInstance's num_entities.
     pub fn num_entities(&self) -> usize {
-        self.t_internal.borrow().t_entity.len()
+        self.t_internal.read().unwrap().t_entity.len()
     }
 
     fn has_space_for_id(&self, entity: &Entity) -> bool {
-        entity.ecs_id < self.t_internal.borrow().t_entity.len()
+        entity.ecs_id < self.t_internal.read().unwrap().t_entity.len()
     }
 
     /// Helper to grow our internal array to fit entity
     fn ensure_space_for_id(&mut self, entity: &Entity) {
-        let mut internal = self.t_internal.borrow_mut();
+        let mut internal = self.t_internal.write().unwrap();
 
         // First handle any resizing that needs to occur
         if entity.ecs_id >= internal.t_entity.len() {
@@ -231,8 +281,8 @@ pub struct ComponentList {
 ///   * The table releases its internal borrows, so all mutable borrows have ended
 ///   * The data is dropped
 pub struct Instance {
-    i_internal: Rc<RefCell<InstanceInternal>>,
-    i_component_set: Rc<RefCell<ComponentList>>,
+    i_internal: Arc<RwLock<InstanceInternal>>,
+    i_component_set: Arc<RwLock<ComponentList>>,
 }
 
 impl Clone for Instance {
@@ -248,11 +298,11 @@ impl Instance {
     /// Create a new global Entity Component System
     pub fn new() -> Self {
         Self {
-            i_internal: Rc::new(RefCell::new(InstanceInternal {
+            i_internal: Arc::new(RwLock::new(InstanceInternal {
                 i_valid_ids: Vec::new(),
                 i_total_num_ids: 0,
             })),
-            i_component_set: Rc::new(RefCell::new(ComponentList {
+            i_component_set: Arc::new(RwLock::new(ComponentList {
                 cl_components: Vec::new(),
             })),
         }
@@ -262,14 +312,14 @@ impl Instance {
     ///
     /// This returns the number of "live" ids
     pub fn num_entities(&self) -> usize {
-        self.i_internal.borrow().i_total_num_ids
+        self.i_internal.read().unwrap().i_total_num_ids
     }
 
     /// Get the largest entity value
     ///
     /// This is essentially the capacity of the entity array
     pub fn capacity(&self) -> usize {
-        self.i_internal.borrow().i_valid_ids.len()
+        self.i_internal.read().unwrap().i_valid_ids.len()
     }
 
     /// Allocate a new component table
@@ -278,7 +328,7 @@ impl Instance {
     /// of data stored for each component. Components have a generic data type for the
     /// data they store, and Entities are not required to have a populated value.
     pub fn add_component<T: 'static>(&mut self) -> Component<T> {
-        let mut cl = self.i_component_set.borrow_mut();
+        let mut cl = self.i_component_set.write().unwrap();
 
         let component_id = cl.cl_components.len();
         let new_table: Table<T> = Table::new();
@@ -300,7 +350,7 @@ impl Instance {
     /// structure. There is non-zero time spent to find an old, free id value to recycle.
     pub fn add_entity(&mut self) -> Entity {
         let new_self = self.clone();
-        let mut internal = self.i_internal.borrow_mut();
+        let mut internal = self.i_internal.write().unwrap();
 
         // Find the first free id that is not in use or make one
         let first_valid_id = {
@@ -330,7 +380,7 @@ impl Instance {
         internal.i_valid_ids[first_valid_id] = true;
         internal.i_total_num_ids += 1;
 
-        return Rc::new(EntityInternal {
+        return Arc::new(EntityInternal {
             ecs_id: first_valid_id,
             ecs_inst: new_self,
         });
@@ -340,7 +390,7 @@ impl Instance {
     fn invalidate_id(&mut self, id: usize) {
         // First remove this id from the valid list
         {
-            let mut internal = self.i_internal.borrow_mut();
+            let mut internal = self.i_internal.write().unwrap();
             assert!(internal.i_valid_ids[id]);
             internal.i_valid_ids[id] = false;
             internal.i_total_num_ids -= 1;
@@ -349,7 +399,7 @@ impl Instance {
         // Now that we have dropped our ref for the id tracking we can
         // tell each table to free the entity
         {
-            let cl = self.i_component_set.borrow();
+            let cl = self.i_component_set.read().unwrap();
             for table in cl.cl_components.iter() {
                 table.clear_entity(id);
             }
@@ -357,13 +407,13 @@ impl Instance {
     }
 
     fn id_is_valid(&self, id: &Entity) -> bool {
-        let internal = self.i_internal.borrow();
+        let internal = self.i_internal.read().unwrap();
 
         id.ecs_id < internal.i_valid_ids.len() && internal.i_valid_ids[id.ecs_id]
     }
 
     fn component_is_valid<T: 'static>(&self, component: &Component<T>) -> bool {
-        let cl = self.i_component_set.borrow();
+        let cl = self.i_component_set.read().unwrap();
 
         component.c_index < cl.cl_components.len()
     }
@@ -381,7 +431,7 @@ impl Instance {
             return None;
         }
 
-        let cl = self.i_component_set.borrow();
+        let cl = self.i_component_set.read().unwrap();
 
         // Ensure that this component table is of the right type
         if let Some(table) = cl.cl_components[component.c_index]
@@ -443,44 +493,46 @@ impl<T: 'static> Session<T> {
     /// while this ref is in scope.
     ///
     /// If this entity has not had a value set, None will be returned.
-    pub fn get(&self, entity: &Entity) -> Option<Ref<T>> {
+    pub fn get(&self, entity: &Entity) -> Option<TableRef<T>> {
         if !self.s_inst.id_is_valid(entity) || !self.s_table.has_space_for_id(entity) {
             return None;
         }
 
-        let table_internal = self.s_table.t_internal.borrow();
+        let table_internal = self.s_table.t_internal.read().unwrap();
         if table_internal.t_entity[entity.ecs_id].is_none() {
             return None;
         }
 
-        return Some(Ref::map(table_internal, |i| {
-            i.t_entity[entity.ecs_id].as_ref().unwrap()
-        }));
+        return Some(TableRef {
+            tr_guard: table_internal,
+            tr_entity: TableRefEntityType::Entity(entity.clone()),
+        });
     }
 
     /// Get a mutable reference to data corresponding to the (component, entity) pair
     ///
     /// This is the same as the `get` method, but for mutable references. Keep in
-    /// mind that only one RefMut from the Component corresponding to this
+    /// mind that only one TableRefMut from the Component corresponding to this
     /// Session can be active, and trying to get a second mutable reference will
     /// panic.
     ///
     /// The `set` method must be called before this can be used, or else the
     /// value of the entity for this property cannot be determined and None
     /// will be returned.
-    pub fn get_mut(&mut self, entity: &Entity) -> Option<RefMut<T>> {
+    pub fn get_mut(&mut self, entity: &Entity) -> Option<TableRefMut<T>> {
         if !self.s_inst.id_is_valid(entity) || !self.s_table.has_space_for_id(entity) {
             return None;
         }
 
-        let table_internal = self.s_table.t_internal.borrow_mut();
+        let table_internal = self.s_table.t_internal.write().unwrap();
         if table_internal.t_entity[entity.ecs_id].is_none() {
             return None;
         }
 
-        return Some(RefMut::map(table_internal, |i| {
-            i.t_entity[entity.ecs_id].as_mut().unwrap()
-        }));
+        return Some(TableRefMut {
+            tr_guard: table_internal,
+            tr_entity: entity.clone(),
+        });
     }
 
     /// Set the value of an entity for the component corresponding to this session
@@ -494,7 +546,7 @@ impl<T: 'static> Session<T> {
         // First grow our internal storage if necessary
         self.s_table.ensure_space_for_id(entity);
 
-        let mut table_internal = self.s_table.t_internal.borrow_mut();
+        let mut table_internal = self.s_table.t_internal.write().unwrap();
         table_internal.t_entity[entity.ecs_id] = Some(val);
     }
 
@@ -511,7 +563,7 @@ impl<T: 'static> Session<T> {
         // First grow our internal storage if necessary
         self.s_table.ensure_space_for_id(entity);
 
-        let mut table_internal = self.s_table.t_internal.borrow_mut();
+        let mut table_internal = self.s_table.t_internal.write().unwrap();
         table_internal.t_entity[entity.ecs_id].take()
     }
 
@@ -535,10 +587,10 @@ pub struct SessionIterator<'a, T: 'static> {
 }
 
 impl<'a, T: 'static> Iterator for SessionIterator<'a, T> {
-    type Item = Option<Ref<'a, T>>;
+    type Item = Option<TableRef<'a, T>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let table_internal = self.si_session.s_table.t_internal.borrow();
+        let table_internal = self.si_session.s_table.t_internal.read().unwrap();
         let cur = self.si_cur;
         self.si_cur += 1;
 
@@ -549,7 +601,10 @@ impl<'a, T: 'static> Iterator for SessionIterator<'a, T> {
             return Some(None);
         }
 
-        let ret = Ref::map(table_internal, |t| t.t_entity[cur].as_ref().unwrap());
+        let ret = TableRef {
+            tr_guard: table_internal,
+            tr_entity: TableRefEntityType::Offset(cur),
+        };
 
         return Some(Some(ret));
     }

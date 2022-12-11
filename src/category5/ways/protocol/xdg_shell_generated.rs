@@ -31,6 +31,8 @@ pub mod xdg_wm_base {
         InvalidSurfaceState = 4,
         #[doc = "the client provided an invalid positioner"]
         InvalidPositioner = 5,
+        #[doc = "the client didn’t respond to a ping event in time"]
+        Unresponsive = 6,
     }
     impl Error {
         pub fn from_raw(n: u32) -> Option<Error> {
@@ -41,6 +43,7 @@ pub mod xdg_wm_base {
                 3 => Some(Error::InvalidPopupParent),
                 4 => Some(Error::InvalidSurfaceState),
                 5 => Some(Error::InvalidPositioner),
+                6 => Some(Error::Unresponsive),
                 _ => Option::None,
             }
         }
@@ -51,18 +54,18 @@ pub mod xdg_wm_base {
     #[derive(Debug)]
     #[non_exhaustive]
     pub enum Request {
-        #[doc = "destroy xdg_wm_base\n\nDestroy this xdg_wm_base object.\n\nDestroying a bound xdg_wm_base object while there are surfaces\nstill alive created by this xdg_wm_base object instance is illegal\nand will result in a protocol error.\n\nThis is a destructor, once received this object cannot be used any longer."]
+        #[doc = "destroy xdg_wm_base\n\nDestroy this xdg_wm_base object.\n\nDestroying a bound xdg_wm_base object while there are surfaces\nstill alive created by this xdg_wm_base object instance is illegal\nand will result in a defunct_surfaces error.\n\nThis is a destructor, once received this object cannot be used any longer."]
         Destroy,
         #[doc = "create a positioner object\n\nCreate a positioner object. A positioner object is used to position\nsurfaces relative to some parent surface. See the interface description\nand xdg_surface.get_popup for details."]
         CreatePositioner {
             id: Main<super::xdg_positioner::XdgPositioner>,
         },
-        #[doc = "create a shell surface from a surface\n\nThis creates an xdg_surface for the given surface. While xdg_surface\nitself is not a role, the corresponding surface may only be assigned\na role extending xdg_surface, such as xdg_toplevel or xdg_popup. It is\nillegal to create an xdg_surface for a wl_surface which already has an\nassigned role and this will result in a protocol error.\n\nThis creates an xdg_surface for the given surface. An xdg_surface is\nused as basis to define a role to a given surface, such as xdg_toplevel\nor xdg_popup. It also manages functionality shared between xdg_surface\nbased surface roles.\n\nSee the documentation of xdg_surface for more details about what an\nxdg_surface is and how it is used."]
+        #[doc = "create a shell surface from a surface\n\nThis creates an xdg_surface for the given surface. While xdg_surface\nitself is not a role, the corresponding surface may only be assigned\na role extending xdg_surface, such as xdg_toplevel or xdg_popup. It is\nillegal to create an xdg_surface for a wl_surface which already has an\nassigned role and this will result in a role error.\n\nThis creates an xdg_surface for the given surface. An xdg_surface is\nused as basis to define a role to a given surface, such as xdg_toplevel\nor xdg_popup. It also manages functionality shared between xdg_surface\nbased surface roles.\n\nSee the documentation of xdg_surface for more details about what an\nxdg_surface is and how it is used."]
         GetXdgSurface {
             id: Main<super::xdg_surface::XdgSurface>,
             surface: super::wl_surface::WlSurface,
         },
-        #[doc = "respond to a ping event\n\nA client must respond to a ping event with a pong request or\nthe client may be deemed unresponsive. See xdg_wm_base.ping."]
+        #[doc = "respond to a ping event\n\nA client must respond to a ping event with a pong request or\nthe client may be deemed unresponsive. See xdg_wm_base.ping\nand xdg_wm_base.error.unresponsive."]
         Pong { serial: u32 },
     }
     impl super::MessageGroup for Request {
@@ -234,7 +237,7 @@ pub mod xdg_wm_base {
     #[derive(Debug)]
     #[non_exhaustive]
     pub enum Event {
-        #[doc = "check if the client is alive\n\nThe ping event asks the client if it's still alive. Pass the\nserial specified in the event back to the compositor by sending\na \"pong\" request back with the specified serial. See xdg_wm_base.pong.\n\nCompositors can use this to determine if the client is still\nalive. It's unspecified what will happen if the client doesn't\nrespond to the ping request, or in what timeframe. Clients should\ntry to respond in a reasonable amount of time.\n\nA compositor is free to ping in any way it wants, but a client must\nalways respond to any xdg_wm_base object it created."]
+        #[doc = "check if the client is alive\n\nThe ping event asks the client if it's still alive. Pass the\nserial specified in the event back to the compositor by sending\na \"pong\" request back with the specified serial. See xdg_wm_base.pong.\n\nCompositors can use this to determine if the client is still\nalive. It's unspecified what will happen if the client doesn't\nrespond to the ping request, or in what timeframe. Clients should\ntry to respond in a reasonable amount of time. The “unresponsive”\nerror is provided for compositors that wish to disconnect unresponsive\nclients.\n\nA compositor is free to ping in any way it wants, but a client must\nalways respond to any xdg_wm_base object it created."]
         Ping { serial: u32 },
     }
     impl super::MessageGroup for Event {
@@ -336,7 +339,7 @@ pub mod xdg_wm_base {
         }
     }
     impl XdgWmBase {
-        #[doc = "check if the client is alive\n\nThe ping event asks the client if it's still alive. Pass the\nserial specified in the event back to the compositor by sending\na \"pong\" request back with the specified serial. See xdg_wm_base.pong.\n\nCompositors can use this to determine if the client is still\nalive. It's unspecified what will happen if the client doesn't\nrespond to the ping request, or in what timeframe. Clients should\ntry to respond in a reasonable amount of time.\n\nA compositor is free to ping in any way it wants, but a client must\nalways respond to any xdg_wm_base object it created."]
+        #[doc = "check if the client is alive\n\nThe ping event asks the client if it's still alive. Pass the\nserial specified in the event back to the compositor by sending\na \"pong\" request back with the specified serial. See xdg_wm_base.pong.\n\nCompositors can use this to determine if the client is still\nalive. It's unspecified what will happen if the client doesn't\nrespond to the ping request, or in what timeframe. Clients should\ntry to respond in a reasonable amount of time. The “unresponsive”\nerror is provided for compositors that wish to disconnect unresponsive\nclients.\n\nA compositor is free to ping in any way it wants, but a client must\nalways respond to any xdg_wm_base object it created."]
         pub fn ping(&self, serial: u32) -> () {
             let msg = Event::Ping { serial: serial };
             self.0.send(msg);
@@ -397,7 +400,7 @@ pub mod xdg_wm_base {
         events: unsafe { &xdg_wm_base_events as *const _ },
     };
 }
-#[doc = "child surface positioner\n\nThe xdg_positioner provides a collection of rules for the placement of a\nchild surface relative to a parent surface. Rules can be defined to ensure\nthe child surface remains within the visible area's borders, and to\nspecify how the child surface changes its position, such as sliding along\nan axis, or flipping around a rectangle. These positioner-created rules are\nconstrained by the requirement that a child surface must intersect with or\nbe at least partially adjacent to its parent surface.\n\nSee the various requests for details about possible rules.\n\nAt the time of the request, the compositor makes a copy of the rules\nspecified by the xdg_positioner. Thus, after the request is complete the\nxdg_positioner object can be destroyed or reused; further changes to the\nobject will have no effect on previous usages.\n\nFor an xdg_positioner object to be considered complete, it must have a\nnon-zero size set by set_size, and a non-zero anchor rectangle set by\nset_anchor_rect. Passing an incomplete xdg_positioner object when\npositioning a surface raises an error."]
+#[doc = "child surface positioner\n\nThe xdg_positioner provides a collection of rules for the placement of a\nchild surface relative to a parent surface. Rules can be defined to ensure\nthe child surface remains within the visible area's borders, and to\nspecify how the child surface changes its position, such as sliding along\nan axis, or flipping around a rectangle. These positioner-created rules are\nconstrained by the requirement that a child surface must intersect with or\nbe at least partially adjacent to its parent surface.\n\nSee the various requests for details about possible rules.\n\nAt the time of the request, the compositor makes a copy of the rules\nspecified by the xdg_positioner. Thus, after the request is complete the\nxdg_positioner object can be destroyed or reused; further changes to the\nobject will have no effect on previous usages.\n\nFor an xdg_positioner object to be considered complete, it must have a\nnon-zero size set by set_size, and a non-zero anchor rectangle set by\nset_anchor_rect. Passing an incomplete xdg_positioner object when\npositioning a surface raises an invalid_positioner error."]
 pub mod xdg_positioner {
     use super::sys::common::{wl_argument, wl_array, wl_interface, wl_message};
     use super::sys::server::*;
@@ -515,7 +518,7 @@ pub mod xdg_positioner {
         },
         #[doc = "set anchor rectangle anchor\n\nDefines the anchor point for the anchor rectangle. The specified anchor\nis used derive an anchor point that the child surface will be\npositioned relative to. If a corner anchor is set (e.g. 'top_left' or\n'bottom_right'), the anchor point will be at the specified corner;\notherwise, the derived anchor point will be centered on the specified\nedge, or in the center of the anchor rectangle if no edge is specified."]
         SetAnchor { anchor: Anchor },
-        #[doc = "set child surface gravity\n\nDefines in what direction a surface should be positioned, relative to\nthe anchor point of the parent surface. If a corner gravity is\nspecified (e.g. 'bottom_right' or 'top_left'), then the child surface\nwill be placed towards the specified gravity; otherwise, the child\nsurface will be centered over the anchor point on any axis that had no\ngravity specified."]
+        #[doc = "set child surface gravity\n\nDefines in what direction a surface should be positioned, relative to\nthe anchor point of the parent surface. If a corner gravity is\nspecified (e.g. 'bottom_right' or 'top_left'), then the child surface\nwill be placed towards the specified gravity; otherwise, the child\nsurface will be centered over the anchor point on any axis that had no\ngravity specified. If the gravity is not in the ‘gravity’ enum, an\ninvalid_input error is raised."]
         SetGravity { gravity: Gravity },
         #[doc = "set the adjustment to be done when constrained\n\nSpecify how the window should be positioned if the originally intended\nposition caused the surface to be constrained, meaning at least\npartially outside positioning boundaries set by the compositor. The\nadjustment is set by constructing a bitmask describing the adjustment to\nbe made when the surface is constrained on that axis.\n\nIf no bit for one axis is set, the compositor will assume that the child\nsurface should not change its position on that axis when constrained.\n\nIf more than one bit for one axis is set, the order of how adjustments\nare applied is specified in the corresponding adjustment descriptions.\n\nThe default adjustment is none."]
         SetConstraintAdjustment { constraint_adjustment: u32 },
@@ -1036,10 +1039,18 @@ pub mod xdg_surface {
     #[derive(Copy, Clone, Debug, PartialEq)]
     #[non_exhaustive]
     pub enum Error {
+        #[doc = "Surface was not fully constructed"]
         NotConstructed = 1,
+        #[doc = "Surface was already constructed"]
         AlreadyConstructed = 2,
+        #[doc = "Attaching a buffer to an unconfigured surface"]
         UnconfiguredBuffer = 3,
+        #[doc = "Invalid serial number when acking a configure event"]
         InvalidSerial = 4,
+        #[doc = "Width or height was zero or negative"]
+        InvalidSize = 5,
+        #[doc = "Surface was destroyed before its role object"]
+        DefunctRoleObject = 6,
     }
     impl Error {
         pub fn from_raw(n: u32) -> Option<Error> {
@@ -1048,6 +1059,8 @@ pub mod xdg_surface {
                 2 => Some(Error::AlreadyConstructed),
                 3 => Some(Error::UnconfiguredBuffer),
                 4 => Some(Error::InvalidSerial),
+                5 => Some(Error::InvalidSize),
+                6 => Some(Error::DefunctRoleObject),
                 _ => Option::None,
             }
         }
@@ -1058,7 +1071,7 @@ pub mod xdg_surface {
     #[derive(Debug)]
     #[non_exhaustive]
     pub enum Request {
-        #[doc = "destroy the xdg_surface\n\nDestroy the xdg_surface object. An xdg_surface must only be destroyed\nafter its role object has been destroyed.\n\nThis is a destructor, once received this object cannot be used any longer."]
+        #[doc = "destroy the xdg_surface\n\nDestroy the xdg_surface object. An xdg_surface must only be destroyed\nafter its role object has been destroyed, otherwise\na defunct_role_object error is raised.\n\nThis is a destructor, once received this object cannot be used any longer."]
         Destroy,
         #[doc = "assign the xdg_toplevel surface role\n\nThis creates an xdg_toplevel object for the given xdg_surface and gives\nthe associated wl_surface the xdg_toplevel role.\n\nSee the documentation of xdg_toplevel for more details about what an\nxdg_toplevel is and how it is used."]
         GetToplevel {
@@ -1070,14 +1083,14 @@ pub mod xdg_surface {
             parent: Option<super::xdg_surface::XdgSurface>,
             positioner: super::xdg_positioner::XdgPositioner,
         },
-        #[doc = "set the new window geometry\n\nThe window geometry of a surface is its \"visible bounds\" from the\nuser's perspective. Client-side decorations often have invisible\nportions like drop-shadows which should be ignored for the\npurposes of aligning, placing and constraining windows.\n\nThe window geometry is double buffered, and will be applied at the\ntime wl_surface.commit of the corresponding wl_surface is called.\n\nWhen maintaining a position, the compositor should treat the (x, y)\ncoordinate of the window geometry as the top left corner of the window.\nA client changing the (x, y) window geometry coordinate should in\ngeneral not alter the position of the window.\n\nOnce the window geometry of the surface is set, it is not possible to\nunset it, and it will remain the same until set_window_geometry is\ncalled again, even if a new subsurface or buffer is attached.\n\nIf never set, the value is the full bounds of the surface,\nincluding any subsurfaces. This updates dynamically on every\ncommit. This unset is meant for extremely simple clients.\n\nThe arguments are given in the surface-local coordinate space of\nthe wl_surface associated with this xdg_surface.\n\nThe width and height must be greater than zero. Setting an invalid size\nwill raise an error. When applied, the effective window geometry will be\nthe set window geometry clamped to the bounding rectangle of the\ncombined geometry of the surface of the xdg_surface and the associated\nsubsurfaces."]
+        #[doc = "set the new window geometry\n\nThe window geometry of a surface is its \"visible bounds\" from the\nuser's perspective. Client-side decorations often have invisible\nportions like drop-shadows which should be ignored for the\npurposes of aligning, placing and constraining windows.\n\nThe window geometry is double buffered, and will be applied at the\ntime wl_surface.commit of the corresponding wl_surface is called.\n\nWhen maintaining a position, the compositor should treat the (x, y)\ncoordinate of the window geometry as the top left corner of the window.\nA client changing the (x, y) window geometry coordinate should in\ngeneral not alter the position of the window.\n\nOnce the window geometry of the surface is set, it is not possible to\nunset it, and it will remain the same until set_window_geometry is\ncalled again, even if a new subsurface or buffer is attached.\n\nIf never set, the value is the full bounds of the surface,\nincluding any subsurfaces. This updates dynamically on every\ncommit. This unset is meant for extremely simple clients.\n\nThe arguments are given in the surface-local coordinate space of\nthe wl_surface associated with this xdg_surface.\n\nThe width and height must be greater than zero. Setting an invalid size\nwill raise an invalid_size error. When applied, the effective window\ngeometry will be the set window geometry clamped to the bounding\nrectangle of the combined geometry of the surface of the xdg_surface and\nthe associated subsurfaces."]
         SetWindowGeometry {
             x: i32,
             y: i32,
             width: i32,
             height: i32,
         },
-        #[doc = "ack a configure event\n\nWhen a configure event is received, if a client commits the\nsurface in response to the configure event, then the client\nmust make an ack_configure request sometime before the commit\nrequest, passing along the serial of the configure event.\n\nFor instance, for toplevel surfaces the compositor might use this\ninformation to move a surface to the top left only when the client has\ndrawn itself for the maximized or fullscreen state.\n\nIf the client receives multiple configure events before it\ncan respond to one, it only has to ack the last configure event.\n\nA client is not required to commit immediately after sending\nan ack_configure request - it may even ack_configure several times\nbefore its next surface commit.\n\nA client may send multiple ack_configure requests before committing, but\nonly the last request sent before a commit indicates which configure\nevent the client really is responding to.\n\nSending an ack_configure request consumes the serial number sent with\nthe request, as well as serial numbers sent by all configure events\nsent on this xdg_surface prior to the configure event referenced by\nthe committed serial.\n\nIt is an error to issue multiple ack_configure requests referencing a\nserial from the same configure event, or to issue an ack_configure\nrequest referencing a serial from a configure event issued before the\nevent identified by the last ack_configure request for the same\nxdg_surface. Doing so will raise an invalid_serial error."]
+        #[doc = "ack a configure event\n\nWhen a configure event is received, if a client commits the\nsurface in response to the configure event, then the client\nmust make an ack_configure request sometime before the commit\nrequest, passing along the serial of the configure event.\n\nFor instance, for toplevel surfaces the compositor might use this\ninformation to move a surface to the top left only when the client has\ndrawn itself for the maximized or fullscreen state.\n\nIf the client receives multiple configure events before it\ncan respond to one, it only has to ack the last configure event.\nAcking a configure event that was never sent raises an invalid_serial\nerror.\n\nA client is not required to commit immediately after sending\nan ack_configure request - it may even ack_configure several times\nbefore its next surface commit.\n\nA client may send multiple ack_configure requests before committing, but\nonly the last request sent before a commit indicates which configure\nevent the client really is responding to.\n\nSending an ack_configure request consumes the serial number sent with\nthe request, as well as serial numbers sent by all configure events\nsent on this xdg_surface prior to the configure event referenced by\nthe committed serial.\n\nIt is an error to issue multiple ack_configure requests referencing a\nserial from the same configure event, or to issue an ack_configure\nrequest referencing a serial from a configure event issued before the\nevent identified by the last ack_configure request for the same\nxdg_surface. Doing so will raise an invalid_serial error."]
         AckConfigure { serial: u32 },
     }
     impl super::MessageGroup for Request {
@@ -1515,12 +1528,15 @@ pub mod xdg_toplevel {
         InvalidResizeEdge = 0,
         #[doc = "invalid parent toplevel"]
         InvalidParent = 1,
+        #[doc = "client provided an invalid min or max size"]
+        InvalidSize = 2,
     }
     impl Error {
         pub fn from_raw(n: u32) -> Option<Error> {
             match n {
                 0 => Some(Error::InvalidResizeEdge),
                 1 => Some(Error::InvalidParent),
+                2 => Some(Error::InvalidSize),
                 _ => Option::None,
             }
         }
@@ -1640,9 +1656,9 @@ pub mod xdg_toplevel {
         },
         #[doc = "set surface title\n\nSet a short title for the surface.\n\nThis string may be used to identify the surface in a task bar,\nwindow list, or other user interface elements provided by the\ncompositor.\n\nThe string must be encoded in UTF-8."]
         SetTitle { title: String },
-        #[doc = "set application ID\n\nSet an application identifier for the surface.\n\nThe app ID identifies the general class of applications to which\nthe surface belongs. The compositor can use this to group multiple\nsurfaces together, or to determine how to launch a new application.\n\nFor D-Bus activatable applications, the app ID is used as the D-Bus\nservice name.\n\nThe compositor shell will try to group application surfaces together\nby their app ID. As a best practice, it is suggested to select app\nID's that match the basename of the application's .desktop file.\nFor example, \"org.freedesktop.FooViewer\" where the .desktop file is\n\"org.freedesktop.FooViewer.desktop\".\n\nLike other properties, a set_app_id request can be sent after the\nxdg_toplevel has been mapped to update the property.\n\nSee the desktop-entry specification [0] for more details on\napplication identifiers and how they relate to well-known D-Bus\nnames and .desktop files.\n\n[0] http://standards.freedesktop.org/desktop-entry-spec/"]
+        #[doc = "set application ID\n\nSet an application identifier for the surface.\n\nThe app ID identifies the general class of applications to which\nthe surface belongs. The compositor can use this to group multiple\nsurfaces together, or to determine how to launch a new application.\n\nFor D-Bus activatable applications, the app ID is used as the D-Bus\nservice name.\n\nThe compositor shell will try to group application surfaces together\nby their app ID. As a best practice, it is suggested to select app\nID's that match the basename of the application's .desktop file.\nFor example, \"org.freedesktop.FooViewer\" where the .desktop file is\n\"org.freedesktop.FooViewer.desktop\".\n\nLike other properties, a set_app_id request can be sent after the\nxdg_toplevel has been mapped to update the property.\n\nSee the desktop-entry specification [0] for more details on\napplication identifiers and how they relate to well-known D-Bus\nnames and .desktop files.\n\n[0] https://standards.freedesktop.org/desktop-entry-spec/"]
         SetAppId { app_id: String },
-        #[doc = "show the window menu\n\nClients implementing client-side decorations might want to show\na context menu when right-clicking on the decorations, giving the\nuser a menu that they can use to maximize or minimize the window.\n\nThis request asks the compositor to pop up such a window menu at\nthe given position, relative to the local surface coordinates of\nthe parent surface. There are no guarantees as to what menu items\nthe window menu contains.\n\nThis request must be used in response to some sort of user action\nlike a button press, key press, or touch down event."]
+        #[doc = "show the window menu\n\nClients implementing client-side decorations might want to show\na context menu when right-clicking on the decorations, giving the\nuser a menu that they can use to maximize or minimize the window.\n\nThis request asks the compositor to pop up such a window menu at\nthe given position, relative to the local surface coordinates of\nthe parent surface. There are no guarantees as to what menu items\nthe window menu contains, or even if a window menu will be drawn\nat all.\n\nThis request must be used in response to some sort of user action\nlike a button press, key press, or touch down event."]
         ShowWindowMenu {
             seat: super::wl_seat::WlSeat,
             serial: u32,
@@ -1660,9 +1676,9 @@ pub mod xdg_toplevel {
             serial: u32,
             edges: ResizeEdge,
         },
-        #[doc = "set the maximum size\n\nSet a maximum size for the window.\n\nThe client can specify a maximum size so that the compositor does\nnot try to configure the window beyond this size.\n\nThe width and height arguments are in window geometry coordinates.\nSee xdg_surface.set_window_geometry.\n\nValues set in this way are double-buffered. They will get applied\non the next commit.\n\nThe compositor can use this information to allow or disallow\ndifferent states like maximize or fullscreen and draw accurate\nanimations.\n\nSimilarly, a tiling window manager may use this information to\nplace and resize client windows in a more effective way.\n\nThe client should not rely on the compositor to obey the maximum\nsize. The compositor may decide to ignore the values set by the\nclient and request a larger size.\n\nIf never set, or a value of zero in the request, means that the\nclient has no expected maximum size in the given dimension.\nAs a result, a client wishing to reset the maximum size\nto an unspecified state can use zero for width and height in the\nrequest.\n\nRequesting a maximum size to be smaller than the minimum size of\na surface is illegal and will result in a protocol error.\n\nThe width and height must be greater than or equal to zero. Using\nstrictly negative values for width and height will result in a\nprotocol error."]
+        #[doc = "set the maximum size\n\nSet a maximum size for the window.\n\nThe client can specify a maximum size so that the compositor does\nnot try to configure the window beyond this size.\n\nThe width and height arguments are in window geometry coordinates.\nSee xdg_surface.set_window_geometry.\n\nValues set in this way are double-buffered. They will get applied\non the next commit.\n\nThe compositor can use this information to allow or disallow\ndifferent states like maximize or fullscreen and draw accurate\nanimations.\n\nSimilarly, a tiling window manager may use this information to\nplace and resize client windows in a more effective way.\n\nThe client should not rely on the compositor to obey the maximum\nsize. The compositor may decide to ignore the values set by the\nclient and request a larger size.\n\nIf never set, or a value of zero in the request, means that the\nclient has no expected maximum size in the given dimension.\nAs a result, a client wishing to reset the maximum size\nto an unspecified state can use zero for width and height in the\nrequest.\n\nRequesting a maximum size to be smaller than the minimum size of\na surface is illegal and will result in an invalid_size error.\n\nThe width and height must be greater than or equal to zero. Using\nstrictly negative values for width or height will result in a\ninvalid_size error."]
         SetMaxSize { width: i32, height: i32 },
-        #[doc = "set the minimum size\n\nSet a minimum size for the window.\n\nThe client can specify a minimum size so that the compositor does\nnot try to configure the window below this size.\n\nThe width and height arguments are in window geometry coordinates.\nSee xdg_surface.set_window_geometry.\n\nValues set in this way are double-buffered. They will get applied\non the next commit.\n\nThe compositor can use this information to allow or disallow\ndifferent states like maximize or fullscreen and draw accurate\nanimations.\n\nSimilarly, a tiling window manager may use this information to\nplace and resize client windows in a more effective way.\n\nThe client should not rely on the compositor to obey the minimum\nsize. The compositor may decide to ignore the values set by the\nclient and request a smaller size.\n\nIf never set, or a value of zero in the request, means that the\nclient has no expected minimum size in the given dimension.\nAs a result, a client wishing to reset the minimum size\nto an unspecified state can use zero for width and height in the\nrequest.\n\nRequesting a minimum size to be larger than the maximum size of\na surface is illegal and will result in a protocol error.\n\nThe width and height must be greater than or equal to zero. Using\nstrictly negative values for width and height will result in a\nprotocol error."]
+        #[doc = "set the minimum size\n\nSet a minimum size for the window.\n\nThe client can specify a minimum size so that the compositor does\nnot try to configure the window below this size.\n\nThe width and height arguments are in window geometry coordinates.\nSee xdg_surface.set_window_geometry.\n\nValues set in this way are double-buffered. They will get applied\non the next commit.\n\nThe compositor can use this information to allow or disallow\ndifferent states like maximize or fullscreen and draw accurate\nanimations.\n\nSimilarly, a tiling window manager may use this information to\nplace and resize client windows in a more effective way.\n\nThe client should not rely on the compositor to obey the minimum\nsize. The compositor may decide to ignore the values set by the\nclient and request a smaller size.\n\nIf never set, or a value of zero in the request, means that the\nclient has no expected minimum size in the given dimension.\nAs a result, a client wishing to reset the minimum size\nto an unspecified state can use zero for width and height in the\nrequest.\n\nRequesting a minimum size to be larger than the maximum size of\na surface is illegal and will result in an invalid_size error.\n\nThe width and height must be greater than or equal to zero. Using\nstrictly negative values for width and height will result in a\ninvalid_size error."]
         SetMinSize { width: i32, height: i32 },
         #[doc = "maximize the window\n\nMaximize the surface.\n\nAfter requesting that the surface should be maximized, the compositor\nwill respond by emitting a configure event. Whether this configure\nactually sets the window maximized is subject to compositor policies.\nThe client must then update its content, drawing in the configured\nstate. The client must also acknowledge the configure when committing\nthe new content (see ack_configure).\n\nIt is up to the compositor to decide how and where to maximize the\nsurface, for example which output and what region of the screen should\nbe used.\n\nIf the surface was already maximized, the compositor will still emit\na configure event with the \"maximized\" state.\n\nIf the surface is in a fullscreen state, this request has no direct\neffect. It may alter the state the surface is returned to when\nunmaximized unless overridden by the compositor."]
         SetMaximized,
