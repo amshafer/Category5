@@ -2,12 +2,12 @@
 // interfaces
 //
 // Austin Shafer - 2020
+extern crate wayland_protocols;
 extern crate wayland_server as ws;
 
+use wayland_protocols::xdg::shell::*;
 use ws::protocol::wl_surface;
-use ws::Main;
 
-pub use super::protocol::xdg_shell::*;
 use super::role::Role;
 use super::surface::*;
 
@@ -146,10 +146,7 @@ impl TLConfig {
 /// The xdg_shell interface implements functionality regarding
 /// the lifecycle of the window. Essentially it just creates
 /// a xdg_shell_surface.
-pub fn xdg_wm_base_handle_request(
-    req: xdg_wm_base::Request,
-    _wm_base: Main<xdg_wm_base::XdgWmBase>,
-) {
+pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request, _wm_base: xdg_wm_base::XdgWmBase) {
     match req {
         xdg_wm_base::Request::GetXdgSurface { id: xdg, surface } => {
             // get category5's surface from the userdata

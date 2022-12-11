@@ -6,8 +6,9 @@
 //
 // Austin Shafer - 2020
 extern crate wayland_server as ws;
+use ws::protocol::wl_surface::Request;
 use ws::protocol::{wl_buffer, wl_callback, wl_output, wl_region, wl_surface as wlsi, wl_surface};
-use ws::Main;
+use ws::Resource;
 
 extern crate thundr;
 use thundr as th;
@@ -17,11 +18,35 @@ use super::shm::*;
 use super::wl_region::Region;
 use crate::category5::atmosphere::Atmosphere;
 use crate::category5::vkcomp::wm;
+use crate::category5::Climate;
 use utils::{log, Dmabuf, WindowId};
 
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+
+impl ws::Dispatch<wlsi::WlSurface, ()> for Climate {
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &wlsi::WlSurface,
+        request: Request,
+        data: &(),
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        let surf = resource.data::<Arc<Mutex<Surface>>>().unwrap();
+        surf.lock()
+            .unwrap()
+            .handle_request(&mut state.c_atmos, resource, data_init, request);
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        _data: &(),
+    ) {
+    }
+}
 
 /// Private structure for a wayland surface
 ///
@@ -31,8 +56,7 @@ use std::sync::{Arc, Mutex};
 /// will be displayed to the client when it is committed.
 #[allow(dead_code)]
 pub struct Surface {
-    pub s_atmos: Arc<Mutex<Atmosphere>>,
-    pub s_surf: Main<wl_surface::WlSurface>,
+    pub s_surf: wl_surface::WlSurface,
     pub s_id: WindowId, // The id of the window in the renderer
     /// The currently attached buffer. Will be displayed on commit
     /// When the window is created a buffer is not assigned, hence the option
@@ -43,35 +67,32 @@ pub struct Surface {
     /// Frame callback
     /// This is a power saving feature, we will signal this when the
     /// client should redraw this surface
-    pub s_attached_frame_callbacks: Vec<Main<wl_callback::WlCallback>>,
-    pub s_frame_callbacks: Vec<Main<wl_callback::WlCallback>>,
+    pub s_attached_frame_callbacks: Vec<wl_callback::WlCallback>,
+    pub s_frame_callbacks: Vec<wl_callback::WlCallback>,
     /// How this surface is being used
     pub s_role: Option<Role>,
     /// Are we currently committing this surface?
     pub s_commit_in_progress: bool,
     /// The opaque region.
     /// vkcomp can optimize displaying this region
-    pub s_opaque: Option<Rc<RefCell<Region>>>,
+    pub s_opaque: Option<Arc<Mutex<Region>>>,
     /// The input region.
     /// Input events will only be delivered if this region is in focus
-    pub s_input: Option<Rc<RefCell<Region>>>,
+    pub s_input: Option<Arc<Mutex<Region>>>,
     /// Arrays of damage for this image. This will eventually
     /// be propogated to thundr
     pub s_surf_damage: th::Damage,
     /// Buffer damage,
     pub s_damage: th::Damage,
+    /// Validates that we cleaned this surf up correctly
+    s_is_destroyed: bool,
 }
 
 impl Surface {
     // create a new visible surface at coordinates (x,y)
     // from the specified wayland resource
-    pub fn new(
-        atmos: Arc<Mutex<Atmosphere>>,
-        surf: Main<wl_surface::WlSurface>,
-        id: WindowId,
-    ) -> Surface {
+    pub fn new(surf: wl_surface::WlSurface, id: WindowId) -> Surface {
         Surface {
-            s_atmos: atmos,
             s_surf: surf,
             s_id: id,
             s_attached_buffer: None,
@@ -84,21 +105,13 @@ impl Surface {
             s_commit_in_progress: false,
             s_surf_damage: th::Damage::empty(),
             s_damage: th::Damage::empty(),
+            s_is_destroyed: false,
         }
     }
 
-    fn get_priv_from_region(
-        &self,
-        reg: Option<wl_region::WlRegion>,
-    ) -> Option<Rc<RefCell<Region>>> {
+    fn get_priv_from_region(&self, reg: Option<wl_region::WlRegion>) -> Option<Arc<Mutex<Region>>> {
         match reg {
-            Some(r) => Some(
-                r.as_ref()
-                    .user_data()
-                    .get::<Rc<RefCell<Region>>>()
-                    .unwrap()
-                    .clone(),
-            ),
+            Some(r) => Some(r.data::<Arc<Mutex<Region>>>().unwrap().clone()),
             None => None,
         }
     }
@@ -108,15 +121,16 @@ impl Surface {
     // Called by wayland-rs, this function dispatches
     // to the correct handling function.
     #[allow(unused_variables)]
-    pub fn handle_request(&mut self, surf: Main<wlsi::WlSurface>, req: wlsi::Request) {
-        // we need to clone the atmosphere to make the borrow checker happy. If we don't,
-        // then self will be borrowed both here and during the method calls below
-        let atmos_cell = self.s_atmos.clone();
-        let mut atmos = atmos_cell.lock().unwrap();
-
+    pub fn handle_request(
+        &mut self,
+        atmos: &mut Atmosphere,
+        surf: &wlsi::WlSurface,
+        data_init: &mut ws::DataInit<'_, Climate>,
+        req: Request,
+    ) {
         match req {
             wlsi::Request::Attach { buffer, x, y } => self.attach(surf, buffer, x, y),
-            wlsi::Request::Commit => self.commit(&mut atmos, false),
+            wlsi::Request::Commit => self.commit(atmos, false),
             wlsi::Request::Damage {
                 x,
                 y,
@@ -149,7 +163,10 @@ impl Surface {
                     self.s_input
                 );
             }
-            wlsi::Request::Frame { callback } => self.frame(callback),
+            wlsi::Request::Frame { callback } => {
+                let callback_resource = data_init.init(callback, ());
+                self.frame(callback_resource)
+            }
             // wayland-rs makes us register a destructor
             wlsi::Request::Destroy => self.destroy(&mut atmos),
             // TODO: support variable buffer scaling
@@ -160,7 +177,7 @@ impl Surface {
             }
             // TODO: support variable buffer transformation
             wlsi::Request::SetBufferTransform { transform } => {
-                if transform != wl_output::Transform::Normal {
+                if transform.into_result().unwrap() != wl_output::Transform::Normal {
                     panic!("Non-normal Buffer transformation is not implemented");
                 }
             }
@@ -175,7 +192,7 @@ impl Surface {
     // placed in the private struct that the compositor made.
     fn attach(
         &mut self,
-        _surf: Main<wlsi::WlSurface>,
+        _surf: &wlsi::WlSurface,
         buf: Option<wl_buffer::WlBuffer>,
         _x: i32,
         _y: i32,
@@ -233,20 +250,12 @@ impl Surface {
             // We need to do different things depending on the
             // type of buffer attached. We detect the type by
             // trying to extract different types of userdat
-            let userdata = self
-                .s_committed_buffer
-                // this is a bit wonky, we need to get a reference
-                // to committed, but it is behind an option
-                .as_ref()
-                .unwrap()
-                // now we can call as_ref on the &WlBuffer
-                .as_ref()
-                .user_data();
+            let buf = self.s_committed_buffer.as_ref().unwrap();
 
             // Add tasks that tell the compositor to import this buffer
             // so it is usable in vulkan. Also return the size of the buffer
             // so we can set the surface size
-            if let Some(dmabuf) = userdata.get::<Dmabuf>() {
+            if let Some(dmabuf) = buf.data::<Dmabuf>() {
                 atmos.add_wm_task(wm::task::Task::update_window_contents_from_dmabuf(
                     self.s_id, // ID of the new window
                     *dmabuf,   // fd of the gpu buffer
@@ -254,7 +263,7 @@ impl Surface {
                     self.s_committed_buffer.as_ref().unwrap().clone(),
                 ));
                 (dmabuf.db_width as f32, dmabuf.db_height as f32)
-            } else if let Some(shm_buf) = userdata.get::<ShmBuffer>() {
+            } else if let Some(shm_buf) = buf.data::<ShmBuffer>() {
                 // ShmBuffer holds the base pointer and an offset, so
                 // we need to get the actual pointer, which will be
                 // wrapped in a MemImage
@@ -340,7 +349,7 @@ impl Surface {
     // tell the clients when to update their buffers instead of them
     // guessing. If a client is hidden, then it will not have its
     // callback called, conserving power.
-    fn frame(&mut self, callback: Main<wl_callback::WlCallback>) {
+    fn frame(&mut self, callback: wl_callback::WlCallback) {
         // Add this call to our current state, which will
         // be called at the appropriate time
         log::debug!(
@@ -356,6 +365,7 @@ impl Surface {
     // This must be registered explicitly as the destructor
     // for wayland-rs to call it
     pub fn destroy(&mut self, atmos: &mut Atmosphere) {
+        self.s_is_destroyed = true;
         let client = atmos.get_owner(self.s_id);
         atmos.free_window_id(client, self.s_id);
         atmos.add_wm_task(wm::task::Task::close_window(self.s_id));
@@ -364,8 +374,8 @@ impl Surface {
 
 impl Drop for Surface {
     fn drop(&mut self) {
-        let atmos_mtx = self.s_atmos.clone();
-        let mut atmos = atmos_mtx.lock().unwrap();
-        self.destroy(&mut atmos);
+        if !self.s_is_destroyed {
+            panic!("This surface was dropped without being destroyed!");
+        }
     }
 }

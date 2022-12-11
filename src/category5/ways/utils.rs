@@ -16,16 +16,11 @@ use std::sync::{Arc, Mutex};
 /// we can register the new client with the atmos
 ///
 /// Returns the id created
-pub fn register_new_client(atmos_cell: Arc<Mutex<Atmosphere>>, client: Client) -> ClientId {
-    let id;
-    {
-        let mut atmos = atmos_cell.lock().unwrap();
-        // make a new client id
-        id = atmos.mint_client_id();
-
-        if !client.data_map().insert_if_missing(move || id) {
-            log::error!("registering a client that has already been registered");
-        }
+pub fn register_new_client(atmos: &mut Atmosphere, client: Client) -> ClientId {
+    // make a new client id
+    let id = atmos.mint_client_id();
+    if !client.data_map().insert_if_missing(move || id) {
+        log::error!("registering a client that has already been registered");
     }
 
     // when the client is destroyed we need to tell the atmosphere
@@ -44,8 +39,8 @@ pub fn register_new_client(atmos_cell: Arc<Mutex<Atmosphere>>, client: Client) -
 /// we wrap it here so it can change easily
 ///
 /// If the client does not currently have an id, register it
-pub fn get_id_from_client(atmos: Arc<Mutex<Atmosphere>>, client: Client) -> ClientId {
-    match client.data_map().get::<ClientId>() {
+pub fn get_id_from_client(atmos: &mut Atmosphere, client: Client) -> ClientId {
+    match client.get_data::<ClientId>() {
         Some(id) => *id,
         // The client hasn't been assigned an id
         None => register_new_client(atmos, client),
