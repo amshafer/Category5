@@ -12,13 +12,11 @@ use super::{utils, wl_region};
 use crate::category5::Climate;
 
 use ws::protocol::{wl_compositor as wlci, wl_surface as wlsi};
-use ws::Resource;
 
 extern crate utils as cat5_utils;
 use cat5_utils::log;
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
 impl ws::GlobalDispatch<wlci::WlCompositor, ()> for Climate {
@@ -46,8 +44,7 @@ impl ws::Dispatch<wlci::WlCompositor, ()> for Climate {
     ) {
         match request {
             ws::protocol::wl_compositor::Request::CreateSurface { id } => {
-                let surf = data_init.init(id, ());
-                state.create_surface(surf, data_init)
+                state.create_surface(client, id, data_init)
             }
             ws::protocol::wl_compositor::Request::CreateRegion { id } => {
                 wl_region::register_new(id)
@@ -74,28 +71,24 @@ impl Climate {
     /// module
     pub fn create_surface(
         &mut self,
-        surf: wlsi::WlSurface,
+        client: &ws::Client,
+        id: ws::New<wlsi::WlSurface>,
         data_init: &mut ws::DataInit<'_, Self>,
     ) {
-        let mut atmos = self.em_climate.c_atmos.lock().unwrap();
-        let client = utils::get_id_from_client(
-            atmos,
-            surf.client()
-                .expect("client for this surface seems to have disappeared"),
-        );
-        let id = atmos.mint_window_id(client);
-        log::debug!("Creating new surface {:?}", id);
+        let mut atmos = self.c_atmos.lock().unwrap();
+        let client_id = utils::get_id_from_client(atmos.deref_mut(), *client);
+        let win_id = atmos.mint_window_id(client_id);
+        log::debug!("Creating new surface {:?}", win_id);
 
         // Create a reference counted object
         // in charge of this new surface
-        let new_surface = Surface::new(surf.clone(), id);
+        let new_surface = Arc::new(Mutex::new(Surface::new(win_id)));
         // Add the new surface to the atmosphere
-        atmos.add_surface(id, new_surface.clone());
-        // get the Resource<WlSurface>, turn it into a &WlSurface
-        atmos.set_wl_surface(id, surf.as_ref().clone().into());
+        atmos.add_surface(win_id, new_surface.clone());
 
         // Add the new surface to the userdata so other
         // protocols can see it
-        data_init.init(surf, new_surface);
+        let surf = data_init.init(id, new_surface);
+        atmos.set_wl_surface(win_id, surf.into());
     }
 }

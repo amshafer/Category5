@@ -17,16 +17,12 @@ use thundr::ThundrError;
 use utils::ClientId;
 use vkcomp::wm::*;
 
-use ws::protocol::{
-    wl_compositor as wlci, wl_data_device_manager as wlddm, wl_output, wl_seat, wl_shell, wl_shm,
-    wl_subcompositor as wlsc, wl_surface as wlsi,
-};
+use ws::protocol::wl_compositor as wlci;
 
 use std::ops::DerefMut;
 use std::os::unix::io::AsRawFd;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
 
 // The category5 compositor
 //
@@ -187,8 +183,14 @@ impl EventManager {
     ) -> ClientId {
         // make a new client id
         let id = atmos.mint_client_id();
-        // TODO: add client data
-        self.em_display.handle().insert_client(client_stream, ());
+        // add our ClientData
+        self.em_display.handle().insert_client(
+            client_stream,
+            Arc::new(ClientInfo {
+                ci_id: id,
+                ci_atmos: self.em_climate.c_atmos.clone(),
+            }),
+        );
 
         return id;
     }

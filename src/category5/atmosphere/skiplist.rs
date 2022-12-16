@@ -1,6 +1,8 @@
 // Support code for handling window heirarchies
 //
 // Austin Shafer - 2020
+extern crate wayland_protocols;
+use wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge;
 
 use super::*;
 use crate::category5::input::Input;
@@ -289,7 +291,7 @@ impl Atmosphere {
             log::info!("checking window {:?}", win);
             // We need to get t
             if let Some(surf_cell) = self.get_surface_from_id(win) {
-                let surf = surf_cell.borrow();
+                let surf = surf_cell.lock().unwrap();
                 let (wx, wy) = self.get_surface_pos(win);
 
                 if let Some(input_region) = surf.s_input.as_ref() {
@@ -305,7 +307,8 @@ impl Atmosphere {
                     // by the position of the window, instead of scaling
                     // every Rect in the Region up by that amount
                     if input_region
-                        .borrow()
+                        .lock()
+                        .unwrap()
                         .intersects((x - wx) as i32, (y - wy) as i32)
                     {
                         ret = Some(win);

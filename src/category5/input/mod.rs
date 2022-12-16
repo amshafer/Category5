@@ -34,9 +34,11 @@ pub mod event;
 
 extern crate input;
 extern crate nix;
+extern crate wayland_protocols;
 extern crate wayland_server as ws;
 extern crate xkbcommon;
 
+use wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge;
 use ws::protocol::wl_pointer;
 use ws::Resource;
 

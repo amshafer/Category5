@@ -5,8 +5,9 @@
 extern crate wayland_protocols;
 extern crate wayland_server as ws;
 
-use wayland_protocols::xdg::shell::*;
+use wayland_protocols::xdg::shell::server::*;
 use ws::protocol::wl_surface;
+use ws::Resource;
 
 use super::role::Role;
 use super::surface::*;
@@ -144,16 +145,15 @@ impl TLConfig {
 /// The xdg_shell interface implements functionality regarding
 /// the lifecycle of the window. Essentially it just creates
 /// a xdg_shell_surface.
-pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request, _wm_base: xdg_wm_base::XdgWmBase) {
+pub fn xdg_wm_base_handle_request(
+    atmos: &mut Atmosphere,
+    req: xdg_wm_base::Request,
+    _wm_base: xdg_wm_base::XdgWmBase,
+) {
     match req {
         xdg_wm_base::Request::GetXdgSurface { id: xdg, surface } => {
             // get category5's surface from the userdata
-            let surf = surface
-                .as_ref()
-                .user_data()
-                .get::<Arc<Mutex<Surface>>>()
-                .unwrap();
-            let atmos = surf.lock().unwrap().s_atmos.clone();
+            let surf = surface.data::<Arc<Mutex<Surface>>>().unwrap();
 
             let shsurf = Arc::new(Mutex::new(ShellSurface {
                 ss_atmos: atmos.clone(),
@@ -174,6 +174,7 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request, _wm_base: xdg_wm_ba
             });
             // Pass ourselves as user data
             xdg.as_ref().user_data().set(move || shsurf);
+            data_init.init(xdg, shsurf);
         }
         xdg_wm_base::Request::CreatePositioner { id } => {
             let pos = Arc::new(Mutex::new(Positioner {
@@ -194,7 +195,7 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request, _wm_base: xdg_wm_ba
             });
             // We will add the positioner as userdata since nothing
             // else needs to look it up
-            id.as_ref().user_data().set(move || pos);
+            data_init.init(id, pos);
         }
         xdg_wm_base::Request::Destroy => log::debug!("xdg_wm_base.destroy: impelementme"),
         _ => unimplemented!(),
@@ -207,7 +208,7 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request, _wm_base: xdg_wm_ba
 /// tracks window characteristics and roles. It is
 /// highly recommended to read wayland.xml for all
 /// the gory details.
-fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>, req: xdg_surface::Request) {
+fn xdg_surface_handle_request(surf: xdg_surface::XdgSurface, req: xdg_surface::Request) {
     // first clone the ShellSurface to be used as
     // userdata later
     let ss_clone = surf
@@ -254,6 +255,7 @@ fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>, req: xdg_surf
             shsurf.set_win_geom(x, y, width, height);
         }
         xdg_surface::Request::Destroy => (),
+        _ => unimplemented!(),
     };
 }
 
@@ -321,6 +323,7 @@ impl Positioner {
             xdg_positioner::Anchor::BottomRight => {
                 (rect.r_pos.0 + rect.r_size.0, rect.r_pos.1 + rect.r_size.1)
             }
+            _ => unimplemented!(),
         };
         ret.0 += anchor_offset.0;
         ret.1 += anchor_offset.1;
@@ -336,10 +339,7 @@ impl Positioner {
 ///
 /// These requests are used to build up a `Positioner`, which will
 /// later be used during the creation of an `xdg_popup` surface.
-fn xdg_positioner_handle_request(
-    res: Main<xdg_positioner::XdgPositioner>,
-    req: xdg_positioner::Request,
-) {
+fn xdg_positioner_handle_request(res: xdg_positioner::XdgPositioner, req: xdg_positioner::Request) {
     let pos_cell = res
         .as_ref()
         .user_data()
@@ -380,13 +380,14 @@ fn xdg_positioner_handle_request(
         } => pos.p_parent_size = Some((parent_width, parent_height)),
         xdg_positioner::Request::SetParentConfigure { serial } => pos.p_parent_configure = serial,
         xdg_positioner::Request::Destroy => (),
+        _ => unimplemented!(),
     };
 }
 
 /// Private struct for an xdg_popup role.
 #[allow(dead_code)]
 pub struct Popup {
-    pu_pop: Main<xdg_popup::XdgPopup>,
+    pu_pop: xdg_popup::XdgPopup,
     pu_parent: Option<xdg_surface::XdgSurface>,
     pu_positioner: xdg_positioner::XdgPositioner,
     pu_next_positioner: Option<xdg_positioner::XdgPositioner>,
@@ -406,9 +407,7 @@ impl Popup {
                 .expect("Bug: popup did not have a parent assigned yet");
             // Now get our ShellSurface object from the XdgSurface protocol object
             let shsurf = parent_surf
-                .as_ref()
-                .user_data()
-                .get::<Arc<Mutex<ShellSurface>>>()
+                .data::<Arc<Mutex<ShellSurface>>>()
                 .unwrap()
                 .lock()
                 .unwrap();
@@ -426,9 +425,7 @@ impl Popup {
         // Update the size and position from the latest reposition
         let pos_cell = self
             .pu_positioner
-            .as_ref()
-            .user_data()
-            .get::<Arc<Mutex<Positioner>>>()
+            .data::<Arc<Mutex<Positioner>>>()
             .expect("Bug: positioner did not have userdata attached")
             .clone();
         let positioner = pos_cell.lock().unwrap();
@@ -457,8 +454,8 @@ pub struct ShellSurface {
     // the wayland proxy
     ss_surface_proxy: wl_surface::WlSurface,
     // The object this belongs to
-    ss_xdg_surface: Main<xdg_surface::XdgSurface>,
-    ss_xdg_toplevel: Option<Main<xdg_toplevel::XdgToplevel>>,
+    ss_xdg_surface: xdg_surface::XdgSurface,
+    ss_xdg_toplevel: Option<xdg_toplevel::XdgToplevel>,
     ss_xdg_popup: Option<Popup>,
     // Outstanding changes to be applied in commit
     pub ss_xs: XdgState,
@@ -613,7 +610,7 @@ impl ShellSurface {
                     self.ss_serial,
                     size.0,
                     size.1, // width, height
-                    Rc::new(self.ss_cur_tlstate),
+                    Arc::new(self.ss_cur_tlstate),
                 ));
             }
             log::debug!(
@@ -676,7 +673,7 @@ impl ShellSurface {
     /// be added to toplevel.
     fn get_toplevel(
         &mut self,
-        toplevel: Main<xdg_toplevel::XdgToplevel>,
+        toplevel: xdg_toplevel::XdgToplevel,
         userdata: Arc<Mutex<ShellSurface>>,
     ) {
         // Mark our surface as being a window handled by xdg_shell
@@ -708,7 +705,7 @@ impl ShellSurface {
     /// has made, and they will be applied during the next commit.
     fn handle_toplevel_request(
         &mut self,
-        _toplevel: Main<xdg_toplevel::XdgToplevel>,
+        _toplevel: xdg_toplevel::XdgToplevel,
         req: xdg_toplevel::Request,
     ) {
         let xs = &mut self.ss_xs;
@@ -748,6 +745,7 @@ impl ShellSurface {
             }
             xdg_toplevel::Request::UnsetFullscreen => self.ss_cur_tlstate.tl_fullscreen = false,
             xdg_toplevel::Request::SetMinimized => self.ss_cur_tlstate.tl_minimized = true,
+            _ => unimplemented!(),
         }
     }
 
@@ -762,9 +760,7 @@ impl ShellSurface {
 
         let pos_cell = pop
             .pu_positioner
-            .as_ref()
-            .user_data()
-            .get::<Arc<Mutex<Positioner>>>()
+            .data::<Arc<Mutex<Positioner>>>()
             .expect("Bug: positioner did not have userdata attached")
             .clone();
         let pos = pos_cell.lock().unwrap();
@@ -786,7 +782,7 @@ impl ShellSurface {
     /// toplevel surface and may exclusively grab input for that app.
     fn get_popup(
         &mut self,
-        popup: Main<xdg_popup::XdgPopup>,
+        popup: xdg_popup::XdgPopup,
         parent: Option<xdg_surface::XdgSurface>,
         positioner: xdg_positioner::XdgPositioner,
         userdata: Arc<Mutex<ShellSurface>>,
@@ -824,7 +820,7 @@ impl ShellSurface {
     /// This should load our xdg state with any changes that the client
     /// has made, and they will be applied during the next commit.
     /// There is relatively little compared to xdg_toplevel.
-    fn handle_popup_request(&mut self, _popup: Main<xdg_popup::XdgPopup>, req: xdg_popup::Request) {
+    fn handle_popup_request(&mut self, _popup: xdg_popup::XdgPopup, req: xdg_popup::Request) {
         // TODO: implement the remaining handlers
         #[allow(unused_variables)]
         match req {
@@ -840,6 +836,7 @@ impl ShellSurface {
             xdg_popup::Request::Reposition { positioner, token } => {
                 self.ss_xdg_popup.as_mut().unwrap().pu_next_positioner = Some(positioner);
             }
+            _ => unimplemented!(),
         }
     }
 }

@@ -7,7 +7,7 @@
 // Austin Shafer - 2020
 extern crate wayland_server as ws;
 use ws::protocol::wl_surface::Request;
-use ws::protocol::{wl_buffer, wl_callback, wl_output, wl_region, wl_surface as wlsi, wl_surface};
+use ws::protocol::{wl_buffer, wl_callback, wl_output, wl_region, wl_surface as wlsi};
 use ws::Resource;
 
 extern crate thundr;
@@ -24,13 +24,14 @@ use utils::{log, Dmabuf, WindowId};
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
-impl ws::Dispatch<wlsi::WlSurface, ()> for Climate {
+// Dispatch<Interface, Userdata>
+impl ws::Dispatch<wlsi::WlSurface, Arc<Mutex<Surface>>> for Climate {
     fn request(
         state: &mut Self,
         client: &ws::Client,
         resource: &wlsi::WlSurface,
         request: Request,
-        data: &(),
+        data: &Arc<Mutex<Surface>>,
         dhandle: &ws::DisplayHandle,
         data_init: &mut ws::DataInit<'_, Self>,
     ) {
@@ -47,7 +48,7 @@ impl ws::Dispatch<wlsi::WlSurface, ()> for Climate {
         state: &mut Self,
         _client: ws::backend::ClientId,
         _resource: ws::backend::ObjectId,
-        _data: &(),
+        data: &Arc<Mutex<Surface>>,
     ) {
     }
 }
@@ -60,7 +61,6 @@ impl ws::Dispatch<wlsi::WlSurface, ()> for Climate {
 /// will be displayed to the client when it is committed.
 #[allow(dead_code)]
 pub struct Surface {
-    pub s_surf: wl_surface::WlSurface,
     pub s_id: WindowId, // The id of the window in the renderer
     /// The currently attached buffer. Will be displayed on commit
     /// When the window is created a buffer is not assigned, hence the option
@@ -95,9 +95,8 @@ pub struct Surface {
 impl Surface {
     // create a new visible surface at coordinates (x,y)
     // from the specified wayland resource
-    pub fn new(surf: wl_surface::WlSurface, id: WindowId) -> Surface {
+    pub fn new(id: WindowId) -> Surface {
         Surface {
-            s_surf: surf,
             s_id: id,
             s_attached_buffer: None,
             s_committed_buffer: None,
