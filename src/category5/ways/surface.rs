@@ -21,6 +21,7 @@ use crate::category5::vkcomp::wm;
 use crate::category5::Climate;
 use utils::{log, Dmabuf, WindowId};
 
+use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
 impl ws::Dispatch<wlsi::WlSurface, ()> for Climate {
@@ -34,9 +35,12 @@ impl ws::Dispatch<wlsi::WlSurface, ()> for Climate {
         data_init: &mut ws::DataInit<'_, Self>,
     ) {
         let surf = resource.data::<Arc<Mutex<Surface>>>().unwrap();
-        surf.lock()
-            .unwrap()
-            .handle_request(&mut state.c_atmos, resource, data_init, request);
+        surf.lock().unwrap().handle_request(
+            state.c_atmos.lock().unwrap().deref_mut(),
+            resource,
+            data_init,
+            request,
+        );
     }
 
     fn destroyed(
@@ -213,7 +217,8 @@ impl Surface {
     fn commit(&mut self, atmos: &mut Atmosphere, parent_commit_in_progress: bool) {
         if let Some(Role::subsurface(ss)) = &self.s_role {
             if !ss
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .should_commit(self, atmos, parent_commit_in_progress)
             {
                 log::debug!(
@@ -233,7 +238,7 @@ impl Surface {
         for id in subsurfaces.iter() {
             let sid = atmos.get_surface_from_id(*id);
             if let Some(surf) = sid {
-                surf.borrow_mut().commit(atmos, true);
+                surf.lock().unwrap().commit(atmos, true);
             }
         }
 
@@ -288,12 +293,12 @@ impl Surface {
 
         // Commit any role state before we do our thing
         match &self.s_role {
-            Some(Role::xdg_shell_toplevel(xs)) => xs.borrow_mut().commit(&self, atmos),
-            Some(Role::xdg_shell_popup(xs)) => xs.borrow_mut().commit(&self, atmos),
+            Some(Role::xdg_shell_toplevel(xs)) => xs.lock().unwrap().commit(&self, atmos),
+            Some(Role::xdg_shell_popup(xs)) => xs.lock().unwrap().commit(&self, atmos),
             Some(Role::wl_shell_toplevel) => {
                 atmos.set_window_size(self.s_id, surf_size.0, surf_size.1)
             }
-            Some(Role::subsurface(ss)) => ss.borrow_mut().commit(&self, atmos),
+            Some(Role::subsurface(ss)) => ss.lock().unwrap().commit(&self, atmos),
             // if we don't have an assigned role, avoid doing
             // any real work
             None => {

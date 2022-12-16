@@ -38,10 +38,10 @@ extern crate wayland_server as ws;
 extern crate xkbcommon;
 
 use ws::protocol::wl_pointer;
-use ws::Main;
+use ws::Resource;
 
 use crate::category5::atmosphere::Atmosphere;
-use crate::category5::ways::{role::Role, xdg_shell::xdg_toplevel::ResizeEdge};
+use crate::category5::ways::role::Role;
 use event::*;
 use utils::{log, timing::*, WindowId};
 
@@ -54,15 +54,14 @@ use input::{Libinput, LibinputInterface};
 use xkbcommon::xkb;
 pub use xkbcommon::xkb::{keysyms, Keysym};
 
+use core::convert::TryFrom;
 use std::fs::{File, OpenOptions};
+use std::mem::drop;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::RawFd;
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 use std::path::Path;
-
 use std::sync::{Arc, Mutex};
-
-use std::mem::drop;
 
 /// This is sort of like a private userdata struct which
 /// is used as an interface to the systems devices
@@ -121,52 +120,18 @@ impl LibinputInterface for Inkit {
     }
 }
 
-/// This represents an input system
-///
-/// Input is grabbed from the udev interface, but
-/// any method should be applicable. It just feeds
-/// the ways and wm subsystems input events
-///
-/// We will also stash our xkb resources here, and
-/// will consult this before sending out keymaps/syms
-pub struct Input {
+/// This struct holds all the hardware dependent and non-multithreaded
+/// state. For now this is really just a wrapper around libinput.
+pub struct HWInput {
     /// libinput context
-    libin: Libinput,
-    /// xkb goodies
-    i_xkb_ctx: xkb::Context,
-    i_xkb_keymap: xkb::Keymap,
-    /// this is referenced by Seat, which needs to map and
-    /// share it with the clients
-    pub i_xkb_keymap_name: String,
-    /// xkb state machine
-    i_xkb_state: xkb::State,
-
-    /// Tracking info for the modifier keys
-    /// These keys are sent separately in the modifiers event
-    pub i_mod_ctrl: bool,
-    pub i_mod_alt: bool,
-    pub i_mod_shift: bool,
-    pub i_mod_caps: bool,
-    pub i_mod_meta: bool,
-    pub i_mod_num: bool,
-
-    /// Resize tracking
-    /// When we resize a window we want to batch together the
-    /// changes and send one configure message per frame
-    /// The window currently being resized
-    /// The currently grabbed resizing window is in the atmosphere
-    /// changes to the window surface to be sent this frame
-    pub i_resize_diff: (f64, f64),
-    /// The surface that the pointer is currently over
-    /// note that this may be different than the application focus
-    pub i_pointer_focus: Option<WindowId>,
+    hi_libin: Libinput,
+    /// Our input handler
+    hi_in: Arc<Mutex<Input>>,
 }
 
-impl Input {
-    /// Create an input subsystem.
-    ///
-    /// Setup the libinput library from a udev context
-    pub fn new() -> Input {
+impl HWInput {
+    /// Open a new libinput connection
+    pub fn new() -> Self {
         let kit: Inkit = Inkit { _inner: 0 };
         let mut libin = Libinput::new_with_udev(kit);
 
@@ -174,38 +139,9 @@ impl Input {
         // the default seat is seat0, which is all input devs
         libin.udev_assign_seat("seat0").unwrap();
 
-        // Create all the components for xkb
-        // A description of this can be found in the xkb
-        // section of wayland-book.com
-        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-        let keymap = xkb::Keymap::new_from_names(
-            &context,
-            &"",
-            &"",
-            &"",
-            &"", // These should be env vars
-            None,
-            xkb::KEYMAP_COMPILE_NO_FLAGS,
-        )
-        .expect("Could not initialize a xkb keymap");
-        let km_name = keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
-
-        let state = xkb::State::new(&keymap);
-
-        Input {
-            libin: libin,
-            i_xkb_ctx: context,
-            i_xkb_keymap: keymap,
-            i_xkb_keymap_name: km_name,
-            i_xkb_state: state,
-            i_mod_ctrl: false,
-            i_mod_alt: false,
-            i_mod_shift: false,
-            i_mod_caps: false,
-            i_mod_meta: false,
-            i_mod_num: false,
-            i_resize_diff: (0.0, 0.0),
-            i_pointer_focus: None,
+        Self {
+            hi_libin: libin,
+            hi_in: Arc::new(Mutex::new(Input::new())),
         }
     }
 
@@ -214,7 +150,7 @@ impl Input {
     /// This saves power and is monitored by kqueue in
     /// the ways event loop
     pub fn get_poll_fd(&mut self) -> RawFd {
-        self.libin.as_raw_fd()
+        self.hi_libin.as_raw_fd()
     }
 
     /// Processs any pending input events
@@ -224,12 +160,13 @@ impl Input {
     /// (time sensitive) operations on them
     /// It will then handle all the available input events
     /// before returning.
-    pub fn dispatch(&mut self) {
-        self.libin.dispatch().unwrap();
+    pub fn dispatch(&mut self, atmos: &mut Atmosphere) {
+        self.hi_libin.dispatch().unwrap();
+        let input = self.hi_in.lock().unwrap();
 
         // now go through each event
         while let Some(iev) = self.next_available() {
-            self.handle_input_event(&iev);
+            input.handle_input_event(atmos, &iev);
         }
     }
 
@@ -257,7 +194,7 @@ impl Input {
     /// internally read and prepare all events.
     fn next_available(&mut self) -> Option<InputEvent> {
         // TODO: need to fix this wrapper
-        let ev = self.libin.next();
+        let ev = self.hi_libin.next();
         match ev {
             Some(Event::Pointer(PointerEvent::Motion(m))) => {
                 log::debug!("moving mouse by ({}, {})", m.dx(), m.dy());
@@ -311,14 +248,103 @@ impl Input {
         return None;
     }
 
-    fn send_pointer_frame(pointer: &Main<wl_pointer::WlPointer>) {
-        if pointer.as_ref().version() >= 5 {
+    pub fn update_from_eventloop(&mut self, atmos: &mut Atmosphere) {
+        self.hi_in.lock().unwrap().update_from_eventloop(atmos)
+    }
+}
+
+/// This represents an input system
+///
+/// Input is grabbed from the udev interface, but
+/// any method should be applicable. It just feeds
+/// the ways and wm subsystems input events
+///
+/// We will also stash our xkb resources here, and
+/// will consult this before sending out keymaps/syms
+pub struct Input {
+    /// xkb goodies
+    i_xkb_ctx: xkb::Context,
+    i_xkb_keymap: xkb::Keymap,
+    /// this is referenced by Seat, which needs to map and
+    /// share it with the clients
+    pub i_xkb_keymap_name: String,
+    /// xkb state machine
+    i_xkb_state: xkb::State,
+
+    /// Tracking info for the modifier keys
+    /// These keys are sent separately in the modifiers event
+    pub i_mod_ctrl: bool,
+    pub i_mod_alt: bool,
+    pub i_mod_shift: bool,
+    pub i_mod_caps: bool,
+    pub i_mod_meta: bool,
+    pub i_mod_num: bool,
+
+    /// Resize tracking
+    /// When we resize a window we want to batch together the
+    /// changes and send one configure message per frame
+    /// The window currently being resized
+    /// The currently grabbed resizing window is in the atmosphere
+    /// changes to the window surface to be sent this frame
+    pub i_resize_diff: (f64, f64),
+    /// The surface that the pointer is currently over
+    /// note that this may be different than the application focus
+    pub i_pointer_focus: Option<WindowId>,
+}
+
+// NOTE:
+// The XKB entries above are not marked send/sync. Due to the way
+// cat5 is written they will never be used from multiple threads,
+// so we can safely mark this input handler as sendable
+unsafe impl Send for Input {}
+
+impl Input {
+    /// Create an input subsystem.
+    ///
+    /// Setup the libinput library from a udev context
+    pub fn new() -> Input {
+        // Create all the components for xkb
+        // A description of this can be found in the xkb
+        // section of wayland-book.com
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let keymap = xkb::Keymap::new_from_names(
+            &context,
+            &"",
+            &"",
+            &"",
+            &"", // These should be env vars
+            None,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )
+        .expect("Could not initialize a xkb keymap");
+        let km_name = keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
+
+        let state = xkb::State::new(&keymap);
+
+        Input {
+            i_xkb_ctx: context,
+            i_xkb_keymap: keymap,
+            i_xkb_keymap_name: km_name,
+            i_xkb_state: state,
+            i_mod_ctrl: false,
+            i_mod_alt: false,
+            i_mod_shift: false,
+            i_mod_caps: false,
+            i_mod_meta: false,
+            i_mod_num: false,
+            i_resize_diff: (0.0, 0.0),
+            i_pointer_focus: None,
+        }
+    }
+
+    fn send_pointer_frame(pointer: &wl_pointer::WlPointer) {
+        if pointer.version() >= 5 {
             pointer.frame();
         }
     }
 
     fn send_axis(
-        pointer: &Main<wl_pointer::WlPointer>,
+        pointer: &wl_pointer::WlPointer,
         axis_type: wl_pointer::Axis,
         val: f64,
         val_discrete: Option<f64>,
@@ -327,9 +353,9 @@ impl Input {
         // deliver the axis events, one for each direction
         if val != 0.0 {
             if let Some(discrete) = val_discrete {
-                if pointer.as_ref().version() >= 8 {
+                if pointer.version() >= 8 {
                     pointer.axis_value120(axis_type, discrete as i32);
-                } else if pointer.as_ref().version() >= 5 {
+                } else if pointer.version() >= 5 {
                     pointer.axis_discrete(axis_type, discrete as i32);
                 }
             }
@@ -340,7 +366,7 @@ impl Input {
             // tell the application that the axis series has stopped. This
             // is needed for firefox, not having it means scrolling stops working
             // when you load a page for the first time.
-            if pointer.as_ref().version() >= 5 {
+            if pointer.version() >= 5 {
                 pointer.axis_stop(time, axis_type);
             }
         }
@@ -349,14 +375,14 @@ impl Input {
     /// Perform a scrolling motion.
     ///
     /// Generates the wl_pointer.axis event.
-    fn handle_pointer_axis(&mut self, a: &Axis, atmos: &Atmosphere) {
+    fn handle_pointer_axis(&mut self, atmos: &Atmosphere, a: &Axis) {
         // Find the active window
         if let Some(id) = self.i_pointer_focus {
             // get the seat for this client
             if let Some(cell) = atmos.get_seat_from_window_id(id) {
-                let seat = cell.borrow();
+                let seat = cell.lock().unwrap();
                 // Get the pointer
-                for si in seat.s_proxies.borrow().iter() {
+                for si in seat.s_proxies.lock().unwrap().iter() {
                     for pointer in si.si_pointers.iter() {
                         Self::send_axis(
                             pointer,
@@ -375,9 +401,9 @@ impl Input {
                         // finger scrolling on a touchpad or scroll wheel scrolling. Firefox
                         // breaks scrolling without this, I think it wants it to decide if
                         // it should do kinetic scrolling or not.
-                        if pointer.as_ref().version() >= 5 {
+                        if pointer.version() >= 5 {
                             pointer
-                                .axis_source(wl_pointer::AxisSource::from_raw(a.a_source).unwrap());
+                                .axis_source(wl_pointer::AxisSource::try_from(a.a_source).unwrap());
                         }
                         Self::send_pointer_frame(pointer);
                         // Mark the atmosphere as changed so that it fires frame throttling
@@ -399,11 +425,11 @@ impl Input {
     pub fn update_from_eventloop(&mut self, atmos: &mut Atmosphere) {
         if let Some(id) = atmos.get_resizing() {
             if let Some(cell) = atmos.get_surface_from_id(id) {
-                let surf = cell.borrow();
+                let surf = cell.lock().unwrap();
                 match &surf.s_role {
                     Some(Role::xdg_shell_toplevel(ss)) => {
                         // send the xdg configure events
-                        ss.borrow_mut().configure(
+                        ss.lock().unwrap().configure(
                             &mut atmos,
                             &surf,
                             Some((self.i_resize_diff.0 as f32, self.i_resize_diff.1 as f32)),
@@ -426,11 +452,11 @@ impl Input {
     pub fn keyboard_enter(atmos: &Atmosphere, id: WindowId) {
         log::error!("Keyboard entered WindowId {:?}", id);
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
-            let seat = cell.borrow_mut();
+            let seat = cell.lock().unwrap();
             // TODO: verify
             // The client may have allocated multiple seats, and we should
             // deliver events to all of them
-            for si in seat.s_proxies.borrow().iter() {
+            for si in seat.s_proxies.lock().unwrap().iter() {
                 for keyboard in si.si_keyboards.iter() {
                     if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                         keyboard.enter(
@@ -452,11 +478,11 @@ impl Input {
     pub fn keyboard_leave(atmos: &Atmosphere, id: WindowId) {
         log::error!("Keyboard left WindowId {:?}", id);
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
-            let seat = cell.borrow_mut();
+            let seat = cell.lock().unwrap();
             // TODO: verify
             // The client may have allocated multiple seats, and we should
             // deliver events to all of them
-            for si in seat.s_proxies.borrow().iter() {
+            for si in seat.s_proxies.lock().unwrap().iter() {
                 for keyboard in si.si_keyboards.iter() {
                     if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                         keyboard.leave(seat.s_serial, &surf);
@@ -477,11 +503,11 @@ impl Input {
             if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                 let (cx, cy) = atmos.get_cursor_pos();
                 if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
-                    let seat = cell.borrow_mut();
+                    let seat = cell.lock().unwrap();
                     // TODO: verify
                     // The client may have allocated multiple seats, and we should
                     // deliver events to all of them
-                    for si in seat.s_proxies.borrow().iter() {
+                    for si in seat.s_proxies.lock().unwrap().iter() {
                         for pointer in si.si_pointers.iter() {
                             pointer.enter(
                                 seat.s_serial,
@@ -505,11 +531,11 @@ impl Input {
     pub fn pointer_leave(atmos: &Atmosphere, id: WindowId) {
         log::error!("Pointer left WindowId {:?}", id);
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
-            let seat = cell.borrow_mut();
+            let seat = cell.lock().unwrap();
             // TODO: verify
             // The client may have allocated multiple seats, and we should
             // deliver events to all of them
-            for si in seat.s_proxies.borrow().iter() {
+            for si in seat.s_proxies.lock().unwrap().iter() {
                 for pointer in si.si_pointers.iter() {
                     if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                         pointer.leave(seat.s_serial, &surf);
@@ -557,9 +583,9 @@ impl Input {
         if let Some(id) = focus {
             if let Some(cell) = atmos.get_seat_from_window_id(id) {
                 // get the seat for this client
-                let seat = cell.borrow();
+                let seat = cell.lock().unwrap();
                 // Get the pointer
-                for si in seat.s_proxies.borrow().iter() {
+                for si in seat.s_proxies.lock().unwrap().iter() {
                     for pointer in si.si_pointers.iter() {
                         // If the pointer is over this surface
                         if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
@@ -607,14 +633,14 @@ impl Input {
             if let Some(id) = resizing {
                 // if on one of the edges start a resize
                 if let Some(surf) = atmos.get_surface_from_id(id) {
-                    match &surf.borrow_mut().s_role {
+                    match &surf.lock().unwrap().s_role {
                         Some(Role::xdg_shell_toplevel(ss)) => {
                             match c.c_state {
                                 // The release is handled above
                                 ButtonState::Released => {
                                     log::debug!("Stopping resize of {:?}", id);
                                     atmos.set_resizing(None);
-                                    ss.borrow_mut().ss_cur_tlstate.tl_resizing = false;
+                                    ss.lock().unwrap().ss_cur_tlstate.tl_resizing = false;
                                     // TODO: send final configure here?
                                 }
                                 // this should never be pressed
@@ -660,13 +686,13 @@ impl Input {
             if edge != ResizeEdge::None {
                 // if on one of the edges start a resize
                 if let Some(surf) = atmos.get_surface_from_id(id) {
-                    match &surf.borrow_mut().s_role {
+                    match &surf.lock().unwrap().s_role {
                         Some(Role::xdg_shell_toplevel(ss)) => {
                             match c.c_state {
                                 ButtonState::Pressed => {
                                     log::debug!("Resizing window {:?}", id);
                                     atmos.set_resizing(Some(id));
-                                    ss.borrow_mut().ss_cur_tlstate.tl_resizing = true;
+                                    ss.lock().unwrap().ss_cur_tlstate.tl_resizing = true;
                                 }
                                 // releasing is handled above
                                 _ => (),
@@ -695,8 +721,8 @@ impl Input {
 
                 // get the seat for this client
                 if let Some(cell) = atmos.get_seat_from_window_id(id) {
-                    let seat = cell.borrow_mut();
-                    for si in seat.s_proxies.borrow().iter() {
+                    let seat = cell.lock().unwrap();
+                    for si in seat.s_proxies.lock().unwrap().iter() {
                         for pointer in si.si_pointers.iter() {
                             // Trigger a button event
                             pointer.button(
@@ -733,7 +759,7 @@ impl Input {
     ///
     /// Deliver the wl_keyboard.key and modifier events.
     pub fn handle_keyboard(&mut self, atmos: &Atmosphere, key: &Key) {
-        if self.handle_compositor_shortcut(key) {
+        if self.handle_compositor_shortcut(atmos, key) {
             return;
         }
 
@@ -787,8 +813,8 @@ impl Input {
         if let Some(id) = atmos.get_client_in_focus() {
             // get the seat for this client
             if let Some(cell) = atmos.get_seat_from_client_id(id) {
-                let mut seat = cell.borrow_mut();
-                for si in seat.s_proxies.borrow().iter() {
+                let mut seat = cell.lock().unwrap();
+                for si in seat.s_proxies.lock().unwrap().iter() {
                     for keyboard in si.si_keyboards.iter() {
                         if let Some((depressed, latched, locked, layout)) = mods {
                             // Finally fire the wayland event
@@ -816,12 +842,12 @@ impl Input {
     /// Input events are either handled by us or by the wayland client
     /// we need to figure out the appropriate destination and perform
     /// the right action.
-    pub fn handle_input_event(&mut self, iev: &InputEvent) {
+    pub fn handle_input_event(&mut self, atmos: &mut Atmosphere, iev: &InputEvent) {
         match iev {
-            InputEvent::pointer_move(m) => self.handle_pointer_move(m),
-            InputEvent::axis(a) => self.handle_pointer_axis(a),
-            InputEvent::click(c) => self.handle_click_on_window(c),
-            InputEvent::key(k) => self.handle_keyboard(k),
+            InputEvent::pointer_move(m) => self.handle_pointer_move(atmos, m),
+            InputEvent::axis(a) => self.handle_pointer_axis(atmos, a),
+            InputEvent::click(c) => self.handle_click_on_window(atmos, c),
+            InputEvent::key(k) => self.handle_keyboard(atmos, k),
         }
     }
 }

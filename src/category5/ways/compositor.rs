@@ -19,6 +19,7 @@ use cat5_utils::log;
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 impl ws::GlobalDispatch<wlci::WlCompositor, ()> for Climate {
     fn bind(
@@ -76,22 +77,22 @@ impl Climate {
         surf: wlsi::WlSurface,
         data_init: &mut ws::DataInit<'_, Self>,
     ) {
+        let mut atmos = self.em_climate.c_atmos.lock().unwrap();
         let client = utils::get_id_from_client(
-            &self.c_atmos,
+            atmos,
             surf.client()
                 .expect("client for this surface seems to have disappeared"),
         );
-        let id = self.c_atmos.mint_window_id(client);
+        let id = atmos.mint_window_id(client);
         log::debug!("Creating new surface {:?}", id);
 
         // Create a reference counted object
         // in charge of this new surface
         let new_surface = Surface::new(surf.clone(), id);
         // Add the new surface to the atmosphere
-        self.c_atmos.add_surface(id, new_surface.clone());
+        atmos.add_surface(id, new_surface.clone());
         // get the Resource<WlSurface>, turn it into a &WlSurface
-        self.c_atmos
-            .set_wl_surface(id, surf.as_ref().clone().into());
+        atmos.set_wl_surface(id, surf.as_ref().clone().into());
 
         // Add the new surface to the userdata so other
         // protocols can see it

@@ -1210,7 +1210,7 @@ checksum = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
 
 [[package]]
 name = "wayland-backend"
-version = "0.1.0-beta.13"
+version = "0.1.0-beta.14"
 dependencies = [
  "cc",
  "downcast-rs",
@@ -1223,7 +1223,7 @@ dependencies = [
 
 [[package]]
 name = "wayland-protocols"
-version = "0.30.0-beta.13"
+version = "0.30.0-beta.14"
 dependencies = [
  "bitflags",
  "wayland-backend",
@@ -1232,7 +1232,7 @@ dependencies = [
 
 [[package]]
 name = "wayland-scanner"
-version = "0.30.0-beta.13"
+version = "0.30.0-beta.14"
 dependencies = [
  "proc-macro2",
  "quick-xml",
@@ -1242,7 +1242,7 @@ dependencies = [
 
 [[package]]
 name = "wayland-server"
-version = "0.30.0-beta.13"
+version = "0.30.0-beta.14"
 dependencies = [
  "bitflags",
  "downcast-rs",
@@ -1254,7 +1254,7 @@ dependencies = [
 
 [[package]]
 name = "wayland-sys"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "dlib",
  "lazy_static",

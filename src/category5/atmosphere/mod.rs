@@ -127,12 +127,11 @@ use property_list::PropertyList;
 mod skiplist;
 
 use crate::category5::vkcomp::wm;
-use crate::category5::ways::{seat::Seat, surface::*, xdg_shell::xdg_toplevel::ResizeEdge};
+use crate::category5::ways::{seat::Seat, surface::*};
 use utils::{log, ClientId, WindowId};
 
-use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::vec::Vec;
 
@@ -238,7 +237,7 @@ enum WindowProperty {
 #[derive(Clone)]
 enum Priv {
     // a surface to have its callbacks called
-    surface(Option<Rc<RefCell<Surface>>>),
+    surface(Option<Arc<Mutex<Surface>>>),
     // The protocol object for this surface
     // We need to store this here because some places
     // (`keyboard_enter`) will want to query for it to deliver
@@ -272,7 +271,7 @@ impl Property for Priv {
 #[derive(Clone)]
 enum ClientPriv {
     // a collection of input resources
-    seat(Option<Rc<RefCell<Seat>>>),
+    seat(Option<Arc<Mutex<Seat>>>),
 }
 
 impl ClientPriv {
@@ -755,14 +754,14 @@ impl Atmosphere {
 
     /// These are getters for the private wayland structures
     /// that do not get shared across hemispheres
-    pub fn add_surface(&mut self, id: WindowId, surf: Rc<RefCell<Surface>>) {
+    pub fn add_surface(&mut self, id: WindowId, surf: Arc<Mutex<Surface>>) {
         let WindowId(raw_id) = id;
         self.a_window_priv
             .set(raw_id, Priv::SURFACE, &Priv::surface(Some(surf)));
     }
 
     /// Grab our Surface struct for this id
-    pub fn get_surface_from_id(&self, id: WindowId) -> Option<Rc<RefCell<Surface>>> {
+    pub fn get_surface_from_id(&self, id: WindowId) -> Option<Arc<Mutex<Surface>>> {
         let WindowId(raw_id) = id;
         match self.a_window_priv.get(raw_id, Priv::SURFACE) {
             Some(Priv::surface(Some(s))) => Some(s.clone()),
@@ -784,18 +783,18 @@ impl Atmosphere {
             .set(raw_id, Priv::WL_SURFACE, &Priv::wl_surface(surf));
     }
 
-    pub fn add_seat(&mut self, id: ClientId, seat: Rc<RefCell<Seat>>) {
+    pub fn add_seat(&mut self, id: ClientId, seat: Arc<Mutex<Seat>>) {
         let ClientId(raw_id) = id;
         self.a_client_priv
             .set(raw_id, ClientPriv::SEAT, &ClientPriv::seat(Some(seat)));
     }
 
-    pub fn get_seat_from_window_id(&self, id: WindowId) -> Option<Rc<RefCell<Seat>>> {
+    pub fn get_seat_from_window_id(&self, id: WindowId) -> Option<Arc<Mutex<Seat>>> {
         // get the client id
         let owner = self.get_owner(id);
         self.get_seat_from_client_id(owner)
     }
-    pub fn get_seat_from_client_id(&self, id: ClientId) -> Option<Rc<RefCell<Seat>>> {
+    pub fn get_seat_from_client_id(&self, id: ClientId) -> Option<Arc<Mutex<Seat>>> {
         let ClientId(raw_id) = id;
         match self.a_client_priv.get(raw_id, ClientPriv::SEAT) {
             Some(ClientPriv::seat(Some(s))) => Some(s.clone()),
@@ -815,7 +814,7 @@ impl Atmosphere {
         // get the refcell for the surface for this id
         let WindowId(raw_id) = id;
         if let Some(Priv::surface(Some(cell))) = self.a_window_priv.get(raw_id, Priv::SURFACE) {
-            let mut surf = cell.borrow_mut();
+            let mut surf = cell.lock().unwrap();
             let cbs = std::mem::take(&mut surf.s_frame_callbacks);
             for callback in cbs.iter() {
                 // frame callbacks are signaled in the order that they

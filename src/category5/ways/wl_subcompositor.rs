@@ -4,7 +4,6 @@
 extern crate wayland_server as ws;
 use ws::protocol::wl_subcompositor as wlsc;
 use ws::protocol::wl_subsurface as wlss;
-use ws::Main;
 
 use super::role::Role;
 use super::surface::Surface;
@@ -26,13 +25,13 @@ pub fn wl_subcompositor_handle_request(req: wlsc::Request, _: Main<wlsc::WlSubco
             let surf = surface
                 .as_ref()
                 .user_data()
-                .get::<Rc<RefCell<Surface>>>()
+                .get::<Arc<Mutex<Surface>>>()
                 .unwrap()
                 .clone();
             let parent = par
                 .as_ref()
                 .user_data()
-                .get::<Rc<RefCell<Surface>>>()
+                .get::<Arc<Mutex<Surface>>>()
                 .unwrap()
                 .clone();
 
@@ -43,9 +42,9 @@ pub fn wl_subcompositor_handle_request(req: wlsc::Request, _: Main<wlsc::WlSubco
                 surf.clone(),
                 parent,
             )));
-            surf.borrow_mut().s_role = Some(Role::subsurface(ss.clone()));
+            surf.lock().unwrap().s_role = Some(Role::subsurface(ss.clone()));
             id.quick_assign(move |_, r, _| {
-                let mut ssurf = ss.borrow_mut();
+                let mut ssurf = ss.lock().unwrap();
                 ssurf.handle_request(r);
             });
         }
@@ -61,9 +60,9 @@ pub fn wl_subcompositor_handle_request(req: wlsc::Request, _: Main<wlsc::WlSubco
 #[allow(dead_code)]
 pub struct SubSurface {
     ss_atmos: Arc<Mutex<Atmosphere>>,
-    ss_proxy: Main<wlss::WlSubsurface>,
-    ss_surf: Rc<RefCell<Surface>>,
-    ss_parent: Rc<RefCell<Surface>>,
+    ss_proxy: wlss::WlSubsurface,
+    ss_surf: Arc<Mutex<Surface>>,
+    ss_parent: Arc<Mutex<Surface>>,
     /// attached new position to be applied on commit
     ss_position: Option<(f32, f32)>,
     /// these requests reorder our skiplist
@@ -80,19 +79,19 @@ pub struct SubSurface {
 
 impl SubSurface {
     fn new(
-        sub: Main<wlss::WlSubsurface>,
-        surf: Rc<RefCell<Surface>>,
-        parent: Rc<RefCell<Surface>>,
+        sub: wlss::WlSubsurface,
+        surf: Arc<Mutex<Surface>>,
+        parent: Arc<Mutex<Surface>>,
     ) -> Self {
-        let atmos_mtx = surf.borrow_mut().s_atmos.clone();
+        let atmos_mtx = surf.lock().unwrap().s_atmos.clone();
         {
             let mut atmos = atmos_mtx.lock().unwrap();
             // We need to mark this surface as the new top child
             // of the parent
-            atmos.add_new_top_subsurf(parent.borrow().s_id, surf.borrow().s_id);
+            atmos.add_new_top_subsurf(parent.lock().unwrap().s_id, surf.lock().unwrap().s_id);
 
             // The synchronized state defaults to true
-            atmos.set_subsurface_sync(surf.borrow().s_id, Some(true));
+            atmos.set_subsurface_sync(surf.lock().unwrap().s_id, Some(true));
         }
 
         Self {
@@ -115,9 +114,10 @@ impl SubSurface {
                     sibling
                         .as_ref()
                         .user_data()
-                        .get::<Rc<RefCell<Surface>>>()
+                        .get::<Arc<Mutex<Surface>>>()
                         .unwrap()
-                        .borrow()
+                        .lock()
+                        .unwrap()
                         .s_id,
                 )
             }
@@ -126,9 +126,10 @@ impl SubSurface {
                     sibling
                         .as_ref()
                         .user_data()
-                        .get::<Rc<RefCell<Surface>>>()
+                        .get::<Arc<Mutex<Surface>>>()
                         .unwrap()
-                        .borrow()
+                        .lock()
+                        .unwrap()
                         .s_id,
                 )
             }
@@ -136,12 +137,12 @@ impl SubSurface {
                 .ss_atmos
                 .lock()
                 .unwrap()
-                .set_subsurface_sync(self.ss_surf.borrow().s_id, Some(true)),
+                .set_subsurface_sync(self.ss_surf.lock().unwrap().s_id, Some(true)),
             wlss::Request::SetDesync => self
                 .ss_atmos
                 .lock()
                 .unwrap()
-                .set_subsurface_sync(self.ss_surf.borrow().s_id, Some(false)),
+                .set_subsurface_sync(self.ss_surf.lock().unwrap().s_id, Some(false)),
             _ => (),
         };
     }

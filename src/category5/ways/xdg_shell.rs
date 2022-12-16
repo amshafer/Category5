@@ -15,9 +15,7 @@ extern crate utils as cat5_utils;
 use crate::category5::atmosphere::Atmosphere;
 use cat5_utils::{log, region::Rect};
 
-use std::cell::RefCell;
 use std::clone::Clone;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 /// This is the set of outstanding
@@ -128,11 +126,11 @@ struct TLConfig {
     /// size to this in `commit`.
     tlc_size: (i32, i32),
     /// reference count this to avoid extra allocations
-    tlc_state: Rc<TLState>,
+    tlc_state: Arc<TLState>,
 }
 
 impl TLConfig {
-    fn new(serial: u32, width: i32, height: i32, state: Rc<TLState>) -> TLConfig {
+    fn new(serial: u32, width: i32, height: i32, state: Arc<TLState>) -> TLConfig {
         TLConfig {
             tlc_serial: serial,
             tlc_size: (width, height),
@@ -153,11 +151,11 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request, _wm_base: xdg_wm_ba
             let surf = surface
                 .as_ref()
                 .user_data()
-                .get::<Rc<RefCell<Surface>>>()
+                .get::<Arc<Mutex<Surface>>>()
                 .unwrap();
-            let atmos = surf.borrow_mut().s_atmos.clone();
+            let atmos = surf.lock().unwrap().s_atmos.clone();
 
-            let shsurf = Rc::new(RefCell::new(ShellSurface {
+            let shsurf = Arc::new(Mutex::new(ShellSurface {
                 ss_atmos: atmos.clone(),
                 ss_surface: surf.clone(),
                 ss_surface_proxy: surface,
@@ -178,7 +176,7 @@ pub fn xdg_wm_base_handle_request(req: xdg_wm_base::Request, _wm_base: xdg_wm_ba
             xdg.as_ref().user_data().set(move || shsurf);
         }
         xdg_wm_base::Request::CreatePositioner { id } => {
-            let pos = Rc::new(RefCell::new(Positioner {
+            let pos = Arc::new(Mutex::new(Positioner {
                 p_offset: None,
                 p_width: 0,
                 p_height: 0,
@@ -215,7 +213,7 @@ fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>, req: xdg_surf
     let ss_clone = surf
         .as_ref()
         .user_data()
-        .get::<Rc<RefCell<ShellSurface>>>()
+        .get::<Arc<Mutex<ShellSurface>>>()
         .unwrap()
         .clone();
 
@@ -223,9 +221,10 @@ fn xdg_surface_handle_request(surf: Main<xdg_surface::XdgSurface>, req: xdg_surf
     let mut shsurf = surf
         .as_ref()
         .user_data()
-        .get::<Rc<RefCell<ShellSurface>>>()
+        .get::<Arc<Mutex<ShellSurface>>>()
         .unwrap()
-        .borrow_mut();
+        .lock()
+        .unwrap();
 
     match req {
         xdg_surface::Request::GetToplevel { id: xdg } => shsurf.get_toplevel(xdg, ss_clone),
@@ -344,10 +343,10 @@ fn xdg_positioner_handle_request(
     let pos_cell = res
         .as_ref()
         .user_data()
-        .get::<Rc<RefCell<Positioner>>>()
+        .get::<Arc<Mutex<Positioner>>>()
         .expect("xdg_positioner did not contain the correct userdata")
         .clone();
-    let mut pos = pos_cell.borrow_mut();
+    let mut pos = pos_cell.lock().unwrap();
 
     // add the reqeust data to our struct
     match req {
@@ -409,17 +408,18 @@ impl Popup {
             let shsurf = parent_surf
                 .as_ref()
                 .user_data()
-                .get::<Rc<RefCell<ShellSurface>>>()
+                .get::<Arc<Mutex<ShellSurface>>>()
                 .unwrap()
-                .borrow();
+                .lock()
+                .unwrap();
 
             // Now we can tell vkcomp to add this surface to the subsurface stack
             // in Thundr
-            atmos.add_new_top_subsurf(shsurf.ss_surface.borrow().s_id, surf.s_id);
+            atmos.add_new_top_subsurf(shsurf.ss_surface.lock().unwrap().s_id, surf.s_id);
             log::error!(
                 "Adding popup subsurf {:?} to parent {:?}",
                 surf.s_id,
-                shsurf.ss_surface.borrow().s_id
+                shsurf.ss_surface.lock().unwrap().s_id
             );
         }
 
@@ -428,10 +428,10 @@ impl Popup {
             .pu_positioner
             .as_ref()
             .user_data()
-            .get::<Rc<RefCell<Positioner>>>()
+            .get::<Arc<Mutex<Positioner>>>()
             .expect("Bug: positioner did not have userdata attached")
             .clone();
-        let positioner = pos_cell.borrow();
+        let positioner = pos_cell.lock().unwrap();
 
         let pos_loc = positioner.get_loc();
         atmos.set_surface_pos(surf.s_id, pos_loc.0 as f32, pos_loc.1 as f32);
@@ -453,7 +453,7 @@ impl Popup {
 pub struct ShellSurface {
     ss_atmos: Arc<Mutex<Atmosphere>>,
     // Category5 surface state object
-    ss_surface: Rc<RefCell<Surface>>,
+    ss_surface: Arc<Mutex<Surface>>,
     // the wayland proxy
     ss_surface_proxy: wl_surface::WlSurface,
     // The object this belongs to
@@ -652,7 +652,7 @@ impl ShellSurface {
         let atmos_cell = self.ss_atmos.clone();
         let surf_cell = self.ss_surface.clone();
         let mut atmos = atmos_cell.lock().unwrap();
-        let mut surf = surf_cell.borrow_mut();
+        let mut surf = surf_cell.lock().unwrap();
 
         // we need to update the *window* position
         // to be an offset from the base surface position
@@ -677,10 +677,10 @@ impl ShellSurface {
     fn get_toplevel(
         &mut self,
         toplevel: Main<xdg_toplevel::XdgToplevel>,
-        userdata: Rc<RefCell<ShellSurface>>,
+        userdata: Arc<Mutex<ShellSurface>>,
     ) {
         // Mark our surface as being a window handled by xdg_shell
-        self.ss_surface.borrow_mut().s_role = Some(Role::xdg_shell_toplevel(userdata.clone()));
+        self.ss_surface.lock().unwrap().s_role = Some(Role::xdg_shell_toplevel(userdata.clone()));
 
         // Record our state
         self.ss_xs.xs_make_new_toplevel_window = true;
@@ -698,7 +698,7 @@ impl ShellSurface {
         // Now add ourselves to the xdg_toplevel
         self.ss_xdg_toplevel = Some(toplevel.clone());
         toplevel.quick_assign(move |t, r, _| {
-            userdata.borrow_mut().handle_toplevel_request(t, r);
+            userdata.lock().unwrap().handle_toplevel_request(t, r);
         });
     }
 
@@ -722,7 +722,7 @@ impl ShellSurface {
             xdg_toplevel::Request::ShowWindowMenu { seat, serial, x, y } => (),
             xdg_toplevel::Request::Move { seat, serial } => {
                 // Moving is NOT double buffered so just grab it now
-                let id = self.ss_surface.borrow().s_id;
+                let id = self.ss_surface.lock().unwrap().s_id;
                 self.ss_atmos.lock().unwrap().set_grabbed(Some(id));
             }
             xdg_toplevel::Request::Resize {
@@ -731,7 +731,7 @@ impl ShellSurface {
                 edges,
             } => {
                 // Moving is NOT double buffered so just grab it now
-                let id = self.ss_surface.borrow().s_id;
+                let id = self.ss_surface.lock().unwrap().s_id;
                 self.ss_atmos.lock().unwrap().set_resizing(Some(id));
                 self.ss_cur_tlstate.tl_resizing = true;
             }
@@ -764,10 +764,10 @@ impl ShellSurface {
             .pu_positioner
             .as_ref()
             .user_data()
-            .get::<Rc<RefCell<Positioner>>>()
+            .get::<Arc<Mutex<Positioner>>>()
             .expect("Bug: positioner did not have userdata attached")
             .clone();
-        let pos = pos_cell.borrow();
+        let pos = pos_cell.lock().unwrap();
 
         // send configuration requests to the client
         // width and height 0 means client picks a size
@@ -789,10 +789,10 @@ impl ShellSurface {
         popup: Main<xdg_popup::XdgPopup>,
         parent: Option<xdg_surface::XdgSurface>,
         positioner: xdg_positioner::XdgPositioner,
-        userdata: Rc<RefCell<ShellSurface>>,
+        userdata: Arc<Mutex<ShellSurface>>,
     ) {
         // assign the popup role
-        self.ss_surface.borrow_mut().s_role = Some(Role::xdg_shell_popup(userdata.clone()));
+        self.ss_surface.lock().unwrap().s_role = Some(Role::xdg_shell_popup(userdata.clone()));
 
         // tell vkcomp to generate resources for a new window
         self.ss_xs.xs_make_new_popup_window = true;
@@ -806,14 +806,15 @@ impl ShellSurface {
         });
 
         popup.quick_assign(move |p, r, _| {
-            userdata.borrow_mut().handle_popup_request(p, r);
+            userdata.lock().unwrap().handle_popup_request(p, r);
         });
         self.reposition_popup();
     }
 
     fn popup_done(&mut self) {
         self.ss_surface
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .destroy(&mut self.ss_atmos.lock().unwrap());
         self.ss_xdg_popup.as_ref().unwrap().pu_pop.popup_done();
     }

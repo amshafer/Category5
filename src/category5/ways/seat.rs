@@ -11,32 +11,30 @@ use nix::unistd::ftruncate;
 extern crate wayland_server as ws;
 use ws::protocol::wl_seat::Capability;
 use ws::protocol::{wl_keyboard, wl_pointer, wl_seat};
-use ws::Main;
 
 use super::keyboard::wl_keyboard_handle_request;
 use super::pointer::wl_pointer_handle_request;
 use crate::category5::input::Input;
 use utils::ClientId;
 
-use std::cell::RefCell;
 use std::fs::File;
 use std::io::Write;
 use std::os::unix::io::FromRawFd;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 /// See the create_global call in `compositor.rs` for the code
 /// that adds a seat instance to a `Seat`.
 pub struct SeatInstance {
     // the seat object itself
-    pub si_seat: Main<wl_seat::WlSeat>,
+    pub si_seat: wl_seat::WlSeat,
     // wl_keyboard handle
-    pub si_keyboards: Vec<Main<wl_keyboard::WlKeyboard>>,
+    pub si_keyboards: Vec<wl_keyboard::WlKeyboard>,
     // wl_pointer handle
-    pub si_pointers: Vec<Main<wl_pointer::WlPointer>>,
+    pub si_pointers: Vec<wl_pointer::WlPointer>,
 }
 
 impl SeatInstance {
-    pub fn new(seat: Main<wl_seat::WlSeat>) -> Self {
+    pub fn new(seat: wl_seat::WlSeat) -> Self {
         Self {
             si_seat: seat,
             si_keyboards: Vec::new(),
@@ -47,13 +45,13 @@ impl SeatInstance {
     /// Add a keyboard to this seat
     ///
     /// This also sends the modifier event
-    fn get_keyboard(&mut self, parent: &mut Seat, keyboard: Main<wl_keyboard::WlKeyboard>) {
+    fn get_keyboard(&mut self, parent: &mut Seat, keyboard: wl_keyboard::WlKeyboard) {
         // register our request handler
         keyboard.quick_assign(move |k, r, _| {
             wl_keyboard_handle_request(r, k);
         });
 
-        let input = parent.s_input.borrow();
+        let input = parent.s_input.lock().unwrap();
         // Make a temp fd to share with the client
         #[cfg(target_os = "freebsd")]
         let fd = unsafe {
@@ -118,7 +116,7 @@ impl SeatInstance {
     }
 
     /// Register a wl_pointer to this seat
-    fn get_pointer(&mut self, parent: &mut Seat, pointer: Main<wl_pointer::WlPointer>) {
+    fn get_pointer(&mut self, parent: &mut Seat, pointer: wl_pointer::WlPointer) {
         self.si_pointers.push(pointer.clone());
         pointer.quick_assign(move |p, r, _| {
             wl_pointer_handle_request(r, p);
@@ -126,7 +124,7 @@ impl SeatInstance {
 
         // If we are in focus, then we should go ahead and generate
         // the enter event
-        let input = parent.s_input.borrow();
+        let input = parent.s_input.lock().unwrap();
         let atmos = input.i_atmos.lock().unwrap();
         if let Some(sid) = atmos.get_win_focus() {
             if let Some(pointer_focus) = input.i_pointer_focus {
@@ -151,11 +149,11 @@ impl SeatInstance {
 #[allow(dead_code)]
 pub struct Seat {
     // The handle to the input subsystem
-    pub s_input: Rc<RefCell<Input>>,
+    pub s_input: Arc<Mutex<Input>>,
     // The id of the client this seat belongs to
     pub s_id: ClientId,
     // List of all wl_seats and their respective device proxies
-    pub s_proxies: Rc<RefCell<Vec<SeatInstance>>>,
+    pub s_proxies: Arc<Mutex<Vec<SeatInstance>>>,
     // the serial number for this set of input events
     pub s_serial: u32,
 }
@@ -167,7 +165,7 @@ impl Seat {
     /// what input methods are ready.
     ///
     /// The wl_seat needs to be added with `add_seat_instance`.
-    pub fn new(input: Rc<RefCell<Input>>, id: ClientId) -> Seat {
+    pub fn new(input: Arc<Mutex<Input>>, id: ClientId) -> Seat {
         Seat {
             s_input: input,
             s_id: id,
@@ -182,22 +180,22 @@ impl Seat {
     /// instance needs to be added for every wl_seat global so that
     /// we can accurately track all wl_seats for a client that have
     /// been created.
-    pub fn add_seat_instance(&mut self, seat: Main<wl_seat::WlSeat>) {
+    pub fn add_seat_instance(&mut self, seat: wl_seat::WlSeat) {
         // broadcast the types of input we have available
         // TODO: don't just default to keyboard + mouse
         seat.capabilities(Capability::Keyboard | Capability::Pointer);
 
-        self.s_proxies.borrow_mut().push(SeatInstance::new(seat));
+        self.s_proxies.lock().unwrap().push(SeatInstance::new(seat));
     }
 
     /// Handle client requests
     ///
     /// This basically just creates and registers the different
     /// input-related protocols, such as wl_keyboard
-    pub fn handle_request(&mut self, req: wl_seat::Request, seat: Main<wl_seat::WlSeat>) {
+    pub fn handle_request(&mut self, req: wl_seat::Request, seat: wl_seat::WlSeat) {
         // we need to borrow proxies seperately so we don't borrow self
         let proxies_rc = self.s_proxies.clone();
-        let mut proxies = proxies_rc.borrow_mut();
+        let mut proxies = proxies_rc.lock().unwrap();
         let si = proxies
             .iter_mut()
             .find(|s| s.si_seat == seat)

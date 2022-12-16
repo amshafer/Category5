@@ -16,7 +16,11 @@ use std::sync::{Arc, Mutex};
 /// we can register the new client with the atmos
 ///
 /// Returns the id created
-pub fn register_new_client(atmos: &mut Atmosphere, client: Client) -> ClientId {
+pub fn register_new_client(
+    atmos: &mut Atmosphere,
+    atmos_copy: Arc<Mutex<Atmosphere>>,
+    client_stream: std::os::unix::net::UnixStream,
+) -> ClientId {
     // make a new client id
     let id = atmos.mint_client_id();
     if !client.data_map().insert_if_missing(move || id) {
