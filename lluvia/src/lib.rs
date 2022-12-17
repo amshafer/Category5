@@ -60,6 +60,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 #[cfg(test)]
 mod tests;
 
+#[derive(Debug)]
 enum TableRefEntityType {
     /// A reference tracked entity
     Entity(Entity),
@@ -68,6 +69,7 @@ enum TableRefEntityType {
     Offset(usize),
 }
 
+#[derive(Debug)]
 pub struct TableRef<'a, T: 'static> {
     /// The lock guard returned from the table
     tr_guard: RwLockReadGuard<'a, TableInternal<T>>,
@@ -87,6 +89,7 @@ impl<'a, T: 'static> Deref for TableRef<'a, T> {
     }
 }
 
+#[derive(Debug)]
 pub struct TableRefMut<'a, T: 'static> {
     /// The lock guard returned from the table
     tr_guard: RwLockWriteGuard<'a, TableInternal<T>>,

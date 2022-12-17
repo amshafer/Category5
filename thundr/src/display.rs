@@ -19,6 +19,8 @@ use crate::pipelines::PipelineType;
 use crate::{CreateInfo, SurfaceType};
 use utils::log;
 
+use std::str::FromStr;
+
 /// A display represents a physical screen
 ///
 /// This is mostly the same as vulkan's concept of a display,
@@ -133,6 +135,14 @@ impl Display {
     /// For VK_KHR_display we will calculate it ourselves, and for
     /// SDL we will ask SDL to tell us it.
     pub fn get_dpi(&self) -> (f32, f32) {
+        // Check for a user set DPI
+        if let Ok(env) = std::env::var("THUNDR_DPI") {
+            let val: f32 = f32::from_str(env.as_str())
+                .expect("THUNDR_DPI value must be a valid 32-bit floating point number");
+            log::debug!("Using user specified DPI {}");
+            return (val, val);
+        }
+
         self.d_back.get_dpi()
     }
 
