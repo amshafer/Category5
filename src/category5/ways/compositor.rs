@@ -47,7 +47,7 @@ impl ws::Dispatch<wlci::WlCompositor, ()> for Climate {
                 state.create_surface(client, id, data_init)
             }
             ws::protocol::wl_compositor::Request::CreateRegion { id } => {
-                wl_region::register_new(id)
+                wl_region::register_new(id, data_init)
             }
             // All other requests are invalid
             _ => unimplemented!(),

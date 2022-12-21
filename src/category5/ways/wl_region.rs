@@ -4,12 +4,43 @@
 // Austin Shafer - 2020
 extern crate wayland_server as ws;
 
-use ws::protocol::wl_region;
-use ws::Main;
-
-use std::cell::RefCell;
-use std::rc::Rc;
+use crate::category5::Climate;
 use utils::region::Rect;
+use ws::protocol::wl_region;
+
+use std::sync::{Arc, Mutex};
+
+// Register a new wl_region
+pub fn register_new(id: ws::New<wl_region::WlRegion>, data_init: &mut ws::DataInit<'_, Climate>) {
+    let re = Arc::new(Mutex::new(Region {
+        r_add: Vec::new(),
+        r_sub: Vec::new(),
+    }));
+    data_init.init(id, re);
+}
+
+// Dispatch<Interface, Userdata>
+impl ws::Dispatch<wl_region::WlRegion, Arc<Mutex<Region>>> for Climate {
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &wl_region::WlRegion,
+        request: wl_region::Request,
+        data: &Arc<Mutex<Region>>,
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        data.lock().unwrap().handle_request(request);
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        data: &Arc<Mutex<Region>>,
+    ) {
+    }
+}
 
 /// The private userdata for the wl_region
 #[derive(Debug)]
@@ -20,21 +51,6 @@ pub struct Region {
     /// List of rectangles to be subtracted from the
     /// active area
     pub r_sub: Vec<Rect<i32>>,
-}
-
-// Register a new wl_region
-pub fn register_new(reg: Main<wl_region::WlRegion>) {
-    let re = Rc::new(RefCell::new(Region {
-        r_add: Vec::new(),
-        r_sub: Vec::new(),
-    }));
-    reg.as_ref().user_data().set(|| re.clone());
-
-    // register our request handler
-    reg.quick_assign(move |_, r, _| {
-        let mut nre = re.borrow_mut();
-        nre.handle_request(r);
-    });
 }
 
 impl Region {
