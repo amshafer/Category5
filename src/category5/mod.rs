@@ -19,7 +19,7 @@ use utils::ClientId;
 use vkcomp::wm::*;
 
 use wayland_protocols::xdg::shell::server::*;
-use ws::protocol::{wl_compositor as wlci, wl_seat};
+use ws::protocol::{wl_compositor as wlci, wl_seat, wl_subcompositor};
 
 use std::ops::DerefMut;
 use std::os::unix::io::AsRawFd;
@@ -169,6 +169,7 @@ impl EventManager {
         display_handle.create_global::<Climate, wlci::WlCompositor, ()>(4, ());
         display_handle.create_global::<Climate, xdg_wm_base::XdgWmBase, ()>(1, ());
         display_handle.create_global::<Climate, wl_seat::WlSeat, ()>(8, ());
+        display_handle.create_global::<Climate, wl_subcompositor::WlSubcompositor, ()>(1, ());
 
         return evman;
     }

@@ -2,54 +2,100 @@
 //
 // Austin Shafer - 2020
 extern crate wayland_server as ws;
-use ws::protocol::wl_subcompositor as wlsc;
-use ws::protocol::wl_subsurface as wlss;
+use ws::protocol::wl_subcompositor;
+use ws::protocol::wl_subsurface;
+use ws::Resource;
 
 use super::role::Role;
 use super::surface::Surface;
 use crate::category5::atmosphere::Atmosphere;
+use crate::category5::Climate;
 use utils::WindowId;
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
-pub fn wl_subcompositor_handle_request(req: wlsc::Request, _: Main<wlsc::WlSubcompositor>) {
-    match req {
-        wlsc::Request::GetSubsurface {
-            id,
-            surface,
-            parent: par,
-        } => {
-            // get category5's surface from the userdata
-            let surf = surface
-                .as_ref()
-                .user_data()
-                .get::<Arc<Mutex<Surface>>>()
-                .unwrap()
-                .clone();
-            let parent = par
-                .as_ref()
-                .user_data()
-                .get::<Arc<Mutex<Surface>>>()
-                .unwrap()
-                .clone();
+impl ws::GlobalDispatch<wl_subcompositor::WlSubcompositor, ()> for Climate {
+    fn bind(
+        state: &mut Self,
+        handle: &ws::DisplayHandle,
+        client: &ws::Client,
+        resource: ws::New<wl_subcompositor::WlSubcompositor>,
+        global_data: &(),
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        data_init.init(resource, ());
+    }
+}
 
-            // TODO: throw error if surface has another role
+// Dispatch<Interface, Userdata>
+impl ws::Dispatch<wl_subcompositor::WlSubcompositor, ()> for Climate {
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &wl_subcompositor::WlSubcompositor,
+        request: wl_subcompositor::Request,
+        data: &(),
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        match request {
+            wl_subcompositor::Request::GetSubsurface {
+                id,
+                surface,
+                parent: par,
+            } => {
+                // get category5's surface from the userdata
+                let surf = surface.data::<Arc<Mutex<Surface>>>().unwrap().clone();
+                let parent = par.data::<Arc<Mutex<Surface>>>().unwrap().clone();
 
-            let ss = Rc::new(RefCell::new(SubSurface::new(
-                id.clone(),
-                surf.clone(),
-                parent,
-            )));
-            surf.lock().unwrap().s_role = Some(Role::subsurface(ss.clone()));
-            id.quick_assign(move |_, r, _| {
-                let mut ssurf = ss.lock().unwrap();
-                ssurf.handle_request(r);
-            });
-        }
-        _ => (),
-    };
+                // TODO: throw error if surface has another role
+
+                let ss = Arc::new(Mutex::new(SubSurface::new(
+                    state.c_atmos.lock().unwrap().deref_mut(),
+                    surf.clone(),
+                    parent,
+                )));
+                // Mark this surface with the subsurface roll
+                surf.lock().unwrap().s_role = Some(Role::subsurface(ss.clone()));
+                // Add our subsurface as the userdata
+                data_init.init(id, ss);
+            }
+            _ => (),
+        };
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        data: &(),
+    ) {
+    }
+}
+
+impl ws::Dispatch<wl_subsurface::WlSubsurface, Arc<Mutex<SubSurface>>> for Climate {
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &wl_subsurface::WlSubsurface,
+        request: wl_subsurface::Request,
+        data: &Arc<Mutex<SubSurface>>,
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        data.lock()
+            .unwrap()
+            .handle_request(state.c_atmos.lock().unwrap().deref_mut(), request);
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        data: &Arc<Mutex<SubSurface>>,
+    ) {
+    }
 }
 
 /// This tracks the double buffered state for a subsurface
@@ -59,8 +105,6 @@ pub fn wl_subcompositor_handle_request(req: wlsc::Request, _: Main<wlsc::WlSubco
 /// different rendering logic path.
 #[allow(dead_code)]
 pub struct SubSurface {
-    ss_atmos: Arc<Mutex<Atmosphere>>,
-    ss_proxy: wlss::WlSubsurface,
     ss_surf: Arc<Mutex<Surface>>,
     ss_parent: Arc<Mutex<Surface>>,
     /// attached new position to be applied on commit
@@ -78,25 +122,15 @@ pub struct SubSurface {
 }
 
 impl SubSurface {
-    fn new(
-        sub: wlss::WlSubsurface,
-        surf: Arc<Mutex<Surface>>,
-        parent: Arc<Mutex<Surface>>,
-    ) -> Self {
-        let atmos_mtx = surf.lock().unwrap().s_atmos.clone();
-        {
-            let mut atmos = atmos_mtx.lock().unwrap();
-            // We need to mark this surface as the new top child
-            // of the parent
-            atmos.add_new_top_subsurf(parent.lock().unwrap().s_id, surf.lock().unwrap().s_id);
+    fn new(atmos: &mut Atmosphere, surf: Arc<Mutex<Surface>>, parent: Arc<Mutex<Surface>>) -> Self {
+        // We need to mark this surface as the new top child
+        // of the parent
+        atmos.add_new_top_subsurf(parent.lock().unwrap().s_id, surf.lock().unwrap().s_id);
 
-            // The synchronized state defaults to true
-            atmos.set_subsurface_sync(surf.lock().unwrap().s_id, Some(true));
-        }
+        // The synchronized state defaults to true
+        atmos.set_subsurface_sync(surf.lock().unwrap().s_id, Some(true));
 
         Self {
-            ss_atmos: atmos_mtx,
-            ss_proxy: sub,
             ss_surf: surf,
             ss_parent: parent,
             ss_position: None,
@@ -106,43 +140,37 @@ impl SubSurface {
         }
     }
 
-    fn handle_request(&mut self, req: wlss::Request) {
+    fn handle_request(&mut self, atmos: &mut Atmosphere, req: wl_subsurface::Request) {
         match req {
-            wlss::Request::SetPosition { x, y } => self.ss_position = Some((x as f32, y as f32)),
-            wlss::Request::PlaceAbove { sibling } => {
+            wl_subsurface::Request::SetPosition { x, y } => {
+                self.ss_position = Some((x as f32, y as f32))
+            }
+            wl_subsurface::Request::PlaceAbove { sibling } => {
                 self.ss_place_above = Some(
                     sibling
-                        .as_ref()
-                        .user_data()
-                        .get::<Arc<Mutex<Surface>>>()
+                        .data::<Arc<Mutex<Surface>>>()
                         .unwrap()
                         .lock()
                         .unwrap()
                         .s_id,
                 )
             }
-            wlss::Request::PlaceBelow { sibling } => {
+            wl_subsurface::Request::PlaceBelow { sibling } => {
                 self.ss_place_below = Some(
                     sibling
-                        .as_ref()
-                        .user_data()
-                        .get::<Arc<Mutex<Surface>>>()
+                        .data::<Arc<Mutex<Surface>>>()
                         .unwrap()
                         .lock()
                         .unwrap()
                         .s_id,
                 )
             }
-            wlss::Request::SetSync => self
-                .ss_atmos
-                .lock()
-                .unwrap()
-                .set_subsurface_sync(self.ss_surf.lock().unwrap().s_id, Some(true)),
-            wlss::Request::SetDesync => self
-                .ss_atmos
-                .lock()
-                .unwrap()
-                .set_subsurface_sync(self.ss_surf.lock().unwrap().s_id, Some(false)),
+            wl_subsurface::Request::SetSync => {
+                atmos.set_subsurface_sync(self.ss_surf.lock().unwrap().s_id, Some(true))
+            }
+            wl_subsurface::Request::SetDesync => {
+                atmos.set_subsurface_sync(self.ss_surf.lock().unwrap().s_id, Some(false))
+            }
             _ => (),
         };
     }
