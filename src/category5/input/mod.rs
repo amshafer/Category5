@@ -429,10 +429,11 @@ impl Input {
             if let Some(cell) = atmos.get_surface_from_id(id) {
                 let surf = cell.lock().unwrap();
                 match &surf.s_role {
-                    Some(Role::xdg_shell_toplevel(ss)) => {
+                    Some(Role::xdg_shell_toplevel(xdg_surf, ss)) => {
                         // send the xdg configure events
                         ss.lock().unwrap().configure(
                             &mut atmos,
+                            xdg_surf,
                             &surf,
                             Some((self.i_resize_diff.0 as f32, self.i_resize_diff.1 as f32)),
                         );
@@ -636,7 +637,7 @@ impl Input {
                 // if on one of the edges start a resize
                 if let Some(surf) = atmos.get_surface_from_id(id) {
                     match &surf.lock().unwrap().s_role {
-                        Some(Role::xdg_shell_toplevel(ss)) => {
+                        Some(Role::xdg_shell_toplevel(_, ss)) => {
                             match c.c_state {
                                 // The release is handled above
                                 ButtonState::Released => {
@@ -689,7 +690,7 @@ impl Input {
                 // if on one of the edges start a resize
                 if let Some(surf) = atmos.get_surface_from_id(id) {
                     match &surf.lock().unwrap().s_role {
-                        Some(Role::xdg_shell_toplevel(ss)) => {
+                        Some(Role::xdg_shell_toplevel(_, ss)) => {
                             match c.c_state {
                                 ButtonState::Pressed => {
                                     log::debug!("Resizing window {:?}", id);

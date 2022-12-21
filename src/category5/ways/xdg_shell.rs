@@ -479,7 +479,8 @@ impl ShellSurface {
         userdata: Arc<Mutex<ShellSurface>>,
     ) {
         // Mark our surface as being a window handled by xdg_shell
-        self.ss_surface.lock().unwrap().s_role = Some(Role::xdg_shell_toplevel(userdata.clone()));
+        self.ss_surface.lock().unwrap().s_role =
+            Some(Role::xdg_shell_toplevel(xdg_surf.clone(), userdata.clone()));
 
         // Record our state
         self.ss_xs.xs_make_new_toplevel_window = true;

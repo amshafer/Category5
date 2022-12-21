@@ -292,7 +292,7 @@ impl Surface {
 
         // Commit any role state before we do our thing
         match &self.s_role {
-            Some(Role::xdg_shell_toplevel(xs)) => xs.lock().unwrap().commit(&self, atmos),
+            Some(Role::xdg_shell_toplevel(_, xs)) => xs.lock().unwrap().commit(&self, atmos),
             Some(Role::xdg_shell_popup(xs)) => xs.lock().unwrap().commit(&self, atmos),
             Some(Role::wl_shell_toplevel) => {
                 atmos.set_window_size(self.s_id, surf_size.0, surf_size.1)

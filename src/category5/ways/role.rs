@@ -7,6 +7,7 @@
 // Austin Shafer 2020
 use super::wl_subcompositor::SubSurface;
 use super::xdg_shell;
+use wayland_protocols::xdg::shell::server::*;
 
 use std::sync::{Arc, Mutex};
 
@@ -16,6 +17,6 @@ pub enum Role {
     // This window is being controlled by wl_shell (deprecated)
     wl_shell_toplevel,
     // This window is being controlled by xdg_shell
-    xdg_shell_toplevel(Arc<Mutex<xdg_shell::ShellSurface>>),
+    xdg_shell_toplevel(xdg_surface::XdgSurface, Arc<Mutex<xdg_shell::ShellSurface>>),
     xdg_shell_popup(Arc<Mutex<xdg_shell::ShellSurface>>),
 }
