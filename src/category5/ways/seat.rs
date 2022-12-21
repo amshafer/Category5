@@ -11,16 +11,81 @@ use nix::unistd::ftruncate;
 extern crate wayland_server as ws;
 use ws::protocol::wl_seat::Capability;
 use ws::protocol::{wl_keyboard, wl_pointer, wl_seat};
+use ws::Resource;
 
-use super::keyboard::wl_keyboard_handle_request;
-use super::pointer::wl_pointer_handle_request;
+use crate::category5::atmosphere::Atmosphere;
 use crate::category5::input::Input;
+use crate::category5::Climate;
 use utils::ClientId;
 
 use std::fs::File;
 use std::io::Write;
+use std::ops::DerefMut;
 use std::os::unix::io::FromRawFd;
 use std::sync::{Arc, Mutex};
+
+impl ws::GlobalDispatch<wl_seat::WlSeat, ()> for Climate {
+    fn bind(
+        state: &mut Self,
+        handle: &ws::DisplayHandle,
+        client: &ws::Client,
+        resource: ws::New<wl_seat::WlSeat>,
+        global_data: &(),
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        // get the id representing this client in the atmos
+        let atmos = state.c_atmos.lock().unwrap();
+        let id = super::utils::get_id_from_client(atmos.deref_mut(), *client);
+
+        // check if a seat exists and add this to it
+        // add a new seat to this client
+        let seat = match atmos.get_seat_from_client_id(id) {
+            Some(seat) => {
+                // Re-use the existing seat global
+                seat
+            }
+            None => {
+                // Make a new seat global if one didn't exist
+                let seat = Arc::new(Mutex::new(Seat::new(state.c_input.hi_in.clone(), id)));
+                atmos.add_seat(id, seat.clone());
+                seat
+            }
+        };
+
+        let wl_seat = data_init.init(resource, seat);
+        // make a new seat instance that adds this wl_seat to the Seat
+        // see docs for this func for more
+        seat.lock().unwrap().add_seat_instance(wl_seat.clone());
+    }
+}
+
+// Dispatch<Interface, Userdata>
+impl ws::Dispatch<wl_seat::WlSeat, Arc<Mutex<Seat>>> for Climate {
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &wl_seat::WlSeat,
+        request: wl_seat::Request,
+        data: &Arc<Mutex<Seat>>,
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        data.lock().unwrap().handle_request(
+            state.c_atmos.lock().unwrap().deref_mut(),
+            request,
+            resource,
+            data_init,
+        );
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        data: &Arc<Mutex<Seat>>,
+    ) {
+    }
+}
 
 /// See the create_global call in `compositor.rs` for the code
 /// that adds a seat instance to a `Seat`.
@@ -45,12 +110,12 @@ impl SeatInstance {
     /// Add a keyboard to this seat
     ///
     /// This also sends the modifier event
-    fn get_keyboard(&mut self, parent: &mut Seat, keyboard: wl_keyboard::WlKeyboard) {
-        // register our request handler
-        keyboard.quick_assign(move |k, r, _| {
-            wl_keyboard_handle_request(r, k);
-        });
-
+    fn get_keyboard(
+        &mut self,
+        atmos: &mut Atmosphere,
+        parent: &mut Seat,
+        keyboard: wl_keyboard::WlKeyboard,
+    ) {
         let input = parent.s_input.lock().unwrap();
         // Make a temp fd to share with the client
         #[cfg(target_os = "freebsd")]
@@ -89,7 +154,7 @@ impl SeatInstance {
         // That gross behavior aside, the spec does require us to send this.
         // Send 0 to show we don't repeat.
         // as_ref turns the Main into a Resource
-        if keyboard.as_ref().version() >= 4 {
+        if keyboard.version() >= 4 {
             keyboard.repeat_info(0, 0);
         }
 
@@ -98,7 +163,6 @@ impl SeatInstance {
 
         // If we are in focus, then we should go ahead and generate
         // the enter event
-        let atmos = input.i_atmos.lock().unwrap();
         if let Some(focus) = atmos.get_client_in_focus() {
             if parent.s_id == focus {
                 if let Some(sid) = atmos.get_win_focus() {
@@ -116,21 +180,22 @@ impl SeatInstance {
     }
 
     /// Register a wl_pointer to this seat
-    fn get_pointer(&mut self, parent: &mut Seat, pointer: wl_pointer::WlPointer) {
+    fn get_pointer(
+        &mut self,
+        atmos: &mut Atmosphere,
+        parent: &mut Seat,
+        pointer: wl_pointer::WlPointer,
+    ) {
         self.si_pointers.push(pointer.clone());
-        pointer.quick_assign(move |p, r, _| {
-            wl_pointer_handle_request(r, p);
-        });
 
         // If we are in focus, then we should go ahead and generate
         // the enter event
         let input = parent.s_input.lock().unwrap();
-        let atmos = input.i_atmos.lock().unwrap();
         if let Some(sid) = atmos.get_win_focus() {
             if let Some(pointer_focus) = input.i_pointer_focus {
                 // check if the surface is the input sys's focus
                 if sid == pointer_focus {
-                    Input::pointer_enter(&atmos, sid);
+                    Input::pointer_enter(atmos, sid);
                 }
             }
         }
@@ -153,7 +218,7 @@ pub struct Seat {
     // The id of the client this seat belongs to
     pub s_id: ClientId,
     // List of all wl_seats and their respective device proxies
-    pub s_proxies: Arc<Mutex<Vec<SeatInstance>>>,
+    pub s_proxies: Vec<SeatInstance>,
     // the serial number for this set of input events
     pub s_serial: u32,
 }
@@ -169,7 +234,7 @@ impl Seat {
         Seat {
             s_input: input,
             s_id: id,
-            s_proxies: Rc::new(RefCell::new(Vec::new())),
+            s_proxies: Vec::new(),
             s_serial: 0,
         }
     }
@@ -185,28 +250,35 @@ impl Seat {
         // TODO: don't just default to keyboard + mouse
         seat.capabilities(Capability::Keyboard | Capability::Pointer);
 
-        self.s_proxies.lock().unwrap().push(SeatInstance::new(seat));
+        self.s_proxies.push(SeatInstance::new(seat));
     }
 
     /// Handle client requests
     ///
     /// This basically just creates and registers the different
     /// input-related protocols, such as wl_keyboard
-    pub fn handle_request(&mut self, req: wl_seat::Request, seat: wl_seat::WlSeat) {
+    pub fn handle_request(
+        &mut self,
+        atmos: &mut Atmosphere,
+        req: wl_seat::Request,
+        seat: &wl_seat::WlSeat,
+        data_init: &mut ws::DataInit<'_, Climate>,
+    ) {
         // we need to borrow proxies seperately so we don't borrow self
-        let proxies_rc = self.s_proxies.clone();
-        let mut proxies = proxies_rc.lock().unwrap();
-        let si = proxies
+        let si = self
+            .s_proxies
             .iter_mut()
-            .find(|s| s.si_seat == seat)
+            .find(|s| s.si_seat == *seat)
             .expect("wl_seat is not known by this Seat");
 
         match req {
             wl_seat::Request::GetKeyboard { id } => {
-                si.get_keyboard(self, id);
+                let kb = data_init.init(id, ());
+                si.get_keyboard(atmos, self, kb);
             }
             wl_seat::Request::GetPointer { id } => {
-                si.get_pointer(self, id);
+                let ptr = data_init.init(id, ());
+                si.get_pointer(atmos, self, ptr);
             }
             _ => unimplemented!("Did not recognize the request"),
         }

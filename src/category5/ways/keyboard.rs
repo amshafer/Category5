@@ -5,13 +5,27 @@
 //
 // Austin Shafer - 2020
 extern crate wayland_server as ws;
-use ws::Main;
+use crate::category5::Climate;
 use ws::protocol::wl_keyboard;
 
-pub fn wl_keyboard_handle_request(req: wl_keyboard::Request,
-                                  _keyboard: Main<wl_keyboard::WlKeyboard>)
-{
-    match req {
-        _ => {},
+// Dispatch<Interface, Userdata>
+impl ws::Dispatch<wl_keyboard::WlKeyboard, ()> for Climate {
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &wl_keyboard::WlKeyboard,
+        request: wl_keyboard::Request,
+        data: &(),
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        data: &(),
+    ) {
     }
 }

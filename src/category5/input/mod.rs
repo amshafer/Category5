@@ -128,7 +128,7 @@ pub struct HWInput {
     /// libinput context
     hi_libin: Libinput,
     /// Our input handler
-    hi_in: Arc<Mutex<Input>>,
+    pub hi_in: Arc<Mutex<Input>>,
 }
 
 impl HWInput {
@@ -384,7 +384,7 @@ impl Input {
             if let Some(cell) = atmos.get_seat_from_window_id(id) {
                 let seat = cell.lock().unwrap();
                 // Get the pointer
-                for si in seat.s_proxies.lock().unwrap().iter() {
+                for si in seat.s_proxies.iter() {
                     for pointer in si.si_pointers.iter() {
                         Self::send_axis(
                             pointer,
@@ -458,7 +458,7 @@ impl Input {
             // TODO: verify
             // The client may have allocated multiple seats, and we should
             // deliver events to all of them
-            for si in seat.s_proxies.lock().unwrap().iter() {
+            for si in seat.s_proxies.iter() {
                 for keyboard in si.si_keyboards.iter() {
                     if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                         keyboard.enter(
@@ -484,7 +484,7 @@ impl Input {
             // TODO: verify
             // The client may have allocated multiple seats, and we should
             // deliver events to all of them
-            for si in seat.s_proxies.lock().unwrap().iter() {
+            for si in seat.s_proxies.iter() {
                 for keyboard in si.si_keyboards.iter() {
                     if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                         keyboard.leave(seat.s_serial, &surf);
@@ -509,7 +509,7 @@ impl Input {
                     // TODO: verify
                     // The client may have allocated multiple seats, and we should
                     // deliver events to all of them
-                    for si in seat.s_proxies.lock().unwrap().iter() {
+                    for si in seat.s_proxies.iter() {
                         for pointer in si.si_pointers.iter() {
                             pointer.enter(
                                 seat.s_serial,
@@ -537,7 +537,7 @@ impl Input {
             // TODO: verify
             // The client may have allocated multiple seats, and we should
             // deliver events to all of them
-            for si in seat.s_proxies.lock().unwrap().iter() {
+            for si in seat.s_proxies.iter() {
                 for pointer in si.si_pointers.iter() {
                     if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                         pointer.leave(seat.s_serial, &surf);
@@ -587,7 +587,7 @@ impl Input {
                 // get the seat for this client
                 let seat = cell.lock().unwrap();
                 // Get the pointer
-                for si in seat.s_proxies.lock().unwrap().iter() {
+                for si in seat.s_proxies.iter() {
                     for pointer in si.si_pointers.iter() {
                         // If the pointer is over this surface
                         if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
@@ -724,7 +724,7 @@ impl Input {
                 // get the seat for this client
                 if let Some(cell) = atmos.get_seat_from_window_id(id) {
                     let seat = cell.lock().unwrap();
-                    for si in seat.s_proxies.lock().unwrap().iter() {
+                    for si in seat.s_proxies.iter() {
                         for pointer in si.si_pointers.iter() {
                             // Trigger a button event
                             pointer.button(
@@ -816,7 +816,7 @@ impl Input {
             // get the seat for this client
             if let Some(cell) = atmos.get_seat_from_client_id(id) {
                 let mut seat = cell.lock().unwrap();
-                for si in seat.s_proxies.lock().unwrap().iter() {
+                for si in seat.s_proxies.iter() {
                     for keyboard in si.si_keyboards.iter() {
                         if let Some((depressed, latched, locked, layout)) = mods {
                             // Finally fire the wayland event
