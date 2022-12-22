@@ -383,3 +383,26 @@ impl Drop for Surface {
         }
     }
 }
+
+// Add empty definition for wl_callback
+#[allow(unused_variables)]
+impl ws::Dispatch<wl_callback::WlCallback, ()> for Climate {
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &wl_callback::WlCallback,
+        request: wl_callback::Request,
+        data: &(),
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        data: &(),
+    ) {
+    }
+}
