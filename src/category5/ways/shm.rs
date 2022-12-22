@@ -6,16 +6,139 @@
 extern crate nix;
 extern crate wayland_server as ws;
 
+use ws::protocol::wl_buffer;
 use ws::protocol::{wl_shm, wl_shm_pool};
+use ws::Resource;
 
+use crate::category5::Climate;
 use utils::{log, MemImage};
 
 use nix::{sys::mman, unistd};
-use std::cell::RefCell;
 use std::ffi::c_void;
-use std::ops::Deref;
-use std::os::unix::io::RawFd;
-use std::rc::Rc;
+use std::os::unix::io::{AsRawFd, RawFd};
+use std::sync::{Arc, Mutex};
+
+impl ws::GlobalDispatch<wl_shm::WlShm, ()> for Climate {
+    fn bind(
+        state: &mut Self,
+        handle: &ws::DisplayHandle,
+        client: &ws::Client,
+        resource: ws::New<wl_shm::WlShm>,
+        global_data: &(),
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        data_init.init(resource, ());
+    }
+}
+
+// Dispatch<Interface, Userdata>
+impl ws::Dispatch<wl_shm::WlShm, ()> for Climate {
+    // Handles events for the wl_shm interface
+    //
+    // There is essentially only one thing going on here,
+    // we immediately create a shared memory pool and
+    // create a wl_shm_pool resource to represent it.
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &wl_shm::WlShm,
+        request: wl_shm::Request,
+        data: &(),
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        match request {
+            wl_shm::Request::CreatePool { id, fd, size } => {
+                // We only handle valid sized pools
+                if size <= 0 {
+                    resource.post_error(wl_shm::Error::InvalidFd as u32, "Invalid Fd".to_string());
+                }
+
+                let reg = Arc::new(Mutex::new(
+                    ShmRegion::new(fd.as_raw_fd(), size as usize).unwrap(),
+                ));
+                // Add our ShmRegion as the private data for the pool
+                data_init.init(id, reg);
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        data: &(),
+    ) {
+    }
+}
+
+impl ws::Dispatch<wl_shm_pool::WlShmPool, Arc<Mutex<ShmRegion>>> for Climate {
+    // Handle events for the wl_shm_pool interface
+    //
+    // The shared memory pool is going to handle creation of
+    // buffers, we will carve out a portion of the shared
+    // memory region to supply one.
+    // Get the userdata from this resource
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &wl_shm_pool::WlShmPool,
+        request: wl_shm_pool::Request,
+        data: &Arc<Mutex<ShmRegion>>,
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        match request {
+            #[allow(unused_variables)]
+            wl_shm_pool::Request::CreateBuffer {
+                // id is actually translated to a buffer by wayland-rs
+                id,
+                offset,
+                width,
+                height,
+                stride,
+                format: format_enum,
+            } => {
+                let format = format_enum.into_result().expect("Not a valid format");
+
+                // Ensure that the requested format is supported
+                if format != wl_shm::Format::Xrgb8888 && format != wl_shm::Format::Argb8888 {
+                    resource.post_error(
+                        wl_shm::Error::InvalidFormat as u32,
+                        format!("SHM format {:?} is not supported.", format),
+                    );
+                }
+
+                let buf = ShmBuffer {
+                    sb_reg: data.clone(),
+                    sb_offset: offset,
+                    sb_width: width,
+                    sb_height: height,
+                    sb_stride: stride,
+                    sb_format: format,
+                };
+                log::debug!("Created new shm buf with size {}x{}", width, height);
+
+                // Add our buffer priv data to the userdata
+                data_init.init(id, Arc::new(buf));
+            }
+            wl_shm_pool::Request::Resize { size } => {
+                data.lock().unwrap().resize(size as usize);
+            }
+            wl_shm_pool::Request::Destroy => {}
+            _ => unimplemented!(),
+        }
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        data: &Arc<Mutex<ShmRegion>>,
+    ) {
+    }
+}
 
 // A ShmRegion is a mmapped anonymous region of
 // shared memory
@@ -30,6 +153,9 @@ struct ShmRegion {
     sr_raw_ptr: *mut c_void,
     sr_size: usize,
 }
+
+// Have to do this manually because of the void *
+unsafe impl Send for ShmRegion {}
 
 impl ShmRegion {
     // Create a new shared memory region from fd
@@ -95,32 +221,6 @@ impl Drop for ShmRegion {
     }
 }
 
-// Handles events for the wl_shm interface
-//
-// There is essentially only one thing going on here,
-// we immediately create a shared memory pool and
-// create a wl_shm_pool resource to represent it.
-pub fn shm_handle_request(req: wl_shm::Request, shm: wl_shm::WlShm) {
-    match req {
-        wl_shm::Request::CreatePool { id: pool, fd, size } => {
-            // We only handle valid sized pools
-            if size <= 0 {
-                shm.as_ref()
-                    .post_error(wl_shm::Error::InvalidFd as u32, "Invalid Fd".to_string());
-            }
-
-            let reg = Rc::new(RefCell::new(ShmRegion::new(fd, size as usize).unwrap()));
-            // Register a callback for the wl_shm_pool interface
-            pool.quick_assign(|p, r, _| {
-                shm_pool_handle_request(r, p.deref().clone());
-            });
-            // Add our ShmRegion as the private data for the pool
-            pool.as_ref().user_data().set(move || reg);
-        }
-        _ => unimplemented!(),
-    }
-}
-
 // A buffer in shared memory
 //
 // This represents a region of memory which
@@ -129,7 +229,7 @@ pub fn shm_handle_request(req: wl_shm::Request, shm: wl_shm::WlShm) {
 #[allow(dead_code)]
 pub struct ShmBuffer {
     // The region this buffer is a part of
-    sb_reg: Rc<RefCell<ShmRegion>>,
+    sb_reg: Arc<Mutex<ShmRegion>>,
     // The offset into sb_reg where this is located
     sb_offset: i32,
     pub sb_width: i32,
@@ -149,7 +249,8 @@ impl ShmBuffer {
         let mut ret = MemImage::new(
             unsafe {
                 self.sb_reg
-                    .borrow()
+                    .lock()
+                    .unwrap()
                     .sr_raw_ptr
                     .offset(self.sb_offset as isize)
             } as *mut u8,
@@ -165,57 +266,25 @@ impl ShmBuffer {
     }
 }
 
-// Handle events for the wl_shm_pool interface
-//
-// The shared memory pool is going to handle creation of
-// buffers, we will carve out a portion of the shared
-// memory region to supply one.
-pub fn shm_pool_handle_request(req: wl_shm_pool::Request, pool: wl_shm_pool::WlShmPool) {
-    // Get the userdata from this resource
-    let reg = pool
-        .as_ref()
-        .user_data()
-        .get::<Rc<RefCell<ShmRegion>>>()
-        .unwrap();
+// Handle buffers with shm attached
+impl ws::Dispatch<wl_buffer::WlBuffer, Arc<ShmBuffer>> for Climate {
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &wl_buffer::WlBuffer,
+        request: wl_buffer::Request,
+        data: &Arc<ShmBuffer>,
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+    }
 
-    match req {
-        #[allow(unused_variables)]
-        wl_shm_pool::Request::CreateBuffer {
-            // id is actually translated to a buffer by wayland-rs
-            id: buffer,
-            offset,
-            width,
-            height,
-            stride,
-            format,
-        } => {
-            // Ensure that the requested format is supported
-            if format != wl_shm::Format::Xrgb8888 && format != wl_shm::Format::Argb8888 {
-                pool.as_ref().post_error(
-                    wl_shm::Error::InvalidFormat as u32,
-                    format!("SHM format {:?} is not supported.", format),
-                );
-            }
-
-            let data = ShmBuffer {
-                sb_reg: reg.clone(),
-                sb_offset: offset,
-                sb_width: width,
-                sb_height: height,
-                sb_stride: stride,
-                sb_format: format,
-            };
-            log::debug!("Created new shm buf with size {}x{}", width, height);
-
-            // We still need to register a void callback
-            buffer.quick_assign(|_, _, _| {});
-            // Add our buffer priv data to the userdata
-            buffer.as_ref().user_data().set(move || data);
-        }
-        wl_shm_pool::Request::Resize { size } => {
-            reg.borrow_mut().resize(size as usize);
-        }
-        wl_shm_pool::Request::Destroy => {}
-        _ => unimplemented!(),
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        data: &Arc<ShmBuffer>,
+    ) {
+        // don't close shm fd here since it is handled in Drop
     }
 }
