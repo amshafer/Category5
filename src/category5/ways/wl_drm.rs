@@ -8,12 +8,12 @@
 extern crate wayland_server as ws;
 
 use crate::category5::atmosphere::Atmosphere;
-use std::sync::{Arc, Mutex};
+use crate::category5::Climate;
 use utils::log;
-use ws::Main;
 
 use nix::sys::stat::SFlag;
 use std::ffi::CStr;
+use std::ops::DerefMut;
 use std::os::raw::{c_char, c_int};
 
 use super::protocol::wl_drm::wl_drm;
@@ -82,18 +82,44 @@ fn get_drm_dev_name(atmos: &Atmosphere) -> String {
     format!("/dev/dri/renderD{}", drm_number_in_name)
 }
 
-pub fn wl_drm_setup(atmos_mtx: Arc<Mutex<Atmosphere>>, wl_drm: Main<wl_drm::WlDrm>) {
-    println!("LIBC DEV_T = {:?}", std::any::type_name::<libc::dev_t>());
-    // Send the name of the DRM device reported by vkcomp
-    let atmos = atmos_mtx.lock().unwrap();
-    let drm_name = get_drm_dev_name(&atmos);
-    log::error!("DRM device returned by wl_drm is {}", drm_name);
+impl ws::GlobalDispatch<wl_drm::WlDrm, ()> for Climate {
+    fn bind(
+        state: &mut Self,
+        handle: &ws::DisplayHandle,
+        client: &ws::Client,
+        resource: ws::New<wl_drm::WlDrm>,
+        global_data: &(),
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        let wl_drm = data_init.init(resource, ());
+        println!("LIBC DEV_T = {:?}", std::any::type_name::<libc::dev_t>());
+        // Send the name of the DRM device reported by vkcomp
+        let drm_name = get_drm_dev_name(state.c_atmos.lock().unwrap().deref_mut());
+        log::error!("DRM device returned by wl_drm is {}", drm_name);
 
-    wl_drm.device(drm_name);
+        wl_drm.device(drm_name);
+    }
 }
 
-/// Ignores all requests. We only use this protocol to deliver
-/// the drm name.
-pub fn wl_drm_handle_request(req: wl_drm::Request, _wl_drm: Main<wl_drm::WlDrm>) {
-    log::error!("Unimplemented wl_drm request {:?}", req);
+// Dispatch<Interface, Userdata>
+impl ws::Dispatch<wl_drm::WlDrm, ()> for Climate {
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &wl_drm::WlDrm,
+        request: wl_drm::Request,
+        data: &(),
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        log::error!("Unimplemented wl_drm request {:?}", request);
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        data: &(),
+    ) {
+    }
 }

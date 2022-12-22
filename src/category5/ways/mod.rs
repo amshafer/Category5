@@ -56,6 +56,7 @@ pub mod compositor;
 mod keyboard;
 pub mod linux_dmabuf;
 mod pointer;
+pub mod protocol;
 pub mod seat;
 mod shm;
 pub mod surface;
