@@ -11,6 +11,7 @@ use ws::protocol::wl_output;
 use ws::protocol::wl_output::{Mode, Subpixel, Transform};
 
 // TODO: have vkcomp give us more information to relay
+#[allow(unused_variables)]
 impl ws::GlobalDispatch<wl_output::WlOutput, ()> for Climate {
     fn bind(
         state: &mut Self,
@@ -47,6 +48,7 @@ impl ws::GlobalDispatch<wl_output::WlOutput, ()> for Climate {
     }
 }
 
+#[allow(unused_variables)]
 impl ws::Dispatch<wl_output::WlOutput, ()> for Climate {
     fn request(
         state: &mut Self,

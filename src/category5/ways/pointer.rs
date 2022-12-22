@@ -6,6 +6,7 @@ use crate::category5::Climate;
 use ws::protocol::wl_pointer;
 
 // Dispatch<Interface, Userdata>
+#[allow(unused_variables)]
 impl ws::Dispatch<wl_pointer::WlPointer, ()> for Climate {
     fn request(
         state: &mut Self,

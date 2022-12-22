@@ -82,6 +82,7 @@ fn get_drm_dev_name(atmos: &Atmosphere) -> String {
     format!("/dev/dri/renderD{}", drm_number_in_name)
 }
 
+#[allow(unused_variables)]
 impl ws::GlobalDispatch<wl_drm::WlDrm, ()> for Climate {
     fn bind(
         state: &mut Self,
@@ -102,6 +103,7 @@ impl ws::GlobalDispatch<wl_drm::WlDrm, ()> for Climate {
 }
 
 // Dispatch<Interface, Userdata>
+#[allow(unused_variables)]
 impl ws::Dispatch<wl_drm::WlDrm, ()> for Climate {
     fn request(
         state: &mut Self,

@@ -20,6 +20,7 @@ pub fn register_new(id: ws::New<wl_region::WlRegion>, data_init: &mut ws::DataIn
 }
 
 // Dispatch<Interface, Userdata>
+#[allow(unused_variables)]
 impl ws::Dispatch<wl_region::WlRegion, Arc<Mutex<Region>>> for Climate {
     fn request(
         state: &mut Self,

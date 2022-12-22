@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex};
 // xdg_wm_base
 // --------------------------------------------------------------
 
+#[allow(unused_variables)]
 impl ws::GlobalDispatch<xdg_wm_base::XdgWmBase, ()> for Climate {
     fn bind(
         state: &mut Self,
@@ -39,6 +40,7 @@ impl ws::GlobalDispatch<xdg_wm_base::XdgWmBase, ()> for Climate {
 }
 
 // Dispatch<Interface, Userdata>
+#[allow(unused_variables)]
 impl ws::Dispatch<xdg_wm_base::XdgWmBase, ()> for Climate {
     fn request(
         state: &mut Self,
@@ -67,7 +69,7 @@ impl ws::Dispatch<xdg_wm_base::XdgWmBase, ()> for Climate {
 /// the lifecycle of the window. Essentially it just creates
 /// a xdg_shell_surface.
 pub fn xdg_wm_base_handle_request(
-    client: &ws::Client,
+    _client: &ws::Client,
     data_init: &mut ws::DataInit<'_, Climate>,
     _resource: &xdg_wm_base::XdgWmBase,
     req: xdg_wm_base::Request,
@@ -119,6 +121,7 @@ pub fn xdg_wm_base_handle_request(
 // xdg_surface
 // --------------------------------------------------------------
 
+#[allow(unused_variables)]
 impl ws::Dispatch<xdg_surface::XdgSurface, Arc<Mutex<ShellSurface>>> for Climate {
     fn request(
         state: &mut Self,
@@ -155,7 +158,7 @@ impl ws::Dispatch<xdg_surface::XdgSurface, Arc<Mutex<ShellSurface>>> for Climate
 /// the gory details.
 fn xdg_surface_handle_request(
     atmos: &mut Atmosphere,
-    client: &ws::Client,
+    _client: &ws::Client,
     data_init: &mut ws::DataInit<'_, Climate>,
     surf: &xdg_surface::XdgSurface,
     req: xdg_surface::Request,
@@ -570,6 +573,7 @@ impl XdgState {
 // xdg_toplevel
 // --------------------------------------------------------------
 
+#[allow(unused_variables)]
 impl ws::Dispatch<xdg_toplevel::XdgToplevel, Arc<Mutex<ShellSurface>>> for Climate {
     fn request(
         state: &mut Self,
@@ -606,8 +610,8 @@ impl ShellSurface {
     fn handle_toplevel_request(
         &mut self,
         atmos: &mut Atmosphere,
-        client: &ws::Client,
-        data_init: &mut ws::DataInit<'_, Climate>,
+        _client: &ws::Client,
+        _data_init: &mut ws::DataInit<'_, Climate>,
         _toplevel: &xdg_toplevel::XdgToplevel,
         req: xdg_toplevel::Request,
     ) {
@@ -712,6 +716,7 @@ impl TLConfig {
 // xdg_positioner
 // --------------------------------------------------------------
 
+#[allow(unused_variables)]
 impl ws::Dispatch<xdg_positioner::XdgPositioner, Arc<Mutex<Positioner>>> for Climate {
     fn request(
         state: &mut Self,
@@ -868,6 +873,7 @@ impl Positioner {
 // xdg_popup
 // --------------------------------------------------------------
 
+#[allow(unused_variables)]
 impl ws::Dispatch<xdg_popup::XdgPopup, Arc<Mutex<ShellSurface>>> for Climate {
     fn request(
         state: &mut Self,
@@ -992,8 +998,8 @@ impl ShellSurface {
     fn handle_popup_request(
         &mut self,
         atmos: &mut Atmosphere,
-        client: &ws::Client,
-        data_init: &mut ws::DataInit<'_, Climate>,
+        _client: &ws::Client,
+        _data_init: &mut ws::DataInit<'_, Climate>,
         _popup: &xdg_popup::XdgPopup,
         req: xdg_popup::Request,
     ) {

@@ -24,6 +24,7 @@ use std::ops::DerefMut;
 use std::os::unix::io::FromRawFd;
 use std::sync::{Arc, Mutex};
 
+#[allow(unused_variables)]
 impl ws::GlobalDispatch<wl_seat::WlSeat, ()> for Climate {
     fn bind(
         state: &mut Self,
@@ -60,6 +61,7 @@ impl ws::GlobalDispatch<wl_seat::WlSeat, ()> for Climate {
 }
 
 // Dispatch<Interface, Userdata>
+#[allow(unused_variables)]
 impl ws::Dispatch<wl_seat::WlSeat, Arc<Mutex<Seat>>> for Climate {
     fn request(
         state: &mut Self,

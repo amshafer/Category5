@@ -15,6 +15,7 @@ use utils::WindowId;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
+#[allow(unused_variables)]
 impl ws::GlobalDispatch<wl_subcompositor::WlSubcompositor, ()> for Climate {
     fn bind(
         state: &mut Self,
@@ -29,6 +30,7 @@ impl ws::GlobalDispatch<wl_subcompositor::WlSubcompositor, ()> for Climate {
 }
 
 // Dispatch<Interface, Userdata>
+#[allow(unused_variables)]
 impl ws::Dispatch<wl_subcompositor::WlSubcompositor, ()> for Climate {
     fn request(
         state: &mut Self,
@@ -74,6 +76,7 @@ impl ws::Dispatch<wl_subcompositor::WlSubcompositor, ()> for Climate {
     }
 }
 
+#[allow(unused_variables)]
 impl ws::Dispatch<wl_subsurface::WlSubsurface, Arc<Mutex<SubSurface>>> for Climate {
     fn request(
         state: &mut Self,

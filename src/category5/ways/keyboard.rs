@@ -9,6 +9,7 @@ use crate::category5::Climate;
 use ws::protocol::wl_keyboard;
 
 // Dispatch<Interface, Userdata>
+#[allow(unused_variables)]
 impl ws::Dispatch<wl_keyboard::WlKeyboard, ()> for Climate {
     fn request(
         state: &mut Self,

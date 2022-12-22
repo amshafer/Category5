@@ -19,6 +19,7 @@ use cat5_utils::log;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
+#[allow(unused_variables)]
 impl ws::GlobalDispatch<wlci::WlCompositor, ()> for Climate {
     fn bind(
         state: &mut Self,
@@ -32,6 +33,7 @@ impl ws::GlobalDispatch<wlci::WlCompositor, ()> for Climate {
     }
 }
 
+#[allow(unused_variables)]
 impl ws::Dispatch<wlci::WlCompositor, ()> for Climate {
     fn request(
         state: &mut Self,
@@ -76,7 +78,7 @@ impl Climate {
         data_init: &mut ws::DataInit<'_, Self>,
     ) {
         let mut atmos = self.c_atmos.lock().unwrap();
-        let client_id = utils::get_id_from_client(atmos.deref_mut(), *client);
+        let client_id = utils::get_id_from_client(atmos.deref_mut(), client.clone());
         let win_id = atmos.mint_window_id(client_id);
         log::debug!("Creating new surface {:?}", win_id);
 

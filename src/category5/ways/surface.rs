@@ -25,6 +25,7 @@ use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
 // Dispatch<Interface, Userdata>
+#[allow(unused_variables)]
 impl ws::Dispatch<wlsi::WlSurface, Arc<Mutex<Surface>>> for Climate {
     fn request(
         state: &mut Self,
@@ -171,7 +172,7 @@ impl Surface {
                 self.frame(callback_resource)
             }
             // wayland-rs makes us register a destructor
-            wlsi::Request::Destroy => self.destroy(&mut atmos),
+            wlsi::Request::Destroy => self.destroy(atmos),
             // TODO: support variable buffer scaling
             wlsi::Request::SetBufferScale { scale } => {
                 if scale != 1 {

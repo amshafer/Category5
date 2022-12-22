@@ -15,6 +15,7 @@ use crate::category5::Climate;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
+#[allow(unused_variables)]
 impl ws::GlobalDispatch<wl_shell::WlShell, ()> for Climate {
     fn bind(
         state: &mut Self,
@@ -29,6 +30,7 @@ impl ws::GlobalDispatch<wl_shell::WlShell, ()> for Climate {
 }
 
 // Dispatch<Interface, Userdata>
+#[allow(unused_variables)]
 impl ws::Dispatch<wl_shell::WlShell, ()> for Climate {
     // Handle requests to a wl_shell interface
     //
@@ -71,6 +73,7 @@ impl ws::Dispatch<wl_shell::WlShell, ()> for Climate {
     }
 }
 
+#[allow(unused_variables)]
 impl ws::Dispatch<wl_shell_surface::WlShellSurface, Arc<Mutex<ShellSurface>>> for Climate {
     // Handle requests to a wl_shell_surface interface
     //

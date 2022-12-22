@@ -36,6 +36,7 @@ const DRM_FORMAT_MOD_INVALID_LOW: u32 = 0xffffffff;
 const WL_DRM_FORMAT_XRGB8888: u32 = 0x34325258;
 const WL_DRM_FORMAT_ARGB8888: u32 = 0x34325241;
 
+#[allow(unused_variables)]
 impl ws::GlobalDispatch<zldv1::ZwpLinuxDmabufV1, ()> for Climate {
     fn bind(
         state: &mut Self,
@@ -62,6 +63,7 @@ impl ws::GlobalDispatch<zldv1::ZwpLinuxDmabufV1, ()> for Climate {
 }
 
 // Dispatch<Interface, Userdata>
+#[allow(unused_variables)]
 impl ws::Dispatch<zldv1::ZwpLinuxDmabufV1, ()> for Climate {
     fn request(
         state: &mut Self,
@@ -91,6 +93,7 @@ impl ws::Dispatch<zldv1::ZwpLinuxDmabufV1, ()> for Climate {
     }
 }
 
+#[allow(unused_variables)]
 impl ws::Dispatch<zlbpv1::ZwpLinuxBufferParamsV1, Arc<Mutex<Params>>> for Climate {
     fn request(
         state: &mut Self,
@@ -197,6 +200,7 @@ impl Params {
 
 // Handle wl_buffer with a dmabuf attached
 // This will clean up the fd when released
+#[allow(unused_variables)]
 impl ws::Dispatch<wl_buffer::WlBuffer, Arc<Dmabuf>> for Climate {
     fn request(
         state: &mut Self,

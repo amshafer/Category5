@@ -18,6 +18,7 @@ use std::ffi::c_void;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 
+#[allow(unused_variables)]
 impl ws::GlobalDispatch<wl_shm::WlShm, ()> for Climate {
     fn bind(
         state: &mut Self,
@@ -32,6 +33,7 @@ impl ws::GlobalDispatch<wl_shm::WlShm, ()> for Climate {
 }
 
 // Dispatch<Interface, Userdata>
+#[allow(unused_variables)]
 impl ws::Dispatch<wl_shm::WlShm, ()> for Climate {
     // Handles events for the wl_shm interface
     //
@@ -73,6 +75,7 @@ impl ws::Dispatch<wl_shm::WlShm, ()> for Climate {
     }
 }
 
+#[allow(unused_variables)]
 impl ws::Dispatch<wl_shm_pool::WlShmPool, Arc<Mutex<ShmRegion>>> for Climate {
     // Handle events for the wl_shm_pool interface
     //
@@ -267,6 +270,7 @@ impl ShmBuffer {
 }
 
 // Handle buffers with shm attached
+#[allow(unused_variables)]
 impl ws::Dispatch<wl_buffer::WlBuffer, Arc<ShmBuffer>> for Climate {
     fn request(
         state: &mut Self,

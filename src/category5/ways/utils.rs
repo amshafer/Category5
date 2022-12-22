@@ -12,7 +12,7 @@ use utils::ClientId;
 /// we wrap it here so it can change easily
 ///
 /// If the client does not currently have an id, register it
-pub fn get_id_from_client(atmos: &mut Atmosphere, client: ws::Client) -> ClientId {
+pub fn get_id_from_client(_atmos: &mut Atmosphere, client: ws::Client) -> ClientId {
     match client.get_data::<ClientInfo>() {
         Some(info) => info.ci_id,
         // The client hasn't been assigned an id
