@@ -5,71 +5,106 @@
 extern crate wayland_server as ws;
 
 use ws::protocol::{wl_shell, wl_shell_surface, wl_surface};
-use ws::Main;
+use ws::Resource;
 
 use super::role::Role;
 use super::surface::*;
+use crate::category5::atmosphere::Atmosphere;
+use crate::category5::Climate;
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::ops::DerefMut;
+use std::sync::{Arc, Mutex};
 
-// Handle requests to a wl_shell interface
-//
-// The wl_shell interface implements functionality regarding
-// the lifecycle of the window. Essentially it just creates
-// a wl_shell_surface.
-pub fn wl_shell_handle_request(req: wl_shell::Request, _shell: Main<wl_shell::WlShell>) {
-    match req {
-        wl_shell::Request::GetShellSurface {
-            id: shell_surface,
-            surface,
-        } => {
-            // get category5's surface from the userdata
-            let surf = surface
-                .as_ref()
-                .user_data()
-                .get::<Rc<RefCell<Surface>>>()
-                .unwrap();
-
-            let shsurf = Rc::new(RefCell::new(ShellSurface {
-                ss_surface: surf.clone(),
-                ss_surface_proxy: surface,
-                ss_toplevel: false,
-            }));
-
-            shell_surface.quick_assign(|s, r, _| {
-                wl_shell_surface_handle_request(s, r);
-            });
-            // Pass ourselves as user data
-            shell_surface.as_ref().user_data().set(move || shsurf);
-        }
-        _ => unimplemented!(),
-    };
+impl ws::GlobalDispatch<wl_shell::WlShell, ()> for Climate {
+    fn bind(
+        state: &mut Self,
+        handle: &ws::DisplayHandle,
+        client: &ws::Client,
+        resource: ws::New<wl_shell::WlShell>,
+        global_data: &(),
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        data_init.init(resource, ());
+    }
 }
 
-// Handle requests to a wl_shell_surface interface
-//
-// wl_shell_surface is the interface which actually
-// tracks window characteristics and roles. It is
-// highly recommended to read wayland.xml for all
-// the gory details.
-#[allow(unused_variables)]
-fn wl_shell_surface_handle_request(
-    surf: Main<wl_shell_surface::WlShellSurface>,
-    req: wl_shell_surface::Request,
-) {
-    let mut shsurf = surf
-        .as_ref()
-        .user_data()
-        .get::<Rc<RefCell<ShellSurface>>>()
-        .unwrap()
-        .borrow_mut();
+// Dispatch<Interface, Userdata>
+impl ws::Dispatch<wl_shell::WlShell, ()> for Climate {
+    // Handle requests to a wl_shell interface
+    //
+    // The wl_shell interface implements functionality regarding
+    // the lifecycle of the window. Essentially it just creates
+    // a wl_shell_surface.
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &wl_shell::WlShell,
+        request: wl_shell::Request,
+        data: &(),
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        match request {
+            wl_shell::Request::GetShellSurface { id, surface } => {
+                // get category5's surface from the userdata
+                let surf = surface.data::<Arc<Mutex<Surface>>>().unwrap();
 
-    match req {
-        wl_shell_surface::Request::SetToplevel => shsurf.set_toplevel(),
-        wl_shell_surface::Request::SetTitle { title } => {}
-        _ => unimplemented!(),
-    };
+                let shsurf = Arc::new(Mutex::new(ShellSurface {
+                    ss_surface: surf.clone(),
+                    ss_surface_proxy: surface,
+                    ss_toplevel: false,
+                }));
+
+                // Pass ourselves as user data
+                data_init.init(id, shsurf);
+            }
+            _ => unimplemented!(),
+        };
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        data: &(),
+    ) {
+    }
+}
+
+impl ws::Dispatch<wl_shell_surface::WlShellSurface, Arc<Mutex<ShellSurface>>> for Climate {
+    // Handle requests to a wl_shell_surface interface
+    //
+    // wl_shell_surface is the interface which actually
+    // tracks window characteristics and roles. It is
+    // highly recommended to read wayland.xml for all
+    // the gory details.
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &wl_shell_surface::WlShellSurface,
+        request: wl_shell_surface::Request,
+        data: &Arc<Mutex<ShellSurface>>,
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        let mut shsurf = data.lock().unwrap();
+
+        match request {
+            wl_shell_surface::Request::SetToplevel => {
+                shsurf.set_toplevel(state.c_atmos.lock().unwrap().deref_mut())
+            }
+            wl_shell_surface::Request::SetTitle { title } => {}
+            _ => unimplemented!(),
+        };
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        data: &Arc<Mutex<ShellSurface>>,
+    ) {
+    }
 }
 
 // A shell surface
@@ -81,27 +116,24 @@ fn wl_shell_surface_handle_request(
 #[allow(dead_code)]
 pub struct ShellSurface {
     // Category5 surface state object
-    ss_surface: Rc<RefCell<Surface>>,
+    ss_surface: Arc<Mutex<Surface>>,
     // the wayland proxy
     ss_surface_proxy: wl_surface::WlSurface,
     ss_toplevel: bool,
 }
 
 impl ShellSurface {
-    fn set_toplevel(&mut self) {
+    fn set_toplevel(&mut self, atmos: &mut Atmosphere) {
         self.ss_toplevel = true;
 
         // Tell vkcomp to create a new window
-        let mut surf = self.ss_surface.borrow_mut();
+        let mut surf = self.ss_surface.lock().unwrap();
         println!("Setting surface {:?} to toplevel", surf.s_id);
 
-        {
-            let mut atmos = surf.s_atmos.lock().unwrap();
-            atmos.set_toplevel(surf.s_id, true);
-            // This places the surface at the front of the skiplist, aka
-            // makes it in focus
-            atmos.focus_on(Some(surf.s_id));
-        }
+        atmos.set_toplevel(surf.s_id, true);
+        // This places the surface at the front of the skiplist, aka
+        // makes it in focus
+        atmos.focus_on(Some(surf.s_id));
 
         // Mark our surface as being a window handled by wl_shell
         surf.s_role = Some(Role::wl_shell_toplevel);
