@@ -18,6 +18,7 @@ use thundr::ThundrError;
 use utils::ClientId;
 use vkcomp::wm::*;
 
+use wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_v1 as zldv1;
 use wayland_protocols::xdg::shell::server::*;
 use ws::protocol::{wl_compositor as wlci, wl_output, wl_seat, wl_subcompositor};
 
@@ -171,6 +172,7 @@ impl EventManager {
         display_handle.create_global::<Climate, wl_seat::WlSeat, ()>(8, ());
         display_handle.create_global::<Climate, wl_subcompositor::WlSubcompositor, ()>(1, ());
         display_handle.create_global::<Climate, wl_output::WlOutput, ()>(4, ());
+        display_handle.create_global::<Climate, zldv1::ZwpLinuxDmabufV1, ()>(3, ());
 
         return evman;
     }

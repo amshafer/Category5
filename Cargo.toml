@@ -13,7 +13,7 @@ thundr={path="thundr"}
 wayland-backend={path="../wayland-rs/wayland-backend/", features=["server_system", "dlopen"]}
 wayland-server={path="../wayland-rs/wayland-server/"}
 wayland-scanner={path="../wayland-rs/wayland-scanner/"}
-wayland-protocols={path="../wayland-rs/wayland-protocols/", features=["server"]}
+wayland-protocols={path="../wayland-rs/wayland-protocols/", features=["server", "unstable"]}
 wayland-sys={path="../wayland-rs/wayland-sys/"}
 input={version="0.7.1", features=["gen"]}
 udev="0.6"

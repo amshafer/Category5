@@ -4,19 +4,21 @@
 //
 // Austin Shafer - 2020
 extern crate nix;
+extern crate wayland_protocols;
 extern crate wayland_server as ws;
 
+use crate::category5::Climate;
 use nix::unistd::close;
 use utils::log;
 use ws::protocol::wl_buffer;
-use ws::{Filter, Main, Resource};
 
-use super::protocol::linux_dmabuf::{
+use utils::Dmabuf;
+use wayland_protocols::wp::linux_dmabuf::zv1::server::{
     zwp_linux_buffer_params_v1 as zlbpv1, zwp_linux_dmabuf_v1 as zldv1,
 };
-use utils::Dmabuf;
 
-use std::os::unix::io::RawFd;
+use std::os::unix::io::{AsRawFd, RawFd};
+use std::sync::{Arc, Mutex};
 
 // drm modifier saying to implicitly infer
 // the modifier from the dmabuf
@@ -34,32 +36,83 @@ const DRM_FORMAT_MOD_INVALID_LOW: u32 = 0xffffffff;
 const WL_DRM_FORMAT_XRGB8888: u32 = 0x34325258;
 const WL_DRM_FORMAT_ARGB8888: u32 = 0x34325241;
 
-pub fn linux_dmabuf_setup(dma: Main<zldv1::ZwpLinuxDmabufV1>) {
-    // we need to advertise the format/modifier
-    // combinations we support
-    dma.format(WL_DRM_FORMAT_XRGB8888);
-    dma.format(WL_DRM_FORMAT_ARGB8888);
+impl ws::GlobalDispatch<zldv1::ZwpLinuxDmabufV1, ()> for Climate {
+    fn bind(
+        state: &mut Self,
+        handle: &ws::DisplayHandle,
+        client: &ws::Client,
+        resource: ws::New<zldv1::ZwpLinuxDmabufV1>,
+        global_data: &(),
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        let dma = data_init.init(resource, ());
+        // we need to advertise the format/modifier
+        // combinations we support
+        dma.format(WL_DRM_FORMAT_XRGB8888);
+        dma.format(WL_DRM_FORMAT_ARGB8888);
 
-    // The above format events are implicitly ignored by mesa,
-    // these modifier events do the real work
-    //
-    // Sending zeroe as the modifier bits is the linear
-    // drm format
-    dma.modifier(WL_DRM_FORMAT_XRGB8888, 0, 0);
-    dma.modifier(WL_DRM_FORMAT_ARGB8888, 0, 0);
+        // The above format events are implicitly ignored by mesa,
+        // these modifier events do the real work
+        //
+        // Sending zeroe as the modifier bits is the linear
+        // drm format
+        dma.modifier(WL_DRM_FORMAT_XRGB8888, 0, 0);
+        dma.modifier(WL_DRM_FORMAT_ARGB8888, 0, 0);
+    }
 }
 
-pub fn linux_dmabuf_handle_request(req: zldv1::Request, _dma: Main<zldv1::ZwpLinuxDmabufV1>) {
-    match req {
-        zldv1::Request::CreateParams { params_id } => {
-            let mut params = Params { p_bufs: Vec::new() };
+// Dispatch<Interface, Userdata>
+impl ws::Dispatch<zldv1::ZwpLinuxDmabufV1, ()> for Climate {
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &zldv1::ZwpLinuxDmabufV1,
+        request: zldv1::Request,
+        data: &(),
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        match request {
+            zldv1::Request::CreateParams { params_id } => {
+                let params = Arc::new(Mutex::new(Params { p_bufs: Vec::new() }));
 
-            params_id.quick_assign(move |p, r, _| {
-                params.handle_request(r, p);
-            });
-        }
-        _ => {}
-    };
+                data_init.init(params_id, params);
+            }
+            _ => {}
+        };
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        data: &(),
+    ) {
+    }
+}
+
+impl ws::Dispatch<zlbpv1::ZwpLinuxBufferParamsV1, Arc<Mutex<Params>>> for Climate {
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &zlbpv1::ZwpLinuxBufferParamsV1,
+        request: zlbpv1::Request,
+        data: &Arc<Mutex<Params>>,
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+        data.lock()
+            .unwrap()
+            .handle_request(request, resource, data_init);
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        data: &Arc<Mutex<Params>>,
+    ) {
+    }
 }
 
 struct Params {
@@ -72,7 +125,8 @@ impl Params {
     fn handle_request(
         &mut self,
         req: zlbpv1::Request,
-        params: Main<zlbpv1::ZwpLinuxBufferParamsV1>,
+        params: &zlbpv1::ZwpLinuxBufferParamsV1,
+        data_init: &mut ws::DataInit<'_, Climate>,
     ) {
         match req {
             zlbpv1::Request::CreateImmed {
@@ -96,17 +150,9 @@ impl Params {
 
                 // Add our dmabuf to the userdata so Surface
                 // can later hand it to vkcomp
-                buffer_id.quick_assign(|_, _, _| {});
-                buffer_id.assign_destructor(Filter::new(
-                    move |r: Resource<wl_buffer::WlBuffer>, _, _| {
-                        let ud = r.user_data().get::<Dmabuf>().unwrap();
-                        log::debug!("Destroying wl_buffer: closing dmabuf with fd {}", ud.db_fd);
-                        close(ud.db_fd).unwrap();
-                    },
-                ));
+                let buffer = data_init.init(buffer_id, Arc::new(dmabuf));
 
-                buffer_id.as_ref().user_data().set(move || dmabuf);
-                params.created(&buffer_id);
+                params.created(&buffer);
             }
             zlbpv1::Request::Add {
                 fd,
@@ -115,7 +161,14 @@ impl Params {
                 stride,
                 modifier_hi,
                 modifier_lo,
-            } => self.add(fd, plane_idx, offset, stride, modifier_hi, modifier_lo),
+            } => self.add(
+                fd.as_raw_fd(),
+                plane_idx,
+                offset,
+                stride,
+                modifier_hi,
+                modifier_lo,
+            ),
             zlbpv1::Request::Destroy => log::debug!("Destroying Dmabuf params"),
             _ => unimplemented!(),
         };
@@ -139,5 +192,34 @@ impl Params {
         );
         log::debug!("linux_dmabuf_params: Adding {:#?}", d);
         self.p_bufs.push(d);
+    }
+}
+
+// Handle wl_buffer with a dmabuf attached
+// This will clean up the fd when released
+impl ws::Dispatch<wl_buffer::WlBuffer, Arc<Dmabuf>> for Climate {
+    fn request(
+        state: &mut Self,
+        client: &ws::Client,
+        resource: &wl_buffer::WlBuffer,
+        request: wl_buffer::Request,
+        data: &Arc<Dmabuf>,
+        dhandle: &ws::DisplayHandle,
+        data_init: &mut ws::DataInit<'_, Self>,
+    ) {
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ws::backend::ClientId,
+        _resource: ws::backend::ObjectId,
+        data: &Arc<Dmabuf>,
+    ) {
+        // Close our dmabuf fd since this object was deleted
+        log::debug!(
+            "Destroying wl_buffer: closing dmabuf with fd {}",
+            data.db_fd
+        );
+        close(data.db_fd).unwrap();
     }
 }
