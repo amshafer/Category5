@@ -1,6 +1,5 @@
 extern crate image;
 extern crate lluvia as ll;
-extern crate serde;
 extern crate thundr as th;
 pub use th::ThundrError as DakotaError;
 
@@ -24,6 +23,10 @@ use event::{Event, EventSystem};
 mod font;
 use font::*;
 
+// Re-exmport our getters/setters
+mod generated;
+pub use generated::*;
+
 use std::collections::HashMap;
 extern crate regex;
 use regex::Regex;
@@ -39,11 +42,43 @@ struct ResMapEntry {
     rme_color: Option<dom::Color>,
 }
 
-pub type LayoutId = ll::Entity;
+pub type DakotaId = ll::Entity;
 // Since there are significantly fewer viewports we will give them
 // their own ECS system so we don't waste space.
 pub type ViewportId = ll::Entity;
 
+pub enum DakotaObjectType {
+    Text,
+    Element,
+    Dakota,
+    Version,
+    ResourceMap,
+    Window,
+    Layout,
+}
+
+/// Only one of content or children may be defined,
+/// they are mutually exclusive.
+///
+/// Element layout will:
+///   a) expand horizontally to fit their container
+///   b) expand vertically to fit their container
+///   c) a element's content is scaled to fit the element.
+///   d) default behavior is only vertical scrolling allowed for
+///      when the element's content is longer than the element's height.
+///      d.1) if the user does not specify a vertical/horizontal scrolling,
+///           then that edge of the element is static. It is basically
+///           a window, and scrolling may occur within that element in
+///           whatever dimensions were not marked as scrolling.
+///           (e.g. default behavior is a horizontal scrolling = false
+///            and vertical scrolling = true)
+///   e) a-b may be limited by dimensions specified by the user.
+///      the dimensions are not specified, then the resource's
+///      default size is used.
+///   f) regarding (e), if the element's size does not fill the container,
+///      then:
+///      f.1) the elementes will be laid out horizontally first,
+///      f.2) with vertical wrapping if there is not enough room.
 pub struct Dakota<'a> {
     // GROSS: we need thund to be before plat so that it gets dropped first
     // It might reference the window inside plat, and will segfault if
@@ -55,17 +90,31 @@ pub struct Dakota<'a> {
     d_plat: platform::SDL2Plat,
     d_resmap: HashMap<String, ResMapEntry>,
     /// This is one ECS that is composed of multiple tables
-    d_layout_ecs_inst: ll::Instance,
+    d_ecs_inst: ll::Instance,
     /// This is all of the LayoutNodes in the system, each corresponding to
-    /// an Element or a subcomponent of an Element. Indexed by LayoutId.
+    /// an Element or a subcomponent of an Element. Indexed by DakotaId.
     d_layout_nodes: ll::Session<LayoutNode>,
+    // NOTE: --------------------------------
+    //
+    // If you update the following you may have to edit the generated
+    // getters/setters in generated.rs
+    d_node_types: ll::Session<DakotaObjectType>,
+    d_resource_maps: ll::Session<dom::ResourceMap>,
+    d_offsets: ll::Session<dom::RelativeOffset>,
+    d_sizes: ll::Session<dom::RelativeSize>,
+    d_texts: ll::Session<dom::Text>,
+    d_content: ll::Session<dom::Content>,
+    d_bounds: ll::Session<dom::Edges>,
+    d_children: ll::Session<Vec<DakotaId>>,
+    d_windows: ll::Session<dom::Window>,
+    d_dom: ll::Session<dom::DakotaDOM>,
     /// This is the corresponding thundr surface for each LayoutNode. Also
-    /// indexed by LayoutId.
+    /// indexed by DakotaId.
     d_layout_node_surfaces: ll::Session<th::Surface>,
     d_viewport_ecs_inst: ll::Instance,
     d_viewport_nodes: ll::Session<ViewportNode>,
     /// This is the root node in the scene tree
-    d_layout_tree_root: Option<LayoutId>,
+    d_layout_tree_root: Option<DakotaId>,
     d_root_viewport: Option<ViewportId>,
     d_window_dims: Option<(u32, u32)>,
     d_needs_redraw: bool,
@@ -77,7 +126,7 @@ pub struct Dakota<'a> {
 
 struct ViewportNode {
     v_children: Vec<ViewportId>,
-    v_root_node: Option<LayoutId>,
+    v_root_node: Option<DakotaId>,
     v_viewport: th::Viewport,
     v_surfaces: th::SurfaceList,
 }
@@ -96,7 +145,7 @@ pub(crate) struct LayoutNode {
     pub l_offset: dom::Offset<f32>,
     pub l_size: dom::Size<f32>,
     /// Ids of the children that this layout node has
-    pub l_children: Vec<LayoutId>,
+    pub l_children: Vec<DakotaId>,
     /// Is this node a viewport boundary.
     ///
     /// This signifies that this node's children are larger than the node
@@ -239,7 +288,7 @@ impl<'a> Dakota<'a> {
             d_plat: plat,
             d_thund: thundr,
             d_resmap: HashMap::new(),
-            d_layout_ecs_inst: layout_ecs,
+            d_ecs_inst: layout_ecs,
             d_layout_nodes: layout_table,
             d_layout_node_surfaces: surface_table,
             d_viewport_ecs_inst: viewport_ecs,
@@ -422,7 +471,7 @@ impl<'a> Dakota<'a> {
     /// we should grow this box to hold all of its children.
     fn calculate_sizes_el(
         &mut self,
-        el: &mut dom::Element,
+        el: &DakotaId,
         node: &mut LayoutNode,
         space: &LayoutSpace,
     ) -> Result<()> {
@@ -500,7 +549,7 @@ impl<'a> Dakota<'a> {
 
                         run.cache = Some(font_inst.initialize_cached_chars(
                             &mut self.d_thund,
-                            &mut self.d_layout_ecs_inst,
+                            &mut self.d_ecs_inst,
                             &trim,
                         ));
                     }
@@ -553,7 +602,7 @@ impl<'a> Dakota<'a> {
 
     /// Create a new LayoutNode and id pair
     ///
-    /// This is a helper for creating a LayoutNode and a matching LayoutId.
+    /// This is a helper for creating a LayoutNode and a matching DakotaId.
     /// We need both because we need a) a node struct holding a bunch of data
     /// and b) we need an ECS ID to perform lookups with.
     #[allow(dead_code)]
@@ -563,8 +612,8 @@ impl<'a> Dakota<'a> {
         glyph_id: Option<u16>,
         off: dom::Offset<f32>,
         size: dom::Size<f32>,
-    ) -> LayoutId {
-        let new_id = self.d_layout_ecs_inst.add_entity();
+    ) -> DakotaId {
+        let new_id = self.d_ecs_inst.add_entity();
         self.d_layout_nodes
             .set(&new_id, LayoutNode::new(res, glyph_id, off, size));
 
@@ -582,11 +631,11 @@ impl<'a> Dakota<'a> {
     /// created, and can set its final size accordingly. This should prevent
     /// us from having to do more recursion later since everything is calculated
     /// now.
-    fn calculate_sizes(&mut self, el: &mut dom::Element, space: &LayoutSpace) -> Result<LayoutId> {
+    fn calculate_sizes(&mut self, el: &mut dom::Element, space: &LayoutSpace) -> Result<DakotaId> {
         let new_id = match el.layout_id.clone() {
             Some(id) => id,
             None => {
-                let id = self.d_layout_ecs_inst.add_entity();
+                let id = self.d_ecs_inst.add_entity();
                 el.layout_id = Some(id.clone());
                 id
             }
@@ -654,7 +703,7 @@ impl<'a> Dakota<'a> {
 
     /// Get the total internal size for this layout node. This is used to calculate
     /// the scrolling region within this node, useful if it is a viewport node.
-    fn get_node_internal_size(&self, id: LayoutId) -> (f32, f32) {
+    fn get_node_internal_size(&self, id: DakotaId) -> (f32, f32) {
         let node = self.d_layout_nodes.get(&id).unwrap();
         let mut ret = (
             node.l_offset.x + node.l_size.width,
@@ -675,7 +724,7 @@ impl<'a> Dakota<'a> {
 
     fn calculate_viewports(
         &mut self,
-        id: LayoutId,
+        id: DakotaId,
         mut parent_viewport: Option<ViewportId>,
         mut offset: (f32, f32),
     ) -> Option<ViewportId> {
@@ -764,7 +813,7 @@ impl<'a> Dakota<'a> {
     ///
     /// This does not cross viewport boundaries. This function will be called on
     /// the root node for every viewport.
-    fn create_thundr_surf_for_el(&mut self, node: LayoutId) -> Result<th::Surface> {
+    fn create_thundr_surf_for_el(&mut self, node: DakotaId) -> Result<th::Surface> {
         let mut surf = {
             let layout = self.d_layout_nodes.get(&node).unwrap();
 

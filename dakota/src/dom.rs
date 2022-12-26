@@ -1,35 +1,32 @@
+/// Define a DOM heirarchy and dakota data file format
+///
+/// Austin Shafer - 2022
 use crate::font::CachedChar;
-use crate::serde::{Deserialize, Serialize};
 use crate::utils::{anyhow, Result};
-use crate::LayoutSpace;
-use lluvia as ll;
+use crate::{Dakota, DakotaId, LayoutSpace};
 
-use std::cell::RefCell;
 use std::cmp::{Ord, PartialOrd};
 use std::rc::Rc;
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-#[serde(tag = "type")]
+#[derive(Debug, PartialEq)]
 pub enum Format {
     ARGB8888,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct Image {
     pub format: Format,
     pub data: Data,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct Hints {
     pub constant: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct Data {
-    #[serde(rename = "relPath", default)]
     pub rel_path: Option<String>,
-    #[serde(rename = "abs_path", default)]
     pub abs_path: Option<String>,
 }
 
@@ -53,7 +50,7 @@ impl Data {
     }
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Color {
     pub r: f32,
     pub g: f32,
@@ -61,7 +58,7 @@ pub struct Color {
     pub a: f32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct Resource {
     pub name: String,
     pub image: Option<Image>,
@@ -69,33 +66,80 @@ pub struct Resource {
     pub hints: Option<Hints>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct ResourceMap {
-    #[serde(rename = "resource", default)]
     pub resources: Vec<Resource>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct Content {
-    pub el: Option<Rc<RefCell<Element>>>,
+    pub el: DakotaId,
+}
+
+/// This is a relative value that modifies an element
+/// by a percentage of the size of the available space.
+#[derive(Debug, PartialEq, PartialOrd, Copy, Clone)]
+pub struct Relative {
+    val: f32,
+}
+
+impl Relative {
+    pub fn new(v: f32) -> Self {
+        assert!(v >= 0.0 && v < 1.0);
+        Self { val: v }
+    }
+
+    pub fn scale(&self, val: f32) -> Result<u32> {
+        if !(self.val >= 0.0 && self.val <= 1.0) {
+            return Err(anyhow!(
+                "Element.relativeOffset should use values in the range (0.0, 1.0)"
+            ));
+        }
+        Ok((val * self.val) as u32)
+    }
+}
+
+#[derive(Debug, PartialEq, PartialOrd, Copy, Clone)]
+pub struct Constant {
+    val: u32,
+}
+
+/// Represents a possibly relative value. This will
+/// either be a f32 scaling value or a constant size
+/// u32.
+#[derive(Debug, PartialEq, PartialOrd, Copy, Clone)]
+#[allow(non_camel_case_types)]
+pub enum Value {
+    relative(Relative),
+    constant(Constant),
+}
+
+impl Value {
+    pub fn get_value(&self, avail_space: f32) -> Result<u32> {
+        Ok(match self {
+            Self::relative(r) => r.scale(avail_space)?,
+            Self::constant(c) => c.val,
+        })
+    }
 }
 
 /// This is a relative offset that offsets an element
 /// by a percentage of the size of the available space.
-#[derive(Debug, PartialEq, PartialOrd, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, PartialOrd, Copy, Clone)]
 pub struct RelativeOffset {
-    pub x: f32,
-    pub y: f32,
+    pub x: Value,
+    pub y: Value,
 }
 
-impl RelativeOffset {
-    pub fn new(w: f32, h: f32) -> Self {
-        assert!((w >= 0.0 && w < 1.0) && (h >= 0.0 && h < 1.0));
-        Self { x: w, y: h }
-    }
+/// This is a relative size that sizes an element
+/// by a percentage of the size of the available space.
+#[derive(Debug, PartialEq, PartialOrd, Copy, Clone)]
+pub struct RelativeSize {
+    pub width: Value,
+    pub height: Value,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Copy, Clone)]
 pub struct Offset<T: Copy> {
     pub x: T,
     pub y: T,
@@ -122,7 +166,7 @@ impl From<Offset<u32>> for Offset<f32> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
 pub struct Size<T: Copy> {
     pub width: T,
     pub height: T,
@@ -150,27 +194,9 @@ impl From<Size<u32>> for Size<f32> {
     }
 }
 
-/// This is a relative size that sizes an element
-/// by a percentage of the size of the available space.
-#[derive(Debug, PartialEq, PartialOrd, Copy, Clone, Serialize, Deserialize)]
-pub struct RelativeSize {
-    pub width: f32,
-    pub height: f32,
-}
-
-impl RelativeSize {
-    pub fn new(w: f32, h: f32) -> Self {
-        assert!((w >= 0.0 && w < 1.0) && (h >= 0.0 && h < 1.0));
-        Self {
-            width: w,
-            height: h,
-        }
-    }
-}
-
 /// The boundary behavior of the edges of a box. True
 /// if scrolling is allowed on that axis in this box.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct Edges {
     pub horizontal: Option<bool>,
     pub vertical: Option<bool>,
@@ -200,13 +226,10 @@ impl Default for Edges {
 /// This node is really just a instance of an event handler.
 /// It describes what handler to call and a set of arguments
 /// to pass.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct Event {
-    #[serde(rename = "group", default)]
     pub groups: Vec<String>,
-    #[serde(skip)]
-    pub id: Option<ll::Entity>,
-    #[serde(rename = "arg", default)]
+    pub id: Option<DakotaId>,
     pub args: Rc<Vec<String>>,
 }
 
@@ -214,65 +237,17 @@ pub struct Event {
 /// taking places on Elements may have Element granularity, but this
 /// set of events handles global changes like window resizing, redraw,
 /// fullscreen, etc.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct WindowEvents {
-    #[serde(rename = "resize")]
     pub resize: Option<Event>,
-    #[serde(rename = "redrawComplete")]
     pub redraw_complete: Option<Event>,
-    #[serde(rename = "closed")]
     pub closed: Option<Event>,
 }
 
-/// Only one of content or children may be defined,
-/// they are mutually exclusive.
-///
-/// Element layout will:
-///   a) expand horizontally to fit their container
-///   b) expand vertically to fit their container
-///   c) a element's content is scaled to fit the element.
-///   d) default behavior is only vertical scrolling allowed for
-///      when the element's content is longer than the element's height.
-///      d.1) if the user does not specify a vertical/horizontal scrolling,
-///           then that edge of the element is static. It is basically
-///           a window, and scrolling may occur within that element in
-///           whatever dimensions were not marked as scrolling.
-///           (e.g. default behavior is a horizontal scrolling = false
-///            and vertical scrolling = true)
-///   e) a-b may be limited by dimensions specified by the user.
-///      the dimensions are not specified, then the resource's
-///      default size is used.
-///   f) regarding (e), if the element's size does not fill the container,
-///      then:
-///      f.1) the elementes will be laid out horizontally first,
-///      f.2) with vertical wrapping if there is not enough room.
-///           
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Element {
-    pub resource: Option<String>,
-    pub content: Option<Content>,
-    pub text: Option<Text>,
-    pub offset: Option<Offset<u32>>,
-    #[serde(rename = "relativeOffset", default)]
-    pub rel_offset: Option<RelativeOffset>,
-    pub size: Option<Size<u32>>,
-    #[serde(rename = "relativeSize", default)]
-    pub rel_size: Option<RelativeSize>,
-    #[serde(rename = "scrolling", default)]
-    pub bounds: Option<Edges>,
-    #[serde(rename = "el", default)]
-    pub children: Vec<Rc<RefCell<Element>>>,
-    /// The LayoutNode backing this Element
-    #[serde(skip)]
-    pub layout_id: Option<ll::Entity>,
-}
-
 /// A run of characters of the same format type
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct TextRun {
-    #[serde(rename = "$value")]
     pub value: String,
-    #[serde(skip)]
     pub cache: Option<Vec<CachedChar>>,
 }
 
@@ -280,7 +255,7 @@ pub struct TextRun {
 ///
 /// An item is something like a paragraph, or a sentence that is bolded. It will
 /// consist of a run of characters that share this format.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 #[allow(non_camel_case_types)]
 pub enum TextItem {
     p(TextRun),
@@ -291,88 +266,57 @@ pub enum TextItem {
 ///
 /// Items are assembled here into paragraphs of mixed fonts and formats. This
 /// tracks on big "block" of text.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct Text {
-    #[serde(rename = "$value")]
     pub items: Vec<TextItem>,
 }
 
-impl Element {
-    /// Get the final size to use as an offset into the
-    /// parent space. This takes care of handling the relative
-    /// proportional offset size
-    pub fn get_final_offset(&self, space: &LayoutSpace) -> Result<Option<Offset<u32>>> {
-        if self.offset.is_some() && self.rel_offset.is_some() {
-            return Err(anyhow!(
-                "Element.offset and Element.relativeOffset cannot both be defined"
-            ));
-        }
-
-        if let Some(rel) = self.rel_offset.as_ref() {
-            if !((rel.x >= 0.0 && rel.x < 1.0) && (rel.y >= 0.0 && rel.y < 1.0)) {
-                return Err(anyhow!(
-                    "Element.relativeOffset should use values in the range (0.0, 1.0)"
-                ));
-            }
-            return Ok(Some(Offset::new(
-                (space.avail_width as f32 * rel.x) as u32,
-                (space.avail_height as f32 * rel.y) as u32,
-            )));
-        }
-
-        Ok(self.offset)
-    }
-
-    /// Get the final size to use within the parent space.
-    /// This takes care of handling the relative
-    /// proportional size.
-    pub fn get_final_size(&self, space: &LayoutSpace) -> Result<Option<Size<f32>>> {
-        if self.size.is_some() && self.rel_size.is_some() {
-            return Err(anyhow!(
-                "Element.size and Element.relativeSize cannot both be defined"
-            ));
-        }
-
-        if let Some(rel) = self.rel_size.as_ref() {
-            if !((rel.width >= 0.0 && rel.width < 1.0) && (rel.height >= 0.0 && rel.height < 1.0)) {
-                return Err(anyhow!(
-                    "Element.relativeSize should use values in the range (0.0, 1.0)"
-                ));
-            }
-            return Ok(Some(Size::new(
-                space.avail_width * rel.width,
-                space.avail_height * rel.height,
-            )));
-        }
-
-        // Convert to dom::Size<f32>
-        Ok(self
-            .size
-            .map(|size| Size::new(size.width as f32, size.height as f32)))
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Layout {
-    #[serde(rename = "el")]
-    pub root_element: Rc<RefCell<Element>>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct Window {
     pub id: u32,
     pub title: String,
     pub width: u32,
     pub height: u32,
-    #[serde(rename = "windowEvents")]
     pub events: Option<WindowEvents>,
+    pub root_element: DakotaId,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct DakotaDOM {
     pub version: String,
-    #[serde(rename = "resourceMap")]
     pub resource_map: ResourceMap,
     pub window: Window,
-    pub layout: Layout,
+}
+
+impl<'a> Dakota<'a> {
+    /// Get the final size to use as an offset into the
+    /// parent space. This takes care of handling the relative
+    /// proportional offset size
+    pub fn get_final_offset(
+        &self,
+        el: &DakotaId,
+        space: &LayoutSpace,
+    ) -> Result<Option<Offset<u32>>> {
+        let offset = self
+            .d_offsets
+            .get(el)
+            .expect("Element did not have an offset");
+
+        return Ok(Some(Offset::new(
+            offset.x.get_value(space.avail_width)?,
+            offset.y.get_value(space.avail_height)?,
+        )));
+    }
+
+    /// Get the final size to use within the parent space.
+    /// This takes care of handling the relative
+    /// proportional size.
+    pub fn get_final_size(&self, el: &DakotaId, space: &LayoutSpace) -> Result<Option<Size<u32>>> {
+        let size = self.d_sizes.get(el).expect("Element did not have an size");
+
+        return Ok(Some(Size::new(
+            size.width.get_value(space.avail_width)?,
+            size.height.get_value(space.avail_height)?,
+        )));
+    }
 }

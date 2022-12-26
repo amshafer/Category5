@@ -4,7 +4,7 @@ extern crate harfbuzz_sys as hb_sys;
 
 use crate::th::Thundr;
 use crate::utils::MemImage;
-use crate::{dom, LayoutId};
+use crate::{dom, DakotaId};
 use lluvia as ll;
 
 #[repr(C)]
@@ -62,7 +62,7 @@ fn scale_hb_positions(position: &hb::GlyphPosition) -> (f32, f32, f32, f32) {
 #[derive(Debug)]
 pub struct CachedChar {
     /// The layout node that represents this character
-    pub node: LayoutId,
+    pub node: DakotaId,
     /// The glyph id to be used to test which character this is
     pub glyph_id: u16,
     /// The final offset calculated by freetype/harfbuzz that we will add to the
