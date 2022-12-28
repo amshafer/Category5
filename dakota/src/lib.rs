@@ -1,3 +1,10 @@
+/// Dakota UI Toolkit
+///
+/// Dakota is a UI toolkit designed for rendering trees of surfaces. These
+/// surfaces can be easily expressed in XML documents, and updated dynamically
+/// by the application.
+///
+/// Austin Shafer - 2022
 extern crate image;
 extern crate lluvia as ll;
 extern crate thundr as th;
@@ -12,7 +19,6 @@ pub use utils::{anyhow, region::Rect, timing::StopWatch, Context, Error, MemImag
 
 pub mod dom;
 pub mod input;
-use dom::DakotaDOM;
 mod platform;
 use platform::Platform;
 pub mod xml;
@@ -28,6 +34,7 @@ mod generated;
 pub use generated::*;
 
 use std::collections::HashMap;
+use std::ops::Deref;
 extern crate regex;
 use regex::Regex;
 
@@ -100,13 +107,13 @@ pub struct Dakota<'a> {
     // getters/setters in generated.rs
     d_node_types: ll::Session<DakotaObjectType>,
     d_resource_maps: ll::Session<dom::ResourceMap>,
+    d_resources: ll::Session<String>,
     d_offsets: ll::Session<dom::RelativeOffset>,
     d_sizes: ll::Session<dom::RelativeSize>,
     d_texts: ll::Session<dom::Text>,
-    d_content: ll::Session<dom::Content>,
+    d_contents: ll::Session<dom::Content>,
     d_bounds: ll::Session<dom::Edges>,
     d_children: ll::Session<Vec<DakotaId>>,
-    d_windows: ll::Session<dom::Window>,
     d_dom: ll::Session<dom::DakotaDOM>,
     /// This is the corresponding thundr surface for each LayoutNode. Also
     /// indexed by DakotaId.
@@ -135,8 +142,6 @@ struct ViewportNode {
 /// This will be constructed from the Elements in the DOM
 #[derive(Debug)]
 pub(crate) struct LayoutNode {
-    /// Has this element been assigned a resource?
-    pub l_resource: Option<String>,
     /// Is this element a glyph subsurface. If so it is one character
     /// in a block of text. This is really an index into the font.
     pub l_glyph_id: Option<u16>,
@@ -157,7 +162,6 @@ pub(crate) struct LayoutNode {
 impl Default for LayoutNode {
     fn default() -> Self {
         Self {
-            l_resource: None,
             l_glyph_id: None,
             l_offset_specified: false,
             l_offset: dom::Offset::new(0.0, 0.0),
@@ -169,14 +173,8 @@ impl Default for LayoutNode {
 }
 
 impl LayoutNode {
-    fn new(
-        res: Option<String>,
-        glyph_id: Option<u16>,
-        off: dom::Offset<f32>,
-        size: dom::Size<f32>,
-    ) -> Self {
+    fn new(glyph_id: Option<u16>, off: dom::Offset<f32>, size: dom::Size<f32>) -> Self {
         Self {
-            l_resource: res,
             l_glyph_id: glyph_id,
             l_offset_specified: false,
             l_offset: off,
@@ -242,6 +240,15 @@ pub struct LayoutSpace {
     pub children_at_this_level: u32,
 }
 
+macro_rules! create_component_and_table {
+    ($ecs:ident, $llty:ty, $name:ident) => {
+        let comp: ll::Component<$llty> = $ecs.add_component();
+        let $name = $ecs
+            .open_session(comp)
+            .ok_or(anyhow!("Could not create an ECS session"))?;
+    };
+}
+
 impl<'a> Dakota<'a> {
     /// Construct a new Dakota instance
     ///
@@ -262,20 +269,21 @@ impl<'a> Dakota<'a> {
         let thundr = th::Thundr::new(&info).context("Failed to initialize Thundr")?;
 
         let mut layout_ecs = ll::Instance::new();
-        let layout_comp = layout_ecs.add_component();
-        let surface_comp = layout_ecs.add_component();
-        let layout_table = layout_ecs
-            .open_session(layout_comp)
-            .ok_or(anyhow!("Could not create an ECS session"))?;
-        let surface_table = layout_ecs
-            .open_session(surface_comp)
-            .ok_or(anyhow!("Could not create an ECS session"))?;
+        create_component_and_table!(layout_ecs, LayoutNode, layout_table);
+        create_component_and_table!(layout_ecs, th::Surface, surface_table);
+        create_component_and_table!(layout_ecs, DakotaObjectType, types_table);
+        create_component_and_table!(layout_ecs, dom::ResourceMap, resource_map_table);
+        create_component_and_table!(layout_ecs, String, resources_table);
+        create_component_and_table!(layout_ecs, dom::RelativeOffset, offsets_table);
+        create_component_and_table!(layout_ecs, dom::RelativeSize, sizes_table);
+        create_component_and_table!(layout_ecs, dom::Text, texts_table);
+        create_component_and_table!(layout_ecs, dom::Content, content_table);
+        create_component_and_table!(layout_ecs, dom::Edges, bounds_table);
+        create_component_and_table!(layout_ecs, Vec<DakotaId>, children_table);
+        create_component_and_table!(layout_ecs, dom::DakotaDOM, dom_table);
 
         let mut viewport_ecs = ll::Instance::new();
-        let viewport_comp = viewport_ecs.add_component();
-        let viewport_table = viewport_ecs
-            .open_session(viewport_comp)
-            .ok_or(anyhow!("Could not create an ECS session"))?;
+        create_component_and_table!(viewport_ecs, ViewportNode, viewport_table);
 
         let dpi = thundr.get_dpi();
         let inst = FontInstance::new(
@@ -291,6 +299,16 @@ impl<'a> Dakota<'a> {
             d_ecs_inst: layout_ecs,
             d_layout_nodes: layout_table,
             d_layout_node_surfaces: surface_table,
+            d_node_types: types_table,
+            d_resource_maps: resource_map_table,
+            d_resources: resources_table,
+            d_offsets: offsets_table,
+            d_sizes: sizes_table,
+            d_texts: texts_table,
+            d_contents: content_table,
+            d_bounds: bounds_table,
+            d_children: children_table,
+            d_dom: dom_table,
             d_viewport_ecs_inst: viewport_ecs,
             d_viewport_nodes: viewport_table,
             d_layout_tree_root: None,
@@ -309,13 +327,28 @@ impl<'a> Dakota<'a> {
     /// Dakota resources may be backed by a Thundr Image. This funciton is in charge
     /// of iterating through all of the dakota resources in use by elements and create
     /// Images for all of them.
-    pub fn refresh_resource_map(&mut self, dom: &DakotaDOM) -> Result<()> {
+    pub fn refresh_resource_map(&mut self, dom_id: &DakotaId) -> Result<()> {
         self.d_thund.clear_all();
+        let dom = self
+            .d_dom
+            .get(dom_id)
+            .ok_or(anyhow!("Only DOM objects can be refreshed"))?;
 
         // Load our resources
         //
         // These get tracked in a resource map so they can be looked up during element creation
-        for res in dom.resource_map.resources.iter() {
+        let num_resources = match self.d_resource_maps.get(dom.resource_map) {
+            Some(resmap) => resmap.resources.len(),
+            None => 0,
+        };
+
+        for i in 0..num_resources {
+            let resmap = self.d_resource_maps.get(dom.resource_map).unwrap();
+            let res = self
+                .d_resources
+                .get(&resmap.resources[i])
+                .ok_or(anyhow!("Could not get Resource"));
+
             let image = match res.image.as_ref() {
                 Some(image) => {
                     if image.format != dom::Format::ARGB8888 {
@@ -366,32 +399,32 @@ impl<'a> Dakota<'a> {
     /// size based on the centered resource.
     fn calculate_sizes_content(
         &mut self,
-        content: &dom::Content,
+        el: &DakotaId,
         space: &LayoutSpace,
         parent: &mut LayoutNode,
     ) -> Result<()> {
-        if let Some(child) = content.el.as_ref() {
-            // num_children_at_this_level was set earlier to 0 when we
-            // created the common child space
-            let child_id = self.calculate_sizes(&mut child.borrow_mut(), &space)?;
-            let mut child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
-            // At this point the size of the is calculated
-            // and we can determine the offset. We want to center the
-            // box, so that's the center point of the parent minus
-            // half the size of the child.
-            //
-            // The child size should have already been clipped to the available space
-            child_size.l_offset.x = utils::partial_max(
-                (space.avail_width / 2.0) - (child_size.l_size.width / 2.0),
-                0.0,
-            );
-            child_size.l_offset.y = utils::partial_max(
-                (space.avail_height / 2.0) - (child_size.l_size.height / 2.0),
-                0.0,
-            );
+        let child_id = self.d_contents.get(el).unwrap().el.clone();
 
-            parent.add_child(child_id.clone());
-        }
+        // num_children_at_this_level was set earlier to 0 when we
+        // created the common child space
+        self.calculate_sizes(&child_id, &space)?;
+        let mut child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
+        // At this point the size of the is calculated
+        // and we can determine the offset. We want to center the
+        // box, so that's the center point of the parent minus
+        // half the size of the child.
+        //
+        // The child size should have already been clipped to the available space
+        child_size.l_offset.x = utils::partial_max(
+            (space.avail_width / 2.0) - (child_size.l_size.width / 2.0),
+            0.0,
+        );
+        child_size.l_offset.y = utils::partial_max(
+            (space.avail_height / 2.0) - (child_size.l_size.height / 2.0),
+            0.0,
+        );
+
+        parent.add_child(child_id.clone());
         Ok(())
     }
 
@@ -403,7 +436,7 @@ impl<'a> Dakota<'a> {
     /// default, wrapping below if necessary.
     fn calculate_sizes_children(
         &mut self,
-        el: &mut dom::Element,
+        el: &DakotaId,
         space: &LayoutSpace,
         parent: &mut LayoutNode,
     ) -> Result<()> {
@@ -414,8 +447,19 @@ impl<'a> Dakota<'a> {
             t_greatest_y: 0,
         };
 
-        for child in el.children.iter() {
-            let child_id = self.calculate_sizes(&mut child.borrow_mut(), &space)?;
+        let child_count = self
+            .d_children
+            .get(el)
+            .ok_or(anyhow!("Expected children"))?
+            .len();
+
+        for i in 0..child_count {
+            let child_id = self
+                .d_children
+                .get(el)
+                .ok_or(anyhow!("Expected children"))?[i]
+                .clone();
+            self.calculate_sizes(&child_id, &space)?;
             let mut child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
 
             // now the child size has been made, but it still needs to find
@@ -475,15 +519,15 @@ impl<'a> Dakota<'a> {
         node: &mut LayoutNode,
         space: &LayoutSpace,
     ) -> Result<()> {
-        if let Some(off) = el
-            .get_final_offset(&space)
+        if let Some(off) = self
+            .get_final_offset(el, &space)
             .context("Failed to calculate offset size of Element")?
         {
             node.l_offset_specified = true;
             node.l_offset = off.into();
         }
 
-        if let Some(size) = el.get_final_size(space)? {
+        if let Some(size) = self.get_final_size(el, space)? {
             node.l_size = size.into();
         } else {
             // first grow this box to fit its children.
@@ -510,7 +554,8 @@ impl<'a> Dakota<'a> {
     /// Handles creating LayoutNodes for every glyph in a passage
     ///
     /// This is the handler for the text field in the dakota file
-    fn calculate_sizes_text(&mut self, text: &mut dom::Text, node: &mut LayoutNode) -> Result<()> {
+    fn calculate_sizes_text(&mut self, el: &DakotaId, node: &mut LayoutNode) -> Result<()> {
+        let mut text = self.d_texts.get_mut(el).unwrap();
         let line_space = self.d_font_inst.get_vertical_line_spacing();
 
         // This is how far we have advanced on a line
@@ -566,7 +611,6 @@ impl<'a> Dakota<'a> {
                             let size = inst.get_glyph_thundr_size(thund, ch.glyph_id);
 
                             let child_size = LayoutNode::new(
-                                None,
                                 Some(ch.glyph_id),
                                 dom::Offset {
                                     x: (curse.c_x + ch.offset.0).round(),
@@ -608,14 +652,13 @@ impl<'a> Dakota<'a> {
     #[allow(dead_code)]
     fn create_layout_node(
         &mut self,
-        res: Option<String>,
         glyph_id: Option<u16>,
         off: dom::Offset<f32>,
         size: dom::Size<f32>,
     ) -> DakotaId {
         let new_id = self.d_ecs_inst.add_entity();
         self.d_layout_nodes
-            .set(&new_id, LayoutNode::new(res, glyph_id, off, size));
+            .set(&new_id, LayoutNode::new(glyph_id, off, size));
 
         new_id
     }
@@ -631,22 +674,8 @@ impl<'a> Dakota<'a> {
     /// created, and can set its final size accordingly. This should prevent
     /// us from having to do more recursion later since everything is calculated
     /// now.
-    fn calculate_sizes(&mut self, el: &mut dom::Element, space: &LayoutSpace) -> Result<DakotaId> {
-        let new_id = match el.layout_id.clone() {
-            Some(id) => id,
-            None => {
-                let id = self.d_ecs_inst.add_entity();
-                el.layout_id = Some(id.clone());
-                id
-            }
-        };
-
-        let mut ret = LayoutNode::new(
-            el.resource.clone(),
-            None,
-            dom::Offset::new(0.0, 0.0),
-            dom::Size::new(0.0, 0.0),
-        );
+    fn calculate_sizes(&mut self, el: &DakotaId, space: &LayoutSpace) -> Result<()> {
+        let mut ret = LayoutNode::new(None, dom::Offset::new(0.0, 0.0), dom::Size::new(0.0, 0.0));
 
         // ------------------------------------------
         // HANDLE THIS ELEMENT
@@ -668,37 +697,37 @@ impl<'a> Dakota<'a> {
         // ------------------------------------------
         // We do this after handling the size of the current element so that we
         // can know what width we have available to fill in with text.
-        if let Some(text) = el.text.as_mut() {
-            self.calculate_sizes_text(text, &mut ret)?;
+        if self.d_texts.get(el).is_some() {
+            self.calculate_sizes_text(el, &mut ret)?;
         }
 
         // if the box has children, then recurse through them and calculate our
         // box size based on the fill type.
-        if el.children.len() > 0 {
+        if self.d_children.get(el).unwrap().len() > 0 {
             // ------------------------------------------
             // CHILDREN
             // ------------------------------------------
             //
 
             // update our child count
-            child_space.children_at_this_level = el.children.len() as u32;
+            child_space.children_at_this_level = self.d_children.get(el).unwrap().len() as u32;
 
             self.calculate_sizes_children(el, &child_space, &mut ret)
                 .context("Layout Tree Calculation: processing children of element")?;
-        } else if let Some(content) = el.content.as_ref() {
+        } else if self.d_contents.get(el).is_some() {
             // ------------------------------------------
             // CENTERED CONTENT
             // ------------------------------------------
-            self.calculate_sizes_content(content, space, &mut ret)
+            self.calculate_sizes_content(el, space, &mut ret)
                 .context("Layout Tree Calculation: processing centered content of element")?;
         }
 
         log::debug!("Final offset of element is {:?}", ret.l_offset);
         log::debug!("Final size of element is {:?}", ret.l_size);
-        self.d_layout_nodes.take(&new_id);
-        self.d_layout_nodes.set(&new_id, ret);
+        self.d_layout_nodes.take(el);
+        self.d_layout_nodes.set(el, ret);
 
-        return Ok(new_id);
+        return Ok(());
     }
 
     /// Get the total internal size for this layout node. This is used to calculate
@@ -813,9 +842,9 @@ impl<'a> Dakota<'a> {
     ///
     /// This does not cross viewport boundaries. This function will be called on
     /// the root node for every viewport.
-    fn create_thundr_surf_for_el(&mut self, node: DakotaId) -> Result<th::Surface> {
+    fn create_thundr_surf_for_el(&mut self, node: &DakotaId) -> Result<th::Surface> {
         let mut surf = {
-            let layout = self.d_layout_nodes.get(&node).unwrap();
+            let layout = self.d_layout_nodes.get(node).unwrap();
 
             // If this node is a viewport then ignore its offset since its surface
             // is going to be added to a different surfacelist
@@ -826,9 +855,9 @@ impl<'a> Dakota<'a> {
 
             // first create a surface for this element, or get an existing one
             // This starts as an empty unbound surface but may be assigned content below
-            let mut surf = if self.d_layout_node_surfaces.get_mut(&node).is_some() {
+            let mut surf = if self.d_layout_node_surfaces.get_mut(node).is_some() {
                 // Do this here to avoid hogging the borrow with the above line
-                let mut surf = self.d_layout_node_surfaces.get_mut(&node).unwrap();
+                let mut surf = self.d_layout_node_surfaces.get_mut(node).unwrap();
                 surf.reset_surface(
                     offset.0,
                     offset.1,
@@ -844,15 +873,15 @@ impl<'a> Dakota<'a> {
                     layout.l_size.height,
                 );
                 // Set and get this to match the RefMut in the first if branch
-                self.d_layout_node_surfaces.set(&node, surf.clone());
+                self.d_layout_node_surfaces.set(node, surf.clone());
                 surf
             };
 
             // Handle binding images
-            if let Some(resname) = layout.l_resource.as_ref() {
+            if let Some(resname) = self.d_resources.get(node) {
                 // We need to get the resource's content from our resource map, get
                 // the thundr image for it, and bind it to our new surface.
-                let rme = match self.d_resmap.get(resname) {
+                let rme = match self.d_resmap.get(resname.deref()) {
                     Some(rme) => rme,
                     None => {
                         return Err(anyhow!(
@@ -909,7 +938,7 @@ impl<'a> Dakota<'a> {
             // add the new child surface as a subsurface
             // don't do this if this is a viewport boundary
             if !self.d_layout_nodes.get(&child_id).unwrap().l_is_viewport {
-                let child_surf = self.create_thundr_surf_for_el(child_id.clone())?;
+                let child_surf = self.create_thundr_surf_for_el(&child_id)?;
                 surf.add_subsurface(child_surf);
             }
         }
@@ -920,7 +949,7 @@ impl<'a> Dakota<'a> {
     /// Helper method to print out our layout tree
     #[allow(dead_code)]
     #[cfg(debug_assertions)]
-    fn print_node(&self, node: &LayoutNode, indent_level: usize) {
+    fn print_node(&self, id: &DakotaId, node: &LayoutNode, indent_level: usize) {
         let spaces = std::iter::repeat("  ")
             .take(indent_level)
             .collect::<String>();
@@ -935,15 +964,15 @@ impl<'a> Dakota<'a> {
         log::verbose!(
             "{}    resource={:?}, glyph_id={:?}, num_children={}, is_viewport={}",
             spaces,
-            node.l_resource,
+            self.d_resources.get(id),
             node.l_glyph_id,
             node.l_children.len(),
             node.l_is_viewport,
         );
 
-        for child in node.l_children.iter() {
-            let child = &self.d_layout_nodes.get(&child).unwrap();
-            self.print_node(child, indent_level + 1);
+        for child_id in node.l_children.iter() {
+            let child = &self.d_layout_nodes.get(child_id).unwrap();
+            self.print_node(child_id, child, indent_level + 1);
         }
     }
 
@@ -956,7 +985,7 @@ impl<'a> Dakota<'a> {
             //
             // TODO: go through each viewport and populate its surface list
             let root_surf = self
-                .create_thundr_surf_for_el(root_node_id)
+                .create_thundr_surf_for_el(&root_node_id)
                 .context("Could not construct Thundr surface tree")?;
 
             let viewport = &mut self.d_viewport_nodes.get_mut(&id).unwrap();
@@ -975,19 +1004,27 @@ impl<'a> Dakota<'a> {
 
     /// This refreshes the entire scene, and regenerates
     /// the Thundr surface list.
-    pub fn refresh_elements(&mut self, dom: &DakotaDOM) -> Result<()> {
+    pub fn refresh_elements(&mut self, dom_id: &DakotaId) -> Result<()> {
         log::verbose!("Dakota: Refreshing element tree");
-        // check if the window size is set. If it is not, this is the
-        // first iteration and we need to populate the dimensions
-        // from the DOM
-        if self.d_window_dims.is_none() {
-            self.d_window_dims = Some((dom.window.width, dom.window.height));
+        let root_node_id = {
+            let dom = self
+                .d_dom
+                .get(dom_id)
+                .ok_or(anyhow!("Only DOM objects can be refreshed"))?;
 
-            // we need to update the window dimensions if possible,
-            // so call into our platform do handle it
-            self.d_plat
-                .set_output_params(&dom.window, self.d_window_dims.unwrap())?;
-        }
+            // check if the window size is set. If it is not, this is the
+            // first iteration and we need to populate the dimensions
+            // from the DOM
+            if self.d_window_dims.is_none() {
+                self.d_window_dims = Some((dom.window.width, dom.window.height));
+
+                // we need to update the window dimensions if possible,
+                // so call into our platform do handle it
+                self.d_plat
+                    .set_output_params(&dom.window, self.d_window_dims.unwrap())?;
+            }
+            dom.window.root_element.clone()
+        };
 
         // reset our thundr surface list. If the set of resources has
         // changed, then we should have called clear_thundr to do so by now.
@@ -996,8 +1033,8 @@ impl<'a> Dakota<'a> {
         self.d_layout_tree_root = None;
 
         // construct layout tree with sizes of all boxes
-        let root_node_id = self.calculate_sizes(
-            &mut dom.layout.root_element.borrow_mut(),
+        self.calculate_sizes(
+            &root_node_id,
             &LayoutSpace {
                 avail_width: self.d_window_dims.unwrap().0 as f32, // available width
                 avail_height: self.d_window_dims.unwrap().1 as f32, // available height
@@ -1038,7 +1075,7 @@ impl<'a> Dakota<'a> {
     }
 
     /// Completely flush the thundr surfaces/images and recreate the scene
-    pub fn refresh_full(&mut self, dom: &DakotaDOM) -> Result<()> {
+    pub fn refresh_full(&mut self, dom: &DakotaId) -> Result<()> {
         self.d_needs_redraw = true;
         self.clear_thundr();
         self.refresh_resource_map(dom)?;
@@ -1048,10 +1085,15 @@ impl<'a> Dakota<'a> {
     /// Handle vulkan swapchain out of date. This is probably because the
     /// window's size has changed. This will requery the window size and
     /// refresh the layout tree.
-    fn handle_ood(&mut self, dom: &DakotaDOM) -> Result<()> {
+    fn handle_ood(&mut self, dom_id: &DakotaId) -> Result<()> {
         let new_res = self.d_thund.get_resolution();
+        let dom = self
+            .d_dom
+            .get(dom_id)
+            .ok_or(anyhow!("Only DOM objects can be refreshed"))?;
+
         self.d_event_sys.add_event_window_resized(
-            dom,
+            dom.deref(),
             dom::Size {
                 width: new_res.0,
                 height: new_res.1,
@@ -1210,7 +1252,7 @@ impl<'a> Dakota<'a> {
     /// Returns true if we should terminate i.e. the window was closed.
     /// Timeout is in milliseconds, and is the timeout to wait for
     /// window system events.
-    pub fn dispatch(&mut self, dom: &DakotaDOM, mut timeout: Option<u32>) -> Result<()> {
+    pub fn dispatch(&mut self, dom: &DakotaId, mut timeout: Option<u32>) -> Result<()> {
         let mut stop = StopWatch::new();
         // first clear the event queue, the app already had a chance to
         // handle them
@@ -1228,7 +1270,16 @@ impl<'a> Dakota<'a> {
 
             // First run our window system code. This will check if wayland/X11
             // notified us of a resize, closure, or need to redraw
-            match self.d_plat.run(&mut self.d_event_sys, dom, timeout) {
+            let plat_res = self.d_plat.run(
+                &mut self.d_event_sys,
+                self.d_dom
+                    .get(dom)
+                    .ok_or(anyhow!("Id passed to Dispatch must be a DOM object"))?
+                    .deref(),
+                timeout,
+            );
+
+            match plat_res {
                 Ok(needs_redraw) => {
                     if needs_redraw {
                         self.d_needs_redraw = needs_redraw
@@ -1288,7 +1339,12 @@ impl<'a> Dakota<'a> {
                 self.d_needs_redraw = false;
 
                 // Notify the app that we just drew a frame and it should prepare the next one
-                self.d_event_sys.add_event_window_redraw_complete(dom);
+                self.d_event_sys.add_event_window_redraw_complete(
+                    self.d_dom
+                        .get(dom)
+                        .ok_or(anyhow!("Id passed to Dispatch must be a DOM object"))?
+                        .deref(),
+                );
                 stop.end();
                 log::error!(
                     "Dakota spent {} ms drawing this frame",

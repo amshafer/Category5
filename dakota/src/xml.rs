@@ -11,7 +11,7 @@ use quick_xml::Reader;
 
 use crate::dom::*;
 use crate::utils::anyhow;
-use crate::{Context, Dakota, Result};
+use crate::{Context, Dakota, DakotaId, Result};
 
 use std::io::BufRead;
 
@@ -20,7 +20,7 @@ impl<'a> Dakota<'a> {
     ///
     /// This provides a way to initialize a full application view from a
     /// string of XML.
-    pub fn load_xml_str(&mut self, xml: &str) -> Result<DakotaDOM> {
+    pub fn load_xml_str(&mut self, xml: &str) -> Result<DakotaId> {
         let mut reader = Reader::from_str(xml);
         reader.trim_text(true);
 
@@ -32,7 +32,7 @@ impl<'a> Dakota<'a> {
     ///
     /// This provides a way to initialize a full application view from a
     /// arbitrary reader type that serves XML.
-    pub fn load_xml_reader<B: BufRead>(&mut self, reader: B) -> Result<DakotaDOM> {
+    pub fn load_xml_reader<B: BufRead>(&mut self, reader: B) -> Result<DakotaId> {
         let mut reader = Reader::from_reader(reader);
         reader.trim_text(true);
 
@@ -43,7 +43,7 @@ impl<'a> Dakota<'a> {
     /// Parse a quick_xml stream into a Dakota DOM tree
     ///
     /// This initializes our elements to be later processed into layout nodes.
-    fn parse_xml<R: BufRead>(&mut self, reader: &mut Reader<R>) -> Result<DakotaDOM> {
+    fn parse_xml<R: BufRead>(&mut self, reader: &mut Reader<R>) -> Result<DakotaId> {
         let mut buf = Vec::new();
 
         loop {

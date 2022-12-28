@@ -26,15 +26,17 @@ macro_rules! define_element_property {
                 pub fn [<get_ $name>](&self, el: &DakotaId) -> Result<ll::TableRef<$val>> {
                     self.[<d_ $sesh>].get(el).ok_or(anyhow!("Element did not have "))
                 }
-                pub fn [<get_mut $name>](&self, el: &DakotaId) -> Result<ll::TableRefMut<$val>> {
+                pub fn [<get_mut $name>](&mut self, el: &DakotaId) -> Result<ll::TableRefMut<$val>> {
                     self.[<d_ $sesh>].get_mut(el).ok_or(anyhow!("Element did not have "))
                 }
-                pub fn [<set_ $name>](&self, el: &DakotaId, data: $val) {
+                pub fn [<set_ $name>](&mut self, el: &DakotaId, data: $val) {
                     self.[<d_ $sesh>].set(el, data)
                 }
             }
         }
     };
 }
+
+// Define a rule for each entry in Dakota
 
 define_element_property!(object_type, node_types, DakotaObjectType);

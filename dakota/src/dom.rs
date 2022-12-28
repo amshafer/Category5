@@ -284,7 +284,7 @@ pub struct Window {
 #[derive(Debug)]
 pub struct DakotaDOM {
     pub version: String,
-    pub resource_map: ResourceMap,
+    pub resource_map: Option<DakotaId>,
     pub window: Window,
 }
 
