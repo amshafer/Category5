@@ -95,7 +95,6 @@ pub struct Dakota<'a> {
     d_plat: platform::WlPlat,
     #[cfg(feature = "sdl")]
     d_plat: platform::SDL2Plat,
-    d_resmap: HashMap<String, ResMapEntry>,
     /// This is one ECS that is composed of multiple tables
     d_ecs_inst: ll::Instance,
     /// This is all of the LayoutNodes in the system, each corresponding to
@@ -106,8 +105,8 @@ pub struct Dakota<'a> {
     // If you update the following you may have to edit the generated
     // getters/setters in generated.rs
     d_node_types: ll::Session<DakotaObjectType>,
-    d_resource_maps: ll::Session<dom::ResourceMap>,
-    d_resources: ll::Session<String>,
+    d_resource_entries: ll::Session<ResMapEntry>,
+    d_resources: ll::Session<dom::Resource>,
     d_offsets: ll::Session<dom::RelativeOffset>,
     d_sizes: ll::Session<dom::RelativeSize>,
     d_texts: ll::Session<dom::Text>,
@@ -272,8 +271,8 @@ impl<'a> Dakota<'a> {
         create_component_and_table!(layout_ecs, LayoutNode, layout_table);
         create_component_and_table!(layout_ecs, th::Surface, surface_table);
         create_component_and_table!(layout_ecs, DakotaObjectType, types_table);
-        create_component_and_table!(layout_ecs, dom::ResourceMap, resource_map_table);
-        create_component_and_table!(layout_ecs, String, resources_table);
+        create_component_and_table!(layout_ecs, ResMapEntry, resource_map_table);
+        create_component_and_table!(layout_ecs, dom::Resource, resources_table);
         create_component_and_table!(layout_ecs, dom::RelativeOffset, offsets_table);
         create_component_and_table!(layout_ecs, dom::RelativeSize, sizes_table);
         create_component_and_table!(layout_ecs, dom::Text, texts_table);
@@ -295,12 +294,11 @@ impl<'a> Dakota<'a> {
         Ok(Self {
             d_plat: plat,
             d_thund: thundr,
-            d_resmap: HashMap::new(),
             d_ecs_inst: layout_ecs,
             d_layout_nodes: layout_table,
             d_layout_node_surfaces: surface_table,
             d_node_types: types_table,
-            d_resource_maps: resource_map_table,
+            d_resource_entries: resource_map_table,
             d_resources: resources_table,
             d_offsets: offsets_table,
             d_sizes: sizes_table,
@@ -337,17 +335,15 @@ impl<'a> Dakota<'a> {
         // Load our resources
         //
         // These get tracked in a resource map so they can be looked up during element creation
-        let num_resources = match self.d_resource_maps.get(dom.resource_map) {
-            Some(resmap) => resmap.resources.len(),
-            None => 0,
-        };
+        for res_id in dom.resource_map.resources.iter() {
+            if self.d_resource_entries.get(res_id).is_some() {
+                continue;
+            }
 
-        for i in 0..num_resources {
-            let resmap = self.d_resource_maps.get(dom.resource_map).unwrap();
             let res = self
                 .d_resources
-                .get(&resmap.resources[i])
-                .ok_or(anyhow!("Could not get Resource"));
+                .get(res_id)
+                .ok_or(anyhow!("Could not get Resource"))?;
 
             let image = match res.image.as_ref() {
                 Some(image) => {
@@ -380,8 +376,8 @@ impl<'a> Dakota<'a> {
             };
 
             // Add the new image to our resource map
-            self.d_resmap.insert(
-                res.name.clone(),
+            self.d_resource_entries.set(
+                res_id,
                 ResMapEntry {
                     rme_image: image,
                     rme_color: res.color,
@@ -878,19 +874,9 @@ impl<'a> Dakota<'a> {
             };
 
             // Handle binding images
-            if let Some(resname) = self.d_resources.get(node) {
-                // We need to get the resource's content from our resource map, get
-                // the thundr image for it, and bind it to our new surface.
-                let rme = match self.d_resmap.get(resname.deref()) {
-                    Some(rme) => rme,
-                    None => {
-                        return Err(anyhow!(
-                            "This Element references resource {:?}, which does not exist",
-                            resname
-                        ))
-                    }
-                };
-
+            // We need to get the resource's content from our resource map, get
+            // the thundr image for it, and bind it to our new surface.
+            if let Some(rme) = self.d_resource_entries.get(node) {
                 // Assert that only one content type is set
                 let mut content_num = 0;
                 if rme.rme_image.is_some() {

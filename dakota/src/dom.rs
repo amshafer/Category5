@@ -68,7 +68,7 @@ pub struct Resource {
 
 #[derive(Debug)]
 pub struct ResourceMap {
-    pub resources: Vec<Resource>,
+    pub resources: Vec<DakotaId>,
 }
 
 #[derive(Debug)]
@@ -284,7 +284,7 @@ pub struct Window {
 #[derive(Debug)]
 pub struct DakotaDOM {
     pub version: String,
-    pub resource_map: Option<DakotaId>,
+    pub resource_map: ResourceMap,
     pub window: Window,
 }
 
