@@ -338,7 +338,7 @@ impl WindowManager {
         app.a_image = self.wm_thundr.create_image_from_dmabuf(
             &info.ufd_dmabuf,
             Some(Box::new(DmabufReleaseInfo {
-                dr_fd: info.ufd_dmabuf.db_fd,
+                dr_fd: info.ufd_dmabuf.db_fd.try_clone()?,
                 dr_wl_buffer: info.ufd_wl_buffer.clone(),
             })),
         );

@@ -3,12 +3,10 @@
 // vkcomp.
 //
 // Austin Shafer - 2020
-extern crate nix;
 extern crate wayland_protocols;
 extern crate wayland_server as ws;
 
 use crate::category5::Climate;
-use nix::unistd::close;
 use utils::log;
 use ws::protocol::wl_buffer;
 
@@ -17,7 +15,7 @@ use wayland_protocols::wp::linux_dmabuf::zv1::server::{
     zwp_linux_buffer_params_v1 as zlbpv1, zwp_linux_dmabuf_v1 as zldv1,
 };
 
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::io::{AsRawFd, OwnedFd};
 use std::sync::{Arc, Mutex};
 
 // drm modifier saying to implicitly infer
@@ -147,7 +145,7 @@ impl Params {
 
                 // TODO
                 // for now just only assign the first dmabuf
-                let mut dmabuf = self.p_bufs[0];
+                let mut dmabuf = self.p_bufs[0].clone();
                 dmabuf.db_width = width;
                 dmabuf.db_height = height;
 
@@ -164,14 +162,7 @@ impl Params {
                 stride,
                 modifier_hi,
                 modifier_lo,
-            } => self.add(
-                fd.as_raw_fd(),
-                plane_idx,
-                offset,
-                stride,
-                modifier_hi,
-                modifier_lo,
-            ),
+            } => self.add(fd, plane_idx, offset, stride, modifier_hi, modifier_lo),
             zlbpv1::Request::Destroy => log::debug!("Destroying Dmabuf params"),
             _ => unimplemented!(),
         };
@@ -179,7 +170,7 @@ impl Params {
 
     fn add(
         &mut self,
-        fd: RawFd,
+        fd: OwnedFd,
         plane_idx: u32,
         offset: u32,
         stride: u32,
@@ -222,8 +213,7 @@ impl ws::Dispatch<wl_buffer::WlBuffer, Arc<Dmabuf>> for Climate {
         // Close our dmabuf fd since this object was deleted
         log::debug!(
             "Destroying wl_buffer: closing dmabuf with fd {}",
-            data.db_fd
+            data.db_fd.as_raw_fd()
         );
-        close(data.db_fd).unwrap();
     }
 }

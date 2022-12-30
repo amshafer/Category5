@@ -13,9 +13,9 @@ use ws::Resource;
 use crate::category5::Climate;
 use utils::{log, MemImage};
 
-use nix::{sys::mman, unistd};
+use nix::sys::mman;
 use std::ffi::c_void;
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::io::{AsRawFd, OwnedFd};
 use std::sync::{Arc, Mutex};
 
 #[allow(unused_variables)]
@@ -56,9 +56,7 @@ impl ws::Dispatch<wl_shm::WlShm, ()> for Climate {
                     resource.post_error(wl_shm::Error::InvalidFd as u32, "Invalid Fd".to_string());
                 }
 
-                let reg = Arc::new(Mutex::new(
-                    ShmRegion::new(fd.as_raw_fd(), size as usize).unwrap(),
-                ));
+                let reg = Arc::new(Mutex::new(ShmRegion::new(fd, size as usize).unwrap()));
                 // Add our ShmRegion as the private data for the pool
                 data_init.init(id, reg);
             }
@@ -152,7 +150,7 @@ impl ws::Dispatch<wl_shm_pool::WlShmPool, Arc<Mutex<ShmRegion>>> for Climate {
 // It is the user_data for a shm pool
 #[allow(dead_code)]
 struct ShmRegion {
-    sr_fd: RawFd,
+    sr_fd: OwnedFd,
     sr_raw_ptr: *mut c_void,
     sr_size: usize,
 }
@@ -165,7 +163,7 @@ impl ShmRegion {
     //
     // Maps size bytes of the fd as a shared memory region
     // in which the clients can reference data
-    fn new(fd: RawFd, size: usize) -> Option<ShmRegion> {
+    fn new(fd: OwnedFd, size: usize) -> Option<ShmRegion> {
         unsafe {
             // To create the region we need to map size
             // bytes from fd
@@ -174,7 +172,7 @@ impl ShmRegion {
                 size,
                 mman::ProtFlags::PROT_READ,
                 mman::MapFlags::MAP_SHARED,
-                fd,
+                fd.as_raw_fd(),
                 0,
             ) {
                 Ok(p) => p,
@@ -201,11 +199,11 @@ impl ShmRegion {
                 self.sr_size,
                 mman::ProtFlags::PROT_READ,
                 mman::MapFlags::MAP_SHARED,
-                self.sr_fd,
+                self.sr_fd.as_raw_fd(),
                 0,
             ) {
                 Ok(p) => p,
-                Err(_) => panic!("Could not resize the shm pool"),
+                Err(e) => panic!("Could not resize the shm pool error: {:?}", e),
             }
         };
     }
@@ -218,7 +216,6 @@ impl Drop for ShmRegion {
                 // We need to manually unmap this region whenever
                 // it goes out of scope. These prevent memory leaks
                 mman::munmap(self.sr_raw_ptr, self.sr_size).unwrap();
-                unistd::close(self.sr_fd).unwrap();
             }
         }
     }

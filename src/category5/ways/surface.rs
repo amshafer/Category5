@@ -260,15 +260,15 @@ impl Surface {
             // Add tasks that tell the compositor to import this buffer
             // so it is usable in vulkan. Also return the size of the buffer
             // so we can set the surface size
-            if let Some(dmabuf) = buf.data::<Dmabuf>() {
+            if let Some(dmabuf) = buf.data::<Arc<Dmabuf>>() {
                 atmos.add_wm_task(wm::task::Task::update_window_contents_from_dmabuf(
-                    self.s_id, // ID of the new window
-                    *dmabuf,   // fd of the gpu buffer
+                    self.s_id,      // ID of the new window
+                    dmabuf.clone(), // fd of the gpu buffer
                     // pass the WlBuffer so it can be released
                     self.s_committed_buffer.as_ref().unwrap().clone(),
                 ));
                 (dmabuf.db_width as f32, dmabuf.db_height as f32)
-            } else if let Some(shm_buf) = buf.data::<ShmBuffer>() {
+            } else if let Some(shm_buf) = buf.data::<Arc<ShmBuffer>>() {
                 // ShmBuffer holds the base pointer and an offset, so
                 // we need to get the actual pointer, which will be
                 // wrapped in a MemImage

@@ -16,6 +16,8 @@ extern crate utils;
 use utils::{log, WindowId};
 use utils::{Dmabuf, MemImage};
 
+use std::sync::Arc;
+
 // Tell wm the desktop background
 //
 // This basically just creates a mesh with the max
@@ -31,7 +33,7 @@ pub struct SetBackgroundFromMem {
 pub struct UpdateWindowContentsFromDmabuf {
     pub ufd_id: WindowId,
     // dmabuf from linux_dmabuf protocol
-    pub ufd_dmabuf: Dmabuf,
+    pub ufd_dmabuf: Arc<Dmabuf>,
     // private: the wl_buffer to release when this
     // is handled. pixels belongs to this.
     pub ufd_wl_buffer: wl_buffer::WlBuffer,
@@ -108,7 +110,7 @@ impl Task {
 
     pub fn update_window_contents_from_dmabuf(
         id: WindowId,
-        dmabuf: Dmabuf,
+        dmabuf: Arc<Dmabuf>,
         buffer: wl_buffer::WlBuffer,
     ) -> Task {
         Task::uwcfd(UpdateWindowContentsFromDmabuf {

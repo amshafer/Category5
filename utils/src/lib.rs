@@ -9,7 +9,7 @@ pub mod log;
 pub mod region;
 
 use std::ops::Deref;
-use std::os::unix::io::RawFd;
+use std::os::unix::io::OwnedFd;
 use std::slice;
 
 extern crate anyhow;
@@ -142,9 +142,9 @@ impl Deref for MemImage {
 // Will be referenced by Params during wl_buffer
 // creation.
 #[allow(dead_code)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug)]
 pub struct Dmabuf {
-    pub db_fd: RawFd,
+    pub db_fd: OwnedFd,
     pub db_plane_idx: u32,
     pub db_offset: u32,
     pub db_stride: u32,
@@ -154,8 +154,22 @@ pub struct Dmabuf {
     pub db_mods: u64,
 }
 
+impl Clone for Dmabuf {
+    fn clone(&self) -> Self {
+        Self {
+            db_fd: self.db_fd.try_clone().expect("Could not DUP fd"),
+            db_plane_idx: self.db_plane_idx,
+            db_offset: self.db_offset,
+            db_stride: self.db_stride,
+            db_width: self.db_width,
+            db_height: self.db_height,
+            db_mods: self.db_mods,
+        }
+    }
+}
+
 impl Dmabuf {
-    pub fn new(fd: RawFd, plane: u32, offset: u32, stride: u32, mods: u64) -> Dmabuf {
+    pub fn new(fd: OwnedFd, plane: u32, offset: u32, stride: u32, mods: u64) -> Dmabuf {
         Dmabuf {
             db_fd: fd,
             db_plane_idx: plane,

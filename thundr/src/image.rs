@@ -18,6 +18,7 @@ use utils::{Dmabuf, MemImage};
 use std::cell::RefCell;
 use std::fmt;
 use std::ops::Drop;
+use std::os::unix::io::AsRawFd;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -397,7 +398,10 @@ impl Renderer {
         // supported types we can import as
         let dmabuf_type_bits = self
             .external_mem_fd_loader
-            .get_memory_fd_properties(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT, dmabuf.db_fd)
+            .get_memory_fd_properties(
+                vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT,
+                dmabuf.db_fd.as_raw_fd(),
+            )
             .expect("Could not get memory fd properties")
             // bitmask set for each supported memory type
             .memory_type_bits;
@@ -432,7 +436,7 @@ impl Renderer {
         // possible that the fd may be bad since the program that
         // owns it was killed. If that is the case just return and
         // don't update the texture.
-        let fd = match fcntl(dmabuf.db_fd, FcntlArg::F_DUPFD_CLOEXEC(0)) {
+        let fd = match fcntl(dmabuf.db_fd.as_raw_fd(), FcntlArg::F_DUPFD_CLOEXEC(0)) {
             Ok(f) => f,
             Err(e) => {
                 log::debug!("could not dup fd {:?}", e);
@@ -478,7 +482,7 @@ impl Renderer {
         log::debug!(
             "Created Vulkan image {:?} from dmabuf {}",
             image,
-            dmabuf.db_fd
+            dmabuf.db_fd.as_raw_fd(),
         );
         Ok((image, view, image_memory))
     }
@@ -530,7 +534,7 @@ impl Renderer {
                 );
 
                 for m in mods.iter() {
-                    log::debug!("dmabuf {} found mod {:#?}", dmabuf.db_fd, m);
+                    log::debug!("dmabuf {} found mod {:#?}", dmabuf.db_fd.as_raw_fd(), m);
                 }
             }
 
@@ -560,7 +564,7 @@ impl Renderer {
             // -------------------------------------------------------
             log::debug!(
                 "dmabuf {} image format properties {:#?} {:#?}",
-                dmabuf.db_fd,
+                dmabuf.db_fd.as_raw_fd(),
                 img_fmt_props,
                 drm_img_props
             );
