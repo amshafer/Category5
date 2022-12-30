@@ -158,7 +158,7 @@ impl EventManager {
             em_wm: wm,
             em_climate: state,
             em_display: display,
-            em_socket: ws::ListeningSocket::bind_auto("wayland-", 0..9)
+            em_socket: ws::ListeningSocket::bind_auto("wayland", 0..9)
                 .expect("Could not create wayland socket"),
             em_dh: display_handle.clone(),
             em_pointer_dx: 0.0,
@@ -191,7 +191,7 @@ impl EventManager {
     pub fn register_new_client(
         &mut self,
         client_stream: std::os::unix::net::UnixStream,
-    ) -> ClientId {
+    ) -> Result<ClientId> {
         let mut atmos = self.em_climate.c_atmos.lock().unwrap();
         // make a new client id
         let id = atmos.mint_client_id();
@@ -202,9 +202,9 @@ impl EventManager {
                 ci_id: id,
                 ci_atmos: self.em_climate.c_atmos.clone(),
             }),
-        );
+        )?;
 
-        return id;
+        return Ok(id);
     }
 
     /// Each subsystem has a function that implements its main
@@ -268,7 +268,8 @@ impl EventManager {
                 .accept()
                 .expect("Error reading wayland socket")
             {
-                self.register_new_client(client_stream);
+                self.register_new_client(client_stream)
+                    .expect("Could not register new client");
             }
 
             if needs_render {
@@ -295,7 +296,9 @@ impl EventManager {
             self.em_display
                 .dispatch_clients(&mut self.em_climate)
                 .unwrap();
-            self.em_display.flush_clients();
+            self.em_display
+                .flush_clients()
+                .expect("Could not flush wayland display");
 
             log::profiling!("EventManager: Blocking for max {} ms", tm.time_remaining());
         }
