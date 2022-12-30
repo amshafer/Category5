@@ -176,7 +176,7 @@ fn xdg_surface_handle_request(
 
     match req {
         xdg_surface::Request::GetToplevel { id } => {
-            let xdg = data_init.init(id, ss_clone);
+            let xdg = data_init.init(id, ss_clone.clone());
             shsurf.get_toplevel(surf, xdg, ss_clone)
         }
         xdg_surface::Request::GetPopup {
@@ -184,7 +184,7 @@ fn xdg_surface_handle_request(
             parent,
             positioner,
         } => {
-            let xdg = data_init.init(id, ss_clone);
+            let xdg = data_init.init(id, ss_clone.clone());
             shsurf.get_popup(xdg, surf, parent, positioner, ss_clone)
         }
         xdg_surface::Request::AckConfigure { serial } => {

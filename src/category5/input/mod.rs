@@ -164,10 +164,9 @@ impl HWInput {
     /// before returning.
     pub fn dispatch(&mut self, atmos: &mut Atmosphere) {
         self.hi_libin.dispatch().unwrap();
-        let input = self.hi_in.lock().unwrap();
-
         // now go through each event
         while let Some(iev) = self.next_available() {
+            let mut input = self.hi_in.lock().unwrap();
             input.handle_input_event(atmos, &iev);
         }
     }
@@ -377,7 +376,7 @@ impl Input {
     /// Perform a scrolling motion.
     ///
     /// Generates the wl_pointer.axis event.
-    fn handle_pointer_axis(&mut self, atmos: &Atmosphere, a: &Axis) {
+    fn handle_pointer_axis(&mut self, atmos: &mut Atmosphere, a: &Axis) {
         // Find the active window
         if let Some(id) = self.i_pointer_focus {
             // get the seat for this client
@@ -432,7 +431,7 @@ impl Input {
                     Some(Role::xdg_shell_toplevel(xdg_surf, ss)) => {
                         // send the xdg configure events
                         ss.lock().unwrap().configure(
-                            &mut atmos,
+                            atmos,
                             xdg_surf,
                             &surf,
                             Some((self.i_resize_diff.0 as f32, self.i_resize_diff.1 as f32)),
@@ -553,7 +552,7 @@ impl Input {
     ///
     /// Also generates wl_pointer.motion events to the surface
     /// in focus if the cursor is on that surface
-    fn handle_pointer_move(&mut self, atmos: &Atmosphere, m: &PointerMove) {
+    fn handle_pointer_move(&mut self, atmos: &mut Atmosphere, m: &PointerMove) {
         // Update the atmosphere with the new cursor pos
         atmos.add_cursor_pos(m.pm_dx, m.pm_dy);
 
@@ -611,7 +610,7 @@ impl Input {
     ///
     /// If a click is over a background window it is brought into focus
     /// clicking on a background titlebar can also start a grab
-    fn handle_click_on_window(&mut self, atmos: &Atmosphere, c: &Click) {
+    fn handle_click_on_window(&mut self, atmos: &mut Atmosphere, c: &Click) {
         let cursor = atmos.get_cursor_pos();
         // did our click bring a window into focus?
         let mut set_focus = false;
@@ -746,7 +745,7 @@ impl Input {
     }
 
     // TODO: add gesture recognition
-    pub fn handle_compositor_shortcut(&mut self, atmos: &Atmosphere, key: &Key) -> bool {
+    pub fn handle_compositor_shortcut(&mut self, atmos: &mut Atmosphere, key: &Key) -> bool {
         // TODO: keysyms::KEY_Meta_L doesn't work? should be 125 for left meta
         if key.k_code == 125 && key.k_state == KeyState::Pressed {
             match atmos.get_renderdoc_recording() {
@@ -761,7 +760,7 @@ impl Input {
     /// Handle the user typing on the keyboard.
     ///
     /// Deliver the wl_keyboard.key and modifier events.
-    pub fn handle_keyboard(&mut self, atmos: &Atmosphere, key: &Key) {
+    pub fn handle_keyboard(&mut self, atmos: &mut Atmosphere, key: &Key) {
         if self.handle_compositor_shortcut(atmos, key) {
             return;
         }

@@ -190,9 +190,9 @@ impl EventManager {
     /// Returns the id created
     pub fn register_new_client(
         &mut self,
-        atmos: &mut Atmosphere,
         client_stream: std::os::unix::net::UnixStream,
     ) -> ClientId {
+        let mut atmos = self.em_climate.c_atmos.lock().unwrap();
         // make a new client id
         let id = atmos.mint_client_id();
         // add our ClientData
@@ -234,20 +234,31 @@ impl EventManager {
         let mut needs_render = true;
         while needs_render || fdw.wait_for_events() {
             log::profiling!("starting loop");
-            let mut atmos = self.em_climate.c_atmos.lock().unwrap();
-            // First thing to do is to dispatch libinput
-            // It has time sensitive operations which need to take
-            // place as soon as the fd is readable
-            self.em_climate.c_input.dispatch(atmos.deref_mut());
+            {
+                let mut atmos = self.em_climate.c_atmos.lock().unwrap();
+                // First thing to do is to dispatch libinput
+                // It has time sensitive operations which need to take
+                // place as soon as the fd is readable
+                self.em_climate.c_input.dispatch(atmos.deref_mut());
 
-            // TODO: fix frame timings to prevent the current state of
-            // 3 frames of latency
-            //
-            // The input subsystem has batched the changes to the window
-            // due to resizing, we need to send those changes now
-            self.em_climate
-                .c_input
-                .update_from_eventloop(atmos.deref_mut());
+                // TODO: fix frame timings to prevent the current state of
+                // 3 frames of latency
+                //
+                // The input subsystem has batched the changes to the window
+                // due to resizing, we need to send those changes now
+                self.em_climate
+                    .c_input
+                    .update_from_eventloop(atmos.deref_mut());
+
+                // Try to flip hemispheres to push our updates to vkcomp
+                // If we can't recieve it, vkcomp isn't ready, and we should
+                // continue processing wayland updates so the system
+                // doesn't lag
+                if atmos.is_changed() {
+                    atmos.clear_changed();
+                    needs_render = true;
+                }
+            }
 
             // Accept any new clients
             // Do this first to fill in their client data and initialize
@@ -257,21 +268,15 @@ impl EventManager {
                 .accept()
                 .expect("Error reading wayland socket")
             {
-                self.register_new_client(atmos.deref_mut(), client_stream);
-            }
-
-            // Try to flip hemispheres to push our updates to vkcomp
-            // If we can't recieve it, vkcomp isn't ready, and we should
-            // continue processing wayland updates so the system
-            // doesn't lag
-            if atmos.is_changed() {
-                atmos.clear_changed();
-                needs_render = true;
+                self.register_new_client(client_stream);
             }
 
             if needs_render {
                 log::profiling!("trying to render frame");
-                match self.em_wm.render_frame(atmos.deref_mut()) {
+                match self
+                    .em_wm
+                    .render_frame(self.em_climate.c_atmos.lock().unwrap().deref_mut())
+                {
                     Ok(()) => needs_render = false,
                     Err(e) => {
                         if let Some(err) = e.downcast_ref::<ThundrError>() {

@@ -35,8 +35,8 @@ impl ws::GlobalDispatch<wl_seat::WlSeat, ()> for Climate {
         data_init: &mut ws::DataInit<'_, Self>,
     ) {
         // get the id representing this client in the atmos
-        let atmos = state.c_atmos.lock().unwrap();
-        let id = super::utils::get_id_from_client(atmos.deref_mut(), *client);
+        let mut atmos = state.c_atmos.lock().unwrap();
+        let id = super::utils::get_id_from_client(atmos.deref_mut(), client.clone());
 
         // check if a seat exists and add this to it
         // add a new seat to this client
@@ -53,7 +53,7 @@ impl ws::GlobalDispatch<wl_seat::WlSeat, ()> for Climate {
             }
         };
 
-        let wl_seat = data_init.init(resource, seat);
+        let wl_seat = data_init.init(resource, seat.clone());
         // make a new seat instance that adds this wl_seat to the Seat
         // see docs for this func for more
         seat.lock().unwrap().add_seat_instance(wl_seat.clone());
@@ -115,10 +115,11 @@ impl SeatInstance {
     fn get_keyboard(
         &mut self,
         atmos: &mut Atmosphere,
-        parent: &mut Seat,
+        input: &mut Input,
+        parent_focus: ClientId,
+        parent_serial: u32,
         keyboard: wl_keyboard::WlKeyboard,
     ) {
-        let input = parent.s_input.lock().unwrap();
         // Make a temp fd to share with the client
         #[cfg(target_os = "freebsd")]
         let fd = unsafe {
@@ -166,12 +167,12 @@ impl SeatInstance {
         // If we are in focus, then we should go ahead and generate
         // the enter event
         if let Some(focus) = atmos.get_client_in_focus() {
-            if parent.s_id == focus {
+            if parent_focus == focus {
                 if let Some(sid) = atmos.get_win_focus() {
                     if let Some(surf) = atmos.get_wl_surface_from_id(sid) {
                         // TODO: use Input::keyboard_enter and fix the refcell order
                         keyboard.enter(
-                            parent.s_serial,
+                            parent_serial,
                             &surf,
                             Vec::new(), // TODO: update modifiers if needed
                         );
@@ -185,14 +186,13 @@ impl SeatInstance {
     fn get_pointer(
         &mut self,
         atmos: &mut Atmosphere,
-        parent: &mut Seat,
+        input: &mut Input,
         pointer: wl_pointer::WlPointer,
     ) {
         self.si_pointers.push(pointer.clone());
 
         // If we are in focus, then we should go ahead and generate
         // the enter event
-        let input = parent.s_input.lock().unwrap();
         if let Some(sid) = atmos.get_win_focus() {
             if let Some(pointer_focus) = input.i_pointer_focus {
                 // check if the surface is the input sys's focus
@@ -273,14 +273,16 @@ impl Seat {
             .find(|s| s.si_seat == *seat)
             .expect("wl_seat is not known by this Seat");
 
+        let mut input = self.s_input.lock().unwrap();
+
         match req {
             wl_seat::Request::GetKeyboard { id } => {
                 let kb = data_init.init(id, ());
-                si.get_keyboard(atmos, self, kb);
+                si.get_keyboard(atmos, input.deref_mut(), self.s_id, self.s_serial, kb);
             }
             wl_seat::Request::GetPointer { id } => {
                 let ptr = data_init.init(id, ());
-                si.get_pointer(atmos, self, ptr);
+                si.get_pointer(atmos, input.deref_mut(), ptr);
             }
             _ => unimplemented!("Did not recognize the request"),
         }
