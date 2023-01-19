@@ -215,6 +215,10 @@ pub struct Renderer {
     /// GPU crashdumps.
     #[cfg(feature = "aftermath")]
     r_aftermath: Aftermath,
+
+    /// We keep a list of all the images allocated by this context
+    /// so that Pipeline::draw doesn't have to dedup the surfacelist's images
+    pub r_image_list: Vec<Image>,
 }
 
 /// This must match the definition of the Window struct in the
@@ -1698,6 +1702,7 @@ impl Renderer {
                 r_release_barriers: Vec::new(),
                 #[cfg(feature = "aftermath")]
                 r_aftermath: aftermath,
+                r_image_list: Vec::new(),
             };
             rend.reallocate_windows_buf_with_cap(rend.r_windows_capacity);
 
@@ -2460,13 +2465,65 @@ impl Renderer {
         unsafe { dev.allocate_descriptor_sets(&info).unwrap()[0] }
     }
 
-    pub fn refresh_window_resources(&mut self, images: &[Image], surfaces: &mut SurfaceList) {
+    /// Helper for inserting a new image and updating its id
+    pub fn push_image(&mut self, image: &mut Image) {
+        self.r_image_list.push(image.clone());
+        image.set_id((self.r_image_list.len() - 1) as i32);
+    }
+
+    /// Remove all attached damage.
+    ///
+    /// Damage is consumed by Thundr to ease the burden of developing
+    /// apps with it. This internal func clears all the damage after
+    /// a frame is drawn.
+    pub fn clear_damage_on_all_images(&mut self) {
+        for image in self.r_image_list.iter_mut() {
+            image.clear_damage();
+        }
+    }
+
+    /// Remove an image from the surfacelist.
+    pub fn remove_image_at_index(&mut self, i: usize) {
+        self.r_image_list.remove(i);
+
+        // now that we have removed the image, we need to update all of the
+        // ids, since some of them will have been shifted
+        // TODO: OPTIMIZEME
+        for (idx, i) in self.r_image_list.iter_mut().enumerate() {
+            i.set_id(idx as i32);
+        }
+    }
+
+    /// Helper for removing an image by handle.
+    ///
+    /// This may not be very performant. If you already know the index position,
+    /// then use remove_image_at_index.
+    fn remove_image(&mut self, image: &Image) {
+        let i = match self.r_image_list.iter().position(|v| *v == *image) {
+            Some(v) => v,
+            // Error: This shouldn't happen, for some reason the image wasn't in
+            // our image list
+            None => return,
+        };
+
+        self.remove_image_at_index(i);
+    }
+
+    /// Helper for removing all surfaces/objects currently loaded
+    ///
+    /// This will totally flush thundr, and reset it back to when it was
+    /// created.
+    pub fn clear_all(&mut self) {
+        self.r_image_list.clear();
+    }
+
+    pub fn refresh_window_resources(&mut self, surfaces: &mut SurfaceList) {
         self.wait_for_prev_submit();
 
         // Construct a list of image views from the submitted surface list
         // this will be our unsized texture array that the composite shader will reference
         // TODO: make this a changed flag
-        if self.r_image_infos.len() != images.len() && images.len() > 0 {
+        if self.r_image_infos.len() != self.r_image_list.len() && self.r_image_list.len() > 0 {
             // free the previous descriptor sets
             unsafe {
                 self.dev
@@ -2481,7 +2538,7 @@ impl Renderer {
                 &self.dev,
                 self.r_images_desc_pool,
                 &[self.r_images_desc_layout],
-                images.len() as u32,
+                self.r_image_list.len() as u32,
             );
         }
 
@@ -2492,7 +2549,7 @@ impl Renderer {
         // Construct a list of image views from the submitted surface list
         // this will be our unsized texture array that the composite shader will reference
         self.r_image_infos.clear();
-        for image in images.iter() {
+        for image in self.r_image_list.iter() {
             self.r_image_infos.push(
                 vk::DescriptorImageInfo::builder()
                     .sampler(self.image_sampler)

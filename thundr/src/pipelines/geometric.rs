@@ -15,7 +15,7 @@ use ash::{util, vk};
 
 use super::Pipeline;
 use crate::renderer::{PushConstants, RecordParams, Renderer};
-use crate::{Image, SurfaceList, Viewport};
+use crate::{SurfaceList, Viewport};
 
 use utils::log;
 
@@ -124,7 +124,6 @@ impl Pipeline for GeomPipeline {
         &mut self,
         rend: &mut Renderer,
         params: &RecordParams,
-        _images: &[Image],
         surfaces: &SurfaceList,
         viewport: &Viewport,
     ) -> bool {
@@ -250,6 +249,7 @@ impl Pipeline for GeomPipeline {
             self.depth_image = depth_image;
             self.depth_image_view = depth_image_view;
             self.depth_image_mem = depth_image_mem;
+            self.setup_depth_image(rend);
 
             self.framebuffers = GeomPipeline::create_framebuffers(
                 rend,

@@ -586,11 +586,6 @@ impl WindowManager {
             if let Some(app) = self.wm_apps[id.into()].as_ref() {
                 assert!(app.a_marked_for_death);
 
-                // Destroy the rendering resources
-                app.a_image
-                    .as_ref()
-                    .map(|image| thundr.destroy_image(image.clone()));
-
                 self.wm_apps.deactivate(id.into())
             }
         }
@@ -850,21 +845,5 @@ impl WindowManager {
         log::debug!("_____________________________ FRAME END");
 
         Ok(())
-    }
-}
-
-impl Drop for WindowManager {
-    /// We need to free our resources before we free
-    /// the renderer, since they were allocated from it.
-    fn drop(&mut self) {
-        // Free all images in each app
-        for i in 0..self.wm_apps.len() {
-            if let Some(a) = self.wm_apps[i].as_mut() {
-                // now destroy the image
-                self.wm_thundr
-                    .destroy_image(a.a_image.as_ref().unwrap().clone());
-            }
-        }
-        std::mem::drop(&self.wm_thundr);
     }
 }

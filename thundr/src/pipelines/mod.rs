@@ -28,7 +28,7 @@ pub use geometric::GeomPipeline;
 
 use crate::display::Display;
 use crate::renderer::{RecordParams, Renderer};
-use crate::{Image, SurfaceList, Viewport};
+use crate::{SurfaceList, Viewport};
 
 // The pipeline trait is essentially a mini-backend for the
 // renderer. It determines what draw calls we generate for the
@@ -56,7 +56,6 @@ pub trait Pipeline {
         &mut self,
         rend: &mut Renderer,
         params: &RecordParams,
-        images: &[Image],
         surfaces: &SurfaceList,
         viewport: &Viewport,
     ) -> bool;

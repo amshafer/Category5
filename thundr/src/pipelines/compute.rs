@@ -12,7 +12,7 @@ use ash::{util, vk, Instance};
 use super::Pipeline;
 use crate::display::Display;
 use crate::renderer::{RecordParams, Renderer};
-use crate::{Image, SurfaceList, Viewport};
+use crate::{SurfaceList, Viewport};
 
 use utils::{log, timing::StopWatch};
 
@@ -643,7 +643,6 @@ impl Pipeline for CompPipeline {
         &mut self,
         rend: &mut Renderer,
         _params: &RecordParams,
-        _images: &[Image],
         _surfaces: &SurfaceList,
         _viewport: &Viewport,
     ) -> bool {

@@ -17,6 +17,7 @@ use utils::{Dmabuf, MemImage};
 use std::cell::RefCell;
 use std::ops::Drop;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::{fmt, mem};
 
 use ash::vk;
@@ -37,8 +38,8 @@ const TARGET_FORMAT: vk::Format = vk::Format::B8G8R8A8_UNORM;
 ///
 /// Images must be created from the global thundr instance. All
 /// images must be destroyed before the instance can be.
-#[derive(Default)]
 pub(crate) struct ImageInternal {
+    i_rend: Arc<Mutex<Renderer>>,
     /// This id is the index of this image in Thundr's image list (th_image_list).
     pub i_id: i32,
     /// Is this image known to the renderer. This is true if the image was destroyed.
@@ -145,6 +146,25 @@ impl fmt::Debug for Image {
     }
 }
 
+impl Drop for ImageInternal {
+    /// A simple teardown function. The renderer is needed since
+    /// it allocated all these objects.
+    fn drop(&mut self) {
+        let mut rend = self.i_rend.lock().unwrap();
+        rend.wait_for_prev_submit();
+        assert!(!self.i_out_of_date);
+        rend.remove_image_at_index(self.i_id as usize);
+
+        unsafe {
+            // Mark that this image was destroyed
+            self.i_out_of_date = true;
+            rend.dev.destroy_image(self.i_image, None);
+            rend.dev.destroy_image_view(self.i_image_view, None);
+            rend.free_memory(self.i_image_mem);
+        }
+    }
+}
+
 /// Private data specific to a image type.
 ///
 /// There are two types of imagees: memimages, and dmabufs
@@ -200,6 +220,7 @@ impl Renderer {
     /// Create a new image from a shm buffer
     pub fn create_image_from_bits(
         &mut self,
+        rend_mtx: Arc<Mutex<Renderer>>,
         img: &MemImage,
         _release: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
@@ -228,6 +249,7 @@ impl Renderer {
             self.update_image_from_memimg(image, img);
 
             return self.create_image_common(
+                rend_mtx,
                 ImagePrivate::MemImage,
                 &tex_res,
                 image,
@@ -455,6 +477,7 @@ impl Renderer {
     /// and create an image/view pair representing it.
     pub fn create_image_from_dmabuf(
         &mut self,
+        rend_mtx: Arc<Mutex<Renderer>>,
         dmabuf: &Dmabuf,
         release: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
@@ -548,6 +571,7 @@ impl Renderer {
                 };
 
             return self.create_image_common(
+                rend_mtx,
                 ImagePrivate::Dmabuf(dmabuf_priv),
                 &vk::Extent2D {
                     width: dmabuf.db_width as u32,
@@ -568,6 +592,7 @@ impl Renderer {
     /// descriptors and constructs the image struct
     fn create_image_common(
         &mut self,
+        rend_mtx: Arc<Mutex<Renderer>>,
         private: ImagePrivate,
         res: &vk::Extent2D,
         image: vk::Image,
@@ -577,6 +602,7 @@ impl Renderer {
     ) -> Option<Image> {
         return Some(Image {
             i_internal: Rc::new(RefCell::new(ImageInternal {
+                i_rend: rend_mtx,
                 // The id will be filled in by thundr in lib.rs
                 i_id: 0,
                 i_out_of_date: false,
@@ -811,21 +837,6 @@ impl Renderer {
                 &[],
                 self.r_release_barriers.as_slice(),
             );
-        }
-    }
-
-    /// A simple teardown function. The renderer is needed since
-    /// it allocated all these objects.
-    pub fn destroy_image(&mut self, thundr_image: &Image) {
-        self.wait_for_prev_submit();
-        thundr_image.assert_valid();
-        let mut image = thundr_image.i_internal.borrow_mut();
-        unsafe {
-            // Mark that this image was destroyed
-            image.i_out_of_date = true;
-            self.dev.destroy_image(image.i_image, None);
-            self.dev.destroy_image_view(image.i_image_view, None);
-            self.free_memory(image.i_image_mem);
         }
     }
 }
