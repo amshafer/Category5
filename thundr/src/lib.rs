@@ -69,6 +69,8 @@ use lluvia as ll;
 
 // Austin Shafer - 2020
 use std::marker::PhantomData;
+use std::ops::DerefMut;
+use std::sync::{Arc, Mutex};
 
 mod damage;
 mod descpool;
@@ -139,7 +141,12 @@ pub enum ThundrError {
 }
 
 pub struct Thundr {
-    th_rend: Renderer,
+    /// Our core rendering resources
+    ///
+    /// This holds the majority of the vulkan objects, and allows them
+    /// to be accessed by things in our ECS so they can tear down their
+    /// vulkan allocations
+    th_rend: Arc<Mutex<Renderer>>,
     /// This is the system used to track all Thundr resources
     th_ecs_inst: ll::Instance,
 
@@ -326,7 +333,7 @@ impl Thundr {
         };
 
         Ok(Thundr {
-            th_rend: rend,
+            th_rend: Arc::new(Mutex::new(rend)),
             th_ecs_inst: ecs,
             th_image_list: Vec::new(),
             _th_pipe_type: ty,
@@ -340,19 +347,17 @@ impl Thundr {
     /// For VK_KHR_display we will calculate it ourselves, and for
     /// SDL we will ask SDL to tell us it.
     pub fn get_dpi(&self) -> (f32, f32) {
-        self.th_rend.display.get_dpi()
+        self.th_rend.lock().unwrap().display.get_dpi()
     }
 
     pub fn get_raw_vkdev_handle(&self) -> *const std::ffi::c_void {
         use ash::vk::Handle;
-        self.th_rend.dev.handle().as_raw() as *const std::ffi::c_void
+        self.th_rend.lock().unwrap().dev.handle().as_raw() as *const std::ffi::c_void
     }
 
     pub fn get_resolution(&self) -> (u32, u32) {
-        (
-            self.th_rend.resolution.width,
-            self.th_rend.resolution.height,
-        )
+        let rend = self.th_rend.lock().unwrap();
+        (rend.resolution.width, rend.resolution.height)
     }
 
     /// Helper for inserting a new image and updating its id
@@ -406,7 +411,7 @@ impl Thundr {
     pub fn clear_all(&mut self) {
         // Destroy all our images
         for img in self.th_image_list.iter_mut() {
-            self.th_rend.destroy_image(img);
+            self.th_rend.lock().unwrap().destroy_image(img);
         }
 
         self.th_image_list.clear();
@@ -418,7 +423,11 @@ impl Thundr {
         img: &MemImage,
         release_info: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
-        let mut ret = self.th_rend.create_image_from_bits(&img, release_info);
+        let mut ret = self
+            .th_rend
+            .lock()
+            .unwrap()
+            .create_image_from_bits(&img, release_info);
         if let Some(i) = ret.as_mut() {
             self.push_image(i);
         }
@@ -431,7 +440,11 @@ impl Thundr {
         dmabuf: &Dmabuf,
         release_info: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
-        let mut ret = self.th_rend.create_image_from_dmabuf(dmabuf, release_info);
+        let mut ret = self
+            .th_rend
+            .lock()
+            .unwrap()
+            .create_image_from_dmabuf(dmabuf, release_info);
         if let Some(i) = ret.as_mut() {
             self.push_image(i)
         }
@@ -439,7 +452,7 @@ impl Thundr {
     }
 
     pub fn destroy_image(&mut self, image: Image) {
-        self.th_rend.destroy_image(&image);
+        self.th_rend.lock().unwrap().destroy_image(&image);
         self.remove_image(&image);
     }
 
@@ -451,6 +464,8 @@ impl Thundr {
         release_info: Option<Box<dyn Drop>>,
     ) {
         self.th_rend
+            .lock()
+            .unwrap()
             .update_image_from_bits(image, memimg, damage, release_info)
     }
 
@@ -462,6 +477,8 @@ impl Thundr {
         release_info: Option<Box<dyn Drop>>,
     ) {
         self.th_rend
+            .lock()
+            .unwrap()
             .update_image_from_dmabuf(image, dmabuf, release_info)
     }
 
@@ -476,7 +493,10 @@ impl Thundr {
         let ecs_capacity = self.th_ecs_inst.num_entities();
 
         // Make space in our vulkan buffers
-        self.th_rend.ensure_window_capacity(ecs_capacity);
+        self.th_rend
+            .lock()
+            .unwrap()
+            .ensure_window_capacity(ecs_capacity);
 
         return surf;
     }
@@ -489,7 +509,7 @@ impl Thundr {
 
     // release_pending_resources
     pub fn release_pending_resources(&mut self) {
-        self.th_rend.release_pending_resources();
+        self.th_rend.lock().unwrap().release_pending_resources();
     }
 
     /// This is a candidate for an out of date error. We should
@@ -499,16 +519,17 @@ impl Thundr {
     /// We have to destroy and recreate our pipeline along the way since
     /// it depends on the swapchain.
     pub fn handle_ood(&mut self) {
-        self.th_rend.wait_for_prev_submit();
-        self.th_rend.wait_for_copy();
+        let mut rend = self.th_rend.lock().unwrap();
+        rend.wait_for_prev_submit();
+        rend.wait_for_copy();
         unsafe {
-            self.th_rend.recreate_swapchain();
+            rend.recreate_swapchain();
         }
-        self.th_pipe.handle_ood(&mut self.th_rend);
+        self.th_pipe.handle_ood(rend.deref_mut());
     }
 
     pub fn get_drm_dev(&self) -> (i64, i64) {
-        unsafe { self.th_rend.get_drm_dev() }
+        unsafe { self.th_rend.lock().unwrap().get_drm_dev() }
     }
 
     /// Flushes all surface updates to the GPU
@@ -521,12 +542,12 @@ impl Thundr {
             return Err(ThundrError::RECORDING_ALREADY_IN_PROGRESS);
         }
 
-        self.th_rend.add_damage_for_list(surfaces)?;
+        let mut rend = self.th_rend.lock().unwrap();
+        rend.add_damage_for_list(surfaces)?;
 
         // TODO: check and see if the image list has been changed, or if
         // any images have been updated.
-        self.th_rend
-            .refresh_window_resources(self.th_image_list.as_slice(), surfaces);
+        rend.refresh_window_resources(self.th_image_list.as_slice(), surfaces);
 
         // Now that we have processed this surfacelist, unmark it as changed
         surfaces.l_changed = false;
@@ -545,7 +566,8 @@ impl Thundr {
         }
 
         // record rendering commands
-        let params = match self.th_rend.begin_recording_one_frame() {
+        let res = self.th_rend.lock().unwrap().begin_recording_one_frame();
+        let params = match res {
             Ok(params) => params,
             Err(ThundrError::OUT_OF_DATE) => {
                 self.handle_ood();
@@ -554,7 +576,8 @@ impl Thundr {
             Err(e) => return Err(e),
         };
 
-        self.th_pipe.begin_record(&mut self.th_rend, &params);
+        let mut rend = self.th_rend.lock().unwrap();
+        self.th_pipe.begin_record(rend.deref_mut(), &params);
         self.th_params = Some(params);
 
         Ok(())
@@ -570,13 +593,16 @@ impl Thundr {
             .as_mut()
             .ok_or(ThundrError::RECORDING_NOT_IN_PROGRESS)?;
 
-        self.th_rend.draw_call_submitted = self.th_pipe.draw(
-            &mut self.th_rend,
-            &params,
-            self.th_image_list.as_slice(),
-            surfaces,
-            viewport,
-        );
+        {
+            let mut rend = self.th_rend.lock().unwrap();
+            rend.draw_call_submitted = self.th_pipe.draw(
+                rend.deref_mut(),
+                &params,
+                self.th_image_list.as_slice(),
+                surfaces,
+                viewport,
+            );
+        }
 
         // Update the amount of depth used while drawing this surface list. This
         // is the depth we should start subtracting from when drawing the next
@@ -598,7 +624,8 @@ impl Thundr {
             .as_ref()
             .ok_or(ThundrError::RECORDING_NOT_IN_PROGRESS)?;
 
-        self.th_pipe.end_record(&mut self.th_rend, params);
+        self.th_pipe
+            .end_record(self.th_rend.lock().unwrap().deref_mut(), params);
         self.clear_damage_on_all_images();
         self.th_params = None;
 
@@ -607,7 +634,7 @@ impl Thundr {
 
     // present
     pub fn present(&mut self) -> Result<()> {
-        self.th_rend.present()
+        self.th_rend.lock().unwrap().present()
     }
 
     pub fn draw_surfaces_debug_prints(&mut self, _surfaces: &SurfaceList, _viewport: &Viewport) {
@@ -642,16 +669,17 @@ impl Thundr {
                 );
             }
 
-            if self.th_rend.dev_features.vkc_supports_incremental_present {
+            let rend = self.th_rend.lock().unwrap();
+            if rend.dev_features.vkc_supports_incremental_present {
                 log::debug!("Damaged vkPresentRegions:");
                 log::debug!("--------------------------------");
-                for (i, pr) in self.th_rend.current_damage.iter().enumerate() {
+                for (i, pr) in rend.current_damage.iter().enumerate() {
                     log::debug!("[{}] Base={:?}, Size={:?}", i, pr.offset, pr.extent);
                 }
             }
 
             log::debug!("Window list:");
-            for (i, val) in self.th_rend.r_windows.iter().enumerate() {
+            for (i, val) in rend.r_windows.iter().enumerate() {
                 if let Some(w) = val {
                     log::debug!(
                         "[{}] Image={}, Pos={:?}, Size={:?}, Opaque(Pos={:?}, Size={:?})",
@@ -674,9 +702,12 @@ impl Thundr {
 impl Drop for Thundr {
     fn drop(&mut self) {
         // first destroy the pipeline specific resources
-        self.th_rend.wait_for_prev_submit();
-        self.th_rend.wait_for_copy();
-        self.th_pipe.destroy(&mut self.th_rend);
+        {
+            let mut rend = self.th_rend.lock().unwrap();
+            rend.wait_for_prev_submit();
+            rend.wait_for_copy();
+            self.th_pipe.destroy(rend.deref_mut());
+        }
         self.clear_all();
         // th_rend will now be dropped
     }

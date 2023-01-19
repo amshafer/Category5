@@ -9,11 +9,12 @@ use crate::{Damage, Result};
 use ash::vk;
 use lluvia as ll;
 use std::iter::DoubleEndedIterator;
-use std::ops::Index;
+use std::ops::{DerefMut, Index};
+use std::sync::{Arc, Mutex};
 use utils::log;
 
-#[derive(Debug)]
 pub struct SurfaceList {
+    l_rend: Arc<Mutex<Renderer>>,
     /// This will get cleared during Thundr::draw
     pub(crate) l_changed: bool,
     l_vec: Vec<Surface>,
@@ -35,9 +36,8 @@ pub struct SurfaceList {
 
 impl SurfaceList {
     pub fn new(thund: &mut Thundr) -> Self {
-        let rend = &mut thund.th_rend;
-
         let mut ret = Self {
+            l_rend: thund.th_rend.clone(),
             l_changed: false,
             l_vec: Vec::new(),
             l_damage: Vec::new(),
@@ -49,9 +49,11 @@ impl SurfaceList {
             l_order_desc: vk::DescriptorSet::null(),
         };
 
+        let mut rend = thund.th_rend.lock().unwrap();
+
         unsafe {
-            ret.reallocate_order_buf_with_cap(rend, ret.l_order_capacity);
-            ret.allocate_order_resources(rend);
+            ret.reallocate_order_buf_with_cap(rend.deref_mut(), ret.l_order_capacity);
+            ret.allocate_order_resources(rend.deref_mut());
         }
 
         return ret;
@@ -282,8 +284,9 @@ impl SurfaceList {
         count
     }
 
-    pub fn destroy(&mut self, rend: &mut Renderer) {
+    fn destroy(&mut self) {
         self.clear();
+        let rend = self.l_rend.lock().unwrap();
         unsafe {
             rend.dev.destroy_buffer(self.l_order_buf, None);
             rend.free_memory(self.l_order_mem);
@@ -295,7 +298,7 @@ impl SurfaceList {
 
 impl Drop for SurfaceList {
     fn drop(&mut self) {
-        self.clear();
+        self.destroy();
     }
 }
 

@@ -139,7 +139,7 @@ impl Display {
         if let Ok(env) = std::env::var("THUNDR_DPI") {
             let val: f32 = f32::from_str(env.as_str())
                 .expect("THUNDR_DPI value must be a valid 32-bit floating point number");
-            log::debug!("Using user specified DPI {}");
+            log::debug!("Using user specified DPI {:?}", val);
             return (val, val);
         }
 
