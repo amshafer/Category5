@@ -7,6 +7,7 @@
 // that will be passed around
 #![allow(dyn_drop)]
 extern crate ash;
+extern crate lluvia as ll;
 extern crate nix;
 
 use super::renderer::Renderer;
@@ -41,7 +42,7 @@ const TARGET_FORMAT: vk::Format = vk::Format::B8G8R8A8_UNORM;
 pub(crate) struct ImageInternal {
     i_rend: Arc<Mutex<Renderer>>,
     /// This id is the index of this image in Thundr's image list (th_image_list).
-    pub i_id: i32,
+    pub i_id: ll::Entity,
     /// Is this image known to the renderer. This is true if the image was destroyed.
     /// If true, it needs to be dropped and recreated.
     pub i_out_of_date: bool,
@@ -101,16 +102,10 @@ impl Image {
         // TODO: clip to image size
     }
 
-    /// set the id. This should only be done by Thundr
-    pub(crate) fn set_id(&mut self, id: i32) {
-        self.assert_valid();
-        self.i_internal.borrow_mut().i_id = id;
-    }
-
     /// Get the id. This is consumed by the pipelines that need to contruct the descriptor
     /// indexing array.
-    pub(crate) fn get_id(&self) -> i32 {
-        self.i_internal.borrow().i_id
+    pub(crate) fn get_id(&self) -> ll::Entity {
+        self.i_internal.borrow().i_id.clone()
     }
 
     /// Removes any damage from this image.
@@ -153,7 +148,6 @@ impl Drop for ImageInternal {
         let mut rend = self.i_rend.lock().unwrap();
         rend.wait_for_prev_submit();
         assert!(!self.i_out_of_date);
-        rend.remove_image_at_index(self.i_id as usize);
 
         unsafe {
             // Mark that this image was destroyed

@@ -218,7 +218,8 @@ pub struct Renderer {
 
     /// We keep a list of all the images allocated by this context
     /// so that Pipeline::draw doesn't have to dedup the surfacelist's images
-    pub r_image_list: Vec<Image>,
+    pub r_image_ecs: ll::Instance,
+    pub r_image_list: ll::Session<Image>,
 }
 
 /// This must match the definition of the Window struct in the
@@ -2469,44 +2470,6 @@ impl Renderer {
     pub fn push_image(&mut self, image: &mut Image) {
         self.r_image_list.push(image.clone());
         image.set_id((self.r_image_list.len() - 1) as i32);
-    }
-
-    /// Remove all attached damage.
-    ///
-    /// Damage is consumed by Thundr to ease the burden of developing
-    /// apps with it. This internal func clears all the damage after
-    /// a frame is drawn.
-    pub fn clear_damage_on_all_images(&mut self) {
-        for image in self.r_image_list.iter_mut() {
-            image.clear_damage();
-        }
-    }
-
-    /// Remove an image from the surfacelist.
-    pub fn remove_image_at_index(&mut self, i: usize) {
-        self.r_image_list.remove(i);
-
-        // now that we have removed the image, we need to update all of the
-        // ids, since some of them will have been shifted
-        // TODO: OPTIMIZEME
-        for (idx, i) in self.r_image_list.iter_mut().enumerate() {
-            i.set_id(idx as i32);
-        }
-    }
-
-    /// Helper for removing an image by handle.
-    ///
-    /// This may not be very performant. If you already know the index position,
-    /// then use remove_image_at_index.
-    fn remove_image(&mut self, image: &Image) {
-        let i = match self.r_image_list.iter().position(|v| *v == *image) {
-            Some(v) => v,
-            // Error: This shouldn't happen, for some reason the image wasn't in
-            // our image list
-            None => return,
-        };
-
-        self.remove_image_at_index(i);
     }
 
     /// Helper for removing all surfaces/objects currently loaded
