@@ -106,13 +106,11 @@ impl EventSystem {
     /// This signifies that a window was resized, and is triggered
     /// anytime OOD is returned from thundr.
     pub fn add_event_window_resized(&mut self, dom: &DakotaDOM, new_size: dom::Size<u32>) {
-        if let Some(events) = dom.window.events.as_ref() {
-            if let Some(handler) = events.resize.as_ref() {
-                self.es_global_event_queue.push(Event::WindowResized {
-                    args: handler.args.clone(),
-                    size: new_size,
-                });
-            }
+        if let Some(handler) = dom.window.events.resize.as_ref() {
+            self.es_global_event_queue.push(Event::WindowResized {
+                args: handler.args.clone(),
+                size: new_size,
+            });
         }
     }
 
@@ -128,13 +126,11 @@ impl EventSystem {
     /// next elements to be presented, or run subroutines. Dakota will
     /// internally worry about drawing everything.
     pub fn add_event_window_redraw_complete(&mut self, dom: &DakotaDOM) {
-        if let Some(events) = dom.window.events.as_ref() {
-            if let Some(handler) = events.redraw_complete.as_ref() {
-                self.es_global_event_queue
-                    .push(Event::WindowRedrawComplete {
-                        args: handler.args.clone(),
-                    });
-            }
+        if let Some(handler) = dom.window.events.redraw_complete.as_ref() {
+            self.es_global_event_queue
+                .push(Event::WindowRedrawComplete {
+                    args: handler.args.clone(),
+                });
         }
     }
 
@@ -143,13 +139,11 @@ impl EventSystem {
     /// This is not an optional event. It will always be sent. It is
     /// optional in the element tree however.
     pub fn add_event_window_closed(&mut self, dom: &DakotaDOM) {
-        if let Some(events) = dom.window.events.as_ref() {
-            if let Some(handler) = events.closed.as_ref() {
-                self.es_global_event_queue.push(Event::WindowClosed {
-                    args: handler.args.clone(),
-                });
-                return;
-            }
+        if let Some(handler) = dom.window.events.closed.as_ref() {
+            self.es_global_event_queue.push(Event::WindowClosed {
+                args: handler.args.clone(),
+            });
+            return;
         }
 
         // If we couldn't get the arg array from the tree, then

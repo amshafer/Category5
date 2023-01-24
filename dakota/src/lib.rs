@@ -33,7 +33,6 @@ use font::*;
 mod generated;
 pub use generated::*;
 
-use std::collections::HashMap;
 use std::ops::Deref;
 extern crate regex;
 use regex::Regex;

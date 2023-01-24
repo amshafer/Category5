@@ -229,7 +229,7 @@ impl Default for Edges {
 #[derive(Debug)]
 pub struct Event {
     pub groups: Vec<String>,
-    pub id: Option<DakotaId>,
+    pub id: Option<String>,
     pub args: Rc<Vec<String>>,
 }
 
@@ -237,7 +237,7 @@ pub struct Event {
 /// taking places on Elements may have Element granularity, but this
 /// set of events handles global changes like window resizing, redraw,
 /// fullscreen, etc.
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct WindowEvents {
     pub resize: Option<Event>,
     pub redraw_complete: Option<Event>,
@@ -265,7 +265,7 @@ pub enum TextItem {
 /// Represnts a collection of text items
 ///
 /// Items are assembled here into paragraphs of mixed fonts and formats. This
-/// tracks on big "block" of text.
+/// tracks one big "block" of text.
 #[derive(Debug)]
 pub struct Text {
     pub items: Vec<TextItem>,
@@ -273,11 +273,10 @@ pub struct Text {
 
 #[derive(Debug)]
 pub struct Window {
-    pub id: u32,
     pub title: String,
     pub width: u32,
     pub height: u32,
-    pub events: Option<WindowEvents>,
+    pub events: WindowEvents,
     pub root_element: DakotaId,
 }
 
