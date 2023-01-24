@@ -69,45 +69,86 @@ enum TableRefEntityType {
     Offset(usize),
 }
 
+pub trait Container<T: 'static> {
+    fn index(&self, index: usize) -> Option<&T>;
+    fn index_mut(&mut self, index: usize) -> &mut Option<T>;
+    fn take(&mut self, index: usize) -> Option<T>;
+    fn len(&self) -> usize;
+    fn resize_with<F>(&mut self, size: usize, callback: F)
+    where
+        F: FnMut() -> Option<T>;
+}
+
+pub struct VecContainer<T: 'static> {
+    v_vec: Vec<Option<T>>,
+}
+
+impl<T: 'static> Container<T> for VecContainer<T> {
+    fn index(&self, index: usize) -> Option<&T> {
+        self.v_vec[index].as_ref()
+    }
+    fn index_mut(&mut self, index: usize) -> &mut Option<T> {
+        &mut self.v_vec[index]
+    }
+    fn take(&mut self, index: usize) -> Option<T> {
+        self.v_vec[index].take()
+    }
+    fn len(&self) -> usize {
+        self.v_vec.len()
+    }
+    fn resize_with<F>(&mut self, size: usize, callback: F)
+    where
+        F: FnMut() -> Option<T>,
+    {
+        self.v_vec.resize_with(size, callback);
+    }
+}
+
 #[derive(Debug)]
-pub struct TableRef<'a, T: 'static> {
+pub struct TableRef<'a, T: 'static, C: Container<T> + 'static> {
     /// The lock guard returned from the table
-    tr_guard: RwLockReadGuard<'a, TableInternal<T>>,
+    tr_guard: RwLockReadGuard<'a, TableInternal<T, C>>,
     /// The entity we are operating on
     tr_entity: TableRefEntityType,
 }
 
-impl<'a, T: 'static> Deref for TableRef<'a, T> {
+impl<'a, T: 'static, C: Container<T> + 'static> Deref for TableRef<'a, T, C> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
-        self.tr_guard.t_entity[match &self.tr_entity {
-            TableRefEntityType::Entity(entity) => entity.ecs_id,
-            TableRefEntityType::Offset(off) => *off,
-        }]
-        .as_ref()
-        .unwrap()
-    }
-}
-
-#[derive(Debug)]
-pub struct TableRefMut<'a, T: 'static> {
-    /// The lock guard returned from the table
-    tr_guard: RwLockWriteGuard<'a, TableInternal<T>>,
-    /// The entity we are operating on
-    tr_entity: Entity,
-}
-
-impl<'a, T: 'static> Deref for TableRefMut<'a, T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        self.tr_guard.t_entity[self.tr_entity.ecs_id]
+        self.tr_guard
+            .t_entity
+            .index(match &self.tr_entity {
+                TableRefEntityType::Entity(entity) => entity.ecs_id,
+                TableRefEntityType::Offset(off) => *off,
+            })
             .as_ref()
             .unwrap()
     }
 }
-impl<'a, T: 'static> DerefMut for TableRefMut<'a, T> {
+
+#[derive(Debug)]
+pub struct TableRefMut<'a, T: 'static, C: Container<T> + 'static> {
+    /// The lock guard returned from the table
+    tr_guard: RwLockWriteGuard<'a, TableInternal<T, C>>,
+    /// The entity we are operating on
+    tr_entity: Entity,
+}
+
+impl<'a, T: 'static, C: Container<T> + 'static> Deref for TableRefMut<'a, T, C> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.tr_guard
+            .t_entity
+            .index(self.tr_entity.ecs_id)
+            .as_ref()
+            .unwrap()
+    }
+}
+impl<'a, T: 'static, C: Container<T> + 'static> DerefMut for TableRefMut<'a, T, C> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.tr_guard.t_entity[self.tr_entity.ecs_id]
+        self.tr_guard
+            .t_entity
+            .index_mut(self.tr_entity.ecs_id)
             .as_mut()
             .unwrap()
     }
@@ -182,16 +223,17 @@ trait ComponentTable {
 ///
 /// This is indexed by the Entity.ecs_id field.
 #[derive(Debug)]
-pub struct TableInternal<T: 'static> {
-    t_entity: Vec<Option<T>>,
+pub struct TableInternal<T: 'static, C: Container<T> + 'static> {
+    t_entity: C,
+    _t_phantom: PhantomData<T>,
 }
 
 #[derive(Debug)]
-pub struct Table<T: 'static> {
-    t_internal: Arc<RwLock<TableInternal<T>>>,
+pub struct Table<T: 'static, C: Container<T> + 'static> {
+    t_internal: Arc<RwLock<TableInternal<T, C>>>,
 }
 
-impl<T: 'static> Clone for Table<T> {
+impl<T: 'static, C: Container<T> + 'static> Clone for Table<T, C> {
     fn clone(&self) -> Self {
         Self {
             t_internal: self.t_internal.clone(),
@@ -199,7 +241,7 @@ impl<T: 'static> Clone for Table<T> {
     }
 }
 
-impl<T: 'static> ComponentTable for Table<T> {
+impl<T: 'static, C: Container<T> + 'static> ComponentTable for Table<T, C> {
     fn clear_entity(&self, id: usize) {
         let _val = {
             // Take the data and don't drop it until we have dropped our RefMut
@@ -207,7 +249,7 @@ impl<T: 'static> ComponentTable for Table<T> {
             if id >= internal.t_entity.len() {
                 return;
             }
-            internal.t_entity[id].take()
+            internal.t_entity.take(id)
         };
     }
 
@@ -220,11 +262,12 @@ impl<T: 'static> ComponentTable for Table<T> {
     }
 }
 
-impl<T: 'static> Table<T> {
-    pub fn new() -> Self {
+impl<T: 'static, C: Container<T> + 'static> Table<T, C> {
+    pub fn new(container: C) -> Self {
         Self {
             t_internal: Arc::new(RwLock::new(TableInternal {
-                t_entity: Vec::new(),
+                t_entity: container,
+                _t_phantom: PhantomData,
             })),
         }
     }
@@ -331,10 +374,17 @@ impl Instance {
     /// of data stored for each component. Components have a generic data type for the
     /// data they store, and Entities are not required to have a populated value.
     pub fn add_component<T: 'static>(&mut self) -> Component<T> {
+        self.add_raw_component(VecContainer { v_vec: Vec::new() })
+    }
+
+    pub fn add_raw_component<T: 'static, C: Container<T> + 'static>(
+        &mut self,
+        container: C,
+    ) -> Component<T> {
         let mut cl = self.i_component_set.write().unwrap();
 
         let component_id = cl.cl_components.len();
-        let new_table: Table<T> = Table::new();
+        let new_table = Table::new(container);
         cl.cl_components.push(Box::new(new_table));
 
         Component {
@@ -429,6 +479,13 @@ impl Instance {
     ///
     /// If `component` is invalid, return None.
     pub fn open_session<T: 'static>(&self, component: Component<T>) -> Option<Session<T>> {
+        self.open_raw_session::<T, VecContainer<T>>(component)
+    }
+
+    pub fn open_raw_session<T: 'static, C: Container<T> + 'static>(
+        &self,
+        component: Component<T>,
+    ) -> Option<RawSession<T, C>> {
         // validate component
         if !self.component_is_valid(&component) {
             return None;
@@ -439,10 +496,10 @@ impl Instance {
         // Ensure that this component table is of the right type
         if let Some(table) = cl.cl_components[component.c_index]
             .as_any()
-            .downcast_ref::<Table<T>>()
+            .downcast_ref::<Table<T, C>>()
         {
             let new_inst = self.clone();
-            return Some(Session {
+            return Some(RawSession {
                 s_inst: new_inst,
                 _s_phantom: PhantomData,
                 s_table: table.clone(),
@@ -469,14 +526,16 @@ impl Instance {
 /// data tables. You should not have long-outsanding references floating around
 /// that will cause a panic when an Entity is dropped and the Session is already
 /// borrowed.
-pub struct Session<T: 'static> {
+pub struct RawSession<T: 'static, C: Container<T> + 'static> {
     s_inst: Instance,
     _s_phantom: PhantomData<T>,
     s_component: Component<T>,
-    s_table: Table<T>,
+    s_table: Table<T, C>,
 }
 
-impl<T: 'static> fmt::Debug for Session<T> {
+pub type Session<T> = RawSession<T, VecContainer<T>>;
+
+impl<T: 'static, C: Container<T> + 'static> fmt::Debug for RawSession<T, C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Session")
             .field("s_component", &self.s_component.c_index)
@@ -484,7 +543,7 @@ impl<T: 'static> fmt::Debug for Session<T> {
     }
 }
 
-impl<T: 'static> Session<T> {
+impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
     /// Get a reference to data corresponding to the (component, entity) pair
     ///
     /// This provides read-only access to the component value for an Entity. This
@@ -496,13 +555,13 @@ impl<T: 'static> Session<T> {
     /// while this ref is in scope.
     ///
     /// If this entity has not had a value set, None will be returned.
-    pub fn get(&self, entity: &Entity) -> Option<TableRef<T>> {
+    pub fn get(&self, entity: &Entity) -> Option<TableRef<T, C>> {
         if !self.s_inst.id_is_valid(entity) || !self.s_table.has_space_for_id(entity) {
             return None;
         }
 
         let table_internal = self.s_table.t_internal.read().unwrap();
-        if table_internal.t_entity[entity.ecs_id].is_none() {
+        if table_internal.t_entity.index(entity.ecs_id).is_none() {
             return None;
         }
 
@@ -522,13 +581,13 @@ impl<T: 'static> Session<T> {
     /// The `set` method must be called before this can be used, or else the
     /// value of the entity for this property cannot be determined and None
     /// will be returned.
-    pub fn get_mut(&mut self, entity: &Entity) -> Option<TableRefMut<T>> {
+    pub fn get_mut(&mut self, entity: &Entity) -> Option<TableRefMut<T, C>> {
         if !self.s_inst.id_is_valid(entity) || !self.s_table.has_space_for_id(entity) {
             return None;
         }
 
         let table_internal = self.s_table.t_internal.write().unwrap();
-        if table_internal.t_entity[entity.ecs_id].is_none() {
+        if table_internal.t_entity.index(entity.ecs_id).is_none() {
             return None;
         }
 
@@ -550,7 +609,7 @@ impl<T: 'static> Session<T> {
         self.s_table.ensure_space_for_id(entity);
 
         let mut table_internal = self.s_table.t_internal.write().unwrap();
-        table_internal.t_entity[entity.ecs_id] = Some(val);
+        *table_internal.t_entity.index_mut(entity.ecs_id) = Some(val);
     }
 
     /// Take a value out of the component table
@@ -567,7 +626,7 @@ impl<T: 'static> Session<T> {
         self.s_table.ensure_space_for_id(entity);
 
         let mut table_internal = self.s_table.t_internal.write().unwrap();
-        table_internal.t_entity[entity.ecs_id].take()
+        table_internal.t_entity.take(entity.ecs_id)
     }
 
     /// Create an iterator over all values in this component table
@@ -576,7 +635,7 @@ impl<T: 'static> Session<T> {
     /// component array. None values can be returned by the iterator,
     /// as it allows for you to use `.enumerate()` to mirror the
     /// component table into other resources.
-    pub fn iter<'a>(&'a self) -> SessionIterator<'a, T> {
+    pub fn iter<'a>(&'a self) -> SessionIterator<'a, T, C> {
         SessionIterator {
             si_session: self,
             si_cur: 0,
@@ -584,13 +643,13 @@ impl<T: 'static> Session<T> {
     }
 }
 
-pub struct SessionIterator<'a, T: 'static> {
-    si_session: &'a Session<T>,
+pub struct SessionIterator<'a, T: 'static, C: Container<T> + 'static> {
+    si_session: &'a RawSession<T, C>,
     si_cur: usize,
 }
 
-impl<'a, T: 'static> Iterator for SessionIterator<'a, T> {
-    type Item = Option<TableRef<'a, T>>;
+impl<'a, T: 'static, C: Container<T> + 'static> Iterator for SessionIterator<'a, T, C> {
+    type Item = Option<TableRef<'a, T, C>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let table_internal = self.si_session.s_table.t_internal.read().unwrap();
@@ -600,7 +659,7 @@ impl<'a, T: 'static> Iterator for SessionIterator<'a, T> {
         if cur >= table_internal.t_entity.len() {
             return None;
         }
-        if table_internal.t_entity[cur].is_none() {
+        if table_internal.t_entity.index(cur).is_none() {
             return Some(None);
         }
 
