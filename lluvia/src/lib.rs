@@ -73,34 +73,163 @@ pub trait Container<T: 'static> {
     fn index(&self, index: usize) -> Option<&T>;
     fn index_mut(&mut self, index: usize) -> &mut Option<T>;
     fn take(&mut self, index: usize) -> Option<T>;
-    fn len(&self) -> usize;
-    fn resize_with<F>(&mut self, size: usize, callback: F)
-    where
-        F: FnMut() -> Option<T>;
+    fn get_next_id(&self, index: usize) -> Option<usize>;
 }
 
+/// Our basic vector storage
+///
+/// This is the default container type meant for general purpose
+/// usage. This storage is presented as a congruent array, but in
+/// reality it is a series of blocks allocated when their data is
+/// filled in. This essentially makes it a sparse vector, allowing
+/// lluvia to support high client counts in frequently unused tables
+/// without wasting space.
 pub struct VecContainer<T: 'static> {
+    v_block_size: usize,
+    v_blocks: Vec<Option<VCBlock<T>>>,
+}
+
+struct VCBlock<T: 'static> {
     v_vec: Vec<Option<T>>,
+}
+
+const DEFAULT_LLUVIA_BLOCK_SIZE: usize = 32;
+
+impl<T: 'static> VecContainer<T> {
+    /// Helper that turns a global index into a block + offset index pair
+    fn get_indices(&self, index: usize) -> (usize, usize) {
+        (index / self.v_block_size, index % self.v_block_size)
+    }
+
+    /// Makes a final, returnable index from our (block, offset) pair
+    fn make_index(&self, block: usize, index: usize) -> usize {
+        block * self.v_block_size + index
+    }
+
+    /// Ensure that we have a block allocated for this index. Dynamic allocation
+    /// is done here.
+    fn ensure_space_for_id(&mut self, index: usize) {
+        let (bi, i) = self.get_indices(index);
+
+        if bi >= self.v_blocks.len() {
+            self.v_blocks.resize_with(bi + 1, || None);
+        }
+
+        if self.v_blocks[bi].is_none() {
+            // set up a new empty block
+            let mut new_vec = Vec::new();
+            for _ in 0..self.v_block_size {
+                new_vec.push(None);
+            }
+
+            assert!(i < new_vec.len());
+            self.v_blocks[bi] = Some(VCBlock { v_vec: new_vec });
+        }
+    }
 }
 
 impl<T: 'static> Container<T> for VecContainer<T> {
     fn index(&self, index: usize) -> Option<&T> {
+        let (bi, i) = self.get_indices(index);
+        // If the block index is too large or the block doesn't exist or the
+        // index is too large for the block return None
+        if bi >= self.v_blocks.len()
+            || self.v_blocks[bi].is_none()
+            || index >= self.v_blocks[bi].as_ref().unwrap().v_vec.len()
+        {
+            return None;
+        }
+        self.v_blocks[bi].as_ref().unwrap().v_vec[i].as_ref()
+    }
+    fn index_mut(&mut self, index: usize) -> &mut Option<T> {
+        self.ensure_space_for_id(index);
+
+        let (bi, i) = self.get_indices(index);
+        assert!(bi < self.v_blocks.len());
+        &mut self.v_blocks[bi].as_mut().unwrap().v_vec[i]
+    }
+    fn take(&mut self, index: usize) -> Option<T> {
+        self.ensure_space_for_id(index);
+
+        let (bi, i) = self.get_indices(index);
+        if bi >= self.v_blocks.len() {
+            return None;
+        }
+        self.v_blocks[bi].as_mut().unwrap().v_vec[i].take()
+    }
+    fn get_next_id(&self, index: usize) -> Option<usize> {
+        let (bi, block_offset) = self.get_indices(index);
+        if bi >= self.v_blocks.len() {
+            return None;
+        }
+
+        let mut offset = Some(block_offset + 1);
+        // Test all remaining blocks
+        for block_index in (bi + 1)..self.v_blocks.len() {
+            if let Some(block) = self.v_blocks[block_index].as_ref() {
+                // if this is the first block, then start from our index's
+                // offset. if not, start at the beginning
+                let start_index = match offset.take() {
+                    Some(off) => off,
+                    None => 0,
+                };
+                // Now crawl this block and see if we find a valid index
+                for i in (start_index)..block.v_vec.len() {
+                    if block.v_vec[i].is_some() {
+                        return Some(self.make_index(block_index, i));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+}
+
+/// A continuous non-space slice container
+///
+/// This container is a continuously allocated Vec that is guaranteed to
+/// be contiguous. The internal storage is `Vec<T>`. This means all values
+/// stored can be accessed as a total slice, without being wrapped in any
+/// data types of any sort. The down side is more memory usage since it is
+/// not sparse and having to provide a default value.
+pub struct SliceContainer<T: 'static> {
+    v_vec: Vec<Option<T>>,
+}
+
+impl<T: 'static> SliceContainer<T> {
+    fn ensure_space_for_id(&mut self, size: usize) {
+        self.v_vec.resize_with(size, || None);
+    }
+}
+
+impl<T: 'static> Container<T> for SliceContainer<T> {
+    fn index(&self, index: usize) -> Option<&T> {
+        if index >= self.v_vec.len() {
+            return None;
+        }
         self.v_vec[index].as_ref()
     }
     fn index_mut(&mut self, index: usize) -> &mut Option<T> {
+        self.ensure_space_for_id(index);
         &mut self.v_vec[index]
     }
     fn take(&mut self, index: usize) -> Option<T> {
+        self.ensure_space_for_id(index);
         self.v_vec[index].take()
     }
-    fn len(&self) -> usize {
-        self.v_vec.len()
-    }
-    fn resize_with<F>(&mut self, size: usize, callback: F)
-    where
-        F: FnMut() -> Option<T>,
-    {
-        self.v_vec.resize_with(size, callback);
+    fn get_next_id(&self, index: usize) -> Option<usize> {
+        if index + 1 >= self.v_vec.len() {
+            return None;
+        }
+
+        for i in (index + 1)..self.v_vec.len() {
+            if self.v_vec[i].is_some() {
+                return Some(index + 1);
+            }
+        }
+
+        None
     }
 }
 
@@ -245,11 +374,7 @@ impl<T: 'static, C: Container<T> + 'static> ComponentTable for Table<T, C> {
     fn clear_entity(&self, id: usize) {
         let _val = {
             // Take the data and don't drop it until we have dropped our RefMut
-            let mut internal = self.t_internal.write().unwrap();
-            if id >= internal.t_entity.len() {
-                return;
-            }
-            internal.t_entity.take(id)
+            self.t_internal.write().unwrap().t_entity.take(id)
         };
     }
 
@@ -269,28 +394,6 @@ impl<T: 'static, C: Container<T> + 'static> Table<T, C> {
                 t_entity: container,
                 _t_phantom: PhantomData,
             })),
-        }
-    }
-
-    /// Get the number of valid ids in the system.
-    ///
-    /// This is the same as the parent ECSInstance's num_entities.
-    pub fn num_entities(&self) -> usize {
-        self.t_internal.read().unwrap().t_entity.len()
-    }
-
-    fn has_space_for_id(&self, entity: &Entity) -> bool {
-        entity.ecs_id < self.t_internal.read().unwrap().t_entity.len()
-    }
-
-    /// Helper to grow our internal array to fit entity
-    fn ensure_space_for_id(&mut self, entity: &Entity) {
-        let mut internal = self.t_internal.write().unwrap();
-
-        // First handle any resizing that needs to occur
-        if entity.ecs_id >= internal.t_entity.len() {
-            let new_size = (entity.ecs_id + 1).next_power_of_two();
-            internal.t_entity.resize_with(new_size, || None);
         }
     }
 }
@@ -374,10 +477,14 @@ impl Instance {
     /// of data stored for each component. Components have a generic data type for the
     /// data they store, and Entities are not required to have a populated value.
     pub fn add_component<T: 'static>(&mut self) -> Component<T> {
-        self.add_raw_component(VecContainer { v_vec: Vec::new() })
+        self.add_raw_component(VecContainer {
+            v_block_size: DEFAULT_LLUVIA_BLOCK_SIZE,
+            v_blocks: Vec::new(),
+        })
     }
 
-    pub fn add_raw_component<T: 'static, C: Container<T> + 'static>(
+    /// Add a component of the given containe type. This is an internal helper.
+    fn add_raw_component<T: 'static, C: Container<T> + 'static>(
         &mut self,
         container: C,
     ) -> Component<T> {
@@ -556,7 +663,7 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
     ///
     /// If this entity has not had a value set, None will be returned.
     pub fn get(&self, entity: &Entity) -> Option<TableRef<T, C>> {
-        if !self.s_inst.id_is_valid(entity) || !self.s_table.has_space_for_id(entity) {
+        if !self.s_inst.id_is_valid(entity) {
             return None;
         }
 
@@ -582,7 +689,7 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
     /// value of the entity for this property cannot be determined and None
     /// will be returned.
     pub fn get_mut(&mut self, entity: &Entity) -> Option<TableRefMut<T, C>> {
-        if !self.s_inst.id_is_valid(entity) || !self.s_table.has_space_for_id(entity) {
+        if !self.s_inst.id_is_valid(entity) {
             return None;
         }
 
@@ -605,9 +712,6 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
     pub fn set(&mut self, entity: &Entity, val: T) {
         assert!(self.s_inst.id_is_valid(entity));
 
-        // First grow our internal storage if necessary
-        self.s_table.ensure_space_for_id(entity);
-
         let mut table_internal = self.s_table.t_internal.write().unwrap();
         *table_internal.t_entity.index_mut(entity.ecs_id) = Some(val);
     }
@@ -621,9 +725,6 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
         if !self.s_inst.id_is_valid(entity) {
             return None;
         }
-
-        // First grow our internal storage if necessary
-        self.s_table.ensure_space_for_id(entity);
 
         let mut table_internal = self.s_table.t_internal.write().unwrap();
         table_internal.t_entity.take(entity.ecs_id)
@@ -639,6 +740,7 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
         SessionIterator {
             si_session: self,
             si_cur: 0,
+            si_next: Some(0),
         }
     }
 }
@@ -646,6 +748,7 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
 pub struct SessionIterator<'a, T: 'static, C: Container<T> + 'static> {
     si_session: &'a RawSession<T, C>,
     si_cur: usize,
+    si_next: Option<usize>,
 }
 
 impl<'a, T: 'static, C: Container<T> + 'static> Iterator for SessionIterator<'a, T, C> {
@@ -653,16 +756,16 @@ impl<'a, T: 'static, C: Container<T> + 'static> Iterator for SessionIterator<'a,
 
     fn next(&mut self) -> Option<Self::Item> {
         let table_internal = self.si_session.s_table.t_internal.read().unwrap();
-        let cur = self.si_cur;
-        self.si_cur += 1;
-
-        if cur >= table_internal.t_entity.len() {
+        // Now update our current to our next pointer. If it is None, then
+        // we don't have any more valid indices
+        if self.si_next.is_none() {
             return None;
         }
-        if table_internal.t_entity.index(cur).is_none() {
-            return Some(None);
-        }
+        let cur = self.si_cur;
+        self.si_cur = self.si_next.unwrap();
+        self.si_next = table_internal.t_entity.get_next_id(cur);
 
+        // Now we can create a ref to this id
         let ret = TableRef {
             tr_guard: table_internal,
             tr_entity: TableRefEntityType::Offset(cur),
