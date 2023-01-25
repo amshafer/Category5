@@ -26,6 +26,30 @@ fn basic_test() {
     assert_eq!(*data_ref, "Hola Lluvia");
 }
 
+#[test]
+fn basic_non_sparse_test() {
+    // Create the ECS holder
+    let mut inst = ll::Instance::new();
+    // Make a new entity
+    let entity = inst.add_entity();
+
+    // Now add our component. This will be a string, but
+    // we don't have to specify that for now
+    let c = inst.add_non_sparse_component(|| "");
+
+    // Get a session to access data for component c. This
+    // allows access to the per-entity data for this component and
+    // lets us perform queries.
+    let mut sesh = inst.open_session(c).unwrap();
+
+    // Before querying the value, we first need to set a valid value
+    // for this component. Afterwards, we can get it and check that
+    // it is unchanged.
+    sesh.set(&entity, "Hola Lluvia");
+    let data_ref = sesh.get(&entity).unwrap();
+    assert_eq!(*data_ref, "Hola Lluvia");
+}
+
 struct TestData {
     e: bool,
     e1: bool,

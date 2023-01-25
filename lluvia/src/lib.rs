@@ -69,9 +69,15 @@ enum TableRefEntityType {
     Offset(usize),
 }
 
+/// The storage backend for a particular table
+///
+/// Lluvia lets you choose between a couple different memory layouts
+/// for components, which can help if you know the performance characteristics
+/// of your data. This trait allows uniform access to these storage types.
 pub trait Container<T: 'static> {
     fn index(&self, index: usize) -> Option<&T>;
-    fn index_mut(&mut self, index: usize) -> &mut Option<T>;
+    fn index_mut(&mut self, index: usize) -> Option<&mut T>;
+    fn set(&mut self, index: usize, val: T);
     fn take(&mut self, index: usize) -> Option<T>;
     fn get_next_id(&self, index: usize) -> Option<usize>;
 }
@@ -93,6 +99,7 @@ struct VCBlock<T: 'static> {
     v_vec: Vec<Option<T>>,
 }
 
+/// Arbitrarily chosen size of the blocks in Lluvia's sparse block allocator.
 const DEFAULT_LLUVIA_BLOCK_SIZE: usize = 32;
 
 impl<T: 'static> VecContainer<T> {
@@ -141,12 +148,19 @@ impl<T: 'static> Container<T> for VecContainer<T> {
         }
         self.v_blocks[bi].as_ref().unwrap().v_vec[i].as_ref()
     }
-    fn index_mut(&mut self, index: usize) -> &mut Option<T> {
+    fn index_mut(&mut self, index: usize) -> Option<&mut T> {
         self.ensure_space_for_id(index);
 
         let (bi, i) = self.get_indices(index);
         assert!(bi < self.v_blocks.len());
-        &mut self.v_blocks[bi].as_mut().unwrap().v_vec[i]
+        self.v_blocks[bi].as_mut().unwrap().v_vec[i].as_mut()
+    }
+    fn set(&mut self, index: usize, val: T) {
+        self.ensure_space_for_id(index);
+
+        let (bi, i) = self.get_indices(index);
+        assert!(bi < self.v_blocks.len());
+        self.v_blocks[bi].as_mut().unwrap().v_vec[i] = Some(val);
     }
     fn take(&mut self, index: usize) -> Option<T> {
         self.ensure_space_for_id(index);
@@ -194,12 +208,15 @@ impl<T: 'static> Container<T> for VecContainer<T> {
 /// data types of any sort. The down side is more memory usage since it is
 /// not sparse and having to provide a default value.
 pub struct SliceContainer<T: 'static> {
-    v_vec: Vec<Option<T>>,
+    v_callback: Box<dyn Fn() -> T>,
+    v_vec: Vec<T>,
 }
 
 impl<T: 'static> SliceContainer<T> {
-    fn ensure_space_for_id(&mut self, size: usize) {
-        self.v_vec.resize_with(size, || None);
+    fn ensure_space_for_id(&mut self, index: usize) {
+        // Kind of a pain here, we have to pass a reference to
+        // the closure and have to deref it out of its dyn box first
+        self.v_vec.resize_with(index + 1, &*self.v_callback);
     }
 }
 
@@ -208,28 +225,31 @@ impl<T: 'static> Container<T> for SliceContainer<T> {
         if index >= self.v_vec.len() {
             return None;
         }
-        self.v_vec[index].as_ref()
+        Some(&self.v_vec[index])
     }
-    fn index_mut(&mut self, index: usize) -> &mut Option<T> {
+    fn index_mut(&mut self, index: usize) -> Option<&mut T> {
         self.ensure_space_for_id(index);
-        &mut self.v_vec[index]
+        Some(&mut self.v_vec[index])
     }
+    fn set(&mut self, index: usize, val: T) {
+        self.ensure_space_for_id(index);
+        self.v_vec[index] = val;
+    }
+    /// The slice container doesn't have a concept of "set" vs "unset",
+    /// it's just defined value vs default value provided from a callback.
+    /// This will always return Some()
     fn take(&mut self, index: usize) -> Option<T> {
         self.ensure_space_for_id(index);
-        self.v_vec[index].take()
+        let mut tmp = (self.v_callback)();
+        std::mem::swap(&mut self.v_vec[index], &mut tmp);
+        Some(tmp)
     }
     fn get_next_id(&self, index: usize) -> Option<usize> {
         if index + 1 >= self.v_vec.len() {
             return None;
         }
 
-        for i in (index + 1)..self.v_vec.len() {
-            if self.v_vec[i].is_some() {
-                return Some(index + 1);
-            }
-        }
-
-        None
+        Some(index + 1)
     }
 }
 
@@ -278,7 +298,6 @@ impl<'a, T: 'static, C: Container<T> + 'static> DerefMut for TableRefMut<'a, T, 
         self.tr_guard
             .t_entity
             .index_mut(self.tr_entity.ecs_id)
-            .as_mut()
             .unwrap()
     }
 }
@@ -327,9 +346,10 @@ impl Drop for EntityInternal {
 pub type Entity = Arc<EntityInternal>;
 
 #[derive(Copy, Clone)]
-pub struct Component<T: 'static> {
+pub struct Component<T: 'static, C: Container<T>> {
     c_index: usize,
     _c_phantom: PhantomData<T>,
+    _c_phantom_container: PhantomData<C>,
 }
 
 /// A component table wrapper trait
@@ -476,10 +496,36 @@ impl Instance {
     /// Components are essentially the data in this system. Each entity may have a piece
     /// of data stored for each component. Components have a generic data type for the
     /// data they store, and Entities are not required to have a populated value.
-    pub fn add_component<T: 'static>(&mut self) -> Component<T> {
+    ///
+    /// This uses the default storage container which supports sparse memory usage.
+    pub fn add_component<T: 'static>(&mut self) -> Component<T, VecContainer<T>> {
         self.add_raw_component(VecContainer {
             v_block_size: DEFAULT_LLUVIA_BLOCK_SIZE,
             v_blocks: Vec::new(),
+        })
+    }
+
+    /// Allocate a new component table with contiguous storage
+    ///
+    /// This is the same as `add_component`, but will use a different storage backend
+    /// which stores all data in one continuous array (not sparse). This can be useful
+    /// if you need to fill in a array that you want to hand off as a slice to some other
+    /// library, and don't want to copy between lluvia and another storage type.
+    ///
+    /// To use this you must provide a callback which will be used to fill in default
+    /// values in the backing array. This is necessary since the backing storage is
+    /// of type `&[T]`, and there needs to be a valid `T` value placed in every cell
+    /// even if it has no associated entity.
+    pub fn add_non_sparse_component<T: 'static, F>(
+        &mut self,
+        callback: F,
+    ) -> Component<T, SliceContainer<T>>
+    where
+        F: Fn() -> T + 'static,
+    {
+        self.add_raw_component(SliceContainer {
+            v_vec: Vec::new(),
+            v_callback: Box::new(callback),
         })
     }
 
@@ -487,7 +533,7 @@ impl Instance {
     fn add_raw_component<T: 'static, C: Container<T> + 'static>(
         &mut self,
         container: C,
-    ) -> Component<T> {
+    ) -> Component<T, C> {
         let mut cl = self.i_component_set.write().unwrap();
 
         let component_id = cl.cl_components.len();
@@ -497,6 +543,7 @@ impl Instance {
         Component {
             c_index: component_id,
             _c_phantom: PhantomData,
+            _c_phantom_container: PhantomData,
         }
     }
 
@@ -572,7 +619,7 @@ impl Instance {
         id.ecs_id < internal.i_valid_ids.len() && internal.i_valid_ids[id.ecs_id]
     }
 
-    fn component_is_valid<T: 'static>(&self, component: &Component<T>) -> bool {
+    fn component_is_valid<T: 'static, C: Container<T>>(&self, component: &Component<T, C>) -> bool {
         let cl = self.i_component_set.read().unwrap();
 
         component.c_index < cl.cl_components.len()
@@ -585,13 +632,16 @@ impl Instance {
     /// user to interact with data.
     ///
     /// If `component` is invalid, return None.
-    pub fn open_session<T: 'static>(&self, component: Component<T>) -> Option<Session<T>> {
-        self.open_raw_session::<T, VecContainer<T>>(component)
+    pub fn open_session<T: 'static, C: Container<T>>(
+        &self,
+        component: Component<T, C>,
+    ) -> Option<RawSession<T, C>> {
+        self.open_raw_session(component)
     }
 
     pub fn open_raw_session<T: 'static, C: Container<T> + 'static>(
         &self,
-        component: Component<T>,
+        component: Component<T, C>,
     ) -> Option<RawSession<T, C>> {
         // validate component
         if !self.component_is_valid(&component) {
@@ -636,7 +686,7 @@ impl Instance {
 pub struct RawSession<T: 'static, C: Container<T> + 'static> {
     s_inst: Instance,
     _s_phantom: PhantomData<T>,
-    s_component: Component<T>,
+    s_component: Component<T, C>,
     s_table: Table<T, C>,
 }
 
@@ -713,7 +763,7 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
         assert!(self.s_inst.id_is_valid(entity));
 
         let mut table_internal = self.s_table.t_internal.write().unwrap();
-        *table_internal.t_entity.index_mut(entity.ecs_id) = Some(val);
+        table_internal.t_entity.set(entity.ecs_id, val);
     }
 
     /// Take a value out of the component table
