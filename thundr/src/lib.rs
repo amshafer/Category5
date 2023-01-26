@@ -363,11 +363,8 @@ impl Thundr {
     ) -> Option<Image> {
         let rend_mtx = self.th_rend.clone();
         let mut rend = self.th_rend.lock().unwrap();
-        let mut ret = rend.create_image_from_bits(rend_mtx, &img, release_info);
-        if let Some(i) = ret.as_mut() {
-            rend.push_image(i);
-        }
-        return ret;
+
+        rend.create_image_from_bits(rend_mtx, &img, release_info)
     }
 
     /// create_image_from_dmabuf
@@ -379,11 +376,7 @@ impl Thundr {
         let rend_mtx = self.th_rend.clone();
         let mut rend = self.th_rend.lock().unwrap();
 
-        let mut ret = rend.create_image_from_dmabuf(rend_mtx, dmabuf, release_info);
-        if let Some(i) = ret.as_mut() {
-            rend.push_image(i)
-        }
-        return ret;
+        rend.create_image_from_dmabuf(rend_mtx, dmabuf, release_info)
     }
 
     pub fn update_image_from_bits(
@@ -558,14 +551,6 @@ impl Thundr {
         Ok(())
     }
 
-    /// Helper for removing all surfaces/objects currently loaded
-    ///
-    /// This will totally flush thundr, and reset it back to when it was
-    /// created.
-    pub fn clear_all(&mut self) {
-        self.th_rend.lock().unwrap().clear_all();
-    }
-
     // present
     pub fn present(&mut self) -> Result<()> {
         self.th_rend.lock().unwrap().present()
@@ -585,7 +570,7 @@ impl Thundr {
                     "[{}] Image={}, Pos={:?}, Size={:?}",
                     i,
                     match img {
-                        Some(img) => img.get_id(),
+                        Some(img) => img.get_id().get_raw_id() as i32,
                         None => -1,
                     },
                     s.get_pos(),
@@ -595,13 +580,15 @@ impl Thundr {
             log::debug!("Images List:");
             log::debug!("--------------------------------");
             let rend = self.th_rend.lock().unwrap();
-            for (i, img) in rend.r_image_list.iter().enumerate() {
-                log::debug!(
-                    "[{}] Id={:?}, Size={:?}",
-                    i,
-                    img.i_internal.borrow().i_image,
-                    img.get_resolution()
-                );
+            for (i, item) in rend.r_image_list.iter().enumerate() {
+                if let Some(img) = item {
+                    log::debug!(
+                        "[{}] Id={:?}, Size={:?}",
+                        i,
+                        img.i_internal.borrow().i_image,
+                        img.get_resolution()
+                    );
+                }
             }
 
             if rend.dev_features.vkc_supports_incremental_present {
@@ -640,7 +627,5 @@ impl Drop for Thundr {
         rend.wait_for_prev_submit();
         rend.wait_for_copy();
         self.th_pipe.destroy(rend.deref_mut());
-        rend.clear_all();
-        // th_rend will now be dropped
     }
 }

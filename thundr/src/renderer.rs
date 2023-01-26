@@ -182,16 +182,15 @@ pub struct Renderer {
     /// We keep a list of image views from the surface list's images
     /// to be passed as our unsized image array in our shader. This needs
     /// to be regenerated any time a change to the surfacelist is made
-    pub(crate) r_image_infos: Vec<vk::DescriptorImageInfo>,
     pub(crate) r_images_desc_pool: vk::DescriptorPool,
     pub(crate) r_images_desc_layout: vk::DescriptorSetLayout,
     pub(crate) r_images_desc: vk::DescriptorSet,
+    r_images_desc_size: usize,
 
     /// The descriptor layout for the surface list's window order desc
     pub r_order_desc_layout: vk::DescriptorSetLayout,
 
     /// The list of window dimensions that is passed to the shader
-    pub r_window_component: ll::Component<Window>,
     pub r_windows: ll::Session<Window>,
     pub r_windows_buf: vk::Buffer,
     pub r_windows_mem: vk::DeviceMemory,
@@ -219,7 +218,10 @@ pub struct Renderer {
     /// We keep a list of all the images allocated by this context
     /// so that Pipeline::draw doesn't have to dedup the surfacelist's images
     pub r_image_ecs: ll::Instance,
+    // We keep this around to ensure the image array isn't empty
+    r_null_image: ll::Entity,
     pub r_image_list: ll::Session<Image>,
+    pub r_image_infos: ll::NonSparseSession<vk::DescriptorImageInfo>,
 }
 
 /// This must match the definition of the Window struct in the
@@ -1634,10 +1636,35 @@ impl Renderer {
             let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
             let order_layout = dev.create_descriptor_set_layout(&info, None).unwrap();
 
+            // Create the window list component
             let win_comp = ecs.add_component();
-            let sesh = ecs
+            let win_sesh = ecs
                 .open_session(win_comp)
                 .ok_or(ThundrError::OUT_OF_MEMORY)?;
+
+            // Create our own ECS for the image resources
+            let mut img_ecs = ll::Instance::new();
+            // Create the image list component
+            let img_list_comp = img_ecs.add_component();
+            let img_list_sesh = img_ecs
+                .open_session(img_list_comp)
+                .ok_or(ThundrError::OUT_OF_MEMORY)?;
+            // Create the image vk info component
+            let img_info_comp =
+                img_ecs.add_non_sparse_component(|| vk::DescriptorImageInfo::default());
+            let mut img_info_sesh = img_ecs
+                .open_session(img_info_comp)
+                .ok_or(ThundrError::OUT_OF_MEMORY)?;
+            // Add our null image
+            let null_image = img_ecs.add_entity();
+            img_info_sesh.set(
+                &null_image,
+                vk::DescriptorImageInfo::builder()
+                    .sampler(sampler)
+                    .image_view(tmp_view)
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .build(),
+            );
 
             // you are now the proud owner of a half complete
             // rendering context
@@ -1686,12 +1713,11 @@ impl Renderer {
                 draw_call_submitted: false,
                 r_pipe_type: pipe_type,
                 r_ecs: ecs.clone(),
-                r_image_infos: Vec::new(),
                 r_images_desc_pool: bindless_pool,
                 r_images_desc_layout: bindless_layout,
                 r_images_desc: bindless_desc,
-                r_window_component: win_comp,
-                r_windows: sesh,
+                r_images_desc_size: 0,
+                r_windows: win_sesh,
                 r_windows_buf: vk::Buffer::null(),
                 r_windows_mem: vk::DeviceMemory::null(),
                 r_windows_capacity: 8,
@@ -1703,7 +1729,10 @@ impl Renderer {
                 r_release_barriers: Vec::new(),
                 #[cfg(feature = "aftermath")]
                 r_aftermath: aftermath,
-                r_image_list: Vec::new(),
+                r_image_ecs: img_ecs,
+                r_null_image: null_image,
+                r_image_list: img_list_sesh,
+                r_image_infos: img_info_sesh,
             };
             rend.reallocate_windows_buf_with_cap(rend.r_windows_capacity);
 
@@ -1789,7 +1818,7 @@ impl Renderer {
             None => Rect::new(-1, 0, -1, 0),
         };
         let (image_id, use_color) = match surf.s_image.as_ref() {
-            Some(i) => (i.get_id(), false),
+            Some(i) => (i.get_id().get_raw_id() as i32, false),
             None => (-1, true),
         };
 
@@ -2466,18 +2495,17 @@ impl Renderer {
         unsafe { dev.allocate_descriptor_sets(&info).unwrap()[0] }
     }
 
-    /// Helper for inserting a new image and updating its id
-    pub fn push_image(&mut self, image: &mut Image) {
-        self.r_image_list.push(image.clone());
-        image.set_id((self.r_image_list.len() - 1) as i32);
-    }
-
-    /// Helper for removing all surfaces/objects currently loaded
+    /// Remove all attached damage.
     ///
-    /// This will totally flush thundr, and reset it back to when it was
-    /// created.
-    pub fn clear_all(&mut self) {
-        self.r_image_list.clear();
+    /// Damage is consumed by Thundr to ease the burden of developing
+    /// apps with it. This internal func clears all the damage after
+    /// a frame is drawn.
+    pub fn clear_damage_on_all_images(&mut self) {
+        for i in self.r_image_list.iter() {
+            if let Some(image) = i {
+                image.clear_damage();
+            }
+        }
     }
 
     pub fn refresh_window_resources(&mut self, surfaces: &mut SurfaceList) {
@@ -2486,7 +2514,7 @@ impl Renderer {
         // Construct a list of image views from the submitted surface list
         // this will be our unsized texture array that the composite shader will reference
         // TODO: make this a changed flag
-        if self.r_image_infos.len() != self.r_image_list.len() && self.r_image_list.len() > 0 {
+        if self.r_images_desc_size < self.r_image_ecs.capacity() {
             // free the previous descriptor sets
             unsafe {
                 self.dev
@@ -2497,41 +2525,18 @@ impl Renderer {
                     .unwrap();
             }
 
+            self.r_images_desc_size = self.r_image_ecs.capacity();
             self.r_images_desc = Self::allocate_bindless_desc(
                 &self.dev,
                 self.r_images_desc_pool,
                 &[self.r_images_desc_layout],
-                self.r_image_list.len() as u32,
+                self.r_images_desc_size as u32,
             );
         }
 
         // Now that we have possibly reallocated the descriptor sets,
         // refresh the window list to put it back in gpu mem
         self.refresh_window_list(surfaces);
-
-        // Construct a list of image views from the submitted surface list
-        // this will be our unsized texture array that the composite shader will reference
-        self.r_image_infos.clear();
-        for image in self.r_image_list.iter() {
-            self.r_image_infos.push(
-                vk::DescriptorImageInfo::builder()
-                    .sampler(self.image_sampler)
-                    // The image view could have been recreated and this would be stale
-                    .image_view(image.get_view())
-                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .build(),
-            );
-        }
-
-        if self.r_image_infos.len() == 0 {
-            self.r_image_infos.push(
-                vk::DescriptorImageInfo::builder()
-                    .sampler(self.image_sampler)
-                    .image_view(self.tmp_image_view)
-                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .build(),
-            );
-        }
 
         // Now write the new bindless descriptor
         let write_infos = &[
@@ -2551,7 +2556,7 @@ impl Renderer {
                 .dst_binding(1)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(self.r_image_infos.as_slice())
+                .image_info(self.r_image_infos.get_data_slice().data())
                 .build(),
         ];
 
@@ -2581,8 +2586,6 @@ impl Renderer {
 
         surfaces.update_window_order_buf(self);
 
-        log::info!("Window List: {:#?}", self.r_windows);
-
         // TODO: don't even use CPU copies of the datastructs and perform
         // the tile/window updates in the mapped GPU memory
         // (requires benchmark)
@@ -2602,7 +2605,7 @@ impl Renderer {
                         for id in surfaces.l_window_order.iter() {
                             let i = id.get_raw_id();
                             let win = self.r_windows.get(&id).unwrap();
-                            log::verbose!("Winlist index {}: writing window {:?}", i, win);
+                            log::verbose!("Winlist index {}: writing window {:?}", i, *win);
                             dst[i] = *win;
                         }
                     },

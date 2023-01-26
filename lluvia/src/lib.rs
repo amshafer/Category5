@@ -218,6 +218,11 @@ impl<T: 'static> SliceContainer<T> {
         // the closure and have to deref it out of its dyn box first
         self.v_vec.resize_with(index + 1, &*self.v_callback);
     }
+
+    /// Get the slice of the backing array
+    fn as_slice<'a>(&'a self) -> &'a [T] {
+        self.v_vec.as_slice()
+    }
 }
 
 impl<T: 'static> Container<T> for SliceContainer<T> {
@@ -346,11 +351,14 @@ impl Drop for EntityInternal {
 pub type Entity = Arc<EntityInternal>;
 
 #[derive(Copy, Clone)]
-pub struct Component<T: 'static, C: Container<T>> {
+pub struct RawComponent<T: 'static, C: Container<T>> {
     c_index: usize,
     _c_phantom: PhantomData<T>,
     _c_phantom_container: PhantomData<C>,
 }
+
+pub type Component<T> = RawComponent<T, VecContainer<T>>;
+pub type NonSparseComponent<T> = RawComponent<T, SliceContainer<T>>;
 
 /// A component table wrapper trait
 ///
@@ -498,7 +506,7 @@ impl Instance {
     /// data they store, and Entities are not required to have a populated value.
     ///
     /// This uses the default storage container which supports sparse memory usage.
-    pub fn add_component<T: 'static>(&mut self) -> Component<T, VecContainer<T>> {
+    pub fn add_component<T: 'static>(&mut self) -> Component<T> {
         self.add_raw_component(VecContainer {
             v_block_size: DEFAULT_LLUVIA_BLOCK_SIZE,
             v_blocks: Vec::new(),
@@ -516,10 +524,7 @@ impl Instance {
     /// values in the backing array. This is necessary since the backing storage is
     /// of type `&[T]`, and there needs to be a valid `T` value placed in every cell
     /// even if it has no associated entity.
-    pub fn add_non_sparse_component<T: 'static, F>(
-        &mut self,
-        callback: F,
-    ) -> Component<T, SliceContainer<T>>
+    pub fn add_non_sparse_component<T: 'static, F>(&mut self, callback: F) -> NonSparseComponent<T>
     where
         F: Fn() -> T + 'static,
     {
@@ -533,14 +538,14 @@ impl Instance {
     fn add_raw_component<T: 'static, C: Container<T> + 'static>(
         &mut self,
         container: C,
-    ) -> Component<T, C> {
+    ) -> RawComponent<T, C> {
         let mut cl = self.i_component_set.write().unwrap();
 
         let component_id = cl.cl_components.len();
         let new_table = Table::new(container);
         cl.cl_components.push(Box::new(new_table));
 
-        Component {
+        RawComponent {
             c_index: component_id,
             _c_phantom: PhantomData,
             _c_phantom_container: PhantomData,
@@ -619,7 +624,10 @@ impl Instance {
         id.ecs_id < internal.i_valid_ids.len() && internal.i_valid_ids[id.ecs_id]
     }
 
-    fn component_is_valid<T: 'static, C: Container<T>>(&self, component: &Component<T, C>) -> bool {
+    fn component_is_valid<T: 'static, C: Container<T>>(
+        &self,
+        component: &RawComponent<T, C>,
+    ) -> bool {
         let cl = self.i_component_set.read().unwrap();
 
         component.c_index < cl.cl_components.len()
@@ -634,14 +642,14 @@ impl Instance {
     /// If `component` is invalid, return None.
     pub fn open_session<T: 'static, C: Container<T>>(
         &self,
-        component: Component<T, C>,
+        component: RawComponent<T, C>,
     ) -> Option<RawSession<T, C>> {
         self.open_raw_session(component)
     }
 
     pub fn open_raw_session<T: 'static, C: Container<T> + 'static>(
         &self,
-        component: Component<T, C>,
+        component: RawComponent<T, C>,
     ) -> Option<RawSession<T, C>> {
         // validate component
         if !self.component_is_valid(&component) {
@@ -686,11 +694,25 @@ impl Instance {
 pub struct RawSession<T: 'static, C: Container<T> + 'static> {
     s_inst: Instance,
     _s_phantom: PhantomData<T>,
-    s_component: Component<T, C>,
+    s_component: RawComponent<T, C>,
     s_table: Table<T, C>,
 }
 
+/// The default session type
+///
+/// This uses the sparse allocation container as a storage backend, and
+/// is intended for general usage.
+///
+/// See `RawSession` for details and usage
 pub type Session<T> = RawSession<T, VecContainer<T>>;
+
+/// This session type represents a contiguously allocated table
+///
+/// This type should only be used if you need to hand a slice of all
+/// data off to something else.
+///
+/// See `RawSession` for details and usage
+pub type NonSparseSession<T> = RawSession<T, SliceContainer<T>>;
 
 impl<T: 'static, C: Container<T> + 'static> fmt::Debug for RawSession<T, C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -795,6 +817,35 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
     }
 }
 
+/// Helper struct for a slice
+///
+/// This is a rwlock guard for the sliced data
+pub struct SliceRef<'a, T: 'static> {
+    /// The lock guard returned from the table
+    sr_guard: RwLockReadGuard<'a, TableInternal<T, SliceContainer<T>>>,
+}
+
+impl<'a, T: 'static> SliceRef<'a, T> {
+    /// Get the backing slice where all data is stored
+    ///
+    /// This returns the raw data itself
+    pub fn data(&'a self) -> &'a [T] {
+        self.sr_guard.t_entity.as_slice()
+    }
+}
+
+impl<T: 'static> RawSession<T, SliceContainer<T>> {
+    /// Get the backing slice where all data is stored
+    ///
+    /// This is useful if you want to pass the raw data array to
+    /// another library, such as ECS objects being passed to Vulkan
+    pub fn get_data_slice<'a>(&'a self) -> SliceRef<'a, T> {
+        SliceRef {
+            sr_guard: self.s_table.t_internal.read().unwrap(),
+        }
+    }
+}
+
 pub struct SessionIterator<'a, T: 'static, C: Container<T> + 'static> {
     si_session: &'a RawSession<T, C>,
     si_cur: usize,
@@ -815,12 +866,18 @@ impl<'a, T: 'static, C: Container<T> + 'static> Iterator for SessionIterator<'a,
         self.si_cur = self.si_next.unwrap();
         self.si_next = table_internal.t_entity.get_next_id(cur);
 
-        // Now we can create a ref to this id
-        let ret = TableRef {
-            tr_guard: table_internal,
-            tr_entity: TableRefEntityType::Offset(cur),
-        };
-
-        return Some(Some(ret));
+        // Double check that this ref is good before returning it.
+        //
+        // Since we start at the zero offset, there's a chance it isn't
+        // defined and we can't pass a TableRef that will panic back to
+        // the caller. This is gross
+        match table_internal.t_entity.index(cur).as_ref() {
+            // Now we can create a ref to this id
+            Some(_) => Some(Some(TableRef {
+                tr_guard: table_internal,
+                tr_entity: TableRefEntityType::Offset(cur),
+            })),
+            None => Some(None),
+        }
     }
 }

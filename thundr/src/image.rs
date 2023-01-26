@@ -109,7 +109,7 @@ impl Image {
     }
 
     /// Removes any damage from this image.
-    pub fn clear_damage(&mut self) {
+    pub fn clear_damage(&self) {
         self.i_internal.borrow_mut().i_damage = None;
     }
 }
@@ -145,7 +145,7 @@ impl Drop for ImageInternal {
     /// A simple teardown function. The renderer is needed since
     /// it allocated all these objects.
     fn drop(&mut self) {
-        let mut rend = self.i_rend.lock().unwrap();
+        let rend = self.i_rend.lock().unwrap();
         rend.wait_for_prev_submit();
         assert!(!self.i_out_of_date);
 
@@ -579,6 +579,21 @@ impl Renderer {
         }
     }
 
+    /// Update the `VkDescriptorImageInfo` entry in the image ECS for the renderer
+    ///
+    /// This updates the descriptor info we pass to Vulkan describing our images.
+    fn update_image_vk_info(&mut self, internal: &ImageInternal) {
+        self.r_image_infos.set(
+            &internal.i_id,
+            vk::DescriptorImageInfo::builder()
+                .sampler(self.image_sampler)
+                // The image view could have been recreated and this would be stale
+                .image_view(internal.i_image_view)
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .build(),
+        );
+    }
+
     /// Create a image
     ///
     /// This logic is the same no matter what type of
@@ -594,22 +609,24 @@ impl Renderer {
         view: vk::ImageView,
         release: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
+        let internal = ImageInternal {
+            i_rend: rend_mtx,
+            i_id: self.r_image_ecs.add_entity(),
+            i_out_of_date: false,
+            i_image: image,
+            i_image_view: view,
+            i_image_mem: image_mem,
+            i_image_resolution: *res,
+            i_general_layout: false,
+            i_priv: private,
+            i_release_info: release,
+            i_damage: None,
+            i_opaque: None,
+        };
+        self.update_image_vk_info(&internal);
+
         return Some(Image {
-            i_internal: Rc::new(RefCell::new(ImageInternal {
-                i_rend: rend_mtx,
-                // The id will be filled in by thundr in lib.rs
-                i_id: 0,
-                i_out_of_date: false,
-                i_image: image,
-                i_image_view: view,
-                i_image_mem: image_mem,
-                i_image_resolution: *res,
-                i_general_layout: false,
-                i_priv: private,
-                i_release_info: release,
-                i_damage: None,
-                i_opaque: None,
-            })),
+            i_internal: Rc::new(RefCell::new(internal)),
         });
     }
 
@@ -640,7 +657,7 @@ impl Renderer {
         let mut image = &mut *thundr_image.i_internal.borrow_mut();
         log::debug!(
             "update_fr_mem_img: update img {}: new is {}x{} and old image_resolution is {:?}",
-            image.i_id,
+            image.i_id.get_raw_id(),
             memimg.width,
             memimg.height,
             image.i_image_resolution
@@ -677,6 +694,7 @@ impl Renderer {
                 // Update the type, in case this image was previously created
                 // from a dmabuf
                 image.i_priv = ImagePrivate::MemImage;
+                self.update_image_vk_info(image);
             }
 
             // Perform the copy
@@ -701,7 +719,11 @@ impl Renderer {
         self.wait_for_copy();
 
         let mut image = thundr_image.i_internal.borrow_mut();
-        log::debug!("Updating image {:?} with dmabuf {:?}", image.i_id, dmabuf);
+        log::debug!(
+            "Updating image {:?} with dmabuf {:?}",
+            image.i_id.get_raw_id(),
+            dmabuf
+        );
 
         // Update our image type. This may have changed since the last time
         // update was called. I.e. if we updated this Thundr Image from a
@@ -734,6 +756,7 @@ impl Renderer {
                 image.i_image = vkimage;
                 image.i_image_view = view;
                 image.i_image_mem = vkimage_memory;
+                self.update_image_vk_info(&*image);
             }
         } else {
             panic!("The ImagePrivate dmabuf type should have been assigned");
