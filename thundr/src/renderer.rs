@@ -20,7 +20,7 @@ use crate::display::Display;
 use crate::list::SurfaceList;
 use crate::pipelines::PipelineType;
 use crate::platform::VKDeviceFeatures;
-use crate::{Image, Surface, Viewport};
+use crate::{Surface, Viewport};
 
 extern crate utils as cat5_utils;
 use crate::{CreateInfo, Damage};
@@ -220,7 +220,7 @@ pub struct Renderer {
     pub r_image_ecs: ll::Instance,
     // We keep this around to ensure the image array isn't empty
     r_null_image: ll::Entity,
-    pub r_image_list: ll::Session<Image>,
+    pub r_image_damage: ll::Session<Damage>,
     pub r_image_infos: ll::NonSparseSession<vk::DescriptorImageInfo>,
 }
 
@@ -1644,10 +1644,9 @@ impl Renderer {
 
             // Create our own ECS for the image resources
             let mut img_ecs = ll::Instance::new();
-            // Create the image list component
-            let img_list_comp = img_ecs.add_component();
-            let img_list_sesh = img_ecs
-                .open_session(img_list_comp)
+            let img_damage_comp = img_ecs.add_component();
+            let img_damage_sesh = img_ecs
+                .open_session(img_damage_comp)
                 .ok_or(ThundrError::OUT_OF_MEMORY)?;
             // Create the image vk info component
             let img_info_comp =
@@ -1731,7 +1730,7 @@ impl Renderer {
                 r_aftermath: aftermath,
                 r_image_ecs: img_ecs,
                 r_null_image: null_image,
-                r_image_list: img_list_sesh,
+                r_image_damage: img_damage_sesh,
                 r_image_infos: img_info_sesh,
             };
             rend.reallocate_windows_buf_with_cap(rend.r_windows_capacity);
@@ -2223,7 +2222,7 @@ impl Renderer {
         for surf_rc in surfaces.iter_mut() {
             // add the new damage to the list of damages
             // If the surface does not have damage attached, then don't generate tiles
-            if let Some(damage) = surf_rc.get_global_damage() {
+            if let Some(damage) = surf_rc.get_global_damage(self) {
                 self.aggregate_damage(&damage);
             }
 
@@ -2493,19 +2492,6 @@ impl Renderer {
         info.p_next = &variable_info as *const _ as *mut std::ffi::c_void;
 
         unsafe { dev.allocate_descriptor_sets(&info).unwrap()[0] }
-    }
-
-    /// Remove all attached damage.
-    ///
-    /// Damage is consumed by Thundr to ease the burden of developing
-    /// apps with it. This internal func clears all the damage after
-    /// a frame is drawn.
-    pub fn clear_damage_on_all_images(&mut self) {
-        for i in self.r_image_list.iter() {
-            if let Some(image) = i {
-                image.clear_damage();
-            }
-        }
     }
 
     pub fn refresh_window_resources(&mut self, surfaces: &mut SurfaceList) {

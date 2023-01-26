@@ -4,7 +4,7 @@
 use utils::region::Rect;
 
 /// Damage is always in surface coord space
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Damage {
     pub(crate) d_damaged: bool,
     pub(crate) d_regions: Vec<Rect<i32>>,

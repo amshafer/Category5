@@ -545,7 +545,6 @@ impl Thundr {
 
         self.th_pipe
             .end_record(self.th_rend.lock().unwrap().deref_mut(), params);
-        self.th_rend.lock().unwrap().clear_damage_on_all_images();
         self.th_params = None;
 
         Ok(())
@@ -577,19 +576,7 @@ impl Thundr {
                     s.get_size()
                 );
             }
-            log::debug!("Images List:");
-            log::debug!("--------------------------------");
             let rend = self.th_rend.lock().unwrap();
-            for (i, item) in rend.r_image_list.iter().enumerate() {
-                if let Some(img) = item {
-                    log::debug!(
-                        "[{}] Id={:?}, Size={:?}",
-                        i,
-                        img.i_internal.borrow().i_image,
-                        img.get_resolution()
-                    );
-                }
-            }
 
             if rend.dev_features.vkc_supports_incremental_present {
                 log::debug!("Damaged vkPresentRegions:");

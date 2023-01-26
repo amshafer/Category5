@@ -7,6 +7,7 @@
 // Austin Shafer - 2020
 #![allow(dead_code)]
 extern crate nix;
+use crate::renderer::Renderer;
 use crate::{Damage, Result, ThundrError};
 use lluvia as ll;
 
@@ -252,8 +253,8 @@ impl Surface {
         return surf.get_opaque();
     }
 
-    /// Get's damage. Returned values are in surface coordinates.
-    pub fn get_surf_damage(&mut self) -> Option<Damage> {
+    /// Gets damage. Returned values are in surface coordinates.
+    pub(crate) fn get_surf_damage(&mut self, rend: &Renderer) -> Option<Damage> {
         let mut surf = self.s_internal.borrow_mut();
         let mut ret = Damage::empty();
         let surf_extent = Rect::new(
@@ -266,7 +267,7 @@ impl Surface {
         // First add up the damage from the buffer
         if let Some(image_rc) = surf.s_image.as_ref() {
             let image = image_rc.i_internal.borrow();
-            if let Some(damage) = image.i_damage.as_ref() {
+            if let Some(damage) = rend.r_image_damage.get(&image.i_id) {
                 // We need to scale the damage from the image size to the
                 // size of this particular surface
                 let scale = (
@@ -312,8 +313,8 @@ impl Surface {
 
     /// This gets the surface damage and offsets it into the
     /// screen coordinate space.
-    pub fn get_global_damage(&mut self) -> Option<Damage> {
-        let mut ret = self.get_surf_damage();
+    pub fn get_global_damage(&mut self, rend: &Renderer) -> Option<Damage> {
+        let mut ret = self.get_surf_damage(rend);
         let surf = self.s_internal.borrow_mut();
 
         if let Some(surf_damage) = ret.as_mut() {
@@ -330,7 +331,7 @@ impl Surface {
     /// This is used for getting the total amount of damage that the image should be
     /// updated by. It's a union of the unchanged image damage and the screen
     /// damage mapped on the image dimensions.
-    pub fn get_image_damage(&mut self) -> Option<Damage> {
+    pub(crate) fn get_image_damage(&mut self, rend: &Renderer) -> Option<Damage> {
         let mut surf = self.s_internal.borrow_mut();
         let surf_damage = surf.s_surf_damage.take();
         let mut ret = Damage::empty();
@@ -352,8 +353,8 @@ impl Surface {
                 surf.s_rect.r_size.1 / image.i_image_resolution.height as f32,
             );
 
-            if let Some(damage) = image.i_damage.as_ref() {
-                ret.union(damage);
+            if let Some(damage) = rend.r_image_damage.get(&image.i_id) {
+                ret.union(&damage);
             }
 
             // Now add in the surface damage

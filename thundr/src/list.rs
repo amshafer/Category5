@@ -288,6 +288,7 @@ impl SurfaceList {
         self.clear();
         let rend = self.l_rend.lock().unwrap();
         unsafe {
+            rend.wait_for_prev_submit();
             rend.dev.destroy_buffer(self.l_order_buf, None);
             rend.free_memory(self.l_order_mem);
             rend.dev

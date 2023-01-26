@@ -57,8 +57,20 @@ pub(crate) struct ImageInternal {
     /// Stuff to release when we are no longer using
     /// this gpu buffer (release the wl_buffer)
     i_release_info: Option<Box<dyn Drop>>,
-    pub i_damage: Option<Damage>,
     pub i_opaque: Option<Rect<i32>>,
+}
+
+impl ImageInternal {
+    /// Gets a copy of the image's damage, if it has one.
+    ///
+    /// Note: potentially expensive copy
+    pub fn get_damage(&self) -> Option<Damage> {
+        if let Some(d) = self.i_rend.lock().unwrap().r_image_damage.get(&self.i_id) {
+            Some((*d).clone())
+        } else {
+            None
+        }
+    }
 }
 
 impl Image {
@@ -85,20 +97,26 @@ impl Image {
     /// Attach damage to this surface. Damage is specified in surface-coordinates.
     pub fn set_damage(&mut self, x: i32, y: i32, width: i32, height: i32) {
         self.assert_valid();
+        let internal = self.i_internal.borrow_mut();
+        let mut rend = internal.i_rend.lock().unwrap();
         // Check if damage is initialized. If it isn't create a new one.
         // If it is, add the damage to the existing list
         let new_rect = Rect::new(x, y, width, height);
-        let mut internal = self.i_internal.borrow_mut();
-        if let Some(d) = internal.i_damage.as_mut() {
+        if let Some(mut d) = rend.r_image_damage.get_mut(&internal.i_id) {
             d.add(&new_rect);
-        } else {
-            internal.i_damage = Some(Damage::new(vec![new_rect]));
+            return;
         }
+
+        rend.r_image_damage
+            .set(&internal.i_id, Damage::new(vec![new_rect]));
     }
 
     pub fn reset_damage(&mut self, damage: Damage) {
         self.assert_valid();
-        self.i_internal.borrow_mut().i_damage = Some(damage);
+        let internal = self.i_internal.borrow_mut();
+        let mut rend = internal.i_rend.lock().unwrap();
+
+        rend.r_image_damage.set(&internal.i_id, damage);
         // TODO: clip to image size
     }
 
@@ -110,7 +128,10 @@ impl Image {
 
     /// Removes any damage from this image.
     pub fn clear_damage(&self) {
-        self.i_internal.borrow_mut().i_damage = None;
+        let internal = self.i_internal.borrow_mut();
+        let mut rend = internal.i_rend.lock().unwrap();
+
+        rend.r_image_damage.take(&internal.i_id);
     }
 }
 
@@ -620,7 +641,6 @@ impl Renderer {
             i_general_layout: false,
             i_priv: private,
             i_release_info: release,
-            i_damage: None,
             i_opaque: None,
         };
         self.update_image_vk_info(&internal);
