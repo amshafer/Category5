@@ -143,7 +143,7 @@ impl<T: 'static> Container<T> for VecContainer<T> {
         // index is too large for the block return None
         if bi >= self.v_blocks.len()
             || self.v_blocks[bi].is_none()
-            || index >= self.v_blocks[bi].as_ref().unwrap().v_vec.len()
+            || i >= self.v_blocks[bi].as_ref().unwrap().v_vec.len()
         {
             return None;
         }
