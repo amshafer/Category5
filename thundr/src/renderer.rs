@@ -2244,6 +2244,15 @@ impl Renderer {
         Ok(())
     }
 
+    /// Remove all attached damage.
+    ///
+    /// Damage is consumed by Thundr to ease the burden of developing
+    /// apps with it. This internal func clears all the damage after
+    /// a frame is drawn.
+    pub fn clear_damage_on_all_images(&mut self) {
+        self.r_image_damage.clear();
+    }
+
     pub fn end_recording_one_frame(&mut self) {
         self.current_damage.extend(&self.surfacelist_regions);
         let mut regions = Vec::new();

@@ -80,6 +80,7 @@ pub trait Container<T: 'static> {
     fn set(&mut self, index: usize, val: T);
     fn take(&mut self, index: usize) -> Option<T>;
     fn get_next_id(&self, index: usize) -> Option<usize>;
+    fn clear(&mut self);
 }
 
 /// Our basic vector storage
@@ -198,6 +199,15 @@ impl<T: 'static> Container<T> for VecContainer<T> {
 
         None
     }
+    fn clear(&mut self) {
+        for b in self.v_blocks.iter_mut() {
+            if let Some(block) = b {
+                for item in block.v_vec.iter_mut() {
+                    *item = None;
+                }
+            }
+        }
+    }
 }
 
 /// A continuous non-space slice container
@@ -255,6 +265,11 @@ impl<T: 'static> Container<T> for SliceContainer<T> {
         }
 
         Some(index + 1)
+    }
+    fn clear(&mut self) {
+        for item in self.v_vec.iter_mut() {
+            *item = (self.v_callback)();
+        }
     }
 }
 
@@ -800,6 +815,15 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
 
         let mut table_internal = self.s_table.t_internal.write().unwrap();
         table_internal.t_entity.take(entity.ecs_id)
+    }
+
+    /// Drop all values in the table
+    ///
+    /// This will drop all values in this component table, and in the case of
+    /// non-sparse allocations will replace it with the default value.
+    pub fn clear(&mut self) {
+        let mut table_internal = self.s_table.t_internal.write().unwrap();
+        table_internal.t_entity.clear();
     }
 
     /// Create an iterator over all values in this component table

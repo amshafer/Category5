@@ -435,6 +435,14 @@ impl Thundr {
         self.th_rend.lock().unwrap().release_pending_resources();
     }
 
+    /// Helper for removing all surfaces/objects currently loaded
+    ///
+    /// This will totally flush thundr, and reset it back to when it was
+    /// created.
+    pub fn clear_all(&mut self) {
+        self.th_rend.lock().unwrap().clear_damage_on_all_images();
+    }
+
     /// This is a candidate for an out of date error. We should
     /// let the application know about this so it can recalculate anything
     /// that depends on the window size, so we exit returning OOD.
@@ -545,6 +553,7 @@ impl Thundr {
 
         self.th_pipe
             .end_record(self.th_rend.lock().unwrap().deref_mut(), params);
+        self.th_rend.lock().unwrap().clear_damage_on_all_images();
         self.th_params = None;
 
         Ok(())
