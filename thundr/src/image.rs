@@ -283,17 +283,17 @@ impl Renderer {
         reqs: &vk::MemoryRequirements,
     ) -> Option<u32> {
         // and find the first type which matches our image
-        for (i, ref mem_type) in props.memory_types.iter().enumerate() {
+        for (i, ref _mem_type) in props.memory_types.iter().enumerate() {
             // Bit i of memoryBitTypes will be set if the resource supports
             // the ith memory type in props.
+            //
+            // Don't check for DEVICE_LOCAL here, since the dmabuf may be
+            // a sysmem buffer.
             //
             // if this index is supported by dmabuf
             if (dmabuf_type_bits >> i) & 1 == 1
                 // and by the image
                 && (reqs.memory_type_bits >> i) & 1 == 1
-                // make sure it is device local
-                &&  mem_type.property_flags
-                .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
             {
                 return Some(i as u32);
             }
