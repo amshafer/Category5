@@ -405,6 +405,16 @@ impl Thundr {
             .update_image_from_dmabuf(image, dmabuf, release_info)
     }
 
+    /// This gets damage in image-coords.
+    ///
+    /// This is used for getting the total amount of damage that the image should be
+    /// updated by. It's a union of the unchanged image damage and the screen
+    /// damage mapped on the image dimensions.
+    pub fn get_image_damage(&mut self, surf: &mut Surface) -> Option<Damage> {
+        let mut rend = self.th_rend.lock().unwrap();
+        surf.get_image_damage(&mut *rend)
+    }
+
     /// Creates a new surface.
     ///
     /// A surface represents a geometric region that will be

@@ -399,13 +399,10 @@ impl WindowManager {
         }
 
         if let Some(image) = app.a_image.as_mut() {
-            self.wm_thundr.update_image_from_bits(
-                image,
-                &info.pixels,
-                // TODO: maybe don't do anything if there isn't damage?
-                app.a_surf.get_image_damage().as_ref(),
-                None,
-            );
+            // TODO: maybe don't do anything if there isn't damage?
+            let damage = self.wm_thundr.get_image_damage(&mut app.a_surf);
+            self.wm_thundr
+                .update_image_from_bits(image, &info.pixels, damage.as_ref(), None);
         } else {
             // If it does not have a image, then this must be the
             // first time contents were attached to it. Go ahead
@@ -577,10 +574,6 @@ impl WindowManager {
     /// a window immediately because its image(s) are still being
     /// used by thundr
     fn reap_dead_windows(&mut self) {
-        // Take a reference out here to avoid making the
-        // borrow checker angry
-        let thundr = &mut self.wm_thundr;
-
         // Only retain alive windows in the array
         for id in self.wm_will_die.drain(..) {
             if let Some(app) = self.wm_apps[id.into()].as_ref() {
