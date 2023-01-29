@@ -335,27 +335,13 @@ impl WindowManager {
             None => return Err(anyhow!("Could not find id {:?}", info.ufd_id)),
         };
 
-        if let Some(image) = app.a_image.as_mut() {
-            self.wm_thundr.update_image_from_dmabuf(
-                image,
-                &info.ufd_dmabuf,
-                Some(Box::new(DmabufReleaseInfo {
-                    dr_fd: info.ufd_dmabuf.db_fd,
-                    dr_wl_buffer: info.ufd_wl_buffer.clone(),
-                })),
-            );
-        } else {
-            // If it does not have a image, then this must be the
-            // first time contents were attached to it. Go ahead
-            // and make one now
-            app.a_image = self.wm_thundr.create_image_from_dmabuf(
-                &info.ufd_dmabuf,
-                Some(Box::new(DmabufReleaseInfo {
-                    dr_fd: info.ufd_dmabuf.db_fd,
-                    dr_wl_buffer: info.ufd_wl_buffer.clone(),
-                })),
-            );
-        }
+        app.a_image = self.wm_thundr.create_image_from_dmabuf(
+            &info.ufd_dmabuf,
+            Some(Box::new(DmabufReleaseInfo {
+                dr_fd: info.ufd_dmabuf.db_fd,
+                dr_wl_buffer: info.ufd_wl_buffer.clone(),
+            })),
+        );
 
         if let Some(damage) = atmos.take_buffer_damage(info.ufd_id) {
             app.a_image.as_mut().map(|i| i.reset_damage(damage));
@@ -398,17 +384,8 @@ impl WindowManager {
             app.a_surf.damage(damage);
         }
 
-        if let Some(image) = app.a_image.as_mut() {
-            // TODO: maybe don't do anything if there isn't damage?
-            let damage = self.wm_thundr.get_image_damage(&mut app.a_surf);
-            self.wm_thundr
-                .update_image_from_bits(image, &info.pixels, damage.as_ref(), None);
-        } else {
-            // If it does not have a image, then this must be the
-            // first time contents were attached to it. Go ahead
-            // and make one now
-            app.a_image = self.wm_thundr.create_image_from_bits(&info.pixels, None);
-        }
+        // Create a new image, the old one will have its refcount dropped
+        app.a_image = self.wm_thundr.create_image_from_bits(&info.pixels, None);
 
         self.wm_thundr
             .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());

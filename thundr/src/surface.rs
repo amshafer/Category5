@@ -82,15 +82,16 @@ impl SurfaceInternal {
     }
 
     /// adjusts from image-coords to surface-coords.
-    pub fn get_opaque(&self) -> Option<Rect<i32>> {
+    pub fn get_opaque(&self, rend: &Renderer) -> Option<Rect<i32>> {
         if let Some(image_rc) = self.s_image.as_ref() {
             let image = image_rc.i_internal.borrow();
             if let Some(opaque) = image.i_opaque.as_ref() {
+                let image_vk = rend.r_image_vk.get(&image.i_id).unwrap();
                 // We need to scale from the image size to the
                 // size of this particular surface
                 let scale = (
-                    image.i_image_resolution.width as f32 / self.s_rect.r_size.0,
-                    image.i_image_resolution.height as f32 / self.s_rect.r_size.1,
+                    image_vk.iv_image_resolution.width as f32 / self.s_rect.r_size.0,
+                    image_vk.iv_image_resolution.height as f32 / self.s_rect.r_size.1,
                 );
 
                 return Some(Rect::new(
@@ -193,9 +194,10 @@ impl Surface {
 
     /// Attaches an image to this surface, when this surface
     /// is drawn the contents will be sample from `image`
-    pub(crate) fn bind_image(&mut self, image: Image) {
+    pub fn bind_image(&mut self, image: Image) {
         let mut surf = self.s_internal.borrow_mut();
         assert!(surf.s_color.is_none());
+        surf.s_modified = true;
         surf.s_image = Some(image);
     }
 
@@ -248,9 +250,9 @@ impl Surface {
         surf.s_color = Some(color);
     }
 
-    pub fn get_opaque(&self) -> Option<Rect<i32>> {
+    pub fn get_opaque(&self, rend: &Renderer) -> Option<Rect<i32>> {
         let surf = self.s_internal.borrow();
-        return surf.get_opaque();
+        return surf.get_opaque(rend);
     }
 
     /// Gets damage. Returned values are in surface coordinates.
@@ -268,11 +270,12 @@ impl Surface {
         if let Some(image_rc) = surf.s_image.as_ref() {
             let image = image_rc.i_internal.borrow();
             if let Some(damage) = rend.r_image_damage.get(&image.i_id) {
+                let image_vk = rend.r_image_vk.get(&image.i_id).unwrap();
                 // We need to scale the damage from the image size to the
                 // size of this particular surface
                 let scale = (
-                    image.i_image_resolution.width as f32 / surf.s_rect.r_size.0,
-                    image.i_image_resolution.height as f32 / surf.s_rect.r_size.1,
+                    image_vk.iv_image_resolution.width as f32 / surf.s_rect.r_size.0,
+                    image_vk.iv_image_resolution.height as f32 / surf.s_rect.r_size.1,
                 );
 
                 for r in damage.regions() {
@@ -339,18 +342,20 @@ impl Surface {
         // First add up the damage from the buffer
         if let Some(image_rc) = surf.s_image.as_ref() {
             let image = image_rc.i_internal.borrow();
+            let image_vk = rend.r_image_vk.get(&image.i_id).unwrap();
+
             let image_extent = Rect::new(
                 0,
                 0,
-                image.i_image_resolution.width as i32,
-                image.i_image_resolution.height as i32,
+                image_vk.iv_image_resolution.width as i32,
+                image_vk.iv_image_resolution.height as i32,
             );
 
             // We need to scale the damage from the image size to the
             // size of this particular surface
             let scale = (
-                surf.s_rect.r_size.0 / image.i_image_resolution.width as f32,
-                surf.s_rect.r_size.1 / image.i_image_resolution.height as f32,
+                surf.s_rect.r_size.0 / image_vk.iv_image_resolution.width as f32,
+                surf.s_rect.r_size.1 / image_vk.iv_image_resolution.height as f32,
             );
 
             if let Some(damage) = rend.r_image_damage.get(&image.i_id) {

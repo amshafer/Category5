@@ -17,6 +17,7 @@ use ash::{vk, Device, Entry, Instance};
 
 use crate::descpool::DescPool;
 use crate::display::Display;
+use crate::image::ImageVk;
 use crate::list::SurfaceList;
 use crate::pipelines::PipelineType;
 use crate::platform::VKDeviceFeatures;
@@ -220,6 +221,7 @@ pub struct Renderer {
     pub r_image_ecs: ll::Instance,
     // We keep this around to ensure the image array isn't empty
     r_null_image: ll::Entity,
+    pub r_image_vk: ll::Session<ImageVk>,
     pub r_image_damage: ll::Session<Damage>,
     pub r_image_infos: ll::NonSparseSession<vk::DescriptorImageInfo>,
 }
@@ -1644,16 +1646,35 @@ impl Renderer {
 
             // Create our own ECS for the image resources
             let mut img_ecs = ll::Instance::new();
+
             let img_damage_comp = img_ecs.add_component();
             let img_damage_sesh = img_ecs
                 .open_session(img_damage_comp)
                 .ok_or(ThundrError::OUT_OF_MEMORY)?;
+
+            // Add our vulkan resource ECS entry
+            let img_vk_comp = img_ecs.add_component();
+            let img_vk_sesh = img_ecs
+                .open_session(img_vk_comp)
+                .ok_or(ThundrError::OUT_OF_MEMORY)?;
+
             // Create the image vk info component
-            let img_info_comp =
-                img_ecs.add_non_sparse_component(|| vk::DescriptorImageInfo::default());
+            // We have deleted this image, but it's invalid to pass a
+            // NULL VkImageView as a descriptor. Instead we will populate
+            // it with our "null"/"tmp" image, which is just a black square
+            let null_sampler = sampler;
+            let null_view = tmp_view;
+            let img_info_comp = img_ecs.add_non_sparse_component(move || {
+                vk::DescriptorImageInfo::builder()
+                    .sampler(null_sampler)
+                    .image_view(null_view)
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .build()
+            });
             let mut img_info_sesh = img_ecs
                 .open_session(img_info_comp)
                 .ok_or(ThundrError::OUT_OF_MEMORY)?;
+
             // Add our null image
             let null_image = img_ecs.add_entity();
             img_info_sesh.set(
@@ -1730,6 +1751,7 @@ impl Renderer {
                 r_aftermath: aftermath,
                 r_image_ecs: img_ecs,
                 r_null_image: null_image,
+                r_image_vk: img_vk_sesh,
                 r_image_damage: img_damage_sesh,
                 r_image_infos: img_info_sesh,
             };
@@ -1810,7 +1832,7 @@ impl Renderer {
         // parent surface(s), and give us the offset from which we should start
         // doing our calculations. Basically off_x is the parent surfaces X position.
         let surf = surf_rc.s_internal.borrow();
-        let opaque_reg = match surf_rc.get_opaque() {
+        let opaque_reg = match surf_rc.get_opaque(self) {
             Some(r) => r,
             // If no opaque data was attached, place a -1 in the start.x component
             // to tell the shader to ignore this
@@ -2600,7 +2622,7 @@ impl Renderer {
                         for id in surfaces.l_window_order.iter() {
                             let i = id.get_raw_id();
                             let win = self.r_windows.get(&id).unwrap();
-                            log::verbose!("Winlist index {}: writing window {:?}", i, *win);
+                            log::debug!("Winlist index {}: writing window {:?}", i, *win);
                             dst[i] = *win;
                         }
                     },

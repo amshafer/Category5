@@ -16,10 +16,10 @@ use utils::region::Rect;
 use utils::{Dmabuf, MemImage};
 
 use std::cell::RefCell;
+use std::fmt;
 use std::ops::Drop;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::{fmt, mem};
 
 use ash::vk;
 use nix::fcntl::{fcntl, FcntlArg};
@@ -30,6 +30,37 @@ use crate::Damage;
 // For now we only support one format.
 // According to the mesa source, this supports all modifiers.
 const TARGET_FORMAT: vk::Format = vk::Format::B8G8R8A8_UNORM;
+
+/// These are the fields private to the vulkan system, mainly
+/// the VkImage and other resources that we need to drop once they
+/// are unreffed in the renderer.
+pub struct ImageVk {
+    iv_rend: Arc<Mutex<Renderer>>,
+    /// image containing the contents of the window.
+    pub iv_image: vk::Image,
+    pub iv_image_view: vk::ImageView,
+    pub iv_image_mem: vk::DeviceMemory,
+    pub iv_image_resolution: vk::Extent2D,
+    /// Stuff to release when we are no longer using
+    /// this gpu buffer (release the wl_buffer)
+    iv_release_info: Option<Box<dyn Drop>>,
+}
+
+impl Drop for ImageVk {
+    /// A simple teardown function. The renderer is needed since
+    /// it allocated all these objects.
+    fn drop(&mut self) {
+        let rend = self.iv_rend.lock().unwrap();
+        rend.wait_for_prev_submit();
+        log::debug!("Deleting image view {:?}", self.iv_image_view);
+
+        unsafe {
+            rend.dev.destroy_image(self.iv_image, None);
+            rend.dev.destroy_image_view(self.iv_image_view, None);
+            rend.free_memory(self.iv_image_mem);
+        }
+    }
+}
 
 /// A image buffer containing contents to be composited.
 ///
@@ -43,20 +74,9 @@ pub(crate) struct ImageInternal {
     i_rend: Arc<Mutex<Renderer>>,
     /// This id is the index of this image in Thundr's image list (th_image_list).
     pub i_id: ll::Entity,
-    /// Is this image known to the renderer. This is true if the image was destroyed.
-    /// If true, it needs to be dropped and recreated.
-    pub i_out_of_date: bool,
-    /// image containing the contents of the window.
-    pub i_image: vk::Image,
-    pub i_image_view: vk::ImageView,
-    pub i_image_mem: vk::DeviceMemory,
-    pub i_image_resolution: vk::Extent2D,
     i_general_layout: bool,
     /// specific to the type of image
     i_priv: ImagePrivate,
-    /// Stuff to release when we are no longer using
-    /// this gpu buffer (release the wl_buffer)
-    i_release_info: Option<Box<dyn Drop>>,
     pub i_opaque: Option<Rect<i32>>,
 }
 
@@ -74,29 +94,30 @@ impl ImageInternal {
 }
 
 impl Image {
-    pub(crate) fn assert_valid(&self) {
-        assert!(!self.i_internal.borrow().i_out_of_date);
+    pub(crate) fn get_view(&self) -> vk::ImageView {
+        let internal = self.i_internal.borrow_mut();
+        let rend = internal.i_rend.lock().unwrap();
+
+        let image_vk = rend.r_image_vk.get(&internal.i_id).unwrap();
+        return image_vk.iv_image_view;
     }
 
-    pub(crate) fn get_view(&self) -> vk::ImageView {
-        self.assert_valid();
-        self.i_internal.borrow().i_image_view
-    }
     pub(crate) fn get_resolution(&self) -> vk::Extent2D {
-        self.assert_valid();
-        self.i_internal.borrow().i_image_resolution
+        let internal = self.i_internal.borrow_mut();
+        let rend = internal.i_rend.lock().unwrap();
+
+        let image_vk = rend.r_image_vk.get(&internal.i_id).unwrap();
+        return image_vk.iv_image_resolution;
     }
 
     /// Sets an opaque region for the image to help the internal compositor
     /// optimize when possible.
     pub fn set_opaque(&mut self, opaque: Option<Rect<i32>>) {
-        self.assert_valid();
         self.i_internal.borrow_mut().i_opaque = opaque;
     }
 
     /// Attach damage to this surface. Damage is specified in surface-coordinates.
     pub fn set_damage(&mut self, x: i32, y: i32, width: i32, height: i32) {
-        self.assert_valid();
         let internal = self.i_internal.borrow_mut();
         let mut rend = internal.i_rend.lock().unwrap();
         // Check if damage is initialized. If it isn't create a new one.
@@ -112,7 +133,6 @@ impl Image {
     }
 
     pub fn reset_damage(&mut self, damage: Damage) {
-        self.assert_valid();
         let internal = self.i_internal.borrow_mut();
         let mut rend = internal.i_rend.lock().unwrap();
 
@@ -152,31 +172,9 @@ impl fmt::Debug for Image {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let image = self.i_internal.borrow();
         f.debug_struct("Image")
-            .field("VkImage", &image.i_image)
-            .field("Image View", &image.i_image_view)
-            .field("Image mem", &image.i_image_mem)
-            .field("Resolution", &image.i_image_resolution)
             .field("Image Private", &image.i_priv)
             .field("Release info", &"<release info omitted>".to_string())
             .finish()
-    }
-}
-
-impl Drop for ImageInternal {
-    /// A simple teardown function. The renderer is needed since
-    /// it allocated all these objects.
-    fn drop(&mut self) {
-        let rend = self.i_rend.lock().unwrap();
-        rend.wait_for_prev_submit();
-        assert!(!self.i_out_of_date);
-
-        unsafe {
-            // Mark that this image was destroyed
-            self.i_out_of_date = true;
-            rend.dev.destroy_image(self.i_image, None);
-            rend.dev.destroy_image_view(self.i_image_view, None);
-            rend.free_memory(self.i_image_mem);
-        }
     }
 }
 
@@ -604,12 +602,24 @@ impl Renderer {
     ///
     /// This updates the descriptor info we pass to Vulkan describing our images.
     fn update_image_vk_info(&mut self, internal: &ImageInternal) {
+        let view = self
+            .r_image_vk
+            .get(&internal.i_id)
+            .as_ref()
+            .unwrap()
+            .iv_image_view;
+
+        log::debug!(
+            "Image list index {}: writing view {:?}",
+            internal.i_id.get_raw_id(),
+            view
+        );
         self.r_image_infos.set(
             &internal.i_id,
             vk::DescriptorImageInfo::builder()
                 .sampler(self.image_sampler)
                 // The image view could have been recreated and this would be stale
-                .image_view(internal.i_image_view)
+                .image_view(view)
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .build(),
         );
@@ -630,171 +640,31 @@ impl Renderer {
         view: vk::ImageView,
         release: Option<Box<dyn Drop>>,
     ) -> Option<Image> {
+        let image_vk = ImageVk {
+            iv_rend: rend_mtx.clone(),
+            iv_image: image,
+            iv_image_view: view,
+            iv_image_mem: image_mem,
+            iv_image_resolution: *res,
+            iv_release_info: release,
+        };
+
         let internal = ImageInternal {
             i_rend: rend_mtx,
             i_id: self.r_image_ecs.add_entity(),
-            i_out_of_date: false,
-            i_image: image,
-            i_image_view: view,
-            i_image_mem: image_mem,
-            i_image_resolution: *res,
             i_general_layout: false,
             i_priv: private,
-            i_release_info: release,
             i_opaque: None,
         };
+
+        // Add our vulkan resources to the ECS
+        self.r_image_vk.set(&internal.i_id, image_vk);
+
         self.update_image_vk_info(&internal);
 
         return Some(Image {
             i_internal: Rc::new(RefCell::new(internal)),
         });
-    }
-
-    /// Update image contents from a shm buffer
-    ///
-    /// If damage is passed, then only those sections of the image will be
-    /// updated.
-    pub fn update_image_from_bits(
-        &mut self,
-        thundr_image: &mut Image,
-        memimg: &MemImage,
-        _damage: Option<&Damage>,
-        _release: Option<Box<dyn Drop>>,
-    ) {
-        self.wait_for_prev_submit();
-        self.wait_for_copy();
-
-        //log::error!(
-        //    "update_image_from_bits: Image {}x{} checksum {}",
-        //    memimg.width,
-        //    memimg.height,
-        //    memimg.checksum()
-        //);
-
-        // we have to take a mut ref to the dereferenced value, so that
-        // we get a full mutable borrow of i_internal, which tells rust
-        // that we can borrow individual fields later in this function
-        let mut image = &mut *thundr_image.i_internal.borrow_mut();
-        log::debug!(
-            "update_fr_mem_img: update img {}: new is {}x{} and old image_resolution is {:?}",
-            image.i_id.get_raw_id(),
-            memimg.width,
-            memimg.height,
-            image.i_image_resolution
-        );
-
-        unsafe {
-            // If the we are updating with a new size, then we need to recreate the
-            // image
-            // This also needs to recreate the image if it is not currently backed
-            // by shared memory
-            if !matches!(image.i_priv, ImagePrivate::MemImage)
-                || memimg.width != image.i_image_resolution.width as usize
-                || memimg.height != image.i_image_resolution.height as usize
-            {
-                let tex_res = vk::Extent2D {
-                    width: memimg.width as u32,
-                    height: memimg.height as u32,
-                };
-
-                self.free_memory(image.i_image_mem);
-                self.dev.destroy_image(image.i_image, None);
-                self.dev.destroy_image_view(image.i_image_view, None);
-                // we need to re-create & resize the image since we changed
-                // the resolution
-                let (vkimage, view, img_mem) = self.alloc_bgra8_image(&tex_res);
-
-                image.i_image = vkimage;
-                image.i_image_view = view;
-                image.i_image_mem = img_mem;
-                // update our image's resolution
-                image.i_image_resolution.width = tex_res.width;
-                image.i_image_resolution.height = tex_res.height;
-
-                // Update the type, in case this image was previously created
-                // from a dmabuf
-                image.i_priv = ImagePrivate::MemImage;
-                self.update_image_vk_info(image);
-            }
-
-            // Perform the copy
-            self.update_image_from_memimg(image.i_image, memimg);
-        }
-
-        // We already copied the image, so silently drop the release info
-        self.update_common(&mut image, None);
-    }
-
-    /// Update image contents from a GPU buffer
-    ///
-    /// GPU buffers are passed as dmabuf fds, we will perform
-    /// an import using vulkan's external memory extensions
-    pub fn update_image_from_dmabuf(
-        &mut self,
-        thundr_image: &mut Image,
-        dmabuf: &Dmabuf,
-        release: Option<Box<dyn Drop>>,
-    ) {
-        self.wait_for_prev_submit();
-        self.wait_for_copy();
-
-        let mut image = thundr_image.i_internal.borrow_mut();
-        log::debug!(
-            "Updating image {:?} with dmabuf {:?}",
-            image.i_id.get_raw_id(),
-            dmabuf
-        );
-
-        // Update our image type. This may have changed since the last time
-        // update was called. I.e. if we updated this Thundr Image from a
-        // shared memory buffer, the current type may be ImagePrivate::MemImage
-        image.i_priv = ImagePrivate::Dmabuf(DmabufPrivate {
-            dp_mem_reqs: vk::MemoryRequirements::builder().build(),
-            dp_memtype_index: 0,
-        });
-
-        if let ImagePrivate::Dmabuf(ref mut dp) = &mut image.i_priv {
-            unsafe {
-                // Import the dmabuf
-                // -------------------------------------------------------
-                let (vkimage, view, vkimage_memory) = match self.create_dmabuf_image(&dmabuf, dp) {
-                    Ok((i, v, im)) => (i, v, im),
-                    Err(_e) => {
-                        log::debug!("Could not update dmabuf image: {:?}", _e);
-                        return;
-                    }
-                };
-
-                // Release the old frame's resources
-                //
-                // Free the old memory and replace it with the new one. Do this
-                // after in case the previous import failed.
-                self.free_memory(image.i_image_mem);
-                self.dev.destroy_image(image.i_image, None);
-                self.dev.destroy_image_view(image.i_image_view, None);
-
-                image.i_image = vkimage;
-                image.i_image_view = view;
-                image.i_image_mem = vkimage_memory;
-                self.update_image_vk_info(&*image);
-            }
-        } else {
-            panic!("The ImagePrivate dmabuf type should have been assigned");
-        }
-
-        self.update_common(&mut image, release);
-    }
-
-    /// Common path for updating a image with a new buffer
-    fn update_common(&mut self, image: &mut ImageInternal, release: Option<Box<dyn Drop>>) {
-        // the old release info will be implicitly dropped
-        // after it has been drawn and presented
-        let mut old_release = release;
-        // swap our new release info into dp
-        mem::swap(&mut image.i_release_info, &mut old_release);
-        if let Some(old) = old_release {
-            self.register_for_release(old);
-        }
     }
 
     /// Add a Cmd full of image barriers for all images that need it.
@@ -810,6 +680,7 @@ impl Renderer {
 
         for img_rc in images.iter() {
             let mut img = img_rc.i_internal.borrow_mut();
+            let image_vk = self.r_image_vk.get_mut(&img.i_id).unwrap();
 
             let src_layout = match img.i_general_layout {
                 true => vk::ImageLayout::GENERAL,
@@ -821,7 +692,7 @@ impl Renderer {
                 vk::ImageMemoryBarrier::builder()
                     .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
                     .dst_queue_family_index(self.graphics_family_index)
-                    .image(img.i_image)
+                    .image(image_vk.iv_image)
                     .old_layout(src_layout)
                     .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .src_access_mask(vk::AccessFlags::empty())
@@ -851,7 +722,7 @@ impl Renderer {
                 vk::ImageMemoryBarrier::builder()
                     .src_queue_family_index(self.graphics_family_index)
                     .dst_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
-                    .image(img.i_image)
+                    .image(image_vk.iv_image)
                     .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .new_layout(vk::ImageLayout::GENERAL)
                     .src_access_mask(vk::AccessFlags::SHADER_READ)

@@ -379,32 +379,6 @@ impl Thundr {
         rend.create_image_from_dmabuf(rend_mtx, dmabuf, release_info)
     }
 
-    pub fn update_image_from_bits(
-        &mut self,
-        image: &mut Image,
-        memimg: &MemImage,
-        damage: Option<&Damage>,
-        release_info: Option<Box<dyn Drop>>,
-    ) {
-        self.th_rend
-            .lock()
-            .unwrap()
-            .update_image_from_bits(image, memimg, damage, release_info)
-    }
-
-    // create_image_from_dmabuf
-    pub fn update_image_from_dmabuf(
-        &mut self,
-        image: &mut Image,
-        dmabuf: &Dmabuf,
-        release_info: Option<Box<dyn Drop>>,
-    ) {
-        self.th_rend
-            .lock()
-            .unwrap()
-            .update_image_from_dmabuf(image, dmabuf, release_info)
-    }
-
     /// This gets damage in image-coords.
     ///
     /// This is used for getting the total amount of damage that the image should be
