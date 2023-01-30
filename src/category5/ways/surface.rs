@@ -48,9 +48,12 @@ impl ws::Dispatch<wlsi::WlSurface, Arc<Mutex<Surface>>> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
-        data: &Arc<Mutex<Surface>>,
+        resource: ws::backend::ObjectId,
+        surf: &Arc<Mutex<Surface>>,
     ) {
+        surf.lock()
+            .unwrap()
+            .destroy(state.c_atmos.lock().unwrap().deref_mut());
     }
 }
 
