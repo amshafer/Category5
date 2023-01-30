@@ -2576,6 +2576,10 @@ impl Renderer {
                 .image_info(self.r_image_infos.get_data_slice().data())
                 .build(),
         ];
+        log::debug!(
+            "Raw image infos is {:#?}",
+            self.r_image_infos.get_data_slice().data()
+        );
 
         unsafe {
             self.dev.update_descriptor_sets(

@@ -226,7 +226,9 @@ impl<T: 'static> SliceContainer<T> {
     fn ensure_space_for_id(&mut self, index: usize) {
         // Kind of a pain here, we have to pass a reference to
         // the closure and have to deref it out of its dyn box first
-        self.v_vec.resize_with(index + 1, &*self.v_callback);
+        if index >= self.v_vec.len() {
+            self.v_vec.resize_with(index + 1, &*self.v_callback);
+        }
     }
 
     /// Get the slice of the backing array
