@@ -142,10 +142,18 @@ impl VKDeviceFeatures {
                 log::error!("This vulkan device does not support importing with drm modifiers")
             }
         }
-        let mut supports_incremental_present = false;
-        match contains_extensions(exts.as_slice(), &ret.vkc_incremental_present_exts) {
-            true => supports_incremental_present = true,
-            false => log::error!("This vulkan device does not support incremental presentation"),
+
+        let mut supports_incremental_present =
+            match contains_extensions(exts.as_slice(), &ret.vkc_incremental_present_exts) {
+                true => true,
+                false => {
+                    log::error!("This vulkan device does not support incremental presentation");
+                    false
+                }
+            };
+        // Force incremental presentation off if env var is defined
+        if std::env::var("THUNDR_NO_INCREMENTAL_PRESENT").is_ok() {
+            supports_incremental_present = false
         }
 
         let supports_aftermath =
