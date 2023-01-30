@@ -129,11 +129,6 @@ pub struct EventManager {
     em_display: ws::Display<Climate>,
     /// The wayland unix socket
     em_socket: ws::ListeningSocket,
-    em_dh: ws::DisplayHandle,
-    /// How much the mouse has moved in this frame
-    /// aggregates input pointer events
-    em_pointer_dx: f64,
-    em_pointer_dy: f64,
 }
 
 impl EventManager {
@@ -160,9 +155,6 @@ impl EventManager {
             em_display: display,
             em_socket: ws::ListeningSocket::bind_auto("wayland", 0..9)
                 .expect("Could not create wayland socket"),
-            em_dh: display_handle.clone(),
-            em_pointer_dx: 0.0,
-            em_pointer_dy: 0.0,
         });
 
         // Register our global interfaces that will be advertised to all clients
