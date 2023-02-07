@@ -53,6 +53,7 @@
 
 // Supported protocols
 pub mod compositor;
+mod data_devices;
 mod keyboard;
 pub mod linux_dmabuf;
 mod pointer;

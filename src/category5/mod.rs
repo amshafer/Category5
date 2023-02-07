@@ -21,7 +21,10 @@ use vkcomp::wm::*;
 use wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_v1 as zldv1;
 use wayland_protocols::xdg::shell::server::*;
 use ways::protocol::wl_drm::wl_drm;
-use ws::protocol::{wl_compositor as wlci, wl_output, wl_seat, wl_shell, wl_shm, wl_subcompositor};
+use ws::protocol::{
+    wl_compositor as wlci, wl_data_device_manager as wlddm, wl_output, wl_seat, wl_shell, wl_shm,
+    wl_subcompositor,
+};
 
 use std::ops::DerefMut;
 use std::os::unix::io::AsRawFd;
@@ -169,6 +172,7 @@ impl EventManager {
         display_handle.create_global::<Climate, wl_drm::WlDrm, ()>(2, ());
         display_handle.create_global::<Climate, wl_shell::WlShell, ()>(1, ());
         display_handle.create_global::<Climate, wl_shm::WlShm, ()>(1, ());
+        display_handle.create_global::<Climate, wlddm::WlDataDeviceManager, ()>(3, ());
 
         return evman;
     }
