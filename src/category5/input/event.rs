@@ -39,6 +39,10 @@ pub struct Click {
 /// Represents a scrolling motion in one of two directions
 #[derive(Debug)]
 pub struct Axis {
+    /// This axis event has a horizontal value
+    pub a_has_horiz: bool,
+    /// This axis event has a vertical value
+    pub a_has_vert: bool,
     /// horizontal motion
     pub a_hori_val: f64,
     /// vertical motion
@@ -46,7 +50,7 @@ pub struct Axis {
     /// The v120 libinput API value, if it was available
     /// This should only be set on AXIS_SOURCE_WHEEL input devices
     /// (horizontal, vertical)
-    pub a_v120_val: Option<(f64, f64)>,
+    pub a_v120_val: (f64, f64),
     /// The axis source.
     pub a_source: u32,
 }

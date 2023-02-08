@@ -49,7 +49,7 @@ use utils::{log, timing::*, WindowId};
 
 use input::event::keyboard::{KeyState, KeyboardEvent, KeyboardEventTrait};
 use input::event::pointer;
-use input::event::pointer::{ButtonState, PointerEvent};
+use input::event::pointer::{ButtonState, PointerEvent, PointerScrollEvent};
 use input::event::Event;
 use input::{Libinput, LibinputInterface};
 
@@ -173,15 +173,19 @@ impl HWInput {
 
     fn get_scroll_event(&self, ev: &dyn pointer::PointerScrollEvent) -> Axis {
         let mut ret = Axis {
+            a_has_horiz: false,
+            a_has_vert: false,
             a_hori_val: 0.0,
             a_vert_val: 0.0,
-            a_v120_val: None,
+            a_v120_val: (0.0, 0.0),
             a_source: 0,
         };
         if ev.has_axis(pointer::Axis::Horizontal) {
+            ret.a_has_horiz = true;
             ret.a_hori_val = ev.scroll_value(pointer::Axis::Horizontal);
         }
         if ev.has_axis(pointer::Axis::Vertical) {
+            ret.a_has_vert = true;
             ret.a_vert_val = ev.scroll_value(pointer::Axis::Vertical);
         }
 
@@ -220,10 +224,12 @@ impl HWInput {
 
                 // Mouse wheels will be handled with the higher resolution
                 // v120 API for discrete scrolling
-                ax.a_v120_val = Some((
-                    sw.scroll_value_v120(pointer::Axis::Horizontal),
-                    sw.scroll_value_v120(pointer::Axis::Vertical),
-                ));
+                if sw.has_axis(pointer::Axis::Horizontal) {
+                    ax.a_v120_val.0 = sw.scroll_value_v120(pointer::Axis::Horizontal);
+                }
+                if sw.has_axis(pointer::Axis::Vertical) {
+                    ax.a_v120_val.1 = sw.scroll_value_v120(pointer::Axis::Vertical);
+                }
 
                 return Some(InputEvent::axis(ax));
             }
@@ -348,20 +354,22 @@ impl Input {
         pointer: &wl_pointer::WlPointer,
         axis_type: wl_pointer::Axis,
         val: f64,
-        val_discrete: Option<f64>,
+        val_discrete: f64,
     ) {
         let time = get_current_millis();
         // deliver the axis events, one for each direction
         if val != 0.0 {
-            if let Some(discrete) = val_discrete {
-                if pointer.version() >= 8 {
-                    pointer.axis_value120(axis_type, discrete as i32);
-                } else if pointer.version() >= 5 {
-                    pointer.axis_discrete(axis_type, discrete as i32);
+            if val_discrete != 0.0 && pointer.version() >= 8 {
+                pointer.axis_value120(axis_type, val_discrete as i32);
+            } else {
+                if val_discrete != 0.0 && pointer.version() >= 5 {
+                    // Divide by 120 here to go from our v120 value to a discrete
+                    // -1/+1 value. We have to do this since libinput's axis_value_discrete
+                    // is deprecated
+                    pointer.axis_discrete(axis_type, val_discrete as i32 / 120);
                 }
+                pointer.axis(time, axis_type, val);
             }
-
-            pointer.axis(time, axis_type, val);
         } else {
             // If neither axis has a non-zero value, then we should
             // tell the application that the axis series has stopped. This
@@ -385,19 +393,6 @@ impl Input {
                 // Get the pointer
                 for si in seat.s_proxies.iter() {
                     for pointer in si.si_pointers.iter() {
-                        Self::send_axis(
-                            pointer,
-                            wl_pointer::Axis::VerticalScroll,
-                            a.a_vert_val,
-                            // convert our Option<tuple> to Option<f64>
-                            a.a_v120_val.map(|a| a.1),
-                        );
-                        Self::send_axis(
-                            pointer,
-                            wl_pointer::Axis::HorizontalScroll,
-                            a.a_hori_val,
-                            a.a_v120_val.map(|a| a.0),
-                        );
                         // Send the source of this input event. This will for now be either
                         // finger scrolling on a touchpad or scroll wheel scrolling. Firefox
                         // breaks scrolling without this, I think it wants it to decide if
@@ -405,6 +400,23 @@ impl Input {
                         if pointer.version() >= 5 {
                             pointer
                                 .axis_source(wl_pointer::AxisSource::try_from(a.a_source).unwrap());
+                        }
+                        if a.a_has_horiz {
+                            Self::send_axis(
+                                pointer,
+                                wl_pointer::Axis::HorizontalScroll,
+                                a.a_hori_val,
+                                a.a_v120_val.0,
+                            );
+                        }
+                        if a.a_has_vert {
+                            Self::send_axis(
+                                pointer,
+                                wl_pointer::Axis::VerticalScroll,
+                                a.a_vert_val,
+                                // convert our Option<tuple> to Option<f64>
+                                a.a_v120_val.1,
+                            );
                         }
                         Self::send_pointer_frame(pointer);
                         // Mark the atmosphere as changed so that it fires frame throttling
