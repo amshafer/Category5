@@ -6,7 +6,7 @@ use paste::paste;
 extern crate lluvia as ll;
 
 use crate::utils::{anyhow, Result};
-use crate::{Dakota, DakotaId, DakotaObjectType};
+use crate::{dom, Dakota, DakotaId, DakotaObjectType};
 
 // ------------------------------------------------
 // Now implement some getters/setters
@@ -40,3 +40,11 @@ macro_rules! define_element_property {
 // Define a rule for each entry in Dakota
 
 define_element_property!(object_type, node_types, DakotaObjectType);
+define_element_property!(resource, resources, dom::Resource);
+define_element_property!(offset, offsets, dom::RelativeOffset);
+define_element_property!(size, sizes, dom::RelativeSize);
+define_element_property!(text, texts, dom::Text);
+define_element_property!(content, contents, dom::Content);
+define_element_property!(bounds, bounds, dom::Edges);
+define_element_property!(children, children, Vec<DakotaId>);
+define_element_property!(dakota_dom, dom, dom::DakotaDOM);

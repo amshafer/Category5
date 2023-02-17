@@ -54,13 +54,9 @@ pub type DakotaId = ll::Entity;
 pub type ViewportId = ll::Entity;
 
 pub enum DakotaObjectType {
-    Text,
     Element,
-    Dakota,
-    Version,
-    ResourceMap,
-    Window,
-    Layout,
+    DakotaDOM,
+    Resource,
 }
 
 /// Only one of content or children may be defined,
@@ -317,6 +313,34 @@ impl<'a> Dakota<'a> {
             d_font_inst: inst,
             d_ood_counter: 30,
         })
+    }
+
+    /// Create a new toplevel Dakota DOM
+    fn create_dakota_dom(&mut self) -> Result<DakotaId> {
+        self.create_new_id_common(DakotaObjectType::DakotaDOM)
+    }
+
+    /// Create a new Dakota element
+    fn create_element(&mut self) -> Result<DakotaId> {
+        self.create_new_id_common(DakotaObjectType::Element)
+    }
+
+    /// Create a new Dakota resource
+    fn create_resource(&mut self) -> Result<DakotaId> {
+        self.create_new_id_common(DakotaObjectType::Resource)
+    }
+
+    /// Create a new Dakota Id
+    ///
+    /// The type of the new id must be specified. In Dakota, all objects are
+    /// represented by an Id, the type of which is specified during creation.
+    /// This type will assign the "role" of this id, and what data can be
+    /// attached to it.
+    fn create_new_id_common(&mut self, element_type: DakotaObjectType) -> Result<DakotaId> {
+        let id = self.d_ecs_inst.add_entity();
+
+        self.set_object_type(&id, element_type);
+        return Ok(id);
     }
 
     /// Reload all of the thundr images from their dakota resources
