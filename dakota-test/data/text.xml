@@ -34,20 +34,17 @@
      <content>
       <el>
        <resource>grey</resource>
-       <relativeOffset>
-        <x>0.15</x><y>0.15</y>
-       </relativeOffset>
-       <relativeSize>
-        <width>0.7</width>
-        <height>0.7</height>
-       </relativeSize>
+       <x><relative>0.15</relative></x>
+       <y><relative>0.15</relative></y>
+       <width><relative>0.7</relative></width>
+       <height><relative>0.7</relative></height>
        <el>
         <text>
          <p>
           Here is
           my
          </p>
-         <b>example</b>
+         <bold>example</bold>
          <p> text</p>
          <p>
           España, también denominado Reino de España,nota 1 es un país soberano

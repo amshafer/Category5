@@ -100,8 +100,12 @@ pub struct Dakota<'a> {
     // If you update the following you may have to edit the generated
     // getters/setters in generated.rs
     d_node_types: ll::Session<DakotaObjectType>,
+    /// The resource's thundr data
     d_resource_entries: ll::Session<ResMapEntry>,
-    d_resources: ll::Session<dom::Resource>,
+    /// The resource info configured by the user
+    d_resource_definitions: ll::Session<dom::Resource>,
+    /// The resource currently assigned to this element
+    d_resource: ll::Session<DakotaId>,
     d_offsets: ll::Session<dom::RelativeOffset>,
     d_sizes: ll::Session<dom::RelativeSize>,
     d_texts: ll::Session<dom::Text>,
@@ -267,7 +271,8 @@ impl<'a> Dakota<'a> {
         create_component_and_table!(layout_ecs, th::Surface, surface_table);
         create_component_and_table!(layout_ecs, DakotaObjectType, types_table);
         create_component_and_table!(layout_ecs, ResMapEntry, resource_map_table);
-        create_component_and_table!(layout_ecs, dom::Resource, resources_table);
+        create_component_and_table!(layout_ecs, dom::Resource, resource_definitions_table);
+        create_component_and_table!(layout_ecs, DakotaId, resources_table);
         create_component_and_table!(layout_ecs, dom::RelativeOffset, offsets_table);
         create_component_and_table!(layout_ecs, dom::RelativeSize, sizes_table);
         create_component_and_table!(layout_ecs, dom::Text, texts_table);
@@ -294,7 +299,8 @@ impl<'a> Dakota<'a> {
             d_layout_node_surfaces: surface_table,
             d_node_types: types_table,
             d_resource_entries: resource_map_table,
-            d_resources: resources_table,
+            d_resource_definitions: resource_definitions_table,
+            d_resource: resources_table,
             d_offsets: offsets_table,
             d_sizes: sizes_table,
             d_texts: texts_table,
@@ -364,7 +370,7 @@ impl<'a> Dakota<'a> {
             }
 
             let res = self
-                .d_resources
+                .d_resource_definitions
                 .get(res_id)
                 .ok_or(anyhow!("Could not get Resource"))?;
 
@@ -973,7 +979,7 @@ impl<'a> Dakota<'a> {
         log::verbose!(
             "{}    resource={:?}, glyph_id={:?}, num_children={}, is_viewport={}",
             spaces,
-            self.d_resources.get(id),
+            self.d_resource_definitions.get(id),
             node.l_glyph_id,
             node.l_children.len(),
             node.l_is_viewport,
