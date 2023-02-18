@@ -40,7 +40,8 @@ macro_rules! define_element_property {
 // Define a rule for each entry in Dakota
 
 define_element_property!(object_type, node_types, DakotaObjectType);
-define_element_property!(resource, resources, dom::Resource);
+define_element_property!(resource_definition, resource_definitions, dom::Resource);
+define_element_property!(resource, resources, DakotaId);
 define_element_property!(offset, offsets, dom::RelativeOffset);
 define_element_property!(size, sizes, dom::RelativeSize);
 define_element_property!(text, texts, dom::Text);

@@ -100,22 +100,32 @@ pub struct Dakota<'a> {
     // If you update the following you may have to edit the generated
     // getters/setters in generated.rs
     d_node_types: ll::Session<DakotaObjectType>,
+
+    // Resource components
+    // --------------------------------------------
     /// The resource's thundr data
     d_resource_entries: ll::Session<ResMapEntry>,
     /// The resource info configured by the user
     d_resource_definitions: ll::Session<dom::Resource>,
+
+    // Element components
+    // --------------------------------------------
     /// The resource currently assigned to this element
-    d_resource: ll::Session<DakotaId>,
+    d_resources: ll::Session<DakotaId>,
     d_offsets: ll::Session<dom::RelativeOffset>,
     d_sizes: ll::Session<dom::RelativeSize>,
     d_texts: ll::Session<dom::Text>,
     d_contents: ll::Session<dom::Content>,
     d_bounds: ll::Session<dom::Edges>,
     d_children: ll::Session<Vec<DakotaId>>,
-    d_dom: ll::Session<dom::DakotaDOM>,
     /// This is the corresponding thundr surface for each LayoutNode. Also
     /// indexed by DakotaId.
     d_layout_node_surfaces: ll::Session<th::Surface>,
+
+    // DOM components
+    // --------------------------------------------
+    d_dom: ll::Session<dom::DakotaDOM>,
+
     d_viewport_ecs_inst: ll::Instance,
     d_viewport_nodes: ll::Session<ViewportNode>,
     /// This is the root node in the scene tree
@@ -300,7 +310,7 @@ impl<'a> Dakota<'a> {
             d_node_types: types_table,
             d_resource_entries: resource_map_table,
             d_resource_definitions: resource_definitions_table,
-            d_resource: resources_table,
+            d_resources: resources_table,
             d_offsets: offsets_table,
             d_sizes: sizes_table,
             d_texts: texts_table,
@@ -364,6 +374,7 @@ impl<'a> Dakota<'a> {
         // Load our resources
         //
         // These get tracked in a resource map so they can be looked up during element creation
+        // TODO: don't use this
         for res_id in dom.resource_map.resources.iter() {
             if self.d_resource_entries.get(res_id).is_some() {
                 continue;
@@ -1038,7 +1049,7 @@ impl<'a> Dakota<'a> {
                 self.d_plat
                     .set_output_params(&dom.window, self.d_window_dims.unwrap())?;
             }
-            dom.window.root_element.clone()
+            dom.root_element.clone()
         };
 
         // reset our thundr surface list. If the set of resources has

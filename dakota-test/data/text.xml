@@ -23,8 +23,8 @@
  <window>
   <id>0</id>
   <title>Dakota Test</title>
-  <width>1024</width>
-  <height>1024</height>
+  <window_width>1024</window_width>
+  <window_height>1024</window_height>
  </window>
  <layout>
   <el>

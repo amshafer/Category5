@@ -34,13 +34,13 @@
 		<title>Dakota Test</title>
 		<width>512</width>
 		<height>512</height>
-		<windowEvents>
+		<window_events>
 			<redrawComplete></redrawComplete>
 			<resize>
 				<group>"Redraw Handler"</group>
 				<arg>"Hello event handler!"</arg>
 			</resize>
-		</windowEvents>
+		</window_events>
 	</window>
 	<layout>
 		<el>

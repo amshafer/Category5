@@ -104,21 +104,26 @@ pub struct Constant {
     val: u32,
 }
 
+impl Constant {
+    pub fn new(val: u32) -> Self {
+        Self { val: val }
+    }
+}
+
 /// Represents a possibly relative value. This will
 /// either be a f32 scaling value or a constant size
 /// u32.
 #[derive(Debug, PartialEq, PartialOrd, Copy, Clone)]
-#[allow(non_camel_case_types)]
 pub enum Value {
-    relative(Relative),
-    constant(Constant),
+    Relative(Relative),
+    Constant(Constant),
 }
 
 impl Value {
     pub fn get_value(&self, avail_space: f32) -> Result<u32> {
         Ok(match self {
-            Self::relative(r) => r.scale(avail_space)?,
-            Self::constant(c) => c.val,
+            Self::Relative(r) => r.scale(avail_space)?,
+            Self::Constant(c) => c.val,
         })
     }
 }
@@ -226,7 +231,7 @@ impl Default for Edges {
 /// This node is really just a instance of an event handler.
 /// It describes what handler to call and a set of arguments
 /// to pass.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Event {
     pub groups: Vec<String>,
     pub id: Option<String>,
@@ -237,7 +242,7 @@ pub struct Event {
 /// taking places on Elements may have Element granularity, but this
 /// set of events handles global changes like window resizing, redraw,
 /// fullscreen, etc.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct WindowEvents {
     pub resize: Option<Event>,
     pub redraw_complete: Option<Event>,
@@ -277,7 +282,6 @@ pub struct Window {
     pub width: u32,
     pub height: u32,
     pub events: WindowEvents,
-    pub root_element: DakotaId,
 }
 
 #[derive(Debug)]
@@ -285,6 +289,7 @@ pub struct DakotaDOM {
     pub version: String,
     pub resource_map: ResourceMap,
     pub window: Window,
+    pub root_element: DakotaId,
 }
 
 impl<'a> Dakota<'a> {

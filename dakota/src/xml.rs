@@ -13,7 +13,9 @@ use crate::dom;
 use crate::utils::anyhow;
 use crate::{Context, Dakota, DakotaId, Result};
 
+use std::collections::HashMap;
 use std::io::BufRead;
+use std::rc::Rc;
 use utils::log;
 
 /// A list of element names
@@ -22,25 +24,32 @@ use utils::log;
 /// without having to do expensive string ops
 #[derive(Debug)]
 enum Element {
-    El,
+    El {
+        x: Option<dom::Value>,
+        y: Option<dom::Value>,
+        width: Option<dom::Value>,
+        height: Option<dom::Value>,
+    },
     Text(Vec<dom::TextItem>),
     Window {
         title: Option<String>,
         width: Option<u32>,
         height: Option<u32>,
         events: dom::WindowEvents,
-        root_element: Option<DakotaId>,
     },
     Dakota {
         version: Option<String>,
         window: Option<dom::Window>,
+        root_element: Option<DakotaId>,
     },
     Version(Option<String>),
     Name(Option<String>),
     Title(Option<String>),
-    Width(Option<u32>),
-    Height(Option<u32>),
-    Layout,
+    Width(Option<dom::Value>),
+    Height(Option<dom::Value>),
+    WindowWidth(Option<u32>),
+    WindowHeight(Option<u32>),
+    Layout(Option<DakotaId>),
     Color {
         r: Option<f32>,
         g: Option<f32>,
@@ -59,7 +68,7 @@ enum Element {
     RelPath(Option<String>),
     Image(Option<dom::Format>, Option<dom::Data>),
     Format(Option<dom::Format>),
-    Data(Option<dom::Data>),
+    Data(dom::Data),
     ResourceMap,
     Resource(Option<String>),
     ResourceDefinition {
@@ -81,11 +90,7 @@ enum Element {
     Group(Option<String>),
     Id(Option<String>),
     Arg(Option<String>),
-    WindowEvents {
-        resize: Option<dom::Event>,
-        redraw_complete: Option<dom::Event>,
-        closed: Option<dom::Event>,
-    },
+    WindowEvents(dom::WindowEvents),
     Resize(Option<dom::Event>),
     RedrawComplete(Option<dom::Event>),
     Closed(Option<dom::Event>),
@@ -94,18 +99,23 @@ enum Element {
 impl Element {
     fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let ret = match bytes {
-            b"el" => Self::El,
+            b"el" => Self::El {
+                x: None,
+                y: None,
+                width: None,
+                height: None,
+            },
             b"text" => Self::Text(Vec::new()),
             b"window" => Self::Window {
                 title: None,
                 width: None,
                 height: None,
                 events: dom::WindowEvents::default(),
-                root_element: None,
             },
             b"dakota" => Self::Dakota {
                 version: None,
                 window: None,
+                root_element: None,
             },
             b"version" => Self::Version(None),
             b"name" => Self::Name(None),
@@ -116,7 +126,7 @@ impl Element {
             b"constant" => Self::Constant(None),
             b"x" => Self::X(None),
             b"y" => Self::Y(None),
-            b"layout" => Self::Layout,
+            b"layout" => Self::Layout(None),
             b"color" => Self::Color {
                 r: None,
                 g: None,
@@ -131,7 +141,10 @@ impl Element {
             b"relPath" => Self::RelPath(None),
             b"image" => Self::Image(None, None),
             b"format" => Self::Format(None),
-            b"data" => Self::Data(None),
+            b"data" => Self::Data(dom::Data {
+                rel_path: None,
+                abs_path: None,
+            }),
             b"resourceMap" => Self::ResourceMap,
             b"resource" => Self::Resource(None),
             b"define_resource" => Self::ResourceDefinition {
@@ -153,11 +166,7 @@ impl Element {
             b"group" => Self::Group(None),
             b"id" => Self::Id(None),
             b"arg" => Self::Arg(None),
-            b"events" => Self::WindowEvents {
-                resize: None,
-                redraw_complete: None,
-                closed: None,
-            },
+            b"window_events" => Self::WindowEvents(dom::WindowEvents::default()),
             b"resize" => Self::Resize(None),
             b"redraw_complete" => Self::RedrawComplete(None),
             b"closed" => Self::Closed(None),
@@ -182,14 +191,59 @@ impl Element {
                 color: _,
                 hints: _,
             } => true,
-            Self::ResourceMap | Self::El => true,
+            Self::ResourceMap
+            | Self::El {
+                x: _,
+                y: _,
+                width: _,
+                height: _,
+            } => true,
             Self::Dakota {
                 version: _,
                 window: _,
+                root_element: _,
             } => true,
             _ => false,
         }
     }
+
+    fn convert_to_dom_value(&self) -> Result<dom::Value> {
+        match self {
+            Element::Relative(float) => Ok(dom::Value::Relative(dom::Relative::new(
+                float.ok_or(anyhow!("No data provided to <relative> tag"))?,
+            ))),
+            Element::Constant(int) => Ok(dom::Value::Constant(dom::Constant::new(
+                int.ok_or(anyhow!("No data provided to <constant> tag"))?,
+            ))),
+            e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+        }
+    }
+
+    fn get_dom_event(&self) -> Result<dom::Event> {
+        match self {
+            Element::Event { groups, id, args } => Ok(dom::Event {
+                groups: groups.clone(),
+                id: id.clone(),
+                args: Rc::new(args.clone()),
+            }),
+            e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+        }
+    }
+}
+
+/// Data for this round of parsing
+///
+/// This will be freed after the XML stream is processed
+struct ParseData {
+    /// This maps the string names for resource found in the
+    /// XML document to DakotaIds that represent those resources.
+    ///
+    /// We need this since the resource section may be processed
+    /// after the elements for some reason. We need to have a way
+    /// to translate from strings to ids so that we can set up
+    /// all the elements to reference resources without holding
+    /// a giant array of resources somewhere.
+    name_to_id_map: HashMap<String, DakotaId>,
 }
 
 impl<'a> Dakota<'a> {
@@ -217,6 +271,16 @@ impl<'a> Dakota<'a> {
             .context("Failed to parse XML dakota string")
     }
 
+    fn get_id_for_name(&mut self, parse: &mut ParseData, name: &str) -> DakotaId {
+        if !parse.name_to_id_map.contains_key(name) {
+            parse
+                .name_to_id_map
+                .insert(name.to_string(), self.d_ecs_inst.add_entity());
+        }
+
+        parse.name_to_id_map.get(name).unwrap().clone()
+    }
+
     /// We need to check that all required fields were specified in the
     /// node we are finishing, otherwise we need to throw a parsing error.
     ///
@@ -228,15 +292,35 @@ impl<'a> Dakota<'a> {
     /// such as adding a child id to our children list.
     fn add_child(
         &mut self,
+        parse: &mut ParseData,
         id: &DakotaId,
-        node: &Element,
+        node: &mut Element,
         old_id: &DakotaId,
         old_node: &Element,
     ) -> Result<()> {
         match node {
-            Element::El => match old_node {
-                Element::Resource(name) => self.d_resource.set(id, name),
-                Element::El => {
+            // Element
+            // -------------------------------------------------------
+            Element::El {
+                x,
+                y,
+                width,
+                height,
+            } => match old_node {
+                Element::Resource(name) => {
+                    let resource_id = self.get_id_for_name(
+                        parse,
+                        name.as_ref()
+                            .ok_or(anyhow!("Element was not assigned a resource"))?,
+                    );
+                    self.d_resources.set(id, resource_id)
+                }
+                Element::El {
+                    x: _,
+                    y: _,
+                    width: _,
+                    height: _,
+                } => {
                     // Add old_id as a child element
                     if self.d_children.get_mut(id).is_none() {
                         self.d_children.set(id, Vec::new());
@@ -244,39 +328,64 @@ impl<'a> Dakota<'a> {
 
                     self.d_children.get_mut(id).unwrap().push(old_id.clone());
                 }
-                e => return Err(anyhow!("Unexpected child element{:?}", e)),
+                Element::X(val) => *x = *val,
+                Element::Y(val) => *y = *val,
+                Element::Width(val) => *width = *val,
+                Element::Height(val) => *height = *val,
+                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
             },
-            Element::Text(data) => {}
+            // -------------------------------------------------------
             Element::Window {
                 title,
                 width,
                 height,
                 events,
+            } => match old_node {
+                Element::Title(data) => *title = data.clone(),
+                Element::WindowWidth(data) => *width = *data,
+                Element::WindowHeight(data) => *height = *data,
+                Element::WindowEvents(data) => *events = data.clone(),
+                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+            },
+            // -------------------------------------------------------
+            Element::Dakota {
+                version,
+                window,
                 root_element,
-            } => {}
-            Element::Dakota { version, window } => {}
-            Element::Version(data) => {}
-            Element::Name(data) => {}
-            Element::Title(data) => {}
-            Element::Width(data) => {}
-            Element::Height(data) => {}
-            Element::Layout => {}
+            } => match old_node {
+                Element::Version(data) => *version = data.clone(),
+                Element::Window {
+                    title,
+                    width,
+                    height,
+                    events,
+                } => {
+                    *window = Some(dom::Window {
+                        title: title
+                            .as_ref()
+                            .ok_or(anyhow!("Window does not contain title field"))?
+                            .clone(),
+                        width: width
+                            .ok_or(anyhow!("Window does not contain window_width field"))?,
+                        height: height
+                            .ok_or(anyhow!("Window does not contain window_height field"))?,
+                        events: events.clone(),
+                    })
+                }
+                Element::Layout(data) => *root_element = *data,
+                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+            },
+            // -------------------------------------------------------
+            Element::Text(data) => {}
+            Element::Width(data) | Element::Height(data) => {
+                *data = Some(old_node.convert_to_dom_value()?)
+            }
+            Element::Layout(data) => {}
             Element::Color { r, g, b, a } => {}
-            Element::X(data) => {}
-            Element::Y(data) => {}
-            Element::Relative(data) => {}
-            Element::Constant(data) => {}
-            Element::R(data) => {}
-            Element::G(data) => {}
-            Element::B(data) => {}
-            Element::A(data) => {}
-            Element::AbsPath(data) => {}
-            Element::RelPath(data) => {}
             Element::Image(format, data) => {}
             Element::Format(data) => {}
             Element::Data(data) => {}
             Element::ResourceMap => {}
-            Element::Resource(data) => {}
             Element::ResourceDefinition {
                 name,
                 image,
@@ -285,21 +394,20 @@ impl<'a> Dakota<'a> {
             } => {}
             Element::Size(width, height) => {}
             Element::Offset(x, y) => {}
-            Element::P(data) => {}
-            Element::Bold(data) => {}
             Element::Content(data) => {}
             Element::Event { groups, id, args } => {}
-            Element::Group(data) => {}
-            Element::Id(data) => {}
-            Element::Arg(data) => {}
-            Element::WindowEvents {
-                resize,
-                redraw_complete,
-                closed,
-            } => {}
+            Element::WindowEvents(events) => {}
             Element::Resize(data) => {}
             Element::RedrawComplete(data) => {}
             Element::Closed(data) => {}
+            _ => {
+                // If this was hit we have a parsing issue. The XML stream specified
+                // data in an element type that does not have any data (such as ResourceMap)
+                return Err(anyhow!(
+                    "Element type {:?} does not expect child elements",
+                    node
+                ));
+            }
         }
 
         Ok(())
@@ -336,14 +444,14 @@ impl<'a> Dakota<'a> {
                     | Element::A(data)
                     | Element::Relative(data) => *data = Some(text.parse::<f32>()?),
                     // unsigned int fields
-                    Element::Width(data) | Element::Height(data) | Element::Constant(data) => {
-                        *data = Some(text.parse::<u32>()?)
-                    }
+                    Element::Constant(data)
+                    | Element::WindowWidth(data)
+                    | Element::WindowHeight(data) => *data = Some(text.parse::<u32>()?),
                     _ => {
                         // If this was hit we have a parsing issue. The XML stream specified
                         // data in an element type that does not have any data (such as ResourceMap)
                         return Err(anyhow!(
-                            "Element type {:?} does not expect text present",
+                            "Element type {:?} does not expect text inside its XML tag",
                             node
                         ));
                     }
@@ -365,6 +473,10 @@ impl<'a> Dakota<'a> {
     /// This initializes our elements to be later processed into layout nodes.
     fn parse_xml<R: BufRead>(&mut self, reader: &mut Reader<R>) -> Result<DakotaId> {
         let mut buf = Vec::new();
+        // Our parsing data
+        let mut parse = ParseData {
+            name_to_id_map: HashMap::new(),
+        };
 
         // The DakotaId we are currently populating
         let mut id = None;
@@ -413,8 +525,9 @@ impl<'a> Dakota<'a> {
                     // Validate old_node and add (old_id, old_node) as children of (id, node)
                     // We can expect id and node to be valid here since we just checked it
                     self.add_child(
+                        &mut parse,
                         id.as_ref().unwrap(),
-                        node.as_ref().unwrap(),
+                        node.as_mut().unwrap(),
                         old_id.as_ref().unwrap(),
                         old_node.as_ref().unwrap(),
                     )
