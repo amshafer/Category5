@@ -76,9 +76,10 @@ enum Element {
         name: Option<String>,
         image: Option<dom::Image>,
         color: Option<dom::Color>,
-        #[allow(dead_code)]
         hints: Option<dom::Hints>,
     },
+    Hints(dom::Hints),
+    Static(bool),
     Size(Option<dom::Value>, Option<dom::Value>),
     Offset(Option<dom::Value>, Option<dom::Value>),
     P(Option<String>),
@@ -160,6 +161,8 @@ impl Element {
                 color: None,
                 hints: None,
             },
+            b"hints" => Self::Hints(dom::Hints::default()),
+            b"static" => Self::Static(false),
             b"size" => Self::Size(None, None),
             b"p" => Self::P(None),
             b"bold" => Self::Bold(None),
@@ -279,16 +282,23 @@ impl<'a> Dakota<'a> {
         }
     }
 
-    fn get_id_for_name(&mut self, parse: &mut ParseData, name: &str) -> DakotaId {
+    /// Look up this resource's DakotaId in our name -> id mapping
+    ///
+    /// This is used to get an id for a resource even if it has not yet
+    /// been created
+    fn get_id_for_name(&mut self, parse: &mut ParseData, name: &str) -> Result<DakotaId> {
         if !parse.name_to_id_map.contains_key(name) {
-            parse
-                .name_to_id_map
-                .insert(name.to_string(), self.d_ecs_inst.add_entity());
+            parse.name_to_id_map.insert(
+                name.to_string(),
+                self.create_resource()
+                    .context("Creating DakotaId for Resource Definition")?,
+            );
         }
 
-        parse.name_to_id_map.get(name).unwrap().clone()
+        Ok(parse.name_to_id_map.get(name).unwrap().clone())
     }
 
+    /// Helper function for turning a string into a DOM object
     fn get_text_run(&self, s: &Option<String>) -> Result<dom::TextRun> {
         Ok(dom::TextRun {
             value: s
@@ -326,11 +336,13 @@ impl<'a> Dakota<'a> {
                 height,
             } => match old_node {
                 Element::Resource(name) => {
-                    let resource_id = self.get_id_for_name(
-                        parse,
-                        name.as_ref()
-                            .ok_or(anyhow!("Element was not assigned a resource"))?,
-                    );
+                    let resource_id = self
+                        .get_id_for_name(
+                            parse,
+                            name.as_ref()
+                                .ok_or(anyhow!("Element was not assigned a resource"))?,
+                        )
+                        .context("Getting resource reference for element")?;
                     self.set_resource(id, resource_id)
                 }
                 Element::El {
@@ -467,21 +479,30 @@ impl<'a> Dakota<'a> {
                     name,
                     image,
                     color,
-                    hints: _,
+                    hints,
                 } => {
+                    // Look up this resource's id
+                    let resource_id = self
+                        .get_id_for_name(
+                            parse,
+                            name.as_ref()
+                                .ok_or(anyhow!("Resource definition does not have a name"))?,
+                        )
+                        .context("Getting resource id for resource definition")?;
+
                     self.set_resource_definition(
-                        &old_id,
+                        &resource_id,
                         dom::Resource {
                             name: name
                                 .clone()
                                 .ok_or(anyhow!("Name field not specified in <define_resource>"))?,
                             image: image.clone(),
                             color: color.clone(),
-                            hints: None,
+                            hints: hints.clone(),
                         },
                     );
 
-                    map.resources.push(old_id.clone());
+                    map.resources.push(resource_id);
                 }
                 e => return Err(anyhow!("Unexpected child element: {:?}", e)),
             },
@@ -490,7 +511,7 @@ impl<'a> Dakota<'a> {
                 image,
                 color,
                 // TODO: fill this in
-                hints: _,
+                hints,
             } => match old_node {
                 Element::Name(n) => *name = n.clone(),
                 Element::Image(format, data) => {
@@ -511,6 +532,11 @@ impl<'a> Dakota<'a> {
                         a: a.clone().ok_or(anyhow!("Color value R not specified"))?,
                     })
                 }
+                Element::Hints(data) => *hints = Some(data.clone()),
+                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+            },
+            Element::Hints(data) => match old_node {
+                Element::Static(val) => data.constant = *val,
                 e => return Err(anyhow!("Unexpected child element: {:?}", e)),
             },
             // -------------------------------------------------------
@@ -599,11 +625,28 @@ impl<'a> Dakota<'a> {
                     | Element::G(data)
                     | Element::B(data)
                     | Element::A(data)
-                    | Element::Relative(data) => *data = Some(text.parse::<f32>()?),
+                    | Element::Relative(data) => {
+                        *data = Some(
+                            text.parse::<f32>()
+                                .context("Could not parse float value for text in element")?,
+                        )
+                    }
                     // unsigned int fields
                     Element::Constant(data)
                     | Element::WindowWidth(data)
-                    | Element::WindowHeight(data) => *data = Some(text.parse::<u32>()?),
+                    | Element::WindowHeight(data) => {
+                        *data =
+                            Some(text.parse::<u32>().context(
+                                "Could not parse unsigned int value for text in element",
+                            )?)
+                    }
+                    Element::Static(data) => {
+                        *data = match text.as_str() {
+                            "true" => true,
+                            "false" => false,
+                            fmt => return Err(anyhow!("Unknown resource hint {:?}", fmt)),
+                        }
+                    }
                     Element::Format(data) => {
                         *data = match text.as_str() {
                             "ARGB8888" => Some(dom::Format::ARGB8888),

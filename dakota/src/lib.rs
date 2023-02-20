@@ -896,36 +896,38 @@ impl<'a> Dakota<'a> {
             // Handle binding images
             // We need to get the resource's content from our resource map, get
             // the thundr image for it, and bind it to our new surface.
-            if let Some(rme) = self.d_resource_entries.get(node) {
-                // Assert that only one content type is set
-                let mut content_num = 0;
-                if rme.rme_image.is_some() {
-                    content_num += 1;
-                }
-                if rme.rme_color.is_some() {
-                    content_num += 1;
-                }
-                assert!(content_num == 1);
+            if let Some(resource_id) = self.d_resources.get(node) {
+                if let Some(rme) = self.d_resource_entries.get(&resource_id) {
+                    // Assert that only one content type is set
+                    let mut content_num = 0;
+                    if rme.rme_image.is_some() {
+                        content_num += 1;
+                    }
+                    if rme.rme_color.is_some() {
+                        content_num += 1;
+                    }
+                    assert!(content_num == 1);
 
-                if let Some(image) = rme.rme_image.as_ref() {
-                    self.d_thund.bind_image(&mut surf, image.clone());
-                }
-                if let Some(color) = rme.rme_color.as_ref() {
-                    surf.set_color((color.r, color.g, color.b, color.a));
-                }
-            } else if let Some(glyph_id) = layout.l_glyph_id {
-                // If this path is hit, then this layout node is really a glyph in a
-                // larger block of text. It has been created as a child, and isn't
-                // a real element. We ask the font code to give us a surface for
-                // it that we can display.
-                self.d_font_inst.get_thundr_surf_for_glyph(
-                    &mut self.d_thund,
-                    &mut surf,
-                    glyph_id,
-                    layout.l_offset,
-                );
+                    if let Some(image) = rme.rme_image.as_ref() {
+                        self.d_thund.bind_image(&mut surf, image.clone());
+                    }
+                    if let Some(color) = rme.rme_color.as_ref() {
+                        surf.set_color((color.r, color.g, color.b, color.a));
+                    }
+                } else if let Some(glyph_id) = layout.l_glyph_id {
+                    // If this path is hit, then this layout node is really a glyph in a
+                    // larger block of text. It has been created as a child, and isn't
+                    // a real element. We ask the font code to give us a surface for
+                    // it that we can display.
+                    self.d_font_inst.get_thundr_surf_for_glyph(
+                        &mut self.d_thund,
+                        &mut surf,
+                        glyph_id,
+                        layout.l_offset,
+                    );
 
-                return Ok(surf);
+                    return Ok(surf);
+                }
             }
 
             surf

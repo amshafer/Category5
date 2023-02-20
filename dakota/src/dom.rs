@@ -19,7 +19,7 @@ pub struct Image {
     pub data: Data,
 }
 
-#[derive(Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct Hints {
     pub constant: bool,
 }

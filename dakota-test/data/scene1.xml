@@ -1,7 +1,7 @@
 <dakota>
  <version>0.0.0.1</version>
  <resourceMap>
-  <resource>
+  <define_resource>
    <name>samson</name>
    <image>
     <format>ARGB8888</format>
@@ -10,15 +10,14 @@
     </data>
    </image>
    <hints>
-    <constant>true</constant>
+    <static>true</static>
    </hints>
-  </resource>
+  </define_resource>
  </resourceMap>
  <window>
-  <id>0</id>
   <title>Dakota Test</title>
-  <width>512</width>
-  <height>512</height>
+  <window_width>512</window_width>
+  <window_height>512</window_height>
  </window>
  <layout>
   <el>
