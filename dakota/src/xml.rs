@@ -439,7 +439,7 @@ impl<'a> Dakota<'a> {
             },
             // -------------------------------------------------------
             Element::Text(data) => match old_node {
-                Element::P(s) => data.push(dom::TextItem::b(self.get_text_run(s)?)),
+                Element::P(s) => data.push(dom::TextItem::p(self.get_text_run(s)?)),
                 Element::Bold(s) => data.push(dom::TextItem::b(self.get_text_run(s)?)),
                 e => return Err(anyhow!("Unexpected child element: {:?}", e)),
             },

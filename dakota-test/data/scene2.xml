@@ -1,7 +1,7 @@
 <dakota>
  <version>0.0.0.1</version>
  <resourceMap>
-  <resource>
+  <define_resource>
    <name>cursor</name>
    <image>
     <format>ARGB8888</format>
@@ -10,10 +10,10 @@
     </data>
    </image>
    <hints>
-    <constant>true</constant>
+    <static>true</static>
    </hints>
-  </resource>
-  <resource>
+  </define_resource>
+  <define_resource>
    <name>samson</name>
    <image>
     <format>ARGB8888</format>
@@ -21,8 +21,8 @@
      <relPath>images/brock.png</relPath>
     </data>
    </image>
-  </resource>
-  <resource>
+  </define_resource>
+  <define_resource>
    <name>blue</name>
    <color>
     <r>0.05</r>
@@ -30,47 +30,46 @@
     <b>0.95</b>
     <a>1</a>
    </color>
-  </resource>
+  </define_resource>
  </resourceMap>
  <window>
-  <id>0</id>
   <title>Dakota Test</title>
-  <width>512</width>
-  <height>512</height>
+  <window_width>512</window_width>
+  <window_height>512</window_height>
  </window>
  <layout>
   <el>
    <el>
     <resource>samson</resource>
     <offset>
-     <x>256</x>
-     <y>256</y>
+     <x><constant>256</constant></x>
+     <y><constant>256</constant></y>
     </offset>
     <size>
-     <width>128</width>
-     <height>128</height>
+     <width><constant>128</constant></width>
+     <height><constant>128</constant></height>
     </size>
    </el>
    <el>
     <resource>blue</resource>
     <offset>
-     <x>64</x>
-     <y>64</y>
+     <x><constant>64</constant></x>
+     <y><constant>64</constant></y>
     </offset>
     <size>
-     <width>128</width>
-     <height>128</height>
+     <width><constant>128</constant></width>
+     <height><constant>128</constant></height>
     </size>
    </el>
    <el>
     <resource>cursor</resource>
     <offset>
-     <x>32</x>
-     <y>64</y>
+     <x><constant>32</constant></x>
+     <y><constant>64</constant></y>
     </offset>
     <size>
-     <width>128</width>
-     <height>128</height>
+     <width><constant>128</constant></width>
+     <height><constant>128</constant></height>
     </size>
    </el>
   </el>

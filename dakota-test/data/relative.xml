@@ -1,68 +1,69 @@
 <dakota>
  <version>0.0.0.1</version>
- <resourceMap>
-  <resource>
-   <name>red</name>
-   <color>
-    <r>0.75</r>
-    <g>0.1</g>
-    <b>0.1</b>
-    <a>1</a>
-   </color>
-  </resource>
-  <resource>
-   <name>green</name>
-   <color>
-    <r>0.25</r>
-    <g>0.80</g>
-    <b>0.25</b>
-    <a>1</a>
-   </color>
-  </resource>
-  <resource>
-   <name>blue</name>
-   <color>
-    <r>0.05</r>
-    <g>0.35</g>
-    <b>0.95</b>
-    <a>1</a>
-   </color>
-  </resource>
- </resourceMap>
- <window>
-  <id>0</id>
-  <title>Dakota Test</title>
-  <width>512</width>
-  <height>512</height>
+	<resourceMap>
+		<define_resource>
+			<name>red</name>
+			<color>
+				<r>0.75</r>
+				<g>0.1</g>
+				<b>0.1</b>
+				<a>1</a>
+			</color>
+		</define_resource>
+		<define_resource>
+			<name>green</name>
+			<color>
+				<r>0.25</r>
+				<g>0.80</g>
+				<b>0.25</b>
+				<a>1</a>
+			</color>
+		</define_resource>
+		<define_resource>
+			<name>blue</name>
+			<color>
+				<r>0.05</r>
+				<g>0.35</g>
+				<b>0.95</b>
+				<a>1</a>
+			</color>
+		</define_resource>
+	</resourceMap>
+	<window>
+		<title>Dakota Test</title>
+		<window_width>512</window_width>
+		<window_height>512</window_height>
  </window>
  <layout>
   <el>
    <el>
     <resource>red</resource>
-    <relativeOffset>
-     <x>0.65</x><y>0.5</y>
-    </relativeOffset>
-    <relativeSize>
-     <width>0.25</width>
-     <height>0.18</height>
-    </relativeSize>
+				<offset>
+     <x><relative>0.65</relative></x>
+     <y><relative>0.5</relative></y>
+				</offset>
+				<size>
+					<width><relative>0.25</relative></width>
+					<height><relative>0.18</relative></height>
+				</size>
    </el>
    <el>
     <resource>blue</resource>
-    <size>
-     <width>256</width>
-     <height>256</height>
-    </size>
+				<size>
+					<width><constant>256</constant></width>
+					<height><constant>256</constant></height>
+				</size>
    </el>
    <el>
     <resource>green</resource>
-    <offset>
-     <x>160</x><y>16</y>
-    </offset>
-    <size>
-     <width>64</width>
-     <height>64</height>
-    </size>
+				<offset>
+     <x><constant>160</constant></x>
+     <y><constant>16</constant></y>
+				</offset>
+				<size>
+					<width><constant>64</constant></width>
+					<height><constant>64</constant></height>
+				</size>
    </el>
   </el>
  </layout>

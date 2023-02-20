@@ -22,10 +22,10 @@ macro_rules! define_element_property {
         paste! {
             impl<'a> Dakota<'a> {
                 // Use the paste crate to append get_ to the front of our name
-                pub fn [<get_ $name>](&self, el: &DakotaId) -> Option<ll::TableRef<$val>> {
+                pub fn [<get_ $name>](&self, el: &DakotaId) -> Option<ll::TableRef<$val, ll::VecContainer<$val>>> {
                     self.[<d_ $sesh>].get(el)
                 }
-                pub fn [<get_mut $name>](&mut self, el: &DakotaId) -> Option<ll::TableRefMut<$val>> {
+                pub fn [<get_mut_ $name>](&mut self, el: &DakotaId) -> Option<ll::TableRefMut<$val, ll::VecContainer<$val>>> {
                     self.[<d_ $sesh>].get_mut(el)
                 }
                 pub fn [<set_ $name>](&mut self, el: &DakotaId, data: $val) {

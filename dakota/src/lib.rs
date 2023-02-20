@@ -650,6 +650,8 @@ impl<'a> Dakota<'a> {
 
                             layouts.take(&ch.node);
                             layouts.set(&ch.node, child_size);
+                            // What we have done here is create a "fake" element (fake since
+                            // the user didn't specify it) that represents a glyph.
                             node.add_child(ch.node.clone());
                         },
                     );
@@ -914,20 +916,20 @@ impl<'a> Dakota<'a> {
                     if let Some(color) = rme.rme_color.as_ref() {
                         surf.set_color((color.r, color.g, color.b, color.a));
                     }
-                } else if let Some(glyph_id) = layout.l_glyph_id {
-                    // If this path is hit, then this layout node is really a glyph in a
-                    // larger block of text. It has been created as a child, and isn't
-                    // a real element. We ask the font code to give us a surface for
-                    // it that we can display.
-                    self.d_font_inst.get_thundr_surf_for_glyph(
-                        &mut self.d_thund,
-                        &mut surf,
-                        glyph_id,
-                        layout.l_offset,
-                    );
-
-                    return Ok(surf);
                 }
+            } else if let Some(glyph_id) = layout.l_glyph_id {
+                // If this path is hit, then this layout node is really a glyph in a
+                // larger block of text. It has been created as a child, and isn't
+                // a real element. We ask the font code to give us a surface for
+                // it that we can display.
+                self.d_font_inst.get_thundr_surf_for_glyph(
+                    &mut self.d_thund,
+                    &mut surf,
+                    glyph_id,
+                    layout.l_offset,
+                );
+
+                return Ok(surf);
             }
 
             surf
@@ -957,7 +959,7 @@ impl<'a> Dakota<'a> {
     /// Helper method to print out our layout tree
     #[allow(dead_code)]
     #[cfg(debug_assertions)]
-    fn print_node(&self, id: &DakotaId, node: &LayoutNode, indent_level: usize) {
+    fn print_node(&self, _id: &DakotaId, node: &LayoutNode, indent_level: usize) {
         let spaces = std::iter::repeat("  ")
             .take(indent_level)
             .collect::<String>();
@@ -969,10 +971,10 @@ impl<'a> Dakota<'a> {
             node.l_offset,
             node.l_size
         );
+
         log::verbose!(
-            "{}    resource={:?}, glyph_id={:?}, num_children={}, is_viewport={}",
+            "{}    glyph_id={:?}, num_children={}, is_viewport={}",
             spaces,
-            self.d_resource_definitions.get(id),
             node.l_glyph_id,
             node.l_children.len(),
             node.l_is_viewport,
@@ -990,8 +992,6 @@ impl<'a> Dakota<'a> {
         let root_node_raw = self.d_viewport_nodes.get(&id).unwrap().v_root_node.clone();
         if let Some(root_node_id) = root_node_raw {
             // Create our thundr surface and add it to the list
-            //
-            // TODO: go through each viewport and populate its surface list
             let root_surf = self
                 .create_thundr_surf_for_el(&root_node_id)
                 .context("Could not construct Thundr surface tree")?;

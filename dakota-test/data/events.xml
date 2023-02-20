@@ -1,7 +1,7 @@
 <dakota>
 	<version>0.0.0.1</version>
 	<resourceMap>
-		<resource>
+		<define_resource>
 			<name>red</name>
 			<color>
 				<r>0.75</r>
@@ -9,8 +9,8 @@
 				<b>0.1</b>
 				<a>1</a>
 			</color>
-		</resource>
-		<resource>
+		</define_resource>
+		<define_resource>
 			<name>green</name>
 			<color>
 				<r>0.25</r>
@@ -18,8 +18,8 @@
 				<b>0.25</b>
 				<a>1</a>
 			</color>
-		</resource>
-		<resource>
+		</define_resource>
+		<define_resource>
 			<name>blue</name>
 			<color>
 				<r>0.05</r>
@@ -27,18 +27,19 @@
 				<b>0.95</b>
 				<a>1</a>
 			</color>
-		</resource>
+		</define_resource>
 	</resourceMap>
 	<window>
-		<id>0</id>
 		<title>Dakota Test</title>
-		<width>512</width>
-		<height>512</height>
+		<window_width>512</window_width>
+		<window_height>512</window_height>
 		<window_events>
-			<redrawComplete></redrawComplete>
-			<resize>
-				<group>"Redraw Handler"</group>
-				<arg>"Hello event handler!"</arg>
+			<redraw_complete></redraw_complete>
+   <resize>
+    <event>
+     <group>"Redraw Handler"</group>
+     <arg>"Hello event handler!"</arg>
+    </event>
 			</resize>
 		</window_events>
 	</window>
@@ -47,28 +48,29 @@
 			<el>
 				<resource>green</resource>
 				<offset>
-					<x>160</x><y>16</y>
+     <x><constant>160</constant></x>
+     <y><constant>16</constant></y>
 				</offset>
 				<size>
-					<width>64</width>
-					<height>64</height>
+					<width><constant>64</constant></width>
+					<height><constant>64</constant></height>
 				</size>
 			</el>
 			<el>
 				<resource>red</resource>
-				<relativeOffset>
-					<x>0.65</x><y>0.5</y>
-				</relativeOffset>
-				<relativeSize>
-					<width>0.25</width>
-					<height>0.18</height>
-				</relativeSize>
+				<offset>
+					<x><relative>0.65</relative></x><y><relative>0.5</relative></y>
+				</offset>
+				<size>
+					<width><relative>0.25</relative></width>
+					<height><relative>0.18</relative></height>
+				</size>
 			</el>
 			<el>
 				<resource>blue</resource>
 				<size>
-					<width>256</width>
-					<height>256</height>
+					<width><constant>256</constant></width>
+					<height><constant>256</constant></height>
 				</size>
 			</el>
 		</el>
