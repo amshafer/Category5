@@ -4,7 +4,7 @@
   <resource>
    <name>cursor</name>
    <image>
-    <format type="ARGB8888"/>
+    <format>ARGB8888</format>
     <data>
      <relPath>images/cursor.png</relPath>
     </data>
@@ -16,7 +16,7 @@
   <resource>
    <name>samson</name>
    <image>
-    <format type="ARGB8888"/>
+    <format>ARGB8888</format>
     <data>
      <relPath>images/brock.png</relPath>
     </data>

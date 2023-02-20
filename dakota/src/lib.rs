@@ -53,6 +53,7 @@ pub type DakotaId = ll::Entity;
 // their own ECS system so we don't waste space.
 pub type ViewportId = ll::Entity;
 
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum DakotaObjectType {
     Element,
     DakotaDOM,
@@ -1028,6 +1029,32 @@ impl<'a> Dakota<'a> {
         Ok(())
     }
 
+    fn assert_id_has_type(&self, id: &DakotaId, ty: DakotaObjectType) {
+        let id_type = *self
+            .d_node_types
+            .get(id)
+            .expect("Dakota node not assigned an object type");
+
+        assert!(id_type == ty);
+    }
+
+    /// Add `child` as a child element to `parent`.
+    ///
+    /// This operation on makes sense for Dakota objects with the `Element` object
+    /// type.
+    pub fn add_child_to_element(&mut self, parent: &DakotaId, child: DakotaId) {
+        // Assert this id has the Element type
+        self.assert_id_has_type(parent, DakotaObjectType::Element);
+        self.assert_id_has_type(&child, DakotaObjectType::Element);
+
+        // Add old_id as a child element
+        if self.d_children.get_mut(parent).is_none() {
+            self.d_children.set(parent, Vec::new());
+        }
+
+        self.d_children.get_mut(parent).unwrap().push(child);
+    }
+
     /// This refreshes the entire scene, and regenerates
     /// the Thundr surface list.
     pub fn refresh_elements(&mut self, dom_id: &DakotaId) -> Result<()> {
@@ -1104,8 +1131,10 @@ impl<'a> Dakota<'a> {
     pub fn refresh_full(&mut self, dom: &DakotaId) -> Result<()> {
         self.d_needs_redraw = true;
         self.clear_thundr();
-        self.refresh_resource_map(dom)?;
+        self.refresh_resource_map(dom)
+            .context("Refreshing resource map")?;
         self.refresh_elements(dom)
+            .context("Refreshing element layout")
     }
 
     /// Handle vulkan swapchain out of date. This is probably because the

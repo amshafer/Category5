@@ -40,6 +40,7 @@ enum Element {
     Dakota {
         version: Option<String>,
         window: Option<dom::Window>,
+        resource_map: Option<dom::ResourceMap>,
         root_element: Option<DakotaId>,
     },
     Version(Option<String>),
@@ -49,7 +50,7 @@ enum Element {
     Height(Option<dom::Value>),
     WindowWidth(Option<u32>),
     WindowHeight(Option<u32>),
-    Layout(Option<DakotaId>),
+    Layout,
     Color {
         r: Option<f32>,
         g: Option<f32>,
@@ -69,12 +70,13 @@ enum Element {
     Image(Option<dom::Format>, Option<dom::Data>),
     Format(Option<dom::Format>),
     Data(dom::Data),
-    ResourceMap,
+    ResourceMap(dom::ResourceMap),
     Resource(Option<String>),
     ResourceDefinition {
         name: Option<String>,
         image: Option<dom::Image>,
         color: Option<dom::Color>,
+        #[allow(dead_code)]
         hints: Option<dom::Hints>,
     },
     Size(Option<dom::Value>, Option<dom::Value>),
@@ -115,6 +117,7 @@ impl Element {
             b"dakota" => Self::Dakota {
                 version: None,
                 window: None,
+                resource_map: None,
                 root_element: None,
             },
             b"version" => Self::Version(None),
@@ -122,11 +125,13 @@ impl Element {
             b"title" => Self::Title(None),
             b"width" => Self::Width(None),
             b"height" => Self::Height(None),
+            b"window_width" => Self::WindowWidth(None),
+            b"window_height" => Self::WindowHeight(None),
             b"relative" => Self::Relative(None),
             b"constant" => Self::Constant(None),
             b"x" => Self::X(None),
             b"y" => Self::Y(None),
-            b"layout" => Self::Layout(None),
+            b"layout" => Self::Layout,
             b"color" => Self::Color {
                 r: None,
                 g: None,
@@ -145,7 +150,9 @@ impl Element {
                 rel_path: None,
                 abs_path: None,
             }),
-            b"resourceMap" => Self::ResourceMap,
+            b"resourceMap" => Self::ResourceMap(dom::ResourceMap {
+                resources: Vec::new(),
+            }),
             b"resource" => Self::Resource(None),
             b"define_resource" => Self::ResourceDefinition {
                 name: None,
@@ -179,32 +186,6 @@ impl Element {
         };
 
         Ok(ret)
-    }
-
-    /// Returns true if this element type will have a DakotaId created for
-    /// it. False if no.
-    fn needs_new_id(&self) -> bool {
-        match self {
-            Self::ResourceDefinition {
-                name: _,
-                image: _,
-                color: _,
-                hints: _,
-            } => true,
-            Self::ResourceMap
-            | Self::El {
-                x: _,
-                y: _,
-                width: _,
-                height: _,
-            } => true,
-            Self::Dakota {
-                version: _,
-                window: _,
-                root_element: _,
-            } => true,
-            _ => false,
-        }
     }
 
     fn convert_to_dom_value(&self) -> Result<dom::Value> {
@@ -271,6 +252,33 @@ impl<'a> Dakota<'a> {
             .context("Failed to parse XML dakota string")
     }
 
+    /// Returns a new id if this element type will have a DakotaId created for
+    /// it. None if no
+    fn needs_new_id(&mut self, node: &Element) -> Result<Option<DakotaId>> {
+        match node {
+            Element::ResourceDefinition {
+                name: _,
+                image: _,
+                color: _,
+                hints: _,
+            } => Ok(Some(self.create_resource()?)),
+            Element::El {
+                x: _,
+                y: _,
+                width: _,
+                height: _,
+            }
+            | Element::Layout => Ok(Some(self.create_element()?)),
+            Element::Dakota {
+                version: _,
+                window: _,
+                resource_map: _,
+                root_element: _,
+            } => Ok(Some(self.create_dakota_dom()?)),
+            _ => Ok(None),
+        }
+    }
+
     fn get_id_for_name(&mut self, parse: &mut ParseData, name: &str) -> DakotaId {
         if !parse.name_to_id_map.contains_key(name) {
             parse
@@ -279,6 +287,16 @@ impl<'a> Dakota<'a> {
         }
 
         parse.name_to_id_map.get(name).unwrap().clone()
+    }
+
+    fn get_text_run(&self, s: &Option<String>) -> Result<dom::TextRun> {
+        Ok(dom::TextRun {
+            value: s
+                .as_ref()
+                .ok_or(anyhow!("No text inside tag that expected text data"))?
+                .clone(),
+            cache: None,
+        })
     }
 
     /// We need to check that all required fields were specified in the
@@ -313,26 +331,36 @@ impl<'a> Dakota<'a> {
                         name.as_ref()
                             .ok_or(anyhow!("Element was not assigned a resource"))?,
                     );
-                    self.d_resources.set(id, resource_id)
+                    self.set_resource(id, resource_id)
                 }
                 Element::El {
                     x: _,
                     y: _,
                     width: _,
                     height: _,
-                } => {
-                    // Add old_id as a child element
-                    if self.d_children.get_mut(id).is_none() {
-                        self.d_children.set(id, Vec::new());
-                    }
-
-                    self.d_children.get_mut(id).unwrap().push(old_id.clone());
-                }
+                } => self.add_child_to_element(id, old_id.clone()),
                 Element::X(val) => *x = *val,
                 Element::Y(val) => *y = *val,
                 Element::Width(val) => *width = *val,
                 Element::Height(val) => *height = *val,
-                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+                Element::Text(data) => self.set_text(
+                    id,
+                    dom::Text {
+                        items: data.clone(),
+                    },
+                ),
+                Element::Content(data) => self.set_content(
+                    id,
+                    dom::Content {
+                        el: data
+                            .clone()
+                            .ok_or(anyhow!("Content does not contain an element"))?,
+                    },
+                ),
+                e => {
+                    return Err(anyhow!("Unexpected child element: {:?}", e)
+                        .context("While processing children for Dakota Element"))
+                }
             },
             // -------------------------------------------------------
             Element::Window {
@@ -351,9 +379,11 @@ impl<'a> Dakota<'a> {
             Element::Dakota {
                 version,
                 window,
+                resource_map,
                 root_element,
             } => match old_node {
                 Element::Version(data) => *version = data.clone(),
+                Element::ResourceMap(data) => *resource_map = Some(data.clone()),
                 Element::Window {
                     title,
                     width,
@@ -372,34 +402,141 @@ impl<'a> Dakota<'a> {
                         events: events.clone(),
                     })
                 }
-                Element::Layout(data) => *root_element = *data,
+                Element::Layout => *root_element = Some(old_id.clone()),
                 e => return Err(anyhow!("Unexpected child element: {:?}", e)),
             },
             // -------------------------------------------------------
-            Element::Text(data) => {}
-            Element::Width(data) | Element::Height(data) => {
+            Element::Text(data) => match old_node {
+                Element::P(s) => data.push(dom::TextItem::b(self.get_text_run(s)?)),
+                Element::Bold(s) => data.push(dom::TextItem::b(self.get_text_run(s)?)),
+                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+            },
+            Element::Width(data) | Element::Height(data) | Element::X(data) | Element::Y(data) => {
                 *data = Some(old_node.convert_to_dom_value()?)
             }
-            Element::Layout(data) => {}
-            Element::Color { r, g, b, a } => {}
-            Element::Image(format, data) => {}
-            Element::Format(data) => {}
-            Element::Data(data) => {}
-            Element::ResourceMap => {}
+            Element::Layout => self.add_child_to_element(id, old_id.clone()),
+            Element::Color { r, g, b, a } => match old_node {
+                Element::R(data) => *r = *data,
+                Element::G(data) => *g = *data,
+                Element::B(data) => *b = *data,
+                Element::A(data) => *a = *data,
+                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+            },
+            // -------------------------------------------------------
+            Element::Image(format, data) => match old_node {
+                Element::Format(f) => *format = f.clone(),
+                Element::Data(d) => *data = Some(d.clone()),
+                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+            },
+            Element::Data(data) => match old_node {
+                Element::RelPath(path) => {
+                    data.rel_path = Some(path.clone().ok_or(anyhow!(
+                        "No path provided in element that expects path value"
+                    ))?)
+                }
+                Element::AbsPath(path) => {
+                    data.abs_path = Some(path.clone().ok_or(anyhow!(
+                        "No path provided in element that expects path value"
+                    ))?)
+                }
+                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+            },
+            // -------------------------------------------------------
+            Element::ResourceMap(map) => match old_node {
+                Element::ResourceDefinition {
+                    name,
+                    image,
+                    color,
+                    hints: _,
+                } => {
+                    self.set_resource_definition(
+                        &old_id,
+                        dom::Resource {
+                            name: name
+                                .clone()
+                                .ok_or(anyhow!("Name field not specified in <define_resource>"))?,
+                            image: image.clone(),
+                            color: color.clone(),
+                            hints: None,
+                        },
+                    );
+
+                    map.resources.push(old_id.clone());
+                }
+                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+            },
             Element::ResourceDefinition {
                 name,
                 image,
                 color,
-                hints,
-            } => {}
-            Element::Size(width, height) => {}
-            Element::Offset(x, y) => {}
-            Element::Content(data) => {}
-            Element::Event { groups, id, args } => {}
-            Element::WindowEvents(events) => {}
-            Element::Resize(data) => {}
-            Element::RedrawComplete(data) => {}
-            Element::Closed(data) => {}
+                // TODO: fill this in
+                hints: _,
+            } => match old_node {
+                Element::Name(n) => *name = n.clone(),
+                Element::Image(format, data) => {
+                    *image = Some(dom::Image {
+                        format: format
+                            .clone()
+                            .ok_or(anyhow!("Format not specified for image"))?,
+                        data: data
+                            .clone()
+                            .ok_or(anyhow!("Format not specified for image"))?,
+                    })
+                }
+                Element::Color { r, g, b, a } => {
+                    *color = Some(dom::Color {
+                        r: r.clone().ok_or(anyhow!("Color value R not specified"))?,
+                        g: g.clone().ok_or(anyhow!("Color value R not specified"))?,
+                        b: b.clone().ok_or(anyhow!("Color value R not specified"))?,
+                        a: a.clone().ok_or(anyhow!("Color value R not specified"))?,
+                    })
+                }
+                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+            },
+            // -------------------------------------------------------
+            Element::Size(width, height) => match old_node {
+                Element::Width(data) => *width = *data,
+                Element::Height(data) => *height = *data,
+                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+            },
+            Element::Offset(x, y) => match old_node {
+                Element::X(data) => *x = *data,
+                Element::Y(data) => *y = *data,
+                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+            },
+            // -------------------------------------------------------
+            Element::Content(data) => match old_node {
+                Element::El {
+                    x: _,
+                    y: _,
+                    width: _,
+                    height: _,
+                } => *data = Some(old_id.clone()),
+                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+            },
+            // -------------------------------------------------------
+            Element::Event { groups, id, args } => match old_node {
+                Element::Group(data) => groups.push(
+                    data.clone()
+                        .ok_or(anyhow!("Event group text not specified"))?,
+                ),
+                Element::Id(data) => *id = data.clone(),
+                Element::Arg(data) => args.push(
+                    data.clone()
+                        .ok_or(anyhow!("Event argument text not specified"))?,
+                ),
+                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+            },
+            Element::Resize(data) | Element::RedrawComplete(data) | Element::Closed(data) => {
+                *data = Some(old_node.get_dom_event()?)
+            }
+            Element::WindowEvents(events) => match old_node {
+                Element::Resize(data) => events.resize = data.clone(),
+                Element::RedrawComplete(data) => events.redraw_complete = data.clone(),
+                Element::Closed(data) => events.closed = data.clone(),
+                e => return Err(anyhow!("Unexpected child element: {:?}", e)),
+            },
+            // -------------------------------------------------------
             _ => {
                 // If this was hit we have a parsing issue. The XML stream specified
                 // data in an element type that does not have any data (such as ResourceMap)
@@ -447,6 +584,12 @@ impl<'a> Dakota<'a> {
                     Element::Constant(data)
                     | Element::WindowWidth(data)
                     | Element::WindowHeight(data) => *data = Some(text.parse::<u32>()?),
+                    Element::Format(data) => {
+                        *data = match text.as_str() {
+                            "ARGB8888" => Some(dom::Format::ARGB8888),
+                            fmt => return Err(anyhow!("Unknown image format {:?}", fmt)),
+                        }
+                    }
                     _ => {
                         // If this was hit we have a parsing issue. The XML stream specified
                         // data in an element type that does not have any data (such as ResourceMap)
@@ -495,8 +638,8 @@ impl<'a> Dakota<'a> {
                     // extract our element type from the XML tag name
                     let ty = Element::from_bytes(e.name().as_ref())?;
 
-                    if ty.needs_new_id() {
-                        id = Some(self.d_ecs_inst.add_entity());
+                    if let Some(new_id) = self.needs_new_id(&ty)? {
+                        id = Some(new_id);
                         // Stash the first id we allocate, this will be the root id
                         // for what the XML stream specifies that we will return.
                         //
@@ -515,7 +658,43 @@ impl<'a> Dakota<'a> {
                     // Pop our parent node info back into focus
                     match stack.pop() {
                         // If we have reached the end break from our loop
-                        Some((None, None)) | None => break,
+                        Some((None, None)) | None => {
+                            // The Dakota object is our toplevel object. Since we are
+                            // done processing here the old_* variables will be our DOM,
+                            // which we need to add to our ECS
+                            match old_node {
+                                Some(Element::Dakota {
+                                    version,
+                                    window,
+                                    resource_map,
+                                    root_element,
+                                }) => {
+                                    self.set_dakota_dom(
+                                        old_id.as_ref().unwrap(),
+                                        dom::DakotaDOM {
+                                            version: version
+                                                .clone()
+                                                .ok_or(anyhow!("Dakota missing field version"))?,
+                                            window: window
+                                                .clone()
+                                                .ok_or(anyhow!("Dakota missing field version"))?,
+                                            resource_map: resource_map
+                                                .clone()
+                                                .ok_or(anyhow!("Dakota missing field version"))?,
+                                            root_element: root_element
+                                                .clone()
+                                                .ok_or(anyhow!("Dakota missing field version"))?,
+                                        },
+                                    );
+                                    break;
+                                }
+                                _ => {
+                                    return Err(anyhow!(
+                                        "Toplevel XML tag is not the Dakota object"
+                                    ))
+                                }
+                            };
+                        }
                         Some((i, n)) => {
                             id = i;
                             node = n;

@@ -8,12 +8,12 @@ use crate::{Dakota, DakotaId, LayoutSpace};
 use std::cmp::{Ord, PartialOrd};
 use std::rc::Rc;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Format {
     ARGB8888,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Image {
     pub format: Format,
     pub data: Data,
@@ -24,7 +24,7 @@ pub struct Hints {
     pub constant: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Data {
     pub rel_path: Option<String>,
     pub abs_path: Option<String>,
@@ -66,7 +66,7 @@ pub struct Resource {
     pub hints: Option<Hints>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ResourceMap {
     pub resources: Vec<DakotaId>,
 }
@@ -250,7 +250,7 @@ pub struct WindowEvents {
 }
 
 /// A run of characters of the same format type
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TextRun {
     pub value: String,
     pub cache: Option<Vec<CachedChar>>,
@@ -260,7 +260,7 @@ pub struct TextRun {
 ///
 /// An item is something like a paragraph, or a sentence that is bolded. It will
 /// consist of a run of characters that share this format.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub enum TextItem {
     p(TextRun),
@@ -276,7 +276,7 @@ pub struct Text {
     pub items: Vec<TextItem>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Window {
     pub title: String,
     pub width: u32,

@@ -21,7 +21,7 @@ fn main() {
     let dom = dak
         .load_xml_reader(reader)
         .expect("Could not parse XML dakota file");
-    dak.refresh_full(&dom).unwrap();
+    dak.refresh_full(&dom).expect("Refreshing Dakota");
     let mut stop = StopWatch::new();
 
     loop {

@@ -59,7 +59,7 @@ fn scale_hb_positions(position: &hb::GlyphPosition) -> (f32, f32, f32, f32) {
 /// out text.
 ///
 /// This prevents us from recalling freetype and recreating layout nodes and such.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CachedChar {
     /// The layout node that represents this character
     pub node: DakotaId,

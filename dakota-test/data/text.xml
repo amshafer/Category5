@@ -1,7 +1,7 @@
 <dakota>
  <version>0.0.0.1</version>
  <resourceMap>
-  <resource>
+  <define_resource>
    <name>grey</name>
    <color>
     <r>0.1725</r>
@@ -9,8 +9,8 @@
     <b>0.2</b>
     <a>1</a>
    </color>
-  </resource>
-  <resource>
+  </define_resource>
+  <define_resource>
    <name>dark_grey</name>
    <color>
     <r>0.1372</r>
@@ -18,10 +18,9 @@
     <b>0.1647</b>
     <a>1</a>
    </color>
-  </resource>
+  </define_resource>
  </resourceMap>
  <window>
-  <id>0</id>
   <title>Dakota Test</title>
   <window_width>1024</window_width>
   <window_height>1024</window_height>
