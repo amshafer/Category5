@@ -5,7 +5,6 @@ extern crate paste;
 use paste::paste;
 extern crate lluvia as ll;
 
-use crate::utils::{anyhow, Result};
 use crate::{dom, Dakota, DakotaId, DakotaObjectType};
 
 // ------------------------------------------------
@@ -23,11 +22,11 @@ macro_rules! define_element_property {
         paste! {
             impl<'a> Dakota<'a> {
                 // Use the paste crate to append get_ to the front of our name
-                pub fn [<get_ $name>](&self, el: &DakotaId) -> Result<ll::TableRef<$val>> {
-                    self.[<d_ $sesh>].get(el).ok_or(anyhow!("Element did not have "))
+                pub fn [<get_ $name>](&self, el: &DakotaId) -> Option<ll::TableRef<$val>> {
+                    self.[<d_ $sesh>].get(el)
                 }
-                pub fn [<get_mut $name>](&mut self, el: &DakotaId) -> Result<ll::TableRefMut<$val>> {
-                    self.[<d_ $sesh>].get_mut(el).ok_or(anyhow!("Element did not have "))
+                pub fn [<get_mut $name>](&mut self, el: &DakotaId) -> Option<ll::TableRefMut<$val>> {
+                    self.[<d_ $sesh>].get_mut(el)
                 }
                 pub fn [<set_ $name>](&mut self, el: &DakotaId, data: $val) {
                     self.[<d_ $sesh>].set(el, data)

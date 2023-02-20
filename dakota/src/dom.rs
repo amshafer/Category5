@@ -296,31 +296,47 @@ impl<'a> Dakota<'a> {
     /// Get the final size to use as an offset into the
     /// parent space. This takes care of handling the relative
     /// proportional offset size
-    pub fn get_final_offset(
-        &self,
-        el: &DakotaId,
-        space: &LayoutSpace,
-    ) -> Result<Option<Offset<u32>>> {
-        let offset = self
-            .d_offsets
-            .get(el)
-            .expect("Element did not have an offset");
+    pub fn get_final_offset(&self, el: &DakotaId, space: &LayoutSpace) -> Result<Offset<u32>> {
+        if let Some(offset) = self.d_offsets.get(el) {
+            Ok(Offset::new(
+                offset.x.get_value(space.avail_width)?,
+                offset.y.get_value(space.avail_height)?,
+            ))
+        } else {
+            // If no offset was specified use (0, 0)
+            let default_offset = Offset {
+                x: Value::Constant(Constant { val: 0 }),
+                y: Value::Constant(Constant { val: 0 }),
+            };
 
-        return Ok(Some(Offset::new(
-            offset.x.get_value(space.avail_width)?,
-            offset.y.get_value(space.avail_height)?,
-        )));
+            Ok(Offset::new(
+                default_offset.x.get_value(space.avail_width)?,
+                default_offset.y.get_value(space.avail_height)?,
+            ))
+        }
     }
 
     /// Get the final size to use within the parent space.
     /// This takes care of handling the relative
     /// proportional size.
-    pub fn get_final_size(&self, el: &DakotaId, space: &LayoutSpace) -> Result<Option<Size<u32>>> {
-        let size = self.d_sizes.get(el).expect("Element did not have an size");
-
-        return Ok(Some(Size::new(
-            size.width.get_value(space.avail_width)?,
-            size.height.get_value(space.avail_height)?,
-        )));
+    pub fn get_final_size(&self, el: &DakotaId, space: &LayoutSpace) -> Result<Size<u32>> {
+        if let Some(size) = self.d_sizes.get(el) {
+            Ok(Size::new(
+                size.width.get_value(space.avail_width)?,
+                size.height.get_value(space.avail_height)?,
+            ))
+        } else {
+            // if the size is still empty, there were no children. This should just be
+            // sized to the available space divided by the number of
+            // children.
+            // Clamp to 1 to avoid dividing by zero
+            let num_children = std::cmp::max(1, space.children_at_this_level);
+            // TODO: add directional tiling of elements
+            // for now just do vertical subdivision and fill horizontal
+            Ok(Size::new(
+                space.avail_width as u32,
+                (space.avail_height / num_children as f32) as u32,
+            ))
+        }
     }
 }

@@ -556,34 +556,13 @@ impl<'a> Dakota<'a> {
         node: &mut LayoutNode,
         space: &LayoutSpace,
     ) -> Result<()> {
-        if let Some(off) = self
+        node.l_offset_specified = self.get_offset(el).is_some();
+        node.l_offset = self
             .get_final_offset(el, &space)
             .context("Failed to calculate offset size of Element")?
-        {
-            node.l_offset_specified = true;
-            node.l_offset = off.into();
-        }
+            .into();
 
-        if let Some(size) = self.get_final_size(el, space)? {
-            node.l_size = size.into();
-        } else {
-            // first grow this box to fit its children.
-            // TODO: this element's size should be set and children
-            // will have to be contained within it.
-            //node.resize_to_children(self)?;
-
-            if node.l_size == dom::Size::new(0.0, 0.0) {
-                // if the size is still empty, there were no children. This should just be
-                // sized to the available space divided by the number of
-                // children.
-                // Clamp to 1 to avoid dividing by zero
-                let num_children = std::cmp::max(1, space.children_at_this_level);
-                // TODO: add directional tiling of elements
-                // for now just do vertical subdivision and fill horizontal
-                node.l_size =
-                    dom::Size::new(space.avail_width, space.avail_height / num_children as f32);
-            }
-        }
+        node.l_size = self.get_final_size(el, space)?.into();
 
         Ok(())
     }
@@ -734,13 +713,13 @@ impl<'a> Dakota<'a> {
         // ------------------------------------------
         // We do this after handling the size of the current element so that we
         // can know what width we have available to fill in with text.
-        if self.d_texts.get(el).is_some() {
+        if self.get_text(el).is_some() {
             self.calculate_sizes_text(el, &mut ret)?;
         }
 
         // if the box has children, then recurse through them and calculate our
         // box size based on the fill type.
-        if self.d_children.get(el).unwrap().len() > 0 {
+        if self.get_children(el).is_some() && self.get_children(el).unwrap().len() > 0 {
             // ------------------------------------------
             // CHILDREN
             // ------------------------------------------
@@ -751,7 +730,7 @@ impl<'a> Dakota<'a> {
 
             self.calculate_sizes_children(el, &child_space, &mut ret)
                 .context("Layout Tree Calculation: processing children of element")?;
-        } else if self.d_contents.get(el).is_some() {
+        } else if self.get_content(el).is_some() {
             // ------------------------------------------
             // CENTERED CONTENT
             // ------------------------------------------

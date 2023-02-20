@@ -357,6 +357,26 @@ impl<'a> Dakota<'a> {
                             .ok_or(anyhow!("Content does not contain an element"))?,
                     },
                 ),
+                Element::Size(width, height) => self.set_size(
+                    id,
+                    dom::RelativeSize {
+                        width: width
+                            .clone()
+                            .ok_or(anyhow!("Content does not contain an element"))?,
+                        height: height
+                            .clone()
+                            .ok_or(anyhow!("Content does not contain an element"))?,
+                    },
+                ),
+                Element::Offset(x, y) => self.set_offset(
+                    id,
+                    dom::RelativeOffset {
+                        x: x.clone()
+                            .ok_or(anyhow!("Content does not contain an element"))?,
+                        y: y.clone()
+                            .ok_or(anyhow!("Content does not contain an element"))?,
+                    },
+                ),
                 e => {
                     return Err(anyhow!("Unexpected child element: {:?}", e)
                         .context("While processing children for Dakota Element"))
