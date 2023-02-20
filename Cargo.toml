@@ -10,11 +10,11 @@ edition = "2018"
 thundr={path="thundr"}
 # As of wayland-rs v0.30 we specify the system library feature
 # for the wayland-backend crate and all others will inherit it
-wayland-backend={path="../wayland-rs/wayland-backend/", features=["server_system", "dlopen"]}
-wayland-server={path="../wayland-rs/wayland-server/"}
-wayland-scanner={path="../wayland-rs/wayland-scanner/"}
-wayland-protocols={path="../wayland-rs/wayland-protocols/", features=["server", "unstable"]}
-wayland-sys={path="../wayland-rs/wayland-sys/"}
+wayland-backend={version="0.1.1", features=["server_system", "dlopen"]}
+wayland-server="0.30"
+wayland-scanner="0.30"
+wayland-protocols={version="0.30", features=["server", "unstable"]}
+wayland-sys="0.30"
 input={version="0.7.1", features=["gen"]}
 udev="0.6"
 libc="0.2"
