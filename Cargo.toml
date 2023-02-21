@@ -16,12 +16,12 @@ wayland-scanner="0.30"
 wayland-protocols={version="0.30", features=["server", "unstable"]}
 wayland-sys="0.30"
 input={version="0.7.1", features=["gen"]}
-udev="0.6"
+udev="0.7"
 libc="0.2"
 image="0.23.14"
-nix="0.24"
+nix="0.26"
 bitflags="1.3.2"
-xkbcommon="0.4"
+xkbcommon="0.5"
 atmos_gen={path="atmos_gen"}
 utils={path="utils"}
 lazy_static="1.4"

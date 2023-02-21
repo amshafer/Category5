@@ -168,8 +168,8 @@ impl ShmRegion {
             // To create the region we need to map size
             // bytes from fd
             let ptr = match mman::mmap(
-                std::ptr::null_mut(),
-                size,
+                None,
+                core::num::NonZeroUsize::new(size).unwrap(),
                 mman::ProtFlags::PROT_READ,
                 mman::MapFlags::MAP_SHARED,
                 fd.as_raw_fd(),
@@ -195,8 +195,8 @@ impl ShmRegion {
 
         self.sr_raw_ptr = unsafe {
             match mman::mmap(
-                std::ptr::null_mut(),
-                self.sr_size,
+                None,
+                core::num::NonZeroUsize::new(self.sr_size).unwrap(),
                 mman::ProtFlags::PROT_READ,
                 mman::MapFlags::MAP_SHARED,
                 self.sr_fd.as_raw_fd(),

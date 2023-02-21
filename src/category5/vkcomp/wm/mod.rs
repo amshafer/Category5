@@ -139,7 +139,7 @@ impl WindowManager {
             "images/bar.png"
         ))
         .unwrap()
-        .to_bgra8();
+        .to_rgba8();
         let pixels: Vec<u8> = img.into_vec();
 
         let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
