@@ -14,7 +14,10 @@ use utils::log;
 use nix::sys::stat::SFlag;
 use std::ffi::CStr;
 use std::ops::DerefMut;
-use std::os::raw::{c_char, c_int};
+use std::os::raw::c_char;
+
+#[cfg(target_os = "linux")]
+use nix::sys::stat::makedev;
 
 use super::protocol::wl_drm::wl_drm;
 
@@ -27,13 +30,12 @@ use super::protocol::wl_drm::wl_drm;
 // causing dev_t to be 32-bit in the libc crate, which is big wrong.
 //
 // https://github.com/rust-lang/libc/pull/2603#issuecomment-1003715259
+#[cfg(target_os = "freebsd")]
 extern "C" {
-    pub fn devname_r(
+    pub fn devname(
         #[cfg(target_arch = "x86_64")] dev: u64, // 64 bit on amd64
         mode: libc::mode_t,
-        buf: *mut libc::c_char,
-        len: libc::c_int,
-    ) -> *mut libc::c_char;
+    ) -> *const libc::c_char;
 }
 
 /// In FreeBSD types.h:
@@ -47,6 +49,7 @@ extern "C" {
 ///         ((dev_t)(_Minor & 0xff00) << 24) | (_Minor & 0xffff00ff));
 /// }
 /// ```
+#[cfg(target_os = "freebsd")]
 fn makedev(major: u64, minor: u64) -> u64 {
     (((major & 0xffffff00) as u64) << 32)
         | (((major & 0xff) as u64) << 8)
@@ -54,24 +57,21 @@ fn makedev(major: u64, minor: u64) -> u64 {
         | (minor & 0xffff00ff)
 }
 
+#[cfg(target_os = "freebsd")]
 fn get_drm_dev_name(atmos: &Atmosphere) -> String {
     let (major, minor) = atmos.get_drm_dev();
 
-    let mut dev_name = Vec::<c_char>::with_capacity(256); // Matching value of SPECNAMELEN in FreeBSD 13+
-
-    let buf: *mut c_char = unsafe {
-        devname_r(
+    let raw_name: *const c_char = unsafe {
+        devname(
             makedev(major as u64, minor as u64),
             SFlag::S_IFCHR.bits(), // Must be S_IFCHR or S_IFBLK
-            dev_name.as_mut_ptr(),
-            dev_name.capacity() as c_int,
         )
     };
 
-    assert!(!buf.is_null());
+    assert!(!raw_name.is_null());
 
     // SAFETY: The buffer written to by devname_r is guaranteed to be NUL terminated.
-    let cstr = unsafe { CStr::from_ptr(buf) };
+    let cstr = unsafe { CStr::from_ptr(raw_name) };
     // This will be of form /dev/drm/128
     let full_drm_name = format!("/dev/{}", cstr.to_string_lossy().into_owned());
     assert!(full_drm_name.starts_with("/dev/drm/"));
@@ -80,6 +80,13 @@ fn get_drm_dev_name(atmos: &Atmosphere) -> String {
     // 9 characters in /dev/drm/
     let drm_number_in_name = &full_drm_name[9..];
     format!("/dev/dri/renderD{}", drm_number_in_name)
+}
+
+/// TODO: Linux stupidly doesn't have a good way to get a device path given
+/// a dev_t, so we are just hard-coding the first available device here
+#[cfg(target_os = "linux")]
+fn get_drm_dev_name(atmos: &Atmosphere) -> String {
+    return "/dev/dri/renderD128".to_string();
 }
 
 #[allow(unused_variables)]

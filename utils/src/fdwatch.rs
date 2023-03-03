@@ -6,8 +6,6 @@ extern crate nix;
 
 #[cfg(not(target_os = "freebsd"))]
 use nix::sys::select::*;
-#[cfg(not(target_os = "freebsd"))]
-use nix::sys::time::{TimeVal, TimeValLike};
 
 #[cfg(target_os = "freebsd")]
 use nix::sys::event::*;
@@ -102,20 +100,13 @@ impl FdWatch {
 
     // timeout in ms
     // returns true if something is ready to be read
-    pub fn wait_for_events(&mut self, timeout: usize) -> bool {
+    pub fn wait_for_events(&mut self) -> bool {
         let mut fdset = FdSet::new();
         for fd in self.fdw_events.iter() {
             fdset.insert(*fd);
         }
 
         // add all of our fds to the readfd list
-        select(
-            None,
-            Some(&mut fdset),
-            None,
-            None,
-            Some(&mut TimeVal::milliseconds(timeout as i64)),
-        )
-        .is_ok()
+        select(None, Some(&mut fdset), None, None, None).is_ok()
     }
 }
