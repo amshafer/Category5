@@ -2637,44 +2637,48 @@ impl Renderer {
 
     /// Update self.current_image with the swapchain image to render to
     ///
-    /// Returns if the next image index was successfully obtained
-    /// false means try again later, the next image is not ready
+    /// If the next image is not ready (i.e. if Vulkan returned NOT_READY or
+    /// TIMEOUT), then this will loop on calling `vkAcquireNextImageKHR` until
+    /// it gets a valid image. This has to be done on AMD hw or else the TIMEOUT
+    /// error will get passed up the callstack and fail.
     pub fn get_next_swapchain_image(&mut self) -> Result<()> {
         unsafe {
-            match self.swapchain_loader.acquire_next_image(
-                self.swapchain,
-                0,                 // use a zero timeout to immediately get the state
-                self.present_sema, // signals presentation
-                vk::Fence::null(),
-            ) {
-                // TODO: handle suboptimal surface regeneration
-                Ok((index, _)) => {
-                    log::debug!(
-                        "Getting next swapchain image: Current {:?}, New {:?}",
-                        self.current_image,
-                        index
-                    );
-                    self.current_image = index;
-                    Ok(())
+            loop {
+                match self.swapchain_loader.acquire_next_image(
+                    self.swapchain,
+                    0,                 // use a zero timeout to immediately get the state
+                    self.present_sema, // signals presentation
+                    vk::Fence::null(),
+                ) {
+                    // TODO: handle suboptimal surface regeneration
+                    Ok((index, _)) => {
+                        log::debug!(
+                            "Getting next swapchain image: Current {:?}, New {:?}",
+                            self.current_image,
+                            index
+                        );
+                        self.current_image = index;
+                        return Ok(());
+                    }
+                    Err(vk::Result::NOT_READY) => {
+                        log::debug!(
+                            "vkAcquireNextImageKHR: vk::Result::NOT_READY: Current {:?}",
+                            self.current_image
+                        );
+                        continue;
+                    }
+                    Err(vk::Result::TIMEOUT) => {
+                        log::debug!(
+                            "vkAcquireNextImageKHR: vk::Result::TIMEOUT: Current {:?}",
+                            self.current_image
+                        );
+                        continue;
+                    }
+                    Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Err(ThundrError::OUT_OF_DATE),
+                    Err(vk::Result::SUBOPTIMAL_KHR) => return Err(ThundrError::OUT_OF_DATE),
+                    // the call did not succeed
+                    Err(_) => return Err(ThundrError::COULD_NOT_ACQUIRE_NEXT_IMAGE),
                 }
-                Err(vk::Result::NOT_READY) => {
-                    log::debug!(
-                        "vkAcquireNextImageKHR: vk::Result::NOT_READY: Current {:?}",
-                        self.current_image
-                    );
-                    Err(ThundrError::NOT_READY)
-                }
-                Err(vk::Result::TIMEOUT) => {
-                    log::debug!(
-                        "vkAcquireNextImageKHR: vk::Result::NOT_READY: Current {:?}",
-                        self.current_image
-                    );
-                    Err(ThundrError::TIMEOUT)
-                }
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(ThundrError::OUT_OF_DATE),
-                Err(vk::Result::SUBOPTIMAL_KHR) => Err(ThundrError::OUT_OF_DATE),
-                // the call did not succeed
-                Err(_) => Err(ThundrError::COULD_NOT_ACQUIRE_NEXT_IMAGE),
             }
         }
     }
