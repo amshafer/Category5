@@ -85,9 +85,15 @@ void main() {
   + (position / vec2(push.width, push.height))
   * vec2(2, 2);
 
- // The model transform will align x,y = (0, 0) with the top left of
- // the screen. It should stubtract 1.0 from x and y.
- float order = push.starting_depth - (float(gl_InstanceIndex) * 0.0000001);
+ // use our instance number as the depth. Smaller means farther back in
+ // the scene, so we are drawing back to front but our depth value is
+ // increasing
+ //
+ // We also have a starting depth that is set, which keeps track of the
+ // latest depth to start at. This will be updated every time a surface
+ // list is drawn in thundr, that way lists don't Z-fight
+ // One million objects is our max right now.
+ float order = push.starting_depth + float(gl_InstanceIndex) / 1000000000.0;
  gl_Position = ubo.model * vec4(adjusted, order, 1.0);
 
  fragcoord = coord;

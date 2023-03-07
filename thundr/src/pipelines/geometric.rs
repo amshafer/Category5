@@ -454,7 +454,7 @@ impl GeomPipeline {
                 },
                 vk::ClearValue {
                     depth_stencil: vk::ClearDepthStencilValue {
-                        depth: 1.0,
+                        depth: 0.0,
                         stencil: 0,
                     },
                 },
@@ -755,10 +755,10 @@ impl GeomPipeline {
         let depth_info = vk::PipelineDepthStencilStateCreateInfo {
             depth_test_enable: 1,
             depth_write_enable: 1,
-            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+            depth_compare_op: vk::CompareOp::GREATER_OR_EQUAL,
             front: stencil_state,
             back: stencil_state,
-            max_depth_bounds: 1.0,
+            // one million objects is our max for now
             ..Default::default()
         };
 
@@ -775,9 +775,8 @@ impl GeomPipeline {
             color_write_mask: vk::ColorComponentFlags::RGBA,
         }];
 
-        let blend_info = vk::PipelineColorBlendStateCreateInfo::builder()
-            .logic_op(vk::LogicOp::CLEAR)
-            .attachments(&blend_attachment_states);
+        let blend_info =
+            vk::PipelineColorBlendStateCreateInfo::builder().attachments(&blend_attachment_states);
 
         // dynamic state specifies what parts of the pipeline will be
         // specified at draw time. (like moving the viewport)

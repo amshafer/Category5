@@ -351,7 +351,7 @@ impl Renderer {
             .enabled_extension_names(&extension_names_raw);
 
         let printf_info = vk::ValidationFeaturesEXT::builder()
-            .enabled_validation_features(&[vk::ValidationFeatureEnableEXT::DEBUG_PRINTF])
+            //.enabled_validation_features(&[vk::ValidationFeatureEnableEXT::DEBUG_PRINTF])
             .build();
         create_info.p_next = &printf_info as *const _ as *const std::os::raw::c_void;
 
@@ -2142,7 +2142,7 @@ impl Renderer {
             cbuf: self.cbufs[self.current_image as usize],
             image_num: self.current_image as usize,
             // Start at max depth of 1.0 and go to zero
-            starting_depth: 1.0,
+            starting_depth: 0.0,
         }
     }
 

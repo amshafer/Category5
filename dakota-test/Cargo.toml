@@ -11,3 +11,7 @@ dakota={path="../dakota", features=["sdl"]}
 sdl2="0.35"
 utils={path="../utils"}
 
+renderdoc={version="0.10", optional=true}
+
+[features]
+renderdoc=["dep:renderdoc"]

@@ -51,7 +51,7 @@ pub fn convert_sdl_mouse_to_dakota(button: sdl2::mouse::MouseButton) -> MouseBut
 }
 
 #[repr(i32)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Keycode {
     Backspace,
     Tab,

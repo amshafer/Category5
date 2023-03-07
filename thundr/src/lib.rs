@@ -519,7 +519,7 @@ impl Thundr {
         // is the depth we should start subtracting from when drawing the next
         // viewport.
         // This magic 0.0000001 must match geom.vert.glsl
-        params.starting_depth -= surfaces.l_window_order.len() as f32 * 0.0000001;
+        params.starting_depth += surfaces.l_window_order.len() as f32 / 1000000000.0;
 
         self.draw_surfaces_debug_prints(surfaces, viewport);
 
