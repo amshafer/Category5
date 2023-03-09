@@ -1147,8 +1147,8 @@ impl<'a> Dakota<'a> {
     ///
     /// The app should do this in its main loop after dispatching.
     /// These will be cleared during each dispatch.
-    pub fn get_events<'b>(&'b self) -> &'b [Event] {
-        self.d_event_sys.get_events()
+    pub fn drain_events<'b>(&'b mut self) -> std::collections::vec_deque::Drain<'b, Event> {
+        self.d_event_sys.drain_events()
     }
 
     fn viewport_at_pos_recursive(&self, id: ViewportId, x: i32, y: i32) -> Option<ViewportId> {
@@ -1290,10 +1290,6 @@ impl<'a> Dakota<'a> {
     /// window system events.
     pub fn dispatch(&mut self, dom: &DakotaId, mut timeout: Option<u32>) -> Result<()> {
         let mut stop = StopWatch::new();
-        // first clear the event queue, the app already had a chance to
-        // handle them
-        self.d_event_sys.clear_event_queue();
-
         let mut first_loop = true;
 
         loop {

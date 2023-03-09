@@ -158,7 +158,7 @@ impl Pipeline for GeomPipeline {
                 ),
             );
 
-            log::info!("Viewport is : {:?}", viewport);
+            log::error!("Viewport is : {:?}", viewport);
 
             // Set our current viewport
             rend.dev.cmd_set_viewport(
@@ -535,6 +535,7 @@ impl GeomPipeline {
                 samples: vk::SampleCountFlags::TYPE_1,
                 load_op: vk::AttachmentLoadOp::CLEAR,
                 store_op: vk::AttachmentStoreOp::STORE,
+                initial_layout: vk::ImageLayout::UNDEFINED,
                 final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
                 ..Default::default()
             },

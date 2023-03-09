@@ -1,6 +1,6 @@
 extern crate dakota;
 use dakota::event::Event;
-use dakota::{input, Dakota};
+use dakota::Dakota;
 
 extern crate utils;
 use std::env;
@@ -49,18 +49,18 @@ fn main() {
             doc.end_frame_capture(std::ptr::null(), std::ptr::null());
         }
 
-        for event in dak.get_events().iter() {
+        for event in dak.drain_events() {
+            println!("Dakota got event: {:?}", event);
             // Exit if the window is closed, else do nothing
             match event {
                 Event::WindowClosed { .. } => return,
-                Event::InputKeyDown { key, modifiers: _ } =>
-                {
-                    #[cfg(feature = "renderdoc")]
-                    if *key == input::Keycode::LCtrl {
+                #[cfg(feature = "renderdoc")]
+                Event::InputKeyDown { key, modifiers: _ } => {
+                    if key == dakota::input::Keycode::LCtrl {
                         renderdoc_recording = true;
                     }
                 }
-                _ => println!("Dakota got event: {:?}", event),
+                _ => {}
             }
         }
     }

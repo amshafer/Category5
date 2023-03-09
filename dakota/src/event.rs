@@ -6,6 +6,7 @@ use crate::dom;
 use crate::dom::DakotaDOM;
 use crate::input::{Keycode, Mods, MouseButton};
 use lluvia as ll;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 pub struct EventSystem {
@@ -13,7 +14,7 @@ pub struct EventSystem {
     /// This will be iterable after dispatching, and
     /// must be cleared (all events handled) before the
     /// next dispatch
-    es_global_event_queue: Vec<Event>,
+    es_global_event_queue: VecDeque<Event>,
     /// These are dakota-only events, which the user doesn't
     /// have to worry about and Dakota itself will handle
     pub(crate) es_dakota_event_queue: Vec<Event>,
@@ -29,7 +30,7 @@ impl EventSystem {
         let handler_ecs = ll::Instance::new();
 
         Self {
-            es_global_event_queue: Vec::new(),
+            es_global_event_queue: VecDeque::new(),
             es_dakota_event_queue: Vec::new(),
             es_handler_ecs_inst: handler_ecs,
             es_name_to_handler_map: Vec::new(),
@@ -78,10 +79,6 @@ pub enum Event {
 }
 
 impl EventSystem {
-    pub fn clear_event_queue(&mut self) {
-        self.es_global_event_queue.clear();
-    }
-
     /// Look up the ECS Id of an Event Handler given its string name
     ///
     /// This is used to go from the human name the app gave the handler to
@@ -107,7 +104,7 @@ impl EventSystem {
     /// anytime OOD is returned from thundr.
     pub fn add_event_window_resized(&mut self, dom: &DakotaDOM, new_size: dom::Size<u32>) {
         if let Some(handler) = dom.window.events.resize.as_ref() {
-            self.es_global_event_queue.push(Event::WindowResized {
+            self.es_global_event_queue.push_back(Event::WindowResized {
                 args: handler.args.clone(),
                 size: new_size,
             });
@@ -128,7 +125,7 @@ impl EventSystem {
     pub fn add_event_window_redraw_complete(&mut self, dom: &DakotaDOM) {
         if let Some(handler) = dom.window.events.redraw_complete.as_ref() {
             self.es_global_event_queue
-                .push(Event::WindowRedrawComplete {
+                .push_back(Event::WindowRedrawComplete {
                     args: handler.args.clone(),
                 });
         }
@@ -140,7 +137,7 @@ impl EventSystem {
     /// optional in the element tree however.
     pub fn add_event_window_closed(&mut self, dom: &DakotaDOM) {
         if let Some(handler) = dom.window.events.closed.as_ref() {
-            self.es_global_event_queue.push(Event::WindowClosed {
+            self.es_global_event_queue.push_back(Event::WindowClosed {
                 args: handler.args.clone(),
             });
             return;
@@ -148,19 +145,19 @@ impl EventSystem {
 
         // If we couldn't get the arg array from the tree, then
         // just create an empty one
-        self.es_global_event_queue.push(Event::WindowClosed {
+        self.es_global_event_queue.push_back(Event::WindowClosed {
             args: Rc::new(Vec::with_capacity(0)),
         });
     }
 
     pub fn add_event_key_down(&mut self, key: Keycode, mods: Mods) {
-        self.es_global_event_queue.push(Event::InputKeyDown {
+        self.es_global_event_queue.push_back(Event::InputKeyDown {
             key: key,
             modifiers: mods,
         });
     }
     pub fn add_event_key_up(&mut self, key: Keycode, mods: Mods) {
-        self.es_global_event_queue.push(Event::InputKeyUp {
+        self.es_global_event_queue.push_back(Event::InputKeyUp {
             key: key,
             modifiers: mods,
         });
@@ -168,22 +165,23 @@ impl EventSystem {
 
     pub fn add_event_mouse_button_down(&mut self, button: MouseButton, x: i32, y: i32) {
         self.es_global_event_queue
-            .push(Event::InputMouseButtonDown {
+            .push_back(Event::InputMouseButtonDown {
                 button: button,
                 x: x,
                 y: y,
             });
     }
     pub fn add_event_mouse_button_up(&mut self, button: MouseButton, x: i32, y: i32) {
-        self.es_global_event_queue.push(Event::InputMouseButtonUp {
-            button: button,
-            x: x,
-            y: y,
-        });
+        self.es_global_event_queue
+            .push_back(Event::InputMouseButtonUp {
+                button: button,
+                x: x,
+                y: y,
+            });
     }
 
     pub fn add_event_scroll(&mut self, mouse_pos: (i32, i32), x: f32, y: f32) {
-        self.es_global_event_queue.push(Event::InputScroll {
+        self.es_global_event_queue.push_back(Event::InputScroll {
             mouse_x: mouse_pos.0,
             mouse_y: mouse_pos.1,
             x: x,
@@ -200,11 +198,11 @@ impl EventSystem {
         });
     }
 
-    /// Get the slice of currently unhandled events
+    /// Drain the queue of currently unhandled events
     ///
     /// The app should do this in its main loop after dispatching.
     /// These will be cleared during each dispatch.
-    pub fn get_events<'a>(&'a self) -> &'a [Event] {
-        self.es_global_event_queue.as_slice()
+    pub fn drain_events<'a>(&'a mut self) -> std::collections::vec_deque::Drain<'a, Event> {
+        self.es_global_event_queue.drain(0..)
     }
 }

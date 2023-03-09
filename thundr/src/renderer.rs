@@ -296,6 +296,7 @@ impl Renderer {
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
                     | vk::DebugUtilsMessageSeverityFlagsEXT::INFO
+                    | vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
                     | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING,
             )
             .message_type(
@@ -352,6 +353,9 @@ impl Renderer {
 
         let printf_info = vk::ValidationFeaturesEXT::builder()
             //.enabled_validation_features(&[vk::ValidationFeatureEnableEXT::DEBUG_PRINTF])
+            .enabled_validation_features(&[
+                vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION,
+            ])
             .build();
         create_info.p_next = &printf_info as *const _ as *const std::os::raw::c_void;
 
@@ -1603,7 +1607,10 @@ impl Renderer {
             // size supported. This will only be doable with geom I guess
             // On moltenvk this is like 128, so that's bad
             let (bindless_pool, bindless_layout) =
-                Self::allocate_bindless_resources(&dev, dev_features.max_sampler_count);
+                // Subtract three resources from the theoretical max that the driver reported.
+                // This is to account for our null image and other resources we create in
+                // addition to our bindless count.
+                Self::allocate_bindless_resources(&dev, dev_features.max_sampler_count - 3);
             let bindless_desc =
                 Self::allocate_bindless_desc(&dev, bindless_pool, &[bindless_layout], 1);
 
