@@ -188,17 +188,39 @@ impl Pipeline for GeomPipeline {
                 }],
             );
 
-            // Here is where everything is actually drawn
-            // technically 3 vertices are being drawn
-            // by the shader
-            rend.dev.cmd_draw_indexed(
-                params.cbuf,                          // drawing command buffer
-                self.vert_count,                      // number of verts
-                surfaces.l_window_order.len() as u32, // number of instances
-                0,                                    // first vertex
-                0,                                    // vertex offset
-                0,                                    // first instance
-            );
+            // Actually draw our objects
+            //
+            // This is done with bindless+instanced drawing. We have one quad object that we will
+            // draw and texture, but instance it for every surface in our surface list. This means
+            // one draw call for any number of elements.
+            //
+            // Unfortunately it seems AMD's driver has a bug where they do not properly handle this
+            // particular draw call sequence. The result is lots of corruption, in the form of
+            // little squares which make it look like compressed pixel data was written to a linear
+            // texture. So on AMD we do not do the instancing, but instead have a draw call for
+            // every object (gross)
+            if rend.dev_features.vkc_war_disable_instanced_drawing {
+                for i in 0..surfaces.l_window_order.len() as u32 {
+                    // [WAR] Launch each instance manually :(
+                    rend.dev.cmd_draw_indexed(
+                        params.cbuf,     // drawing command buffer
+                        self.vert_count, // number of verts
+                        1,               // number of instances
+                        0,               // first vertex
+                        0,               // vertex offset
+                        i as u32,        // first instance
+                    );
+                }
+            } else {
+                rend.dev.cmd_draw_indexed(
+                    params.cbuf,                          // drawing command buffer
+                    self.vert_count,                      // number of verts
+                    surfaces.l_window_order.len() as u32, // number of instances
+                    0,                                    // first vertex
+                    0,                                    // vertex offset
+                    0,                                    // first instance
+                );
+            }
             log::info!("Drawing {} objects", surfaces.l_window_order.len());
         }
 

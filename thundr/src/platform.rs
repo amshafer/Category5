@@ -16,6 +16,10 @@ use utils::log;
 /// lists of extensions to enable. The extension lists will be constructed
 /// from the flags to avoid keeping them in memory forever.
 pub struct VKDeviceFeatures {
+    /// The GPU vendor returned by VkPhysicalDeviceProperties
+    pub vkc_vendor_id: u32,
+    /// Should we disable instanced drawing as a workaround for certain hardware
+    pub vkc_war_disable_instanced_drawing: bool,
     /// Does this device allow import/export from opaque fds
     pub vkc_supports_ext_mem: bool,
     /// Does this device allow import/export using dmabuf handles. Might not
@@ -78,6 +82,16 @@ impl VKDeviceFeatures {
         }
 
         let mut ret = Self {
+            vkc_vendor_id: pdev_props.properties.vendor_id,
+            // Unfortunately it seems AMD's driver has a bug where they do not properly handle this
+            // particular draw call sequence. The result is lots of corruption, in the form of
+            // little squares which make it look like compressed pixel data was written to a linear
+            // texture. So on AMD we do not do the instancing, but instead have a draw call for
+            // every object (gross)
+            vkc_war_disable_instanced_drawing: match pdev_props.properties.vendor_id {
+                0x1002 => true, // AMD
+                _ => false,
+            },
             vkc_supports_ext_mem: false,
             vkc_supports_dmabuf: false,
             vkc_supports_mut_swapchain: false,
@@ -154,6 +168,13 @@ impl VKDeviceFeatures {
         // Force incremental presentation off if env var is defined
         if std::env::var("THUNDR_NO_INCREMENTAL_PRESENT").is_ok() {
             supports_incremental_present = false
+        }
+
+        // Allow overriding the instanced drawing detection
+        if let Ok(val) = std::env::var("THUNDR_DISABLE_INSTANCED_DRAWING") {
+            if let Ok(should_instance) = val.parse() {
+                ret.vkc_war_disable_instanced_drawing = should_instance;
+            }
         }
 
         let supports_aftermath =
