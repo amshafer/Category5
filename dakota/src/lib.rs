@@ -1289,7 +1289,6 @@ impl<'a> Dakota<'a> {
     /// Timeout is in milliseconds, and is the timeout to wait for
     /// window system events.
     pub fn dispatch(&mut self, dom: &DakotaId, mut timeout: Option<u32>) -> Result<()> {
-        let mut stop = StopWatch::new();
         let mut first_loop = true;
 
         loop {
@@ -1300,91 +1299,133 @@ impl<'a> Dakota<'a> {
             }
             first_loop = false;
 
-            // First run our window system code. This will check if wayland/X11
-            // notified us of a resize, closure, or need to redraw
-            let plat_res = self.d_plat.run(
-                &mut self.d_event_sys,
+            // First handle input and platform changes
+            match self.dispatch_platform(dom, timeout) {
+                Ok(()) => {}
+                Err(e) => {
+                    if e.downcast_ref::<DakotaError>() == Some(&DakotaError::OUT_OF_DATE) {
+                        continue;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            };
+
+            // Now render the frame
+            match self.dispatch_rendering(dom) {
+                Ok(()) => {}
+                Err(e) => {
+                    if e.downcast_ref::<DakotaError>() == Some(&DakotaError::OUT_OF_DATE) {
+                        continue;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            };
+
+            return Ok(());
+        }
+    }
+
+    /// Dispatch platform specific handling code
+    ///
+    /// This will handle user input and other things like that. This function
+    /// is internally called by the `dispatch` call and does not perform any
+    /// drawing.
+    pub fn dispatch_platform(&mut self, dom: &DakotaId, timeout: Option<u32>) -> Result<()> {
+        // First run our window system code. This will check if wayland/X11
+        // notified us of a resize, closure, or need to redraw
+        let plat_res = self.d_plat.run(
+            &mut self.d_event_sys,
+            self.d_dom
+                .get(dom)
+                .ok_or(anyhow!("Id passed to Dispatch must be a DOM object"))?
+                .deref(),
+            timeout,
+        );
+
+        match plat_res {
+            Ok(needs_redraw) => {
+                if needs_redraw {
+                    self.d_needs_redraw = needs_redraw
+                }
+            }
+            Err(th::ThundrError::OUT_OF_DATE) => {
+                // This is a weird one
+                // So the above OUT_OF_DATEs are returned from thundr, where we
+                // can expect it will handle OOD itself. But here we have
+                // OUT_OF_DATE returned from our SDL2 backend, so we need
+                // to tell Thundr to do OOD itself
+                self.d_thund.handle_ood();
+                self.handle_ood(dom)?;
+                return Err(th::ThundrError::OUT_OF_DATE.into());
+            }
+            Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
+        };
+
+        return Ok(());
+    }
+
+    /// Draw the next frame
+    ///
+    /// This dispatches *only* the rendering backend of Dakota. The `dispatch_platform`
+    /// call *must* take place before this in order for correct updates to happen, as
+    /// this will only render the current state of Dakota.
+    pub fn dispatch_rendering(&mut self, dom: &DakotaId) -> Result<()> {
+        let mut stop = StopWatch::new();
+
+        // Now handle events like scrolling before we calculate sizes
+        self.handle_private_events()?;
+
+        if self.d_needs_refresh {
+            let mut layout_stop = StopWatch::new();
+            layout_stop.start();
+            self.refresh_elements(dom)?;
+            layout_stop.end();
+            log::error!(
+                "Dakota spent {} ms refreshing the layout",
+                layout_stop.get_duration().as_millis()
+            );
+        }
+        stop.start();
+
+        // if needs redraw, then tell thundr to draw and present a frame
+        // At every step of the way we check if the drawable has been resized
+        // and will return that to the dakota user so they have a chance to resize
+        // anything they want
+        if self.d_needs_redraw {
+            match self.draw_surfacelists() {
+                Ok(()) => {}
+                Err(th::ThundrError::OUT_OF_DATE) => {
+                    self.handle_ood(dom)?;
+                    return Err(th::ThundrError::OUT_OF_DATE.into());
+                }
+                Err(e) => return Err(Error::from(e).context("Thundr: drawing failed with error")),
+            };
+            match self.d_thund.present() {
+                Ok(()) => {}
+                Err(th::ThundrError::OUT_OF_DATE) => {
+                    self.handle_ood(dom)?;
+                    return Err(th::ThundrError::OUT_OF_DATE.into());
+                }
+                Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
+            };
+            self.d_needs_redraw = false;
+
+            // Notify the app that we just drew a frame and it should prepare the next one
+            self.d_event_sys.add_event_window_redraw_complete(
                 self.d_dom
                     .get(dom)
                     .ok_or(anyhow!("Id passed to Dispatch must be a DOM object"))?
                     .deref(),
-                timeout,
             );
-
-            match plat_res {
-                Ok(needs_redraw) => {
-                    if needs_redraw {
-                        self.d_needs_redraw = needs_redraw
-                    }
-                }
-                Err(th::ThundrError::OUT_OF_DATE) => {
-                    // This is a weird one
-                    // So the above OUT_OF_DATEs are returned from thundr, where we
-                    // can expect it will handle OOD itself. But here we have
-                    // OUT_OF_DATE returned from our SDL2 backend, so we need
-                    // to tell Thundr to do OOD itself
-                    self.d_thund.handle_ood();
-                    self.handle_ood(dom)?;
-                    continue;
-                }
-                Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
-            };
-            stop.start();
-
-            // Now handle events like scrolling before we calculate sizes
-            self.handle_private_events()?;
-
-            if self.d_needs_refresh {
-                let mut layout_stop = StopWatch::new();
-                layout_stop.start();
-                self.refresh_elements(dom)?;
-                layout_stop.end();
-                log::error!(
-                    "Dakota spent {} ms refreshing the layout",
-                    layout_stop.get_duration().as_millis()
-                );
-            }
-
-            // if needs redraw, then tell thundr to draw and present a frame
-            // At every step of the way we check if the drawable has been resized
-            // and will return that to the dakota user so they have a chance to resize
-            // anything they want
-            if self.d_needs_redraw {
-                match self.draw_surfacelists() {
-                    Ok(()) => {}
-                    Err(th::ThundrError::OUT_OF_DATE) => {
-                        self.handle_ood(dom)?;
-                        continue;
-                    }
-                    Err(e) => {
-                        return Err(Error::from(e).context("Thundr: drawing failed with error"))
-                    }
-                };
-                match self.d_thund.present() {
-                    Ok(()) => {}
-                    Err(th::ThundrError::OUT_OF_DATE) => {
-                        self.handle_ood(dom)?;
-                        continue;
-                    }
-                    Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
-                };
-                self.d_needs_redraw = false;
-
-                // Notify the app that we just drew a frame and it should prepare the next one
-                self.d_event_sys.add_event_window_redraw_complete(
-                    self.d_dom
-                        .get(dom)
-                        .ok_or(anyhow!("Id passed to Dispatch must be a DOM object"))?
-                        .deref(),
-                );
-                stop.end();
-                log::error!(
-                    "Dakota spent {} ms drawing this frame",
-                    stop.get_duration().as_millis()
-                );
-            }
-
-            return Ok(());
+            stop.end();
+            log::error!(
+                "Dakota spent {} ms drawing this frame",
+                stop.get_duration().as_millis()
+            );
         }
+
+        return Ok(());
     }
 }
