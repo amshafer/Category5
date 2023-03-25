@@ -7,6 +7,8 @@ extern crate nix;
 #[cfg(not(target_os = "freebsd"))]
 use nix::sys::select::*;
 
+use nix::unistd::close;
+
 #[cfg(target_os = "freebsd")]
 use nix::sys::event::*;
 use std::os::unix::io::RawFd;
@@ -66,8 +68,18 @@ impl FdWatch {
     }
 
     // returns true if something is ready to be read
-    pub fn wait_for_events(&mut self) -> bool {
-        kevent_ts(self.fdw_kq, &[], self.fdw_events.as_mut_slice(), None).is_ok()
+    pub fn wait_for_events(&mut self, timeout: Option<usize>) -> bool {
+        match timeout {
+            Some(ms) => kevent(self.fdw_kq, &[], self.fdw_events.as_mut_slice(), ms).is_ok(),
+            None => kevent_ts(self.fdw_kq, &[], self.fdw_events.as_mut_slice(), None).is_ok(),
+        }
+    }
+}
+
+#[cfg(target_os = "freebsd")]
+impl Drop for FdWatch {
+    fn drop(&mut self) {
+        close(self.fdw_kq).expect("Could not close FdWatch Kqueue fd");
     }
 }
 
@@ -100,13 +112,28 @@ impl FdWatch {
 
     // timeout in ms
     // returns true if something is ready to be read
-    pub fn wait_for_events(&mut self) -> bool {
+    pub fn wait_for_events(&mut self, timeout: Option<usize>) -> bool {
+        use crate::fdwatch::nix::sys::time::TimeValLike;
+
         let mut fdset = FdSet::new();
         for fd in self.fdw_events.iter() {
             fdset.insert(*fd);
         }
 
         // add all of our fds to the readfd list
-        select(None, Some(&mut fdset), None, None, None).is_ok()
+        let mut out = match timeout {
+            Some(ms) => Some(nix::sys::time::TimeVal::milliseconds(ms as i64)),
+            None => None,
+        };
+        select(None, Some(&mut fdset), None, None, out.as_mut()).is_ok()
+    }
+}
+
+#[cfg(not(target_os = "freebsd"))]
+impl Drop for FdWatch {
+    fn drop(&mut self) {
+        for fd in self.fdw_events.iter() {
+            close(*fd).expect("Could not close FdWatch fd");
+        }
     }
 }

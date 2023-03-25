@@ -1,5 +1,6 @@
 use crate::dom;
 use crate::dom::DakotaDOM;
+use crate::utils::fdwatch::FdWatch;
 use crate::{event::EventSystem, DakotaError, Result};
 
 #[cfg(feature = "wayland")]
@@ -26,6 +27,7 @@ pub trait Platform {
         evsys: &mut EventSystem,
         dom: &DakotaDOM,
         timeout: Option<u32>,
+        watch: Option<&mut FdWatch>,
     ) -> std::result::Result<bool, DakotaError>;
 }
 
@@ -116,6 +118,7 @@ impl Platform for SDL2Plat {
         evsys: &mut EventSystem,
         dom: &DakotaDOM,
         timeout: Option<u32>,
+        watch: Option<&mut FdWatch>,
     ) -> std::result::Result<bool, DakotaError> {
         let mut is_ood = false;
         let mut needs_redraw = false;
@@ -125,95 +128,133 @@ impl Platform for SDL2Plat {
         // We have to pass in the mouse position (aka self.sdl_mouse_pos) due
         // to the borrow checker. We are referencing other parts of self and using
         // self here will bind the entire self obj in this closure
-        let mut handle_event = |event, mouse_pos: &mut (i32, i32)| {
-            match event {
-                // Tell the window to exit if the user closed it
-                Event::Quit { .. } => evsys.add_event_window_closed(dom),
-                // Here we record events for our keystrokes
-                //
-                // This requires converting the raw keycodes from sdl2 into an
-                // enum that we control. See input.rs for how this is done. We
-                // also wrap the Keyboard Modifiercodes in a similar way
-                Event::KeyDown {
-                    keycode, keymod, ..
-                } => {
-                    let key = convert_sdl_keycode_to_dakota(keycode.unwrap());
-                    let mods = convert_sdl_mods_to_dakota(keymod);
-                    evsys.add_event_key_down(key, mods);
-                }
-                Event::KeyUp {
-                    keycode, keymod, ..
-                } => {
-                    let key = convert_sdl_keycode_to_dakota(keycode.unwrap());
-                    let mods = convert_sdl_mods_to_dakota(keymod);
-                    evsys.add_event_key_up(key, mods);
-                }
-                // handle pointer inputs. This just looks like the above keyboard
-                Event::MouseButtonDown {
-                    mouse_btn, x, y, ..
-                } => {
-                    let button = convert_sdl_mouse_to_dakota(mouse_btn);
-                    evsys.add_event_mouse_button_down(button, x, y);
-                }
-                Event::MouseButtonUp {
-                    mouse_btn, x, y, ..
-                } => {
-                    let button = convert_sdl_mouse_to_dakota(mouse_btn);
-                    evsys.add_event_mouse_button_up(button, x, y);
-                }
-                Event::MouseWheel { x, y, .. } => evsys.add_event_scroll(
-                    *mouse_pos,
-                    x as f32 * SCROLL_SENSITIVITY,
-                    y as f32 * SCROLL_SENSITIVITY,
-                ),
+        let mut handle_event = |raw_event, user_fd, mouse_pos: &mut (i32, i32)| {
+            // raw_event will be Some if we have a valid SDL event
+            if let Some(event) = raw_event {
+                match event {
+                    // Tell the window to exit if the user closed it
+                    Event::Quit { .. } => evsys.add_event_window_closed(dom),
+                    // Here we record events for our keystrokes
+                    //
+                    // This requires converting the raw keycodes from sdl2 into an
+                    // enum that we control. See input.rs for how this is done. We
+                    // also wrap the Keyboard Modifiercodes in a similar way
+                    Event::KeyDown {
+                        keycode, keymod, ..
+                    } => {
+                        let key = convert_sdl_keycode_to_dakota(keycode.unwrap());
+                        let mods = convert_sdl_mods_to_dakota(keymod);
+                        evsys.add_event_key_down(key, mods);
+                    }
+                    Event::KeyUp {
+                        keycode, keymod, ..
+                    } => {
+                        let key = convert_sdl_keycode_to_dakota(keycode.unwrap());
+                        let mods = convert_sdl_mods_to_dakota(keymod);
+                        evsys.add_event_key_up(key, mods);
+                    }
+                    // handle pointer inputs. This just looks like the above keyboard
+                    Event::MouseButtonDown {
+                        mouse_btn, x, y, ..
+                    } => {
+                        let button = convert_sdl_mouse_to_dakota(mouse_btn);
+                        evsys.add_event_mouse_button_down(button, x, y);
+                    }
+                    Event::MouseButtonUp {
+                        mouse_btn, x, y, ..
+                    } => {
+                        let button = convert_sdl_mouse_to_dakota(mouse_btn);
+                        evsys.add_event_mouse_button_up(button, x, y);
+                    }
+                    Event::MouseWheel { x, y, .. } => evsys.add_event_scroll(
+                        *mouse_pos,
+                        x as f32 * SCROLL_SENSITIVITY,
+                        y as f32 * SCROLL_SENSITIVITY,
+                    ),
 
-                Event::MouseMotion { x, y, .. } => {
-                    mouse_pos.0 = x;
-                    mouse_pos.1 = y;
-                }
+                    Event::MouseMotion { x, y, .. } => {
+                        mouse_pos.0 = x;
+                        mouse_pos.1 = y;
+                    }
 
-                // Now we have window events. There's really only one we need to
-                // pay attention to here, and it's the resize event. Thundr is
-                // going to check for OUT_OF_DATE, but it's possible that the toolkit
-                // (SDL) might need refreshing while libvulkan doesn't yet know about
-                // it.
-                Event::Window {
-                    timestamp: _,
-                    window_id: _,
-                    win_event,
-                } => match win_event {
-                    // check redraw requested?
-                    WindowEvent::Resized { .. } => is_ood = true,
-                    WindowEvent::SizeChanged { .. } => is_ood = true,
-                    WindowEvent::Exposed { .. } => needs_redraw = true,
+                    // Now we have window events. There's really only one we need to
+                    // pay attention to here, and it's the resize event. Thundr is
+                    // going to check for OUT_OF_DATE, but it's possible that the toolkit
+                    // (SDL) might need refreshing while libvulkan doesn't yet know about
+                    // it.
+                    Event::Window {
+                        timestamp: _,
+                        window_id: _,
+                        win_event,
+                    } => match win_event {
+                        // check redraw requested?
+                        WindowEvent::Resized { .. } => is_ood = true,
+                        WindowEvent::SizeChanged { .. } => is_ood = true,
+                        WindowEvent::Exposed { .. } => needs_redraw = true,
+                        _ => {}
+                    },
                     _ => {}
-                },
-                _ => {}
-            };
+                }
+            }
+
+            // If this function was called because of our FdWatch, add the
+            // right event now
+            if user_fd {
+                evsys.add_event_user_fd();
+            }
 
             Ok(())
         };
 
-        // First block for the next event
-        handle_event(
-            match timeout {
-                // If we are waiting a certain amount of time, tell SDL. If
-                // it returns an event, great, handle it.
-                // If not, then just return without handling.
-                Some(timeout) => match self.sdl_event_pump.wait_event_timeout(timeout) {
-                    Some(event) => event,
-                    None => return Ok(needs_redraw),
-                },
-                // No timeout was given, so we wait indefinitely
-                None => self.sdl_event_pump.wait_event(),
-            },
-            &mut self.sdl_mouse_pos,
-        )?;
+        // There are two modes we need to consider for polling for SDL events, since
+        // it doesn't follow a unix style: 1) if we are waiting for just SDL, 2) if we
+        // are waiting for SDL and some file descriptors
+        //
+        // In the first case we should use SDL's SDL_WaitEvent, since it will save
+        // power by not busy looping. If we need to wait for some fds then we have no
+        // choice but to busy loop ourselves since SDL doesn't have a good way for us
+        // to deal with this. If this becomes a problem hopefuly SDL3 has a good way to
+        // deal with it..
+        if let Some(fds) = watch {
+            loop {
+                // Wait for the first readable fd
+                if fds.wait_for_events(Some(0)) {
+                    handle_event(None, true, &mut self.sdl_mouse_pos)?;
+                    break;
+                }
+
+                // Or wait for the first SDL event
+                if let Some(ev) = self.sdl_event_pump.poll_event() {
+                    handle_event(Some(ev), false, &mut self.sdl_mouse_pos)?;
+                    break;
+                }
+
+                // Don't waste all the CPU
+                std::thread::sleep(std::time::Duration::from_millis(8));
+            }
+        } else {
+            // First block for the next event
+            handle_event(
+                Some(match timeout {
+                    // If we are waiting a certain amount of time, tell SDL. If
+                    // it returns an event, great, handle it.
+                    // If not, then just return without handling.
+                    Some(timeout) => match self.sdl_event_pump.wait_event_timeout(timeout) {
+                        Some(event) => event,
+                        None => return Ok(needs_redraw),
+                    },
+                    // No timeout was given, so we wait indefinitely
+                    None => self.sdl_event_pump.wait_event(),
+                }),
+                false,
+                &mut self.sdl_mouse_pos,
+            )?;
+        }
 
         // Now drain the available events before returning
         // control to the main dakota dispatch loop.
         for event in self.sdl_event_pump.poll_iter() {
-            handle_event(event, &mut self.sdl_mouse_pos)?
+            handle_event(Some(event), false, &mut self.sdl_mouse_pos)?
         }
 
         match is_ood {

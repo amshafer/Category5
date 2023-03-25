@@ -15,7 +15,9 @@ extern crate bitflags;
 extern crate lazy_static;
 extern crate utils;
 use utils::log;
-pub use utils::{anyhow, region::Rect, timing::StopWatch, Context, Error, MemImage, Result};
+pub use utils::{
+    anyhow, fdwatch::FdWatch, region::Rect, timing::StopWatch, Context, Error, MemImage, Result,
+};
 
 pub mod dom;
 pub mod input;
@@ -34,6 +36,7 @@ mod generated;
 pub use generated::*;
 
 use std::ops::Deref;
+use std::os::fd::RawFd;
 extern crate regex;
 use regex::Regex;
 
@@ -91,6 +94,9 @@ pub struct Dakota<'a> {
     d_plat: platform::WlPlat,
     #[cfg(feature = "sdl")]
     d_plat: platform::SDL2Plat,
+    /// A set of fds provided by the application that we should watch during
+    /// our main loop
+    d_user_fds: Option<FdWatch>,
     /// This is one ECS that is composed of multiple tables
     d_ecs_inst: ll::Instance,
     /// This is all of the LayoutNodes in the system, each corresponding to
@@ -304,6 +310,7 @@ impl<'a> Dakota<'a> {
 
         Ok(Self {
             d_plat: plat,
+            d_user_fds: None,
             d_thund: thundr,
             d_ecs_inst: layout_ecs,
             d_layout_nodes: layout_table,
@@ -1273,6 +1280,20 @@ impl<'a> Dakota<'a> {
         Ok(())
     }
 
+    /// Add a file descriptor to watch
+    ///
+    /// This will add a new file descriptor to the watch set inside dakota,
+    /// meaning dakota will return control to the user when this fd is readable.
+    /// This is done through the `UserFdReadable` event.
+    pub fn add_watch_fd(&mut self, fd: RawFd) {
+        if self.d_user_fds.is_none() {
+            self.d_user_fds = Some(FdWatch::new());
+        }
+
+        let watch = self.d_user_fds.as_mut().unwrap();
+        watch.add_fd(fd);
+    }
+
     /// run the dakota thread.
     ///
     /// Dakota requires takover of one thread, because that's just how winit
@@ -1342,6 +1363,7 @@ impl<'a> Dakota<'a> {
                 .ok_or(anyhow!("Id passed to Dispatch must be a DOM object"))?
                 .deref(),
             timeout,
+            self.d_user_fds.as_mut(),
         );
 
         match plat_res {

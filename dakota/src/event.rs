@@ -76,6 +76,11 @@ pub enum Event {
         x: f32,
         y: f32,
     },
+    /// Indicates that one of the fds that the application provided
+    /// for the event loop is readable. This can be used to have
+    /// dakota `select()` a set of fds and wake the application up
+    /// when they are ready.
+    UserFdReadable,
 }
 
 impl EventSystem {
@@ -196,6 +201,10 @@ impl EventSystem {
             x: x,
             y: y,
         });
+    }
+
+    pub fn add_event_user_fd(&mut self) {
+        self.es_global_event_queue.push_back(Event::UserFdReadable);
     }
 
     /// Drain the queue of currently unhandled events

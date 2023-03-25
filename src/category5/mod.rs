@@ -228,7 +228,7 @@ impl EventManager {
         // reset the timer before we start
         tm.reset();
         let mut needs_render = true;
-        while needs_render || fdw.wait_for_events() {
+        while needs_render || fdw.wait_for_events(None) {
             log::profiling!("starting loop");
             {
                 let mut atmos = self.em_climate.c_atmos.lock().unwrap();
