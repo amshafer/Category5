@@ -21,7 +21,7 @@ use crate::image::ImageVk;
 use crate::list::SurfaceList;
 use crate::pipelines::PipelineType;
 use crate::platform::VKDeviceFeatures;
-use crate::{Surface, Viewport};
+use crate::{Droppable, Surface, Viewport};
 
 extern crate utils as cat5_utils;
 use crate::{CreateInfo, Damage};
@@ -159,7 +159,7 @@ pub struct Renderer {
     /// This is the set of wayland resources used last frame
     /// for rendering that should now be released
     /// See WindowManger's worker_thread for more
-    pub(crate) r_release: Vec<Box<dyn Drop>>,
+    pub(crate) r_release: Vec<Box<dyn Droppable>>,
     /// command buffer for copying shm images
     pub(crate) copy_cbuf: vk::CommandBuffer,
     pub(crate) copy_cbuf_fence: vk::Fence,
@@ -1055,7 +1055,7 @@ impl Renderer {
     /// freed this frame
     ///
     /// Takes care of choosing what list to add info to
-    pub fn register_for_release(&mut self, release: Box<dyn Drop>) {
+    pub fn register_for_release(&mut self, release: Box<dyn Droppable>) {
         self.r_release.push(release);
     }
 

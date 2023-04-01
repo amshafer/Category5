@@ -61,7 +61,6 @@
 //! * VK_KHR_debug_report
 //! * VK_KHR_descriptor_indexing
 //! * VK_KHR_external_memory
-#![allow(dyn_drop)]
 
 extern crate lazy_static;
 extern crate lluvia;
@@ -301,6 +300,16 @@ impl<'a> CreateInfoBuilder<'a> {
     }
 }
 
+/// Droppable trait that matches anything.
+///
+/// From https://doc.rust-lang.org/rustc/lints/listing/warn-by-default.html#dyn-drop
+///
+/// To work around passing dyn Drop we specify a trait that can accept anything. That
+/// way this boxed object can be dropped when the last rendering resource references
+/// it.
+pub trait Droppable {}
+impl<T> Droppable for T {}
+
 // This is the public facing thundr api. Don't change it
 impl Thundr {
     // TODO: make get_available_params and add customization
@@ -359,7 +368,7 @@ impl Thundr {
     pub fn create_image_from_bits(
         &mut self,
         img: &MemImage,
-        release_info: Option<Box<dyn Drop>>,
+        release_info: Option<Box<dyn Droppable>>,
     ) -> Option<Image> {
         let rend_mtx = self.th_rend.clone();
         let mut rend = self.th_rend.lock().unwrap();
@@ -371,7 +380,7 @@ impl Thundr {
     pub fn create_image_from_dmabuf(
         &mut self,
         dmabuf: &Dmabuf,
-        release_info: Option<Box<dyn Drop>>,
+        release_info: Option<Box<dyn Droppable>>,
     ) -> Option<Image> {
         let rend_mtx = self.th_rend.clone();
         let mut rend = self.th_rend.lock().unwrap();

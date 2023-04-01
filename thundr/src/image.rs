@@ -3,9 +3,6 @@
 //
 // Austin Shafer - 2020
 #![allow(dead_code)]
-// We allow using dyn Drop here for the drop info fields
-// that will be passed around
-#![allow(dyn_drop)]
 extern crate ash;
 extern crate lluvia as ll;
 extern crate nix;
@@ -26,7 +23,7 @@ use ash::vk;
 use nix::fcntl::{fcntl, FcntlArg};
 use nix::Error;
 
-use crate::Damage;
+use crate::{Damage, Droppable};
 
 // For now we only support one format.
 // According to the mesa source, this supports all modifiers.
@@ -44,7 +41,7 @@ pub struct ImageVk {
     pub iv_image_resolution: vk::Extent2D,
     /// Stuff to release when we are no longer using
     /// this gpu buffer (release the wl_buffer)
-    iv_release_info: Option<Box<dyn Drop>>,
+    iv_release_info: Option<Box<dyn Droppable>>,
 }
 
 impl Drop for ImageVk {
@@ -236,7 +233,7 @@ impl Renderer {
         &mut self,
         rend_mtx: Arc<Mutex<Renderer>>,
         img: &MemImage,
-        _release: Option<Box<dyn Drop>>,
+        _release: Option<Box<dyn Droppable>>,
     ) -> Option<Image> {
         unsafe {
             let tex_res = vk::Extent2D {
@@ -496,7 +493,7 @@ impl Renderer {
         &mut self,
         rend_mtx: Arc<Mutex<Renderer>>,
         dmabuf: &Dmabuf,
-        release: Option<Box<dyn Drop>>,
+        release: Option<Box<dyn Droppable>>,
     ) -> Option<Image> {
         self.wait_for_prev_submit();
         self.wait_for_copy();
@@ -642,7 +639,7 @@ impl Renderer {
         image: vk::Image,
         image_mem: vk::DeviceMemory,
         view: vk::ImageView,
-        release: Option<Box<dyn Drop>>,
+        release: Option<Box<dyn Droppable>>,
     ) -> Option<Image> {
         let image_vk = ImageVk {
             iv_rend: rend_mtx.clone(),

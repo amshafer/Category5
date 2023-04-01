@@ -8,6 +8,7 @@
 extern crate image;
 extern crate lluvia as ll;
 extern crate thundr as th;
+pub use th::Droppable;
 pub use th::ThundrError as DakotaError;
 
 extern crate bitflags;
@@ -38,6 +39,7 @@ pub use generated::*;
 
 use std::ops::Deref;
 use std::os::fd::RawFd;
+use std::os::unix::io::OwnedFd;
 extern crate regex;
 use regex::Regex;
 
@@ -424,6 +426,37 @@ impl<'a> Dakota<'a> {
             .d_thund
             .create_image_from_bits(&mimg, None)
             .ok_or(anyhow!("Could not create Thundr image"))?;
+
+        self.d_resource_thundr_image.set(res, image);
+        Ok(())
+    }
+
+    /// Populate a resource by importing a dmabuf
+    ///
+    /// This allows for loading the `fd` specified into Dakota's internal
+    /// renderer without any copies. `modifier` must be supported by the
+    /// Dakota device in use.
+    pub fn define_resource_from_dmabuf(
+        &mut self,
+        res: &DakotaId,
+        fd: OwnedFd,
+        plane: u32,
+        offset: u32,
+        stride: u32,
+        modifier: u64,
+        release_info: Option<Box<dyn Droppable>>,
+    ) -> Result<()> {
+        let dmabuf = Dmabuf::new(fd, plane, offset, stride, modifier);
+
+        if self.d_resource_thundr_image.get(res).is_some() || self.get_resource_color(res).is_some()
+        {
+            return Err(anyhow!("Cannot redefine Resource contents"));
+        }
+
+        let image = self
+            .d_thund
+            .create_image_from_dmabuf(&dmabuf, release_info)
+            .ok_or(anyhow!("Could not create Thundr image from dmabuf"))?;
 
         self.d_resource_thundr_image.set(res, image);
         Ok(())
