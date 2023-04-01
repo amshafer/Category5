@@ -8,9 +8,17 @@ use crate::{Dakota, DakotaId, LayoutSpace};
 use std::cmp::{Ord, PartialOrd};
 use std::rc::Rc;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Format {
     ARGB8888,
+}
+
+impl Format {
+    pub fn get_size(&self) -> usize {
+        match self {
+            Format::ARGB8888 => 4,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -64,11 +72,6 @@ pub struct Resource {
     pub image: Option<Image>,
     pub color: Option<Color>,
     pub hints: Option<Hints>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ResourceMap {
-    pub resources: Vec<DakotaId>,
 }
 
 #[derive(Debug)]
@@ -287,7 +290,6 @@ pub struct Window {
 #[derive(Debug)]
 pub struct DakotaDOM {
     pub version: String,
-    pub resource_map: ResourceMap,
     pub window: Window,
     pub root_element: DakotaId,
 }

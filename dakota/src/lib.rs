@@ -16,8 +16,9 @@ extern crate lazy_static;
 extern crate utils;
 use utils::log;
 pub use utils::{
-    anyhow, fdwatch::FdWatch, region::Rect, timing::StopWatch, Context, Error, MemImage, Result,
+    anyhow, fdwatch::FdWatch, region::Rect, timing::StopWatch, Context, Error, Result,
 };
+pub use utils::{Dmabuf, MemImage};
 
 pub mod dom;
 pub mod input;
@@ -44,11 +45,6 @@ fn regex_trim_excess_space(str: &String) -> String {
     let re = Regex::new(r"\s+").unwrap();
     let trimmed = re.replace_all(str, " ");
     trimmed.to_string()
-}
-
-struct ResMapEntry {
-    rme_image: Option<th::Image>,
-    rme_color: Option<dom::Color>,
 }
 
 pub type DakotaId = ll::Entity;
@@ -110,10 +106,10 @@ pub struct Dakota<'a> {
 
     // Resource components
     // --------------------------------------------
-    /// The resource's thundr data
-    d_resource_entries: ll::Session<ResMapEntry>,
     /// The resource info configured by the user
-    d_resource_definitions: ll::Session<dom::Resource>,
+    d_resource_hints: ll::Session<dom::Hints>,
+    d_resource_thundr_image: ll::Session<th::Image>,
+    d_resource_color: ll::Session<dom::Color>,
 
     // Element components
     // --------------------------------------------
@@ -287,8 +283,9 @@ impl<'a> Dakota<'a> {
         create_component_and_table!(layout_ecs, LayoutNode, layout_table);
         create_component_and_table!(layout_ecs, th::Surface, surface_table);
         create_component_and_table!(layout_ecs, DakotaObjectType, types_table);
-        create_component_and_table!(layout_ecs, ResMapEntry, resource_map_table);
-        create_component_and_table!(layout_ecs, dom::Resource, resource_definitions_table);
+        create_component_and_table!(layout_ecs, dom::Hints, resource_hints_table);
+        create_component_and_table!(layout_ecs, th::Image, resource_thundr_image_table);
+        create_component_and_table!(layout_ecs, dom::Color, resource_color_table);
         create_component_and_table!(layout_ecs, DakotaId, resources_table);
         create_component_and_table!(layout_ecs, dom::RelativeOffset, offsets_table);
         create_component_and_table!(layout_ecs, dom::RelativeSize, sizes_table);
@@ -316,8 +313,9 @@ impl<'a> Dakota<'a> {
             d_layout_nodes: layout_table,
             d_layout_node_surfaces: surface_table,
             d_node_types: types_table,
-            d_resource_entries: resource_map_table,
-            d_resource_definitions: resource_definitions_table,
+            d_resource_hints: resource_hints_table,
+            d_resource_thundr_image: resource_thundr_image_table,
+            d_resource_color: resource_color_table,
             d_resources: resources_table,
             d_offsets: offsets_table,
             d_sizes: sizes_table,
@@ -367,71 +365,67 @@ impl<'a> Dakota<'a> {
         return Ok(id);
     }
 
-    /// Reload all of the thundr images from their dakota resources
+    /// Define a resource's contents given a PNG image
     ///
-    /// Dakota resources may be backed by a Thundr Image. This funciton is in charge
-    /// of iterating through all of the dakota resources in use by elements and create
-    /// Images for all of them.
-    pub fn refresh_resource_map(&mut self, dom_id: &DakotaId) -> Result<()> {
-        self.d_thund.clear_all();
-        let dom = self
-            .d_dom
-            .get(dom_id)
-            .ok_or(anyhow!("Only DOM objects can be refreshed"))?;
+    /// This will look up and open the image at `file_path`, and populate
+    /// the resource `res`'s contents from it.
+    pub fn define_resource_from_image(
+        &mut self,
+        res: &DakotaId,
+        file_path: &std::path::Path,
+        format: dom::Format,
+    ) -> Result<()> {
+        // Create an in-memory representation of the image contents
+        let resolution = image::image_dimensions(file_path)
+            .context("Format of image could not be guessed correctly. Could not get resolution")?;
+        let img = image::open(file_path)
+            .context("Could not open image path")?
+            .to_bgra8();
+        let pixels: Vec<u8> = img.into_vec();
 
-        // Load our resources
-        //
-        // These get tracked in a resource map so they can be looked up during element creation
-        // TODO: don't use this
-        for res_id in dom.resource_map.resources.iter() {
-            if self.d_resource_entries.get(res_id).is_some() {
-                continue;
-            }
+        self.define_resource_from_bits(
+            res,
+            pixels.as_slice(),
+            resolution.0 as usize,
+            resolution.1 as usize,
+            0,
+            format,
+        )
+    }
 
-            let res = self
-                .d_resource_definitions
-                .get(res_id)
-                .ok_or(anyhow!("Could not get Resource"))?;
-
-            let image = match res.image.as_ref() {
-                Some(image) => {
-                    if image.format != dom::Format::ARGB8888 {
-                        return Err(anyhow!("Invalid image format"));
-                    }
-
-                    let file_path = image.data.get_fs_path()?;
-
-                    // Create an in-memory representation of the image contents
-                    let resolution = image::image_dimensions(std::path::Path::new(file_path))
-                        .context(
-                        "Format of image could not be guessed correctly. Could not get resolution",
-                    )?;
-                    let img = image::open(file_path)
-                        .context("Could not open image path")?
-                        .to_bgra8();
-                    let pixels: Vec<u8> = img.into_vec();
-                    let mimg = MemImage::new(
-                        pixels.as_slice().as_ptr() as *mut u8,
-                        4,                     // width of a pixel
-                        resolution.0 as usize, // width of texture
-                        resolution.1 as usize, // height of texture
-                    );
-
-                    // create a thundr image for each resource
-                    Some(self.d_thund.create_image_from_bits(&mimg, None).unwrap())
-                }
-                None => None,
-            };
-
-            // Add the new image to our resource map
-            self.d_resource_entries.set(
-                res_id,
-                ResMapEntry {
-                    rme_image: image,
-                    rme_color: res.color,
-                },
-            );
+    /// Define a resource's contents from an array
+    ///
+    /// This will initialize the resource's GPU image using the contents from
+    /// the `data` slice. The `stride` and `format` arguments are used to correctly
+    /// specify the layout of memory within `data`, a stride of zero implies that
+    /// pixels are tightly packed.
+    pub fn define_resource_from_bits(
+        &mut self,
+        res: &DakotaId,
+        data: &[u8],
+        width: usize,
+        height: usize,
+        _stride: usize, // TODO: Handle stride properly
+        format: dom::Format,
+    ) -> Result<()> {
+        if format != dom::Format::ARGB8888 {
+            return Err(anyhow!("Invalid image format"));
         }
+
+        if self.d_resource_thundr_image.get(res).is_some() || self.get_resource_color(res).is_some()
+        {
+            return Err(anyhow!("Cannot redefine Resource contents"));
+        }
+
+        let mimg = MemImage::new(data.as_ptr() as *mut u8, format.get_size(), width, height);
+
+        // create a thundr image for each resource
+        let image = self
+            .d_thund
+            .create_image_from_bits(&mimg, None)
+            .ok_or(anyhow!("Could not create Thundr image"))?;
+
+        self.d_resource_thundr_image.set(res, image);
         Ok(())
     }
 
@@ -906,24 +900,19 @@ impl<'a> Dakota<'a> {
             // We need to get the resource's content from our resource map, get
             // the thundr image for it, and bind it to our new surface.
             if let Some(resource_id) = self.d_resources.get(node) {
-                if let Some(rme) = self.d_resource_entries.get(&resource_id) {
-                    // Assert that only one content type is set
-                    let mut content_num = 0;
-                    if rme.rme_image.is_some() {
-                        content_num += 1;
-                    }
-                    if rme.rme_color.is_some() {
-                        content_num += 1;
-                    }
-                    assert!(content_num == 1);
+                // Assert that only one content type is set
+                let mut content_num = 0;
 
-                    if let Some(image) = rme.rme_image.as_ref() {
-                        self.d_thund.bind_image(&mut surf, image.clone());
-                    }
-                    if let Some(color) = rme.rme_color.as_ref() {
-                        surf.set_color((color.r, color.g, color.b, color.a));
-                    }
+                if let Some(image) = self.d_resource_thundr_image.get(&resource_id) {
+                    self.d_thund.bind_image(&mut surf, image.clone());
+                    content_num += 1;
                 }
+                if let Some(color) = self.get_resource_color(&resource_id) {
+                    surf.set_color((color.r, color.g, color.b, color.a));
+                    content_num += 1;
+                }
+
+                assert!(content_num == 1);
             } else if let Some(glyph_id) = layout.l_glyph_id {
                 // If this path is hit, then this layout node is really a glyph in a
                 // larger block of text. It has been created as a child, and isn't
@@ -1119,8 +1108,6 @@ impl<'a> Dakota<'a> {
     pub fn refresh_full(&mut self, dom: &DakotaId) -> Result<()> {
         self.d_needs_redraw = true;
         self.clear_thundr();
-        self.refresh_resource_map(dom)
-            .context("Refreshing resource map")?;
         self.refresh_elements(dom)
             .context("Refreshing element layout")
     }

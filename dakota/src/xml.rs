@@ -40,7 +40,6 @@ enum Element {
     Dakota {
         version: Option<String>,
         window: Option<dom::Window>,
-        resource_map: Option<dom::ResourceMap>,
         root_element: Option<DakotaId>,
     },
     Version(Option<String>),
@@ -70,7 +69,7 @@ enum Element {
     Image(Option<dom::Format>, Option<dom::Data>),
     Format(Option<dom::Format>),
     Data(dom::Data),
-    ResourceMap(dom::ResourceMap),
+    ResourceMap,
     Resource(Option<String>),
     ResourceDefinition {
         name: Option<String>,
@@ -118,7 +117,6 @@ impl Element {
             b"dakota" => Self::Dakota {
                 version: None,
                 window: None,
-                resource_map: None,
                 root_element: None,
             },
             b"version" => Self::Version(None),
@@ -151,9 +149,7 @@ impl Element {
                 rel_path: None,
                 abs_path: None,
             }),
-            b"resourceMap" => Self::ResourceMap(dom::ResourceMap {
-                resources: Vec::new(),
-            }),
+            b"resourceMap" => Self::ResourceMap,
             b"resource" => Self::Resource(None),
             b"define_resource" => Self::ResourceDefinition {
                 name: None,
@@ -275,7 +271,6 @@ impl<'a> Dakota<'a> {
             Element::Dakota {
                 version: _,
                 window: _,
-                resource_map: _,
                 root_element: _,
             } => Ok(Some(self.create_dakota_dom()?)),
             _ => Ok(None),
@@ -411,11 +406,10 @@ impl<'a> Dakota<'a> {
             Element::Dakota {
                 version,
                 window,
-                resource_map,
                 root_element,
             } => match old_node {
                 Element::Version(data) => *version = data.clone(),
-                Element::ResourceMap(data) => *resource_map = Some(data.clone()),
+                Element::ResourceMap => {}
                 Element::Window {
                     title,
                     width,
@@ -474,7 +468,7 @@ impl<'a> Dakota<'a> {
                 e => return Err(anyhow!("Unexpected child element: {:?}", e)),
             },
             // -------------------------------------------------------
-            Element::ResourceMap(map) => match old_node {
+            Element::ResourceMap => match old_node {
                 Element::ResourceDefinition {
                     name,
                     image,
@@ -490,19 +484,17 @@ impl<'a> Dakota<'a> {
                         )
                         .context("Getting resource id for resource definition")?;
 
-                    self.set_resource_definition(
-                        &resource_id,
-                        dom::Resource {
-                            name: name
-                                .clone()
-                                .ok_or(anyhow!("Name field not specified in <define_resource>"))?,
-                            image: image.clone(),
-                            color: color.clone(),
-                            hints: hints.clone(),
-                        },
-                    );
+                    if let Some(h) = hints.clone() {
+                        self.set_resource_hints(&resource_id, h);
+                    }
 
-                    map.resources.push(resource_id);
+                    // If this resource is backed by an image, populate it
+                    if let Some(i) = image.as_ref() {
+                        let file_path = std::path::Path::new(i.data.get_fs_path()?);
+                        self.define_resource_from_image(&resource_id, &file_path, i.format)?;
+                    } else if let Some(c) = color.as_ref() {
+                        self.set_resource_color(&resource_id, *c);
+                    }
                 }
                 e => return Err(anyhow!("Unexpected child element: {:?}", e)),
             },
@@ -729,7 +721,6 @@ impl<'a> Dakota<'a> {
                                 Some(Element::Dakota {
                                     version,
                                     window,
-                                    resource_map,
                                     root_element,
                                 }) => {
                                     self.set_dakota_dom(
@@ -739,9 +730,6 @@ impl<'a> Dakota<'a> {
                                                 .clone()
                                                 .ok_or(anyhow!("Dakota missing field version"))?,
                                             window: window
-                                                .clone()
-                                                .ok_or(anyhow!("Dakota missing field version"))?,
-                                            resource_map: resource_map
                                                 .clone()
                                                 .ok_or(anyhow!("Dakota missing field version"))?,
                                             root_element: root_element
