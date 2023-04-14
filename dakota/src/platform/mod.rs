@@ -3,11 +3,6 @@ use crate::dom::DakotaDOM;
 use crate::utils::fdwatch::FdWatch;
 use crate::{event::EventSystem, DakotaError, Result};
 
-#[cfg(feature = "wayland")]
-extern crate wayc;
-#[cfg(feature = "wayland")]
-use wayc::Wayc;
-
 #[cfg(any(unix, macos))]
 extern crate sdl2;
 use crate::input::*;
@@ -29,39 +24,6 @@ pub trait Platform {
         timeout: Option<u32>,
         watch: Option<&mut FdWatch>,
     ) -> std::result::Result<bool, DakotaError>;
-}
-
-#[cfg(feature = "wayland")]
-pub struct WLPlat {
-    wp_wayc: Wayc,
-}
-
-#[cfg(feature = "wayland")]
-impl WLPlat {
-    fn new() -> Result<Self> {
-        let mut wayc = Wayc::new().context("Failed to initialize wayland")?;
-        let wl_surf = wayc
-            .create_surface()
-            .context("Failed to create wayland surface")?;
-
-        Self {
-            wp_wayc: wayc,
-            wp_surf: wl_surf,
-        }
-    }
-    fn set_output_params(&mut self, win: &dom::Window, dims: (u32, u32)) -> Result<()> {
-        println!("set_output_params on wayland is unimplemented");
-    }
-}
-
-#[cfg(feature = "wayland")]
-impl Platform for WLPlat {
-    fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType> {
-        Ok(th::SurfaceType::Wayland(
-            self.wp_wayc.get_wl_display(),
-            self.wp_surf.borrow().get_wl_surface().detach(),
-        ))
-    }
 }
 
 #[cfg(feature = "sdl")]

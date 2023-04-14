@@ -88,8 +88,6 @@ pub struct Dakota<'a> {
     // It might reference the window inside plat, and will segfault if
     // dropped after it.
     d_thund: th::Thundr,
-    #[cfg(feature = "wayland")]
-    d_plat: platform::WlPlat,
     #[cfg(feature = "sdl")]
     d_plat: platform::SDL2Plat,
     /// A set of fds provided by the application that we should watch during
@@ -268,9 +266,6 @@ impl<'a> Dakota<'a> {
     /// This will initialize the window system platform layer, create a thundr
     /// instance from it, and wrap it in Dakota.
     pub fn new() -> Result<Self> {
-        #[cfg(feature = "wayland")]
-        let mut plat = platform::WLPlat::new()?;
-
         #[cfg(feature = "sdl")]
         let mut plat = platform::SDL2Plat::new()?;
 
