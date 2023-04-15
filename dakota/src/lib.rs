@@ -88,8 +88,11 @@ pub struct Dakota<'a> {
     // It might reference the window inside plat, and will segfault if
     // dropped after it.
     d_thund: th::Thundr,
-    #[cfg(feature = "sdl")]
-    d_plat: platform::SDL2Plat,
+    /// The current window system backend.
+    ///
+    /// This may be SDL2 for windowed systems, or direct2display. This handles platform-specific
+    /// initialization.
+    d_plat: Box<dyn Platform>,
     /// A set of fds provided by the application that we should watch during
     /// our main loop
     d_user_fds: Option<FdWatch>,
@@ -140,6 +143,12 @@ pub struct Dakota<'a> {
     d_event_sys: EventSystem,
     d_font_inst: FontInstance<'a>,
     d_ood_counter: usize,
+
+    /// Cached mouse position
+    ///
+    /// Mouse updates are relative, so we need to add them to the last
+    /// known mouse location. That is the value stored here.
+    d_mouse_pos: (f64, f64),
 }
 
 struct ViewportNode {
@@ -266,8 +275,19 @@ impl<'a> Dakota<'a> {
     /// This will initialize the window system platform layer, create a thundr
     /// instance from it, and wrap it in Dakota.
     pub fn new() -> Result<Self> {
+        let mut plat = None;
+
+        #[cfg(feature = "direct2display")]
+        if let Ok(display) = platform::DisplayPlat::new() {
+            plat = Some(Box::new(display));
+        }
+
         #[cfg(feature = "sdl")]
-        let mut plat = platform::SDL2Plat::new()?;
+        if let Ok(sdl) = platform::SDL2Plat::new() {
+            plat = Some(Box::new(sdl));
+        }
+
+        let mut plat = plat.ok_or(anyhow!("Could not find available platform"))?;
 
         let info = th::CreateInfo::builder()
             .enable_traditional_composition()
@@ -331,6 +351,7 @@ impl<'a> Dakota<'a> {
             d_event_sys: EventSystem::new(),
             d_font_inst: inst,
             d_ood_counter: 30,
+            d_mouse_pos: (0.0, 0.0),
         })
     }
 
@@ -1216,18 +1237,30 @@ impl<'a> Dakota<'a> {
         for ev in self.d_event_sys.es_dakota_event_queue.iter() {
             match ev {
                 Event::InputScroll {
-                    mouse_x,
-                    mouse_y,
-                    x,
-                    y,
+                    position,
+                    xrel,
+                    yrel,
+                    ..
                 } => {
+                    let x = match *xrel {
+                        Some(v) => v,
+                        None => 0.0,
+                    };
+                    let y = match *yrel {
+                        Some(v) => v,
+                        None => 0.0,
+                    };
+                    // Update our mouse
+                    self.d_mouse_pos = *position;
+
                     // Find viewport at this location
-                    let viewport = self.viewport_at_pos(*mouse_x, *mouse_y);
+                    let viewport =
+                        self.viewport_at_pos(self.d_mouse_pos.0 as i32, self.d_mouse_pos.1 as i32);
 
                     // set its scrolling offset to be used for the next draw
                     let mut node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
 
-                    node.v_viewport.set_scroll_amount(*x as i32, *y as i32);
+                    node.v_viewport.set_scroll_amount(x as i32, y as i32);
                     self.d_needs_redraw = true;
                 }
                 // Ignore all other events for now

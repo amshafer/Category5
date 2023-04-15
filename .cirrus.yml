@@ -19,7 +19,8 @@ category5_freebsd_task:
         build_lluvia_script: cd lluvia && cargo build
         test_lluvia_script: cd lluvia && cargo test
         build_thundr_script: cd thundr && cargo build
-        build_dakota_script: cd dakota && cargo build --features=sdl
+        build_dakota_sdl2_script: cd dakota && cargo build --features=sdl
+        build_dakota_direct_2_display_script: cd dakota && cargo build --features=direct2display --no-default-features
         build_category5_script: cargo build
 
 category5_linux_task:

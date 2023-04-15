@@ -7,11 +7,12 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-dakota={path="../dakota", features=["sdl"]}
-sdl2="0.35"
+dakota={path="../dakota", default-features=false}
 utils={path="../utils"}
 
 renderdoc={version="0.10", optional=true}
 
 [features]
+default=["dakota/sdl"]
 renderdoc=["dep:renderdoc"]
+direct2display=["dakota/direct2display"]

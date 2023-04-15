@@ -23,6 +23,13 @@ pub struct EventSystem {
     /// Ties a string name to a handler id
     /// (name, Id)
     es_name_to_handler_map: Vec<(String, ll::Entity)>,
+    /// Our current mouse position
+    ///
+    /// The individual backends report relative mouse position changes,
+    /// but in the case of button presses we need to report the absolute
+    /// location. This adds a place to cache this. The platforms will
+    /// report relative mouse changes and we will update this here.
+    es_mouse_pos: (f64, f64),
 }
 
 impl EventSystem {
@@ -34,47 +41,76 @@ impl EventSystem {
             es_dakota_event_queue: Vec::new(),
             es_handler_ecs_inst: handler_ecs,
             es_name_to_handler_map: Vec::new(),
+            es_mouse_pos: (0.0, 0.0),
         }
     }
 }
 
 pub type HandlerArgs = Rc<Vec<String>>;
 
-#[derive(Debug)]
+/// Source axis for scrolling operations
+///
+/// This distinguishes if a source comes from a mouse wheel or a trackpad. If
+/// the platform does not distinguish this will always be `Wheel`.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum AxisSource {
+    Wheel = 0,
+    Finger = 1,
+}
+
+/// Dakota Events
+///
+/// These events come from a couple possible sources, the most important of
+/// which is user input. All mouse movements and button presses are recorded
+/// as Events in the Dakota event queue, along with window system events such
+/// as resizing the window.
+#[derive(Debug, Clone)]
 pub enum Event {
+    /// The window size has been changed, normally by the user.
     WindowResized {
         args: HandlerArgs,
         size: dom::Size<u32>,
     },
-    WindowClosed {
-        args: HandlerArgs,
-    },
-    WindowRedrawComplete {
-        args: HandlerArgs,
-    },
-    InputKeyDown {
-        key: Keycode,
-        modifiers: Mods,
-    },
-    InputKeyUp {
-        key: Keycode,
-        modifiers: Mods,
-    },
-    InputMouseButtonDown {
-        button: MouseButton,
-        x: i32,
-        y: i32,
-    },
-    InputMouseButtonUp {
-        button: MouseButton,
-        x: i32,
-        y: i32,
-    },
+    /// The Dakota Application window has been closed
+    WindowClosed { args: HandlerArgs },
+    /// This event is triggered every time Dakota draws a frame
+    WindowRedrawComplete { args: HandlerArgs },
+    /// Key has been pressed. Includes the updated modifiers.
+    InputKeyDown { key: Keycode, modifiers: Mods },
+    /// Key has been released. Includes the updated modifiers.
+    InputKeyUp { key: Keycode, modifiers: Mods },
+    /// Movement of the mouse relative to the previous position
+    ///
+    /// This is the amount the mouse moved.
+    InputMouseMove { dx: f64, dy: f64 },
+    /// A mouse button has been pressed. The button is specified
+    /// in the case that there are multiple buttons on the mouse.
+    InputMouseButtonDown { button: MouseButton, x: f64, y: f64 },
+    /// A mouse button has been released
+    InputMouseButtonUp { button: MouseButton, x: f64, y: f64 },
+    /// User has taken a scrolling action.
+    ///
+    /// This is complex since there are a variety of scrolling options
+    /// that can be reported by hardware. `horizontal` and vertical` are both
+    /// optional values that can be reported. This is to distunguish between
+    /// no scrolling taken place and a value of zero, which is reported when
+    /// kinetic scrolling stops.
+    ///
+    /// v120 values similar to windows may also be reported. This allows for
+    /// high resolution scroll wheel feedback.
     InputScroll {
-        mouse_x: i32,
-        mouse_y: i32,
-        x: f32,
-        y: f32,
+        /// The current mouse position
+        position: (f64, f64),
+        /// horizontal relative motion
+        xrel: Option<f64>,
+        /// vertical relative motion
+        yrel: Option<f64>,
+        /// The v120 libinput API value, if it was available
+        /// This should only be set on AXIS_SOURCE_WHEEL input devices
+        /// (horizontal, vertical)
+        v120_val: (f64, f64),
+        /// The axis source.
+        source: AxisSource,
     },
     /// Indicates that one of the fds that the application provided
     /// for the event loop is readable. This can be used to have
@@ -168,39 +204,55 @@ impl EventSystem {
         });
     }
 
-    pub fn add_event_mouse_button_down(&mut self, button: MouseButton, x: i32, y: i32) {
+    pub fn add_event_mouse_move(&mut self, dx: f64, dy: f64) {
+        self.es_global_event_queue
+            .push_back(Event::InputMouseMove { dx: dx, dy: dy });
+    }
+    pub fn add_event_mouse_button_down(&mut self, button: MouseButton) {
         self.es_global_event_queue
             .push_back(Event::InputMouseButtonDown {
                 button: button,
-                x: x,
-                y: y,
+                x: self.es_mouse_pos.0,
+                y: self.es_mouse_pos.1,
             });
     }
-    pub fn add_event_mouse_button_up(&mut self, button: MouseButton, x: i32, y: i32) {
+    pub fn add_event_mouse_button_up(&mut self, button: MouseButton) {
         self.es_global_event_queue
             .push_back(Event::InputMouseButtonUp {
                 button: button,
-                x: x,
-                y: y,
+                x: self.es_mouse_pos.0,
+                y: self.es_mouse_pos.1,
             });
     }
 
-    pub fn add_event_scroll(&mut self, mouse_pos: (i32, i32), x: f32, y: f32) {
-        self.es_global_event_queue.push_back(Event::InputScroll {
-            mouse_x: mouse_pos.0,
-            mouse_y: mouse_pos.1,
-            x: x,
-            y: y,
-        });
+    pub fn add_event_scroll(
+        &mut self,
+        x: Option<f64>,
+        y: Option<f64>,
+        v120: (f64, f64),
+        source: AxisSource,
+    ) {
+        // Update our cached mouse position
+        if let Some(x) = x {
+            self.es_mouse_pos.0 += x;
+        }
+        if let Some(y) = x {
+            self.es_mouse_pos.1 += y;
+        }
+
+        let ev = Event::InputScroll {
+            position: self.es_mouse_pos,
+            xrel: x,
+            yrel: y,
+            v120_val: v120,
+            source: source,
+        };
+
+        self.es_global_event_queue.push_back(ev.clone());
 
         // We also want to handle scrolling ourselves, so put this event on the
         // dakota queue as well
-        self.es_dakota_event_queue.push(Event::InputScroll {
-            mouse_x: mouse_pos.0,
-            mouse_y: mouse_pos.1,
-            x: x,
-            y: y,
-        });
+        self.es_dakota_event_queue.push(ev);
     }
 
     pub fn add_event_user_fd(&mut self) {
