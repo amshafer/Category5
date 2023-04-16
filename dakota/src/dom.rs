@@ -282,8 +282,7 @@ pub struct Text {
 #[derive(Debug, Clone)]
 pub struct Window {
     pub title: String,
-    pub width: u32,
-    pub height: u32,
+    pub size: Option<(u32, u32)>,
     pub events: WindowEvents,
 }
 

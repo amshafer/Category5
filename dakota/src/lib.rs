@@ -1095,7 +1095,16 @@ impl<'a> Dakota<'a> {
             // first iteration and we need to populate the dimensions
             // from the DOM
             if self.d_window_dims.is_none() {
-                self.d_window_dims = Some((dom.window.width, dom.window.height));
+                // If the user specified a window size use that, otherwise
+                // use the current vulkan surface size.
+                //
+                // This is important for physical display presentation, where
+                // we want to grow to the size of the screen unless told otherwise.
+                if let Some(size) = dom.window.size.as_ref() {
+                    self.d_window_dims = Some((size.0, size.1));
+                } else {
+                    self.d_window_dims = Some(self.d_thund.get_resolution());
+                }
 
                 // we need to update the window dimensions if possible,
                 // so call into our platform do handle it

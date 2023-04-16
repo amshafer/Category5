@@ -416,15 +416,25 @@ impl<'a> Dakota<'a> {
                     height,
                     events,
                 } => {
+                    let mut size = None;
+
+                    if let Some(w) = width {
+                        size = Some((*w, 0));
+                    }
+                    if let Some(h) = height {
+                        size.as_mut()
+                            .ok_or(anyhow!(
+                                "Must specify both width and height of Window or none at all"
+                            ))?
+                            .1 = *h;
+                    }
+
                     *window = Some(dom::Window {
                         title: title
                             .as_ref()
                             .ok_or(anyhow!("Window does not contain title field"))?
                             .clone(),
-                        width: width
-                            .ok_or(anyhow!("Window does not contain window_width field"))?,
-                        height: height
-                            .ok_or(anyhow!("Window does not contain window_height field"))?,
+                        size: size,
                         events: events.clone(),
                     })
                 }

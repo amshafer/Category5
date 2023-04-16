@@ -31,8 +31,6 @@
 	</resourceMap>
 	<window>
 		<title>Dakota Test</title>
-		<window_width>512</window_width>
-		<window_height>512</window_height>
 	</window>
 	<layout>
 		<el>
