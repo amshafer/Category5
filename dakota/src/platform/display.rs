@@ -15,7 +15,7 @@ pub use xkbcommon::xkb::{keysyms, Keysym};
 
 use super::Platform;
 use crate::event::*;
-use crate::input::Mods;
+use crate::input::{convert_libinput_mouse_to_dakota, convert_xkb_keycode_to_dakota, Mods};
 use crate::platform::DakotaDOM;
 use crate::*;
 use utils::log;
@@ -135,7 +135,7 @@ impl DisplayPlat {
             dp_xkb_keymap: keymap,
             dp_xkb_keymap_name: km_name,
             dp_xkb_state: state,
-            dp_current_modifiers: Mods::NOMOD,
+            dp_current_modifiers: Mods::NONE,
         })
     }
 
@@ -195,8 +195,7 @@ impl DisplayPlat {
                 self.get_scroll_event(evsys, &sw, AxisSource::Wheel, v120);
             }
             Some(input::event::Event::Pointer(PointerEvent::Button(b))) => {
-                let button =
-                    num::FromPrimitive::from_u32(b.button()).expect("Mouse button not recognized");
+                let button = convert_libinput_mouse_to_dakota(b.button());
 
                 if b.button_state() == ButtonState::Pressed {
                     evsys.add_event_mouse_button_down(button);
@@ -205,21 +204,30 @@ impl DisplayPlat {
                 }
             }
             Some(input::event::Event::Keyboard(KeyboardEvent::Key(k))) => {
-                let key = num::FromPrimitive::from_u32(k.key()).expect("Keycode not recognized");
-
                 // let xkb keep track of the keyboard state
                 let changed = self.dp_xkb_state.update_key(
                     // add 8 to account for differences between evdev and x11
-                    key as u32 + 8,
+                    k.key() as u32 + 8,
                     match k.key_state() {
                         KeyState::Pressed => xkb::KeyDirection::Down,
                         KeyState::Released => xkb::KeyDirection::Up,
                     },
                 );
 
+                let keysym = self.dp_xkb_state.key_get_one_sym(k.key() + 8);
+                let key = convert_xkb_keycode_to_dakota(keysym);
+                let utf = self.dp_xkb_state.key_get_utf8(k.key() + 8);
+
                 // Update each modifier
                 if changed != 0 {
-                    let mod_options = [(xkb::MOD_NAME_CTRL, Mods::LCTRLMOD)];
+                    let mod_options = [
+                        (xkb::MOD_NAME_ALT, Mods::LALT),
+                        (xkb::MOD_NAME_NUM, Mods::NUM),
+                        (xkb::MOD_NAME_CAPS, Mods::CAPS),
+                        (xkb::MOD_NAME_CTRL, Mods::LCTRL),
+                        (xkb::MOD_NAME_LOGO, Mods::LGUI),
+                        (xkb::MOD_NAME_SHIFT, Mods::LCTRL),
+                    ];
 
                     for opt in mod_options.iter() {
                         self.dp_current_modifiers |= if self
@@ -228,15 +236,23 @@ impl DisplayPlat {
                         {
                             opt.1
                         } else {
-                            Mods::NOMOD
+                            Mods::NONE
                         };
                     }
+
+                    // Add the modifier event with the latest mods
+                    evsys.add_event_keyboard_modifiers(self.dp_current_modifiers);
                 }
 
                 if k.key_state() == KeyState::Pressed {
-                    evsys.add_event_key_down(key, self.dp_current_modifiers);
+                    evsys.add_event_key_down(key, utf, RawKeycode::Linux(k.key()));
                 } else {
-                    evsys.add_event_key_up(key, self.dp_current_modifiers);
+                    // Key up events do not generate utf characters
+                    evsys.add_event_key_up(
+                        key,
+                        String::with_capacity(0),
+                        RawKeycode::Linux(k.key()),
+                    );
                 }
             }
             Some(_e) => log::debug!("Unhandled Input Event: {:?}", _e),

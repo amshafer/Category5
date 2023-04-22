@@ -28,6 +28,7 @@ num-derive = "0.3"
 num-traits = "0.2"
 
 sdl2={ version="0.35", optional=true }
+sdl2-sys={ version="0.35", optional=true }
 input={version="0.8.2", features=["gen"], optional=true}
 
 xkbcommon={version="0.5", optional=true}
@@ -37,5 +38,5 @@ xkbcommon={version="0.5", optional=true}
 # You probably just want the default SDL2 backend.
 [features]
 default=["sdl"]
-sdl=["thundr/sdl", "sdl2"]
+sdl=["thundr/sdl", "sdl2", "sdl2-sys", "xkbcommon"]
 direct2display=["input", "xkbcommon"]

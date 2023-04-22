@@ -8,24 +8,26 @@ extern crate num;
 extern crate num_derive;
 use num_derive::FromPrimitive;
 
+#[cfg(feature = "direct2display")]
 extern crate xkbcommon;
+#[cfg(feature = "direct2display")]
 use xkbcommon::xkb;
 
 bitflags::bitflags! {
     pub struct Mods: u16 {
-        const NOMOD = 0x0000;
-        const LSHIFTMOD = 0x0001;
-        const RSHIFTMOD = 0x0002;
-        const LCTRLMOD = 0x0040;
-        const RCTRLMOD = 0x0080;
-        const LALTMOD = 0x0100;
-        const RALTMOD = 0x0200;
-        const LGUIMOD = 0x0400;
-        const RGUIMOD = 0x0800;
-        const NUMMOD = 0x1000;
-        const CAPSMOD = 0x2000;
-        const MODEMOD = 0x4000;
-        const RESERVEDMOD = 0x8000;
+        const NONE = 0x0000;
+        const LSHIFT = 0x0001;
+        const RSHIFT = 0x0002;
+        const LCTRL = 0x0040;
+        const RCTRL = 0x0080;
+        const LALT = 0x0100;
+        const RALT = 0x0200;
+        const LGUI = 0x0400;
+        const RGUI = 0x0800;
+        const NUM = 0x1000;
+        const CAPS = 0x2000;
+        const MODE = 0x4000;
+        const RESERVED = 0x8000;
     }
 }
 
@@ -37,17 +39,36 @@ pub fn convert_sdl_mods_to_dakota(keymods: sdl2::keyboard::Mod) -> Mods {
 /// Keycodes for mouse buttons.
 ///
 /// Names are self explanitory, `LEFT` for left click and etc.
-///
-/// These also match SDL2 and libinput's keycodes.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, FromPrimitive)]
 pub enum MouseButton {
     UNKNOWN = 0,
-    LEFT = 1,
-    MIDDLE = 2,
-    RIGHT = 3,
-    X1 = 4,
-    X2 = 5,
+    LEFT,
+    MIDDLE,
+    RIGHT,
+    EXTRA,
+    SIDE,
+    BUTTON6,
+    BUTTON7,
+    BUTTON8,
+}
+
+/// Converts a Linux kernel mouse button code into a Dakota enum.
+///
+/// The conversion values are based on Linux's input.h
+#[cfg(feature = "direct2display")]
+pub fn convert_libinput_mouse_to_dakota(button: u32) -> MouseButton {
+    match button {
+        0x110 => MouseButton::LEFT,
+        0x112 => MouseButton::MIDDLE,
+        0x111 => MouseButton::RIGHT,
+        0x114 => MouseButton::EXTRA,
+        0x115 => MouseButton::SIDE,
+        0x106 => MouseButton::BUTTON6,
+        0x107 => MouseButton::BUTTON7,
+        0x108 => MouseButton::BUTTON8,
+        _ => MouseButton::UNKNOWN,
+    }
 }
 
 #[cfg(feature = "sdl")]
@@ -56,8 +77,8 @@ pub fn convert_sdl_mouse_to_dakota(button: sdl2::mouse::MouseButton) -> MouseBut
         sdl2::mouse::MouseButton::Left => MouseButton::LEFT,
         sdl2::mouse::MouseButton::Middle => MouseButton::MIDDLE,
         sdl2::mouse::MouseButton::Right => MouseButton::RIGHT,
-        sdl2::mouse::MouseButton::X1 => MouseButton::X1,
-        sdl2::mouse::MouseButton::X2 => MouseButton::X2,
+        sdl2::mouse::MouseButton::X1 => MouseButton::SIDE,
+        sdl2::mouse::MouseButton::X2 => MouseButton::EXTRA,
         _ => MouseButton::UNKNOWN,
     }
 }
@@ -70,13 +91,13 @@ pub fn convert_sdl_mouse_to_dakota(button: sdl2::mouse::MouseButton) -> MouseBut
 ///
 /// This provides a generic way of defining a table of (Keycode, foreign Keycode) pairs
 /// that we can translate between, in either direction.
-struct CodeTranslator<T: PartialEq + Copy> {
-    ct_table: Vec<(Keycode, T)>,
+struct CodeTranslator<K: PartialEq + Copy, T: PartialEq + Copy> {
+    ct_table: Vec<(K, T)>,
 }
 
-impl<T: PartialEq + Copy> CodeTranslator<T> {
+impl<K: PartialEq + Copy, T: PartialEq + Copy> CodeTranslator<K, T> {
     /// Convert a foreign Keycode into a Dakota Keycode
-    fn val_to_keycode(&self, val: T) -> Option<Keycode> {
+    fn val_to_key(&self, val: T) -> Option<K> {
         for entry in self.ct_table.iter() {
             match entry.1 == val {
                 true => return Some(entry.0),
@@ -88,7 +109,8 @@ impl<T: PartialEq + Copy> CodeTranslator<T> {
     }
 
     /// Convert a Dakota Keycode into a foreign Keycode
-    fn keycode_to_val(&self, code: Keycode) -> Option<T> {
+    #[allow(dead_code)]
+    fn key_to_val(&self, code: K) -> Option<T> {
         for entry in self.ct_table.iter() {
             match entry.0 == code {
                 true => return Some(entry.1),
@@ -103,7 +125,7 @@ impl<T: PartialEq + Copy> CodeTranslator<T> {
 // Define different tables for our different possible keycode sets
 #[cfg(feature = "direct2display")]
 lazy_static::lazy_static! {
-    static ref CT_XKB_TO_DAKOTA: CodeTranslator<u32> =
+    static ref CT_XKB_TO_DAKOTA: CodeTranslator<Keycode, u32> =
         CodeTranslator {
             ct_table: vec![
                 (Keycode::RETURN,              xkb::keysyms::KEY_Return),
@@ -312,7 +334,7 @@ lazy_static::lazy_static! {
 
 #[cfg(feature = "sdl")]
 lazy_static::lazy_static! {
-    static ref CT_SDL_TO_DAKOTA: CodeTranslator<sdl2::keyboard::Keycode> =
+    static ref CT_SDL_TO_DAKOTA: CodeTranslator<Keycode, sdl2::keyboard::Keycode> =
         CodeTranslator {
             ct_table: vec![
                 (Keycode::RETURN,              sdl2::keyboard::Keycode::Return),
@@ -550,6 +572,264 @@ lazy_static::lazy_static! {
                 (Keycode::KBDILLUMUP,          sdl2::keyboard::Keycode::KbdIllumUp),
                 (Keycode::EJECT,               sdl2::keyboard::Keycode::Eject),
                 (Keycode::SLEEP,               sdl2::keyboard::Keycode::Sleep),
+                ],
+        };
+}
+
+#[cfg(feature = "sdl")]
+lazy_static::lazy_static! {
+    static ref CT_SDL_TO_LINUX_KEY: CodeTranslator<u32, u32> =
+        CodeTranslator {
+            ct_table: vec![
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x000), // KEY_RESERVED
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_ESCAPE as u32,           0x001), // KEY_ESC
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_1 as u32,                0x002), // KEY_1
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_2 as u32,                0x003), // KEY_2
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_3 as u32,                0x004), // KEY_3
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_4 as u32,                0x005), // KEY_4
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_5 as u32,                0x006), // KEY_5
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_6 as u32,                0x007), // KEY_6
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_7 as u32,                0x008), // KEY_7
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_8 as u32,                0x009), // KEY_8
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_9 as u32,                0x00a), // KEY_9
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_0 as u32,                0x00b), // KEY_0
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_MINUS as u32,            0x00c), // KEY_MINUS
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_EQUALS as u32,           0x00d), // KEY_EQUAL
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_BACKSPACE as u32,        0x00e), // KEY_BACKSPACE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_TAB as u32,              0x00f), // KEY_TAB
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_Q as u32,                0x010), // KEY_Q
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_W as u32,                0x011), // KEY_W
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_E as u32,                0x012), // KEY_E
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_R as u32,                0x013), // KEY_R
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_T as u32,                0x014), // KEY_T
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_Y as u32,                0x015), // KEY_Y
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_U as u32,                0x016), // KEY_U
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_I as u32,                0x017), // KEY_I
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_O as u32,                0x018), // KEY_O
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_P as u32,                0x019), // KEY_P
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_LEFTBRACKET as u32,      0x01a), // KEY_LEFTBRACE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_RIGHTBRACKET as u32,     0x01b), // KEY_RIGHTBRACE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_RETURN as u32,           0x01c), // KEY_ENTER
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_LCTRL as u32,            0x01d), // KEY_LEFTCTRL
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_A as u32,                0x01e), // KEY_A
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_S as u32,                0x01f), // KEY_S
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_D as u32,                0x020), // KEY_D
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F as u32,                0x021), // KEY_F
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_G as u32,                0x022), // KEY_G
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_H as u32,                0x023), // KEY_H
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_J as u32,                0x024), // KEY_J
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_K as u32,                0x025), // KEY_K
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_L as u32,                0x026), // KEY_L
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_SEMICOLON as u32,        0x027), // KEY_SEMICOLON
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_APOSTROPHE as u32,       0x028), // KEY_APOSTROPHE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_GRAVE as u32,            0x029), // KEY_GRAVE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_LSHIFT as u32,           0x02a), // KEY_LEFTSHIFT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_BACKSLASH as u32,        0x02b), // KEY_BACKSLASH
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_Z as u32,                0x02c), // KEY_Z
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_X as u32,                0x02d), // KEY_X
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_C as u32,                0x02e), // KEY_C
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_V as u32,                0x02f), // KEY_V
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_B as u32,                0x030), // KEY_B
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_N as u32,                0x031), // KEY_N
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_M as u32,                0x032), // KEY_M
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_COMMA as u32,            0x033), // KEY_COMMA
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_PERIOD as u32,           0x034), // KEY_DOT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_SLASH as u32,            0x035), // KEY_SLASH
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_RSHIFT as u32,           0x036), // KEY_RIGHTSHIFT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_MULTIPLY as u32,      0x037), // KEY_KPASTERISK
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_LALT as u32,             0x038), // KEY_LEFTALT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_SPACE as u32,            0x039), // KEY_SPACE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_CAPSLOCK as u32,         0x03a), // KEY_CAPSLOCK
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F1 as u32,               0x03b), // KEY_F1
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F2 as u32,               0x03c), // KEY_F2
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F3 as u32,               0x03d), // KEY_F3
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F4 as u32,               0x03e), // KEY_F4
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F5 as u32,               0x03f), // KEY_F5
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F6 as u32,               0x040), // KEY_F6
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F7 as u32,               0x041), // KEY_F7
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F8 as u32,               0x042), // KEY_F8
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F9 as u32,               0x043), // KEY_F9
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F10 as u32,              0x044), // KEY_F10
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_NUMLOCKCLEAR as u32,     0x045), // KEY_NUMLOCK
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_SCROLLLOCK as u32,       0x046), // KEY_SCROLLLOCK
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_7 as u32,             0x047), // KEY_KP7
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_8 as u32,             0x048), // KEY_KP8
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_9 as u32,             0x049), // KEY_KP9
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_MINUS as u32,         0x04a), // KEY_KPMINUS
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_4 as u32,             0x04b), // KEY_KP4
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_5 as u32,             0x04c), // KEY_KP5
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_6 as u32,             0x04d), // KEY_KP6
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_PLUS as u32,          0x04e), // KEY_KPPLUS
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_1 as u32,             0x04f), // KEY_KP1
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_2 as u32,             0x050), // KEY_KP2
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_3 as u32,             0x051), // KEY_KP3
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_0 as u32,             0x052), // KEY_KP0
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_PERIOD as u32,        0x053), // KEY_KPDOT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x054),
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_LANG5 as u32,            0x055), // KEY_ZENKAKUHANKAKU
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_NONUSBACKSLASH as u32,   0x056), // KEY_102ND
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F11 as u32,              0x057), // KEY_F11
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F12 as u32,              0x058), // KEY_F12
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_INTERNATIONAL1 as u32,   0x059), // KEY_RO
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_LANG3 as u32,            0x05a), // KEY_KATAKANA
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_LANG4 as u32,            0x05b), // KEY_HIRAGANA
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_INTERNATIONAL4 as u32,   0x05c), // KEY_HENKAN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_INTERNATIONAL2 as u32,   0x05d), // KEY_KATAKANAHIRAGANA
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_INTERNATIONAL5 as u32,   0x05e), // KEY_MUHENKAN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_INTERNATIONAL5 as u32,   0x05f), // KEY_KPJPCOMMA
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_ENTER as u32,         0x060), // KEY_KPENTER
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_RCTRL as u32,            0x061), // KEY_RIGHTCTRL
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_DIVIDE as u32,        0x062), // KEY_KPSLASH
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_SYSREQ as u32,           0x063), // KEY_SYSRQ
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_RALT as u32,             0x064), // KEY_RIGHTALT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x065), // KEY_LINEFEED
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_HOME as u32,             0x066), // KEY_HOME
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UP as u32,               0x067), // KEY_UP
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_PAGEUP as u32,           0x068), // KEY_PAGEUP
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_LEFT as u32,             0x069), // KEY_LEFT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_RIGHT as u32,            0x06a), // KEY_RIGHT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_END as u32,              0x06b), // KEY_END
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_DOWN as u32,             0x06c), // KEY_DOWN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_PAGEDOWN as u32,         0x06d), // KEY_PAGEDOWN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_INSERT as u32,           0x06e), // KEY_INSERT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_DELETE as u32,           0x06f), // KEY_DELETE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x070), // KEY_MACRO
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_MUTE as u32,             0x071), // KEY_MUTE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_VOLUMEDOWN as u32,       0x072), // KEY_VOLUMEDOWN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_VOLUMEUP as u32,         0x073), // KEY_VOLUMEUP
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_POWER as u32,            0x074), // KEY_POWER
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_EQUALS as u32,        0x075), // KEY_KPEQUAL
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_PLUSMINUS as u32,     0x076), // KEY_KPPLUSMINUS
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_PAUSE as u32,            0x077), // KEY_PAUSE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x078), // KEY_SCALE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_COMMA as u32,         0x079), // KEY_KPCOMMA
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_LANG1 as u32,            0x07a), // KEY_HANGEUL
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_LANG2 as u32,            0x07b), // KEY_HANJA
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_INTERNATIONAL3 as u32,   0x07c), // KEY_YEN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_LGUI as u32,             0x07d), // KEY_LEFTMETA
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_RGUI as u32,             0x07e), // KEY_RIGHTMETA
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_APPLICATION as u32,      0x07f), // KEY_COMPOSE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_STOP as u32,             0x080), // KEY_STOP
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AGAIN as u32,            0x081), // KEY_AGAIN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x082), // KEY_PROPS
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNDO as u32,             0x083), // KEY_UNDO
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x084), // KEY_FRONT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_COPY as u32,             0x085), // KEY_COPY
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x086), // KEY_OPEN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_PASTE as u32,            0x087), // KEY_PASTE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_FIND as u32,             0x088), // KEY_FIND
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_CUT as u32,              0x089), // KEY_CUT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_HELP as u32,             0x08a), // KEY_HELP
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_MENU as u32,             0x08b), // KEY_MENU
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_CALCULATOR as u32,       0x08c), // KEY_CALC
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x08d), // KEY_SETUP
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_SLEEP as u32,            0x08e), // KEY_SLEEP
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x08f), // KEY_WAKEUP
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x090), // KEY_FILE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x091), // KEY_SENDFILE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x092), // KEY_DELETEFILE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x093), // KEY_XFER
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_APP1 as u32,             0x094), // KEY_PROG1
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_APP2 as u32,             0x095), // KEY_PROG2
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_WWW as u32,              0x096), // KEY_WWW
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x097), // KEY_MSDOS
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x098), // KEY_COFFEE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x099), // KEY_ROTATE_DISPLAY
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x09a), // KEY_CYCLEWINDOWS
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_MAIL as u32,             0x09b), // KEY_MAIL
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AC_BOOKMARKS as u32,     0x09c), // KEY_BOOKMARKS
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_COMPUTER as u32,         0x09d), // KEY_COMPUTER
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AC_BACK as u32,          0x09e), // KEY_BACK
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AC_FORWARD as u32,       0x09f), // KEY_FORWARD
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0a0), // KEY_CLOSECD
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_EJECT as u32,            0x0a1), // KEY_EJECTCD
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_EJECT as u32,            0x0a2), // KEY_EJECTCLOSECD
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AUDIONEXT as u32,        0x0a3), // KEY_NEXTSONG
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AUDIOPLAY as u32,        0x0a4), // KEY_PLAYPAUSE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AUDIOPREV as u32,        0x0a5), // KEY_PREVIOUSSONG
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AUDIOSTOP as u32,        0x0a6), // KEY_STOPCD
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0a7), // KEY_RECORD
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AUDIOREWIND as u32,      0x0a8), // KEY_REWIND
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0a9), // KEY_PHONE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0aa), // KEY_ISO
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0ab), // KEY_CONFIG
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AC_HOME as u32,          0x0ac), // KEY_HOMEPAGE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AC_REFRESH as u32,       0x0ad), // KEY_REFRESH
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0ae), // KEY_EXIT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0af), // KEY_MOVE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0b0), // KEY_EDIT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0b1), // KEY_SCROLLUP
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0b2), // KEY_SCROLLDOWN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_LEFTPAREN as u32,     0x0b3), // KEY_KPLEFTPAREN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KP_RIGHTPAREN as u32,    0x0b4), // KEY_KPRIGHTPAREN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0b5), // KEY_NEW
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AGAIN as u32,            0x0b6), // KEY_REDO
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F13 as u32,              0x0b7), // KEY_F13
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F14 as u32,              0x0b8), // KEY_F14
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F15 as u32,              0x0b9), // KEY_F15
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F16 as u32,              0x0ba), // KEY_F16
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F17 as u32,              0x0bb), // KEY_F17
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F18 as u32,              0x0bc), // KEY_F18
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F19 as u32,              0x0bd), // KEY_F19
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F20 as u32,              0x0be), // KEY_F20
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F21 as u32,              0x0bf), // KEY_F21
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F22 as u32,              0x0c0), // KEY_F22
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F23 as u32,              0x0c1), // KEY_F23
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_F24 as u32,              0x0c2), // KEY_F24
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0c3),
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0c4),
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0c5),
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0c6),
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0c7),
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AUDIOPLAY as u32,        0x0c8), // KEY_PLAYCD
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0c9), // KEY_PAUSECD
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0ca), // KEY_PROG3
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0cb), // KEY_PROG4
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0cc), // KEY_ALL_APPLICATIONS
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0cd), // KEY_SUSPEND
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0ce), // KEY_CLOSE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AUDIOPLAY as u32,        0x0cf), // KEY_PLAY
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AUDIOFASTFORWARD as u32, 0x0d0), // KEY_FASTFORWARD
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0d1), // KEY_BASSBOOST
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_PRINTSCREEN as u32,      0x0d2), // KEY_PRINT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0d3), // KEY_HP
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0d4), // KEY_CAMERA
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0d5), // KEY_SOUND
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0d6), // KEY_QUESTION
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_MAIL as u32,             0x0d7), // KEY_EMAIL
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0d8), // KEY_CHAT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_AC_SEARCH as u32,        0x0d9), // KEY_SEARCH
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0da), // KEY_CONNECT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0db), // KEY_FINANCE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0dc), // KEY_SPORT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0dd), // KEY_SHOP
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_ALTERASE as u32,         0x0de), // KEY_ALTERASE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_CANCEL as u32,           0x0df), // KEY_CANCEL
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_BRIGHTNESSDOWN as u32,   0x0e0), // KEY_BRIGHTNESSDOWN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_BRIGHTNESSUP as u32,     0x0e1), // KEY_BRIGHTNESSUP
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_MEDIASELECT as u32,      0x0e2), // KEY_MEDIA
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_DISPLAYSWITCH as u32,    0x0e3), // KEY_SWITCHVIDEOMODE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KBDILLUMTOGGLE as u32,   0x0e4), // KEY_KBDILLUMTOGGLE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KBDILLUMDOWN as u32,     0x0e5), // KEY_KBDILLUMDOWN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_KBDILLUMUP as u32,       0x0e6), // KEY_KBDILLUMUP
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0e7), // KEY_SEND
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0e8), // KEY_REPLY
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0e9), // KEY_FORWARDMAIL
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0ea), // KEY_SAVE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0eb), // KEY_DOCUMENTS
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0ec), // KEY_BATTERY
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0ed), // KEY_BLUETOOTH
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0ee), // KEY_WLAN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0ef), // KEY_UWB
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0f0), // KEY_UNKNOWN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0f1), // KEY_VIDEO_NEXT
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0f2), // KEY_VIDEO_PREV
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0f3), // KEY_BRIGHTNESS_CYCLE
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0f4), // KEY_BRIGHTNESS_AUTO
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0f5), // KEY_DISPLAY_OFF
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0f6), // KEY_WWAN
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0f7), // KEY_RFKILL
+                (sdl2_sys::SDL_Scancode::SDL_SCANCODE_UNKNOWN as u32,          0x0f8), // KEY_MICMUTE
                 ],
         };
 }
@@ -823,9 +1103,34 @@ impl Keycode {
     }
 }
 
+/// Convert an xkbcommon keycode into a Dakota Keycode
+///
+/// This handles looking up the keycode translation using an internal lookup table.
+///
+/// TODO: Make this O(1)
+#[cfg(feature = "direct2display")]
+pub fn convert_xkb_keycode_to_dakota(key: u32) -> Keycode {
+    CT_XKB_TO_DAKOTA.val_to_key(key).unwrap_or(Keycode::UNKNOWN)
+}
+
+/// Convert an SDL keycode into a Dakota Keycode
+///
+/// This handles looking up the keycode translation using an internal lookup table.
+///
+/// TODO: Make this O(1)
 #[cfg(feature = "sdl")]
 pub fn convert_sdl_keycode_to_dakota(key: sdl2::keyboard::Keycode) -> Keycode {
-    CT_SDL_TO_DAKOTA
-        .val_to_keycode(key)
-        .expect("Invalid Keycode, not recognized")
+    CT_SDL_TO_DAKOTA.val_to_key(key).unwrap_or(Keycode::UNKNOWN)
+}
+
+/// Convert an SDL scancode into a Linux `KEY_*` value
+///
+/// One of the issues is that SDL does not support giving us a unicode value for a keypress,
+/// so instead we have to feed it through xkbcommon. This means we need to look up a linux
+/// key encoding value for the key pressed with SDL, which is done here.
+///
+/// TODO: Make this O(1)
+#[cfg(feature = "sdl")]
+pub fn convert_sdl_scancode_to_linux(code: sdl2::keyboard::Scancode) -> u32 {
+    CT_SDL_TO_LINUX_KEY.key_to_val(code as u32).unwrap_or(0) // Unknown
 }

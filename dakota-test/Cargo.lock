@@ -342,6 +342,7 @@ dependencies = [
  "quick-xml",
  "regex",
  "sdl2",
+ "sdl2-sys",
  "thundr",
  "utils",
  "xkbcommon",
