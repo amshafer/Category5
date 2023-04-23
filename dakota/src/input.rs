@@ -4,10 +4,6 @@
 //
 // Austin Shafer - 2020
 
-extern crate num;
-extern crate num_derive;
-use num_derive::FromPrimitive;
-
 #[cfg(feature = "direct2display")]
 extern crate xkbcommon;
 #[cfg(feature = "direct2display")]
@@ -40,7 +36,7 @@ pub fn convert_sdl_mods_to_dakota(keymods: sdl2::keyboard::Mod) -> Mods {
 ///
 /// Names are self explanitory, `LEFT` for left click and etc.
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, FromPrimitive)]
+#[derive(Debug, Clone, Copy)]
 pub enum MouseButton {
     UNKNOWN = 0,
     LEFT,
@@ -841,7 +837,7 @@ lazy_static::lazy_static! {
 ///
 /// These are numerically the same as the constants in SDL2.
 #[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(non_camel_case_types)]
 pub enum Keycode {
     UNKNOWN,
