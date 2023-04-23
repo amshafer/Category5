@@ -164,11 +164,9 @@ impl SDL2Plat {
                     AxisSource::Wheel,
                 ),
                 Event::MouseMotion { x, y, .. } => {
-                    evsys.add_event_scroll(
-                        Some(x as f64 - self.sdl_mouse_pos.0),
-                        Some(y as f64 - self.sdl_mouse_pos.1),
-                        (0.0, 0.0),
-                        AxisSource::Wheel,
+                    evsys.add_event_mouse_move(
+                        x as f64 - self.sdl_mouse_pos.0,
+                        y as f64 - self.sdl_mouse_pos.1,
                     );
 
                     // Update our mouse position

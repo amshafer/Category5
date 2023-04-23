@@ -239,6 +239,10 @@ impl EventSystem {
     }
 
     pub fn add_event_mouse_move(&mut self, dx: f64, dy: f64) {
+        // Update our cached mouse position
+        self.es_mouse_pos.0 += dx;
+        self.es_mouse_pos.1 += dy;
+
         self.es_global_event_queue
             .push_back(Event::InputMouseMove { dx: dx, dy: dy });
     }
@@ -266,14 +270,6 @@ impl EventSystem {
         v120: (f64, f64),
         source: AxisSource,
     ) {
-        // Update our cached mouse position
-        if let Some(x) = x {
-            self.es_mouse_pos.0 += x;
-        }
-        if let Some(y) = x {
-            self.es_mouse_pos.1 += y;
-        }
-
         let ev = Event::InputScroll {
             position: self.es_mouse_pos,
             xrel: x,
