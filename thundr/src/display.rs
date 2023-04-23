@@ -16,7 +16,7 @@ use ash::vk;
 use ash::{Entry, Instance};
 
 use crate::pipelines::PipelineType;
-use crate::{CreateInfo, SurfaceType};
+use crate::{CreateInfo, Result as ThundrResult, SurfaceType, ThundrError};
 use utils::log;
 
 use std::str::FromStr;
@@ -57,7 +57,7 @@ trait Backend {
     /// This is useful because some upper parts of the stack (dakota
     /// text management) need to know this value to calculate the
     /// resolution of things.
-    fn get_dpi(&self) -> (f32, f32);
+    fn get_dpi(&self) -> ThundrResult<(f32, f32)>;
 
     /// Helper for getting the drawable size according to the
     /// display. This will basically just be passed to SDL's
@@ -134,13 +134,13 @@ impl Display {
     ///
     /// For VK_KHR_display we will calculate it ourselves, and for
     /// SDL we will ask SDL to tell us it.
-    pub fn get_dpi(&self) -> (f32, f32) {
+    pub fn get_dpi(&self) -> ThundrResult<(f32, f32)> {
         // Check for a user set DPI
         if let Ok(env) = std::env::var("THUNDR_DPI") {
             let val: f32 = f32::from_str(env.as_str())
                 .expect("THUNDR_DPI value must be a valid 32-bit floating point number");
             log::debug!("Using user specified DPI {:?}", val);
-            return (val, val);
+            return Ok((val, val));
         }
 
         self.d_back.get_dpi()
@@ -424,11 +424,11 @@ impl Backend for PhysicalDisplay {
         }
     }
 
-    fn get_dpi(&self) -> (f32, f32) {
+    fn get_dpi(&self) -> ThundrResult<(f32, f32)> {
         let dpi_h = self.pd_native_res.width / self.pd_phys_dims.width;
         let dpi_v = self.pd_native_res.height / self.pd_phys_dims.height;
 
-        (dpi_h as f32, dpi_v as f32)
+        Ok((dpi_h as f32, dpi_v as f32))
     }
 
     fn get_vulkan_drawable_size(&self) -> Option<vk::Extent2D> {
@@ -525,21 +525,21 @@ impl Backend for SDL2DisplayBackend {
         }
     }
 
-    fn get_dpi(&self) -> (f32, f32) {
+    fn get_dpi(&self) -> ThundrResult<(f32, f32)> {
         let dpi = self
             .sdl_video
             .display_dpi(self.sdl_window.display_index().unwrap())
-            .unwrap();
+            .or(Err(ThundrError::INVALID))?;
 
         // Scale the reported DPI by the scaling factor
         let win_size = self.sdl_window.size();
         let vk_size = self.sdl_window.vulkan_drawable_size();
 
         // return hdpi and vdpi
-        (
+        Ok((
             dpi.1 * (win_size.0 as f32 / vk_size.0 as f32),
             dpi.2 * (win_size.1 as f32 / vk_size.1 as f32),
-        )
+        ))
     }
 
     fn get_vulkan_drawable_size(&self) -> Option<vk::Extent2D> {

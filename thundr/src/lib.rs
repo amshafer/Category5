@@ -137,6 +137,8 @@ pub enum ThundrError {
     RECORDING_ALREADY_IN_PROGRESS,
     #[error("Thundr Usage Bug: Recording has not been started")]
     RECORDING_NOT_IN_PROGRESS,
+    #[error("Invalid Operation")]
+    INVALID,
 }
 
 pub struct Thundr {
@@ -350,7 +352,7 @@ impl Thundr {
     ///
     /// For VK_KHR_display we will calculate it ourselves, and for
     /// SDL we will ask SDL to tell us it.
-    pub fn get_dpi(&self) -> (f32, f32) {
+    pub fn get_dpi(&self) -> Result<(f32, f32)> {
         self.th_rend.lock().unwrap().display.get_dpi()
     }
 

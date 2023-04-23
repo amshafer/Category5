@@ -270,31 +270,62 @@ macro_rules! create_component_and_table {
 }
 
 impl<'a> Dakota<'a> {
-    /// Construct a new Dakota instance
-    ///
-    /// This will initialize the window system platform layer, create a thundr
-    /// instance from it, and wrap it in Dakota.
-    pub fn new() -> Result<Self> {
-        let mut plat = None;
-
-        #[cfg(feature = "direct2display")]
-        if let Ok(display) = platform::DisplayPlat::new() {
-            plat = Some(Box::new(display));
-        }
-
-        #[cfg(feature = "sdl")]
-        if let Ok(sdl) = platform::SDL2Plat::new() {
-            plat = Some(Box::new(sdl));
-        }
-
-        let mut plat = plat.ok_or(anyhow!("Could not find available platform"))?;
-
+    /// Helper for initializing Thundr for a given platform.
+    fn init_thundr(plat: &mut Box<dyn Platform>) -> Result<th::Thundr> {
         let info = th::CreateInfo::builder()
             .enable_traditional_composition()
             .surface_type(plat.get_th_surf_type()?)
             .build();
 
-        let thundr = th::Thundr::new(&info).context("Failed to initialize Thundr")?;
+        th::Thundr::new(&info).context("Failed to initialize Thundr")
+    }
+
+    /// Try initializing the different plaform backends until we find one that works
+    ///
+    /// This will test for platform support and initialize the platform, Thundr, and
+    /// get the DPI of the display. These three are tested since they all may fail
+    /// given different configurations. DPI fails if SDL2 tries to initialize us on
+    /// a physical display.
+    fn initialize_platform() -> Result<(Box<dyn Platform>, th::Thundr, (f32, f32))> {
+        #[cfg(feature = "sdl")]
+        if let Ok(sdl) = platform::SDL2Plat::new() {
+            let mut sdl: Box<dyn Platform> = Box::new(sdl);
+            match Self::init_thundr(&mut sdl) {
+                Ok(thundr) => match thundr.get_dpi() {
+                    Ok(dpi) => {
+                        log::error!("Using SDL2 Platform Backend");
+                        return Ok((sdl, thundr, dpi));
+                    }
+                    Err(e) => log::error!("Failed to create SDL2 backend: {:?}", e),
+                },
+                Err(e) => log::error!("Failed to create SDL2 backend: {:?}", e),
+            }
+        }
+
+        #[cfg(feature = "direct2display")]
+        if let Ok(display) = platform::DisplayPlat::new() {
+            let mut display: Box<dyn Platform> = Box::new(display);
+            match Self::init_thundr(&mut display) {
+                Ok(thundr) => match thundr.get_dpi() {
+                    Ok(dpi) => {
+                        log::error!("Using Direct to Display Platform Backend");
+                        return Ok((display, thundr, dpi));
+                    }
+                    Err(e) => log::error!("Failed to create SDL2 backend: {:?}", e),
+                },
+                Err(e) => log::error!("Failed to create Physical Display backend: {:?}", e),
+            }
+        }
+
+        return Err(anyhow!("Could not find available platform"));
+    }
+
+    /// Construct a new Dakota instance
+    ///
+    /// This will initialize the window system platform layer, create a thundr
+    /// instance from it, and wrap it in Dakota.
+    pub fn new() -> Result<Self> {
+        let (plat, thundr, dpi) = Self::initialize_platform()?;
 
         let mut layout_ecs = ll::Instance::new();
         create_component_and_table!(layout_ecs, LayoutNode, layout_table);
@@ -315,7 +346,6 @@ impl<'a> Dakota<'a> {
         let mut viewport_ecs = ll::Instance::new();
         create_component_and_table!(viewport_ecs, ViewportNode, viewport_table);
 
-        let dpi = thundr.get_dpi();
         let inst = FontInstance::new(
             "./SourceCodePro-Regular.ttf",
             (dpi.0 as u32, dpi.1 as u32),
