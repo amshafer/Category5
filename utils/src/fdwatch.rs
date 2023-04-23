@@ -24,6 +24,7 @@ pub struct FdWatch {
     fdw_kq: RawFd,
     // Events to watch
     fdw_events: Vec<KEvent>,
+    fdw_fds: Vec<RawFd>,
 }
 
 #[cfg(target_os = "freebsd")]
@@ -53,12 +54,24 @@ impl FdWatch {
             // Create a new kqueue
             fdw_kq: kqueue().expect("Could not create kqueue"),
             fdw_events: Vec::new(),
+            fdw_fds: Vec::new(),
         }
     }
 
     pub fn add_fd(&mut self, fd: RawFd) {
         let kev = FdWatch::read_fd_kevent(fd);
         self.fdw_events.push(kev);
+        self.fdw_fds.push(fd);
+    }
+
+    pub fn remove_fd(&mut self, fd: RawFd) {
+        let index = self
+            .fdw_fds
+            .iter()
+            .position(|f| *f == fd)
+            .expect("FdWatch: Could not find requested fd");
+        self.fdw_events.remove(index);
+        self.fdw_fds.remove(index);
     }
 
     pub fn register_events(&mut self) {
@@ -104,6 +117,10 @@ impl FdWatch {
 
     pub fn add_fd(&mut self, fd: RawFd) {
         self.fdw_events.push(fd);
+    }
+
+    pub fn remove_fd(&mut self, fd: RawFd) {
+        self.fdw_events.retain(|&f| f != fd);
     }
 
     pub fn register_events(&mut self) {

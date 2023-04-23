@@ -24,7 +24,7 @@ pub trait Platform {
         &mut self,
         evsys: &mut EventSystem,
         dom: &DakotaDOM,
-        timeout: Option<u32>,
+        timeout: Option<usize>,
         watch: Option<&mut FdWatch>,
     ) -> std::result::Result<bool, DakotaError>;
 }

@@ -252,7 +252,7 @@ impl Platform for SDL2Plat {
         &mut self,
         evsys: &mut EventSystem,
         dom: &DakotaDOM,
-        timeout: Option<u32>,
+        timeout: Option<usize>,
         watch: Option<&mut FdWatch>,
     ) -> std::result::Result<bool, DakotaError> {
         let mut needs_redraw = false;
@@ -290,7 +290,7 @@ impl Platform for SDL2Plat {
                 // If we are waiting a certain amount of time, tell SDL. If
                 // it returns an event, great, handle it.
                 // If not, then just return without handling.
-                Some(timeout) => match self.sdl_event_pump.wait_event_timeout(timeout) {
+                Some(timeout) => match self.sdl_event_pump.wait_event_timeout(timeout as u32) {
                     Some(event) => event,
                     None => return Ok(needs_redraw),
                 },

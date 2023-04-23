@@ -1396,7 +1396,7 @@ impl<'a> Dakota<'a> {
     /// Returns true if we should terminate i.e. the window was closed.
     /// Timeout is in milliseconds, and is the timeout to wait for
     /// window system events.
-    pub fn dispatch(&mut self, dom: &DakotaId, mut timeout: Option<u32>) -> Result<()> {
+    pub fn dispatch(&mut self, dom: &DakotaId, mut timeout: Option<usize>) -> Result<()> {
         let mut first_loop = true;
 
         loop {
@@ -1440,7 +1440,7 @@ impl<'a> Dakota<'a> {
     /// This will handle user input and other things like that. This function
     /// is internally called by the `dispatch` call and does not perform any
     /// drawing.
-    pub fn dispatch_platform(&mut self, dom: &DakotaId, timeout: Option<u32>) -> Result<()> {
+    pub fn dispatch_platform(&mut self, dom: &DakotaId, timeout: Option<usize>) -> Result<()> {
         // First run our window system code. This will check if wayland/X11
         // notified us of a resize, closure, or need to redraw
         let plat_res = self.d_plat.run(

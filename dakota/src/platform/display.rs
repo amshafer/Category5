@@ -22,6 +22,7 @@ use utils::log;
 
 use std::fs::{File, OpenOptions};
 use std::marker::PhantomData;
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::OwnedFd;
 use std::path::Path;
@@ -97,10 +98,11 @@ pub struct DisplayPlat {
     dp_xkb_keymap_name: String,
     /// xkb state machine
     dp_xkb_state: xkb::State,
-
     /// The current modifier key state. This will be updated using
     /// xkb.
     dp_current_modifiers: Mods,
+    /// Our private fd listener
+    dp_fdwatch: FdWatch,
 }
 
 impl DisplayPlat {
@@ -129,6 +131,10 @@ impl DisplayPlat {
         // the default seat is seat0, which is all input devs
         libin.udev_assign_seat("seat0").unwrap();
 
+        let mut fdwatch = FdWatch::new();
+        fdwatch.add_fd(libin.as_raw_fd());
+        fdwatch.register_events();
+
         Ok(Self {
             dp_libin: libin,
             dp_xkb_ctx: context,
@@ -136,6 +142,7 @@ impl DisplayPlat {
             dp_xkb_keymap_name: km_name,
             dp_xkb_state: state,
             dp_current_modifiers: Mods::NONE,
+            dp_fdwatch: fdwatch,
         })
     }
 
@@ -277,12 +284,31 @@ impl Platform for DisplayPlat {
         &mut self,
         evsys: &mut EventSystem,
         _dom: &DakotaDOM,
-        _timeout: Option<u32>,
-        _watch: Option<&mut FdWatch>,
+        timeout: Option<usize>,
+        mut watch: Option<&mut FdWatch>,
     ) -> std::result::Result<bool, DakotaError> {
-        self.dp_libin.dispatch().unwrap();
+        let fdw = match watch.as_mut() {
+            Some(w) => {
+                // If the upper parts of the stack request us to wake up on
+                // other fds, then we need to add our libinput fd to the
+                // provided fdwatch and remove it when we are done.
+                w.add_fd(self.dp_libin.as_raw_fd());
+                w.register_events();
+                w
+            }
+            None => &mut self.dp_fdwatch,
+        };
+        fdw.wait_for_events(timeout);
 
+        self.dp_libin.dispatch().unwrap();
         self.process_available(evsys);
+
+        // Remove our own fd if needed. TODO: Kind of hacky, clean this up
+        if let Some(w) = watch.as_mut() {
+            evsys.add_event_user_fd();
+            w.add_fd(self.dp_libin.as_raw_fd());
+            w.register_events();
+        }
 
         Ok(false)
     }
