@@ -8,8 +8,8 @@
 extern crate image;
 extern crate lluvia as ll;
 extern crate thundr as th;
-pub use th::Droppable;
 pub use th::ThundrError as DakotaError;
+pub use th::{Droppable, SubsurfaceOrder};
 
 extern crate bitflags;
 
@@ -1109,6 +1109,83 @@ impl<'a> Dakota<'a> {
         }
 
         self.d_children.get_mut(parent).unwrap().push(child);
+    }
+
+    /// Remove `child` as a child element of `parent`.
+    ///
+    /// This operation on makes sense for Dakota objects with the `Element` object
+    /// type.
+    pub fn remove_child_from_element(&mut self, parent: &DakotaId, child: &DakotaId) -> Result<()> {
+        // Assert this id has the Element type
+        self.assert_id_has_type(parent, DakotaObjectType::Element);
+        self.assert_id_has_type(&child, DakotaObjectType::Element);
+
+        let mut children = self
+            .d_children
+            .get_mut(parent)
+            .context("Parent does not have any children, cannot remove child")?;
+
+        // Get the indices of our two children
+        let pos = children
+            .iter()
+            .position(|c| c.get_raw_id() == child.get_raw_id())
+            .context("Could not find child in parent's children while removing")?;
+        children.remove(pos);
+
+        Ok(())
+    }
+
+    /// Reorder two elements that are children of parent
+    ///
+    /// Depending on the value of `order`, this will insert child A above or below
+    /// child B in the element list.
+    ///
+    /// This is best used for when you need to bring an element to the front or back
+    /// of a child list without regenerating the entire thing. This is particularly
+    /// useful for category5, which orders elements for wayland subsurfaces
+    pub fn reorder_children_element(
+        &mut self,
+        parent: &DakotaId,
+        order: SubsurfaceOrder,
+        a: &DakotaId,
+        b: &DakotaId,
+    ) -> Result<()> {
+        // Assert this id has the Element type
+        self.assert_id_has_type(parent, DakotaObjectType::Element);
+        self.assert_id_has_type(a, DakotaObjectType::Element);
+        self.assert_id_has_type(b, DakotaObjectType::Element);
+
+        let mut children = self
+            .d_children
+            .get_mut(parent)
+            .context("Parent does not have any children, cannot reorder")?;
+
+        // Get the indices of our two children
+        let pos_a = children
+            .iter()
+            .position(|c| c.get_raw_id() == a.get_raw_id())
+            .context("Could not find Child A in Parent's children")?;
+        let pos_b = children
+            .iter()
+            .position(|c| c.get_raw_id() == b.get_raw_id())
+            .context("Could not find Child B in Parent's children")?;
+
+        // Remove child A and insert it above or below child B
+        children.remove(pos_a);
+        children.insert(
+            match order {
+                SubsurfaceOrder::Above => pos_b + 1,
+                SubsurfaceOrder::Below => pos_b,
+            },
+            a.clone(),
+        );
+
+        // TODO: If thundr surfaces are already created for this element, reorder
+        // the thundr subsurfaces?
+        // Right now looks like we always recreate the child list, but maybe we
+        // want to optimize that in the future for large child lists?
+
+        Ok(())
     }
 
     /// This refreshes the entire scene, and regenerates
