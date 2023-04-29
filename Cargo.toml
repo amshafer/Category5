@@ -7,7 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-thundr={path="thundr"}
+dakota={path="dakota", features=["direct2display"]}
 # As of wayland-rs v0.30 we specify the system library feature
 # for the wayland-backend crate and all others will inherit it
 wayland-backend={version="0.1.1", features=["server_system", "dlopen"]}
@@ -15,8 +15,6 @@ wayland-server="0.30"
 wayland-scanner="0.30"
 wayland-protocols={version="0.30", features=["server", "unstable"]}
 wayland-sys="0.30"
-input={version="0.7.1", features=["gen"]}
-udev="0.7"
 libc="0.2"
 image="0.23.14"
 nix="0.26"
@@ -29,5 +27,5 @@ lazy_static="1.4"
 renderdoc={version="0.10", optional=true}
 
 [features]
-aftermath = ["thundr/aftermath"]
+aftermath = ["dakota/aftermath"]
 renderdoc = ["dep:renderdoc"]

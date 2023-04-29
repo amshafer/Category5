@@ -47,7 +47,7 @@ impl ws::GlobalDispatch<wl_seat::WlSeat, ()> for Climate {
             }
             None => {
                 // Make a new seat global if one didn't exist
-                let seat = Arc::new(Mutex::new(Seat::new(state.c_input.hi_in.clone(), id)));
+                let seat = Arc::new(Mutex::new(Seat::new(id)));
                 atmos.add_seat(id, seat.clone());
                 seat
             }
@@ -74,6 +74,7 @@ impl ws::Dispatch<wl_seat::WlSeat, Arc<Mutex<Seat>>> for Climate {
     ) {
         data.lock().unwrap().handle_request(
             state.c_atmos.lock().unwrap().deref_mut(),
+            &mut state.c_input,
             request,
             resource,
             data_init,
@@ -215,8 +216,6 @@ impl SeatInstance {
 /// of all the seats created by this client.
 #[allow(dead_code)]
 pub struct Seat {
-    // The handle to the input subsystem
-    pub s_input: Arc<Mutex<Input>>,
     // The id of the client this seat belongs to
     pub s_id: ClientId,
     // List of all wl_seats and their respective device proxies
@@ -232,9 +231,8 @@ impl Seat {
     /// what input methods are ready.
     ///
     /// The wl_seat needs to be added with `add_seat_instance`.
-    pub fn new(input: Arc<Mutex<Input>>, id: ClientId) -> Seat {
+    pub fn new(id: ClientId) -> Seat {
         Seat {
-            s_input: input,
             s_id: id,
             s_proxies: Vec::new(),
             s_serial: 0,
@@ -262,6 +260,7 @@ impl Seat {
     pub fn handle_request(
         &mut self,
         atmos: &mut Atmosphere,
+        input: &mut Input,
         req: wl_seat::Request,
         seat: &wl_seat::WlSeat,
         data_init: &mut ws::DataInit<'_, Climate>,
@@ -273,16 +272,14 @@ impl Seat {
             .find(|s| s.si_seat == *seat)
             .expect("wl_seat is not known by this Seat");
 
-        let mut input = self.s_input.lock().unwrap();
-
         match req {
             wl_seat::Request::GetKeyboard { id } => {
                 let kb = data_init.init(id, ());
-                si.get_keyboard(atmos, input.deref_mut(), self.s_id, self.s_serial, kb);
+                si.get_keyboard(atmos, input, self.s_id, self.s_serial, kb);
             }
             wl_seat::Request::GetPointer { id } => {
                 let ptr = data_init.init(id, ());
-                si.get_pointer(atmos, input.deref_mut(), ptr);
+                si.get_pointer(atmos, input, ptr);
             }
             _ => unimplemented!("Did not recognize the request"),
         }

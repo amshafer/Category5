@@ -18,8 +18,8 @@ bitflags::bitflags! {
         const RCTRL = 0x0080;
         const LALT = 0x0100;
         const RALT = 0x0200;
-        const LGUI = 0x0400;
-        const RGUI = 0x0800;
+        const LMETA = 0x0400;
+        const RMETA = 0x0800;
         const NUM = 0x1000;
         const CAPS = 0x2000;
         const MODE = 0x4000;
@@ -64,6 +64,29 @@ pub fn convert_libinput_mouse_to_dakota(button: u32) -> MouseButton {
         0x107 => MouseButton::BUTTON7,
         0x108 => MouseButton::BUTTON8,
         _ => MouseButton::UNKNOWN,
+    }
+}
+
+#[cfg(feature = "direct2display")]
+impl MouseButton {
+    /// Get the Linux kernel button code corresponding to this mouse button
+    ///
+    /// This is useful for getting a value to pass to system libraries, such
+    /// as xkbcommon.
+    pub fn to_linux_button_code(&self) -> u32 {
+        match self {
+            MouseButton::LEFT => 0x110,
+            MouseButton::MIDDLE => 0x112,
+            MouseButton::RIGHT => 0x111,
+            MouseButton::EXTRA => 0x114,
+            MouseButton::SIDE => 0x115,
+            MouseButton::BUTTON6 => 0x106,
+            MouseButton::BUTTON7 => 0x107,
+            MouseButton::BUTTON8 => 0x108,
+            // Return a left keypress if we don't recognize
+            // this button
+            MouseButton::UNKNOWN => 0x110,
+        }
     }
 }
 
@@ -303,11 +326,11 @@ lazy_static::lazy_static! {
                 (Keycode::LCTRL,               xkb::keysyms::KEY_Control_L),
                 (Keycode::LSHIFT,              xkb::keysyms::KEY_Shift_L),
                 (Keycode::LALT,                xkb::keysyms::KEY_Alt_L),
-                (Keycode::LGUI,                xkb::keysyms::KEY_Super_L),
+                (Keycode::LMETA,                xkb::keysyms::KEY_Super_L),
                 (Keycode::RCTRL,               xkb::keysyms::KEY_Control_R),
                 (Keycode::RSHIFT,              xkb::keysyms::KEY_Shift_R),
                 (Keycode::RALT,                xkb::keysyms::KEY_Alt_R),
-                (Keycode::RGUI,                xkb::keysyms::KEY_Super_R),
+                (Keycode::RMETA,                xkb::keysyms::KEY_Super_R),
                 (Keycode::AUDIONEXT,           xkb::keysyms::KEY_XF86AudioNext),
                 (Keycode::AUDIOPREV,           xkb::keysyms::KEY_XF86AudioPrev),
                 (Keycode::AUDIOSTOP,           xkb::keysyms::KEY_XF86AudioStop),
@@ -537,11 +560,11 @@ lazy_static::lazy_static! {
                 (Keycode::LCTRL,               sdl2::keyboard::Keycode::LCtrl),
                 (Keycode::LSHIFT,              sdl2::keyboard::Keycode::LShift),
                 (Keycode::LALT,                sdl2::keyboard::Keycode::LAlt),
-                (Keycode::LGUI,                sdl2::keyboard::Keycode::LGui),
+                (Keycode::LMETA,                sdl2::keyboard::Keycode::LGui),
                 (Keycode::RCTRL,               sdl2::keyboard::Keycode::RCtrl),
                 (Keycode::RSHIFT,              sdl2::keyboard::Keycode::RShift),
                 (Keycode::RALT,                sdl2::keyboard::Keycode::RAlt),
-                (Keycode::RGUI,                sdl2::keyboard::Keycode::RGui),
+                (Keycode::RMETA,                sdl2::keyboard::Keycode::RGui),
                 (Keycode::MODE,                sdl2::keyboard::Keycode::Mode),
                 (Keycode::AUDIONEXT,           sdl2::keyboard::Keycode::AudioNext),
                 (Keycode::AUDIOPREV,           sdl2::keyboard::Keycode::AudioPrev),
@@ -1046,11 +1069,11 @@ pub enum Keycode {
     LCTRL,
     LSHIFT,
     LALT,
-    LGUI,
+    LMETA,
     RCTRL,
     RSHIFT,
     RALT,
-    RGUI,
+    RMETA,
     MODE,
     AUDIONEXT,
     AUDIOPREV,
@@ -1089,11 +1112,11 @@ impl Keycode {
             Self::LCTRL
             | Self::LSHIFT
             | Self::LALT
-            | Self::LGUI
+            | Self::LMETA
             | Self::RCTRL
             | Self::RSHIFT
             | Self::RALT
-            | Self::RGUI => true,
+            | Self::RMETA => true,
             _ => false,
         }
     }

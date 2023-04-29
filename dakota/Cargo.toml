@@ -36,3 +36,4 @@ xkbcommon={version="0.5", optional=true}
 default=["sdl"]
 sdl=["thundr/sdl", "sdl2", "sdl2-sys", "xkbcommon"]
 direct2display=["input", "xkbcommon"]
+aftermath = ["thundr/aftermath"]

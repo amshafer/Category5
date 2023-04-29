@@ -72,19 +72,28 @@ pub struct CachedChar {
     pub offset: (f32, f32),
 }
 
-pub struct FontInstance<'a> {
+pub struct FontInstance {
     _f_freetype: ft::Library,
     /// The font reference for our rasterizer
     f_ft_face: ft::Face,
     /// Our rustybuzz font face (see harfbuzz docs)
-    f_hb_font: hb::Owned<hb::Font<'a>>,
+    ///
+    /// Note that this is a raw pointer. This is to work around some
+    /// obnoxious lifetime issues. hb::Font<'a> has a lifetime parameter,
+    /// which means if we use it this lifetime has to be specified all the way
+    /// up to the Dakota object. This isn't acceptable since a lifetime parameter
+    /// means Dakota can't be used in environments that require a static lifetime,
+    /// so we have to do this annoying dance here to avoid all of that.
+    ///
+    /// Each time you need a Font object, use hb::Owned::from_raw()
+    f_hb_raw_font: *mut harfbuzz_sys::hb_font_t,
     /// Map of glyphs to look up to find the thundr resources
     /// The ab::GlyphId is really just an index into this. That's all
     /// glyph ids are, is the index of the glyph in the font.
     f_glyphs: Vec<Option<Glyph>>,
 }
 
-impl<'a> FontInstance<'a> {
+impl FontInstance {
     /// Create a new font
     ///
     /// This is a particular font from a typeface at a
@@ -92,11 +101,8 @@ impl<'a> FontInstance<'a> {
     pub fn new(font_path: &str, dpi: (u32, u32), point_size: f32) -> Self {
         let ft_lib = ft::Library::init().unwrap();
         let mut ft_face: ft::Face = ft_lib.new_face(font_path, 0).unwrap();
-        let hb_font = unsafe {
-            let raw_font =
-                hb_ft_font_create_referenced(ft_face.raw_mut() as *mut ft::ffi::FT_FaceRec);
-            hb::Owned::from_raw(raw_font)
-        };
+        let raw_font =
+            unsafe { hb_ft_font_create_referenced(ft_face.raw_mut() as *mut ft::ffi::FT_FaceRec) };
 
         // set our font size
         // The sizes come in 1/64th of a point. See the tutorial. Zeroes
@@ -110,7 +116,7 @@ impl<'a> FontInstance<'a> {
         Self {
             _f_freetype: ft_lib,
             f_ft_face: ft_face,
-            f_hb_font: hb_font,
+            f_hb_raw_font: raw_font,
             f_glyphs: Vec::new(),
         }
     }
@@ -384,7 +390,8 @@ impl<'a> FontInstance<'a> {
         let mut ret = Vec::new();
 
         // Now the big call to get the shaping information
-        let glyph_buffer = hb::shape(&self.f_hb_font, buffer, Vec::with_capacity(0).as_slice());
+        let font = unsafe { hb::Owned::from_raw(self.f_hb_raw_font) };
+        let glyph_buffer = hb::shape(&font, buffer, Vec::with_capacity(0).as_slice());
         let infos = glyph_buffer.get_glyph_infos();
         let positions = glyph_buffer.get_glyph_positions();
 

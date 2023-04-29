@@ -52,7 +52,7 @@ pub type HandlerArgs = Rc<Vec<String>>;
 ///
 /// This distinguishes if a source comes from a mouse wheel or a trackpad. If
 /// the platform does not distinguish this will always be `Wheel`.
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum AxisSource {
     Wheel = 0,
     Finger = 1,

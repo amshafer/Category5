@@ -1,6 +1,6 @@
 extern crate dakota;
-use dakota::event::Event;
 use dakota::Dakota;
+use dakota::Event;
 
 extern crate utils;
 use std::env;

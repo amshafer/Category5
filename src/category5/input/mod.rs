@@ -30,235 +30,26 @@
 // external input crate.
 #![allow(dead_code)]
 pub mod codes;
-pub mod event;
 
-extern crate input;
+extern crate dakota as dak;
 extern crate nix;
 extern crate wayland_protocols;
 extern crate wayland_server as ws;
 extern crate xkbcommon;
 
 use wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge;
+use ws::protocol::wl_keyboard;
 use ws::protocol::wl_pointer;
 use ws::Resource;
 
 use crate::category5::atmosphere::Atmosphere;
 use crate::category5::ways::role::Role;
-use event::*;
 use utils::{log, timing::*, WindowId};
-
-use input::event::keyboard::{KeyState, KeyboardEvent, KeyboardEventTrait};
-use input::event::pointer;
-use input::event::pointer::{ButtonState, PointerEvent, PointerScrollEvent};
-use input::event::Event;
-use input::{Libinput, LibinputInterface};
 
 use xkbcommon::xkb;
 pub use xkbcommon::xkb::{keysyms, Keysym};
 
 use core::convert::TryFrom;
-use std::fs::{File, OpenOptions};
-use std::mem::drop;
-use std::os::unix::fs::OpenOptionsExt;
-use std::os::unix::io::RawFd;
-use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
-use std::path::Path;
-use std::sync::{Arc, Mutex};
-
-/// This is sort of like a private userdata struct which
-/// is used as an interface to the systems devices
-///
-/// i.e. this could call consolekit to avoid having to
-/// be a root user to get raw input.
-struct Inkit {
-    // For now we don't have anything special to do,
-    // so we are just putting a phantom int here since
-    // we need to have something.
-    _inner: u32,
-}
-
-/// This is the interface that libinput uses to abstract away
-/// consolekit and friends.
-///
-/// In our case we just pass the arguments through to `open`.
-/// We need to use the unix open extensions so that we can pass
-/// custom flags.
-impl LibinputInterface for Inkit {
-    // open a device
-    fn open_restricted(&mut self, path: &Path, flags: i32) -> Result<RawFd, i32> {
-        log::debug!(" Opening device {:?}", path);
-        match OpenOptions::new()
-            // the unix extension's custom_flag field below
-            // masks out O_ACCMODE, i.e. read/write, so add
-            // them back in
-            .read(true)
-            .write(true)
-            // libinput wants to use O_NONBLOCK
-            .custom_flags(flags)
-            .open(path)
-        {
-            Ok(f) => {
-                // this turns the File into an int, so we
-                // don't need to worry about the File's
-                // lifetime.
-                let fd = f.into_raw_fd();
-                log::error!("Returning raw fd {}", fd);
-                Ok(fd)
-            }
-            Err(e) => {
-                // leave this in, it gives great error msgs
-                log::error!("Error on opening {:?}", e);
-                Err(-1)
-            }
-        }
-    }
-
-    // close a device
-    fn close_restricted(&mut self, fd: RawFd) {
-        unsafe {
-            // this will close the file
-            drop(File::from_raw_fd(fd));
-        }
-    }
-}
-
-/// This struct holds all the hardware dependent and non-multithreaded
-/// state. For now this is really just a wrapper around libinput.
-pub struct HWInput {
-    /// libinput context
-    hi_libin: Libinput,
-    /// Our input handler
-    pub hi_in: Arc<Mutex<Input>>,
-}
-
-impl HWInput {
-    /// Open a new libinput connection
-    pub fn new() -> Self {
-        let kit: Inkit = Inkit { _inner: 0 };
-        let mut libin = Libinput::new_with_udev(kit);
-
-        // we need to choose a "seat" for udev to listen on
-        // the default seat is seat0, which is all input devs
-        libin.udev_assign_seat("seat0").unwrap();
-
-        Self {
-            hi_libin: libin,
-            hi_in: Arc::new(Mutex::new(Input::new())),
-        }
-    }
-
-    /// Get a pollable fd
-    ///
-    /// This saves power and is monitored by kqueue in
-    /// the ways event loop
-    pub fn get_poll_fd(&mut self) -> RawFd {
-        self.hi_libin.as_raw_fd()
-    }
-
-    /// Processs any pending input events
-    ///
-    /// dispatch will grab the latest available data
-    /// from the devices and perform libinputs internal
-    /// (time sensitive) operations on them
-    /// It will then handle all the available input events
-    /// before returning.
-    pub fn dispatch(&mut self, atmos: &mut Atmosphere) {
-        self.hi_libin.dispatch().unwrap();
-        // now go through each event
-        while let Some(iev) = self.next_available() {
-            let mut input = self.hi_in.lock().unwrap();
-            input.handle_input_event(atmos, &iev);
-        }
-    }
-
-    fn get_scroll_event(&self, ev: &dyn pointer::PointerScrollEvent) -> Axis {
-        let mut ret = Axis {
-            a_has_horiz: false,
-            a_has_vert: false,
-            a_hori_val: 0.0,
-            a_vert_val: 0.0,
-            a_v120_val: (0.0, 0.0),
-            a_source: 0,
-        };
-        if ev.has_axis(pointer::Axis::Horizontal) {
-            ret.a_has_horiz = true;
-            ret.a_hori_val = ev.scroll_value(pointer::Axis::Horizontal);
-        }
-        if ev.has_axis(pointer::Axis::Vertical) {
-            ret.a_has_vert = true;
-            ret.a_vert_val = ev.scroll_value(pointer::Axis::Vertical);
-        }
-
-        log::debug!("scrolling by {:?}", ret);
-        return ret;
-    }
-
-    /// Get the next available event from libinput
-    ///
-    /// Dispatch should be called before this so libinput can
-    /// internally read and prepare all events.
-    fn next_available(&mut self) -> Option<InputEvent> {
-        // TODO: need to fix this wrapper
-        let ev = self.hi_libin.next();
-        match ev {
-            Some(Event::Pointer(PointerEvent::Motion(m))) => {
-                log::debug!("moving mouse by ({}, {})", m.dx(), m.dy());
-
-                return Some(InputEvent::pointer_move(PointerMove {
-                    pm_dx: m.dx(),
-                    pm_dy: m.dy(),
-                }));
-            }
-            // TODO: actually handle advanced scrolling/finger behavior
-            // We should track ScrollWheel using the v120 api, and handle
-            // high-res and wheel click behavior. For ScrollFinger we
-            // should handle kinetic scrolling
-            Some(Event::Pointer(PointerEvent::ScrollFinger(sf))) => {
-                let mut ax = self.get_scroll_event(&sf);
-                ax.a_source = AXIS_SOURCE_FINGER;
-                return Some(InputEvent::axis(ax));
-            }
-            Some(Event::Pointer(PointerEvent::ScrollWheel(sw))) => {
-                let mut ax = self.get_scroll_event(&sw);
-                ax.a_source = AXIS_SOURCE_WHEEL;
-
-                // Mouse wheels will be handled with the higher resolution
-                // v120 API for discrete scrolling
-                if sw.has_axis(pointer::Axis::Horizontal) {
-                    ax.a_v120_val.0 = sw.scroll_value_v120(pointer::Axis::Horizontal);
-                }
-                if sw.has_axis(pointer::Axis::Vertical) {
-                    ax.a_v120_val.1 = sw.scroll_value_v120(pointer::Axis::Vertical);
-                }
-
-                return Some(InputEvent::axis(ax));
-            }
-            Some(Event::Pointer(PointerEvent::Button(b))) => {
-                log::debug!("pointer button {:?}", b.button());
-
-                return Some(InputEvent::click(Click {
-                    c_code: b.button(),
-                    c_state: b.button_state(),
-                }));
-            }
-            Some(Event::Keyboard(KeyboardEvent::Key(k))) => {
-                log::debug!("keyboard event: {:?}", k.key());
-                return Some(InputEvent::key(Key {
-                    k_code: k.key(),
-                    k_state: k.key_state(),
-                }));
-            }
-            Some(_e) => log::debug!("Unhandled Input Event: {:?}", _e),
-            None => (),
-        };
-
-        return None;
-    }
-
-    pub fn update_from_eventloop(&mut self, atmos: &mut Atmosphere) {
-        self.hi_in.lock().unwrap().update_from_eventloop(atmos)
-    }
-}
 
 /// This represents an input system
 ///
@@ -297,6 +88,21 @@ pub struct Input {
     /// The surface that the pointer is currently over
     /// note that this may be different than the application focus
     pub i_pointer_focus: Option<WindowId>,
+}
+
+#[derive(Copy, Eq, PartialEq, Clone)]
+enum ButtonState {
+    Pressed,
+    Released,
+}
+
+// A helper function to map a KeyState from the input event
+// into a KeyState from wl_keyboard
+fn map_key_state(state: ButtonState) -> wl_keyboard::KeyState {
+    match state {
+        ButtonState::Pressed => wl_keyboard::KeyState::Pressed,
+        ButtonState::Released => wl_keyboard::KeyState::Released,
+    }
 }
 
 // NOTE:
@@ -384,7 +190,14 @@ impl Input {
     /// Perform a scrolling motion.
     ///
     /// Generates the wl_pointer.axis event.
-    fn handle_pointer_axis(&mut self, atmos: &mut Atmosphere, a: &Axis) {
+    fn handle_pointer_axis(
+        &mut self,
+        atmos: &mut Atmosphere,
+        xrel: Option<f64>,
+        yrel: Option<f64>,
+        v120_val: (f64, f64),
+        source: dak::AxisSource,
+    ) {
         // Find the active window
         if let Some(id) = self.i_pointer_focus {
             // get the seat for this client
@@ -398,24 +211,25 @@ impl Input {
                         // breaks scrolling without this, I think it wants it to decide if
                         // it should do kinetic scrolling or not.
                         if pointer.version() >= 5 {
-                            pointer
-                                .axis_source(wl_pointer::AxisSource::try_from(a.a_source).unwrap());
+                            pointer.axis_source(
+                                wl_pointer::AxisSource::try_from(source as u32).unwrap(),
+                            );
                         }
-                        if a.a_has_horiz {
+                        if let Some(hori_val) = xrel {
                             Self::send_axis(
                                 pointer,
                                 wl_pointer::Axis::HorizontalScroll,
-                                a.a_hori_val,
-                                a.a_v120_val.0,
+                                hori_val,
+                                v120_val.0,
                             );
                         }
-                        if a.a_has_vert {
+                        if let Some(vert_val) = yrel {
                             Self::send_axis(
                                 pointer,
                                 wl_pointer::Axis::VerticalScroll,
-                                a.a_vert_val,
+                                vert_val,
                                 // convert our Option<tuple> to Option<f64>
-                                a.a_v120_val.1,
+                                v120_val.1,
                             );
                         }
                         Self::send_pointer_frame(pointer);
@@ -564,16 +378,16 @@ impl Input {
     ///
     /// Also generates wl_pointer.motion events to the surface
     /// in focus if the cursor is on that surface
-    fn handle_pointer_move(&mut self, atmos: &mut Atmosphere, m: &PointerMove) {
+    fn handle_pointer_move(&mut self, atmos: &mut Atmosphere, dx: f64, dy: f64) {
         // Update the atmosphere with the new cursor pos
-        atmos.add_cursor_pos(m.pm_dx, m.pm_dy);
+        atmos.add_cursor_pos(dx, dy);
 
         // If a resize is happening then collect the cursor changes
         // to send at the end of the frame
         if atmos.get_resizing().is_some() {
             log::error!("Resizing in progress");
-            self.i_resize_diff.0 += m.pm_dx;
-            self.i_resize_diff.1 += m.pm_dy;
+            self.i_resize_diff.0 += dx;
+            self.i_resize_diff.1 += dy;
             return;
         }
         // Get the cursor position
@@ -622,14 +436,19 @@ impl Input {
     ///
     /// If a click is over a background window it is brought into focus
     /// clicking on a background titlebar can also start a grab
-    fn handle_click_on_window(&mut self, atmos: &mut Atmosphere, c: &Click) {
+    fn handle_click_on_window(
+        &mut self,
+        atmos: &mut Atmosphere,
+        button: dak::MouseButton,
+        state: ButtonState,
+    ) {
         let cursor = atmos.get_cursor_pos();
         // did our click bring a window into focus?
         let mut set_focus = false;
 
         // first check if we are releasing a grab
         if let Some(_id) = atmos.get_grabbed() {
-            match c.c_state {
+            match state {
                 ButtonState::Released => {
                     log::debug!("Ungrabbing window {:?}", _id);
                     atmos.set_grabbed(None);
@@ -641,7 +460,7 @@ impl Input {
 
         // find the window under the cursor
         let resizing = atmos.get_resizing();
-        if resizing.is_some() && c.c_state == ButtonState::Released {
+        if resizing.is_some() && state == ButtonState::Released {
             // We are releasing a resize, and we might not be resizing
             // the same window as find_window_at_point would report
             if let Some(id) = resizing {
@@ -649,7 +468,7 @@ impl Input {
                 if let Some(surf) = atmos.get_surface_from_id(id) {
                     match &surf.lock().unwrap().s_role {
                         Some(Role::xdg_shell_toplevel(_, ss)) => {
-                            match c.c_state {
+                            match state {
                                 // The release is handled above
                                 ButtonState::Released => {
                                     log::debug!("Stopping resize of {:?}", id);
@@ -678,7 +497,7 @@ impl Input {
                     None => id,
                 };
 
-                if root != focus && c.c_state == ButtonState::Pressed {
+                if root != focus && state == ButtonState::Pressed {
                     set_focus = true;
                 }
             } else {
@@ -702,7 +521,7 @@ impl Input {
                 if let Some(surf) = atmos.get_surface_from_id(id) {
                     match &surf.lock().unwrap().s_role {
                         Some(Role::xdg_shell_toplevel(_, ss)) => {
-                            match c.c_state {
+                            match state {
                                 ButtonState::Pressed => {
                                     log::debug!("Resizing window {:?}", id);
                                     atmos.set_resizing(Some(id));
@@ -719,7 +538,7 @@ impl Input {
             } else if atmos.point_is_on_titlebar(id, cursor.0 as f32, cursor.1 as f32) {
                 // now check if we are over the titlebar
                 // if so we will grab the bar
-                match c.c_state {
+                match state {
                     ButtonState::Pressed => {
                         log::debug!("Grabbing window {:?}", id);
                         atmos.set_grabbed(Some(id));
@@ -742,8 +561,8 @@ impl Input {
                             pointer.button(
                                 seat.s_serial,
                                 get_current_millis(),
-                                c.c_code,
-                                match c.c_state {
+                                button.to_linux_button_code() + 8,
+                                match state {
                                     ButtonState::Pressed => wl_pointer::ButtonState::Pressed,
                                     ButtonState::Released => wl_pointer::ButtonState::Released,
                                 },
@@ -757,9 +576,14 @@ impl Input {
     }
 
     // TODO: add gesture recognition
-    pub fn handle_compositor_shortcut(&mut self, atmos: &mut Atmosphere, key: &Key) -> bool {
+    fn handle_compositor_shortcut(
+        &mut self,
+        atmos: &mut Atmosphere,
+        key: dak::Keycode,
+        state: ButtonState,
+    ) -> bool {
         // TODO: keysyms::KEY_Meta_L doesn't work? should be 125 for left meta
-        if key.k_code == 125 && key.k_state == KeyState::Pressed {
+        if key == dak::Keycode::LMETA && state == ButtonState::Pressed {
             match atmos.get_renderdoc_recording() {
                 true => atmos.set_renderdoc_recording(false),
                 false => atmos.set_renderdoc_recording(true),
@@ -772,8 +596,14 @@ impl Input {
     /// Handle the user typing on the keyboard.
     ///
     /// Deliver the wl_keyboard.key and modifier events.
-    pub fn handle_keyboard(&mut self, atmos: &mut Atmosphere, key: &Key) {
-        if self.handle_compositor_shortcut(atmos, key) {
+    fn handle_keyboard(
+        &mut self,
+        atmos: &mut Atmosphere,
+        dakota_key: dak::Keycode,
+        key: u32,
+        state: ButtonState,
+    ) {
+        if self.handle_compositor_shortcut(atmos, dakota_key, state) {
             return;
         }
 
@@ -782,10 +612,10 @@ impl Input {
         // let xkb keep track of the keyboard state
         let changed = self.i_xkb_state.update_key(
             // add 8 to account for differences between evdev and x11
-            key.k_code + 8,
-            match key.k_state {
-                KeyState::Pressed => xkb::KeyDirection::Down,
-                KeyState::Released => xkb::KeyDirection::Up,
+            key + 8,
+            match state {
+                ButtonState::Pressed => xkb::KeyDirection::Down,
+                ButtonState::Released => xkb::KeyDirection::Up,
             },
         );
 
@@ -838,9 +668,9 @@ impl Input {
 
                         // give the keycode to the client
                         let time = get_current_millis();
-                        let state = map_key_state(key.k_state);
-                        log::debug!("Sending key {} to window {:?}", key.k_code, id);
-                        keyboard.key(seat.s_serial, time, key.k_code, state);
+                        let state = map_key_state(state);
+                        log::debug!("Sending key {} to window {:?}", key, id);
+                        keyboard.key(seat.s_serial, time, key, state);
                     }
                 }
                 // increment the serial for next time
@@ -851,17 +681,62 @@ impl Input {
         // ignore it
     }
 
+    /// Processs any pending input events
+    ///
+    /// dispatch will grab the latest available data
+    /// from the devices and perform libinputs internal
+    /// (time sensitive) operations on them
+    /// It will then handle all the available input events
+    /// before returning.
+    pub fn dispatch(&mut self, atmos: &mut Atmosphere, dakota: &mut dak::Dakota) {
+        // now go through each event
+        for event in dakota.drain_events() {
+            self.handle_input_event(atmos, &event);
+        }
+    }
+
     /// Dispatch an arbitrary input event
     ///
     /// Input events are either handled by us or by the wayland client
     /// we need to figure out the appropriate destination and perform
     /// the right action.
-    pub fn handle_input_event(&mut self, atmos: &mut Atmosphere, iev: &InputEvent) {
-        match iev {
-            InputEvent::pointer_move(m) => self.handle_pointer_move(atmos, m),
-            InputEvent::axis(a) => self.handle_pointer_axis(atmos, a),
-            InputEvent::click(c) => self.handle_click_on_window(atmos, c),
-            InputEvent::key(k) => self.handle_keyboard(atmos, k),
+    pub fn handle_input_event(&mut self, atmos: &mut Atmosphere, ev: &dak::Event) {
+        match ev {
+            dak::Event::InputMouseMove { dx, dy } => self.handle_pointer_move(atmos, *dx, *dy),
+            dak::Event::InputScroll {
+                xrel,
+                yrel,
+                v120_val,
+                source,
+                ..
+            } => self.handle_pointer_axis(atmos, *xrel, *yrel, *v120_val, *source),
+            dak::Event::InputMouseButtonUp { button, .. } => {
+                self.handle_click_on_window(atmos, *button, ButtonState::Released)
+            }
+            dak::Event::InputMouseButtonDown { button, .. } => {
+                self.handle_click_on_window(atmos, *button, ButtonState::Pressed)
+            }
+            dak::Event::InputKeyUp {
+                key, raw_keycode, ..
+            } => self.handle_keyboard(
+                atmos,
+                *key,
+                match raw_keycode {
+                    dak::RawKeycode::Linux(k) => *k,
+                },
+                ButtonState::Released,
+            ),
+            dak::Event::InputKeyDown {
+                key, raw_keycode, ..
+            } => self.handle_keyboard(
+                atmos,
+                *key,
+                match raw_keycode {
+                    dak::RawKeycode::Linux(k) => *k,
+                },
+                ButtonState::Released,
+            ),
+            _ => {}
         }
     }
 }

@@ -5,13 +5,11 @@
 // to vkcomp
 //
 // Austin Shafer - 2020
+extern crate dakota as dak;
 extern crate wayland_server as ws;
 use ws::protocol::wl_surface::Request;
 use ws::protocol::{wl_buffer, wl_callback, wl_output, wl_region, wl_surface as wlsi};
 use ws::Resource;
-
-extern crate thundr;
-use thundr as th;
 
 use super::role::Role;
 use super::shm::*;
@@ -88,10 +86,10 @@ pub struct Surface {
     /// Input events will only be delivered if this region is in focus
     pub s_input: Option<Arc<Mutex<Region>>>,
     /// Arrays of damage for this image. This will eventually
-    /// be propogated to thundr
-    pub s_surf_damage: th::Damage,
+    /// be propogated to dakota
+    pub s_surf_damage: dak::Damage,
     /// Buffer damage,
-    pub s_damage: th::Damage,
+    pub s_damage: dak::Damage,
     /// Validates that we cleaned this surf up correctly
     s_is_destroyed: bool,
 }
@@ -110,8 +108,8 @@ impl Surface {
             s_opaque: None,
             s_input: None,
             s_commit_in_progress: false,
-            s_surf_damage: th::Damage::empty(),
-            s_damage: th::Damage::empty(),
+            s_surf_damage: dak::Damage::empty(),
+            s_damage: dak::Damage::empty(),
             s_is_destroyed: false,
         }
     }
@@ -144,7 +142,7 @@ impl Surface {
                 width,
                 height,
             } => {
-                self.s_surf_damage.add(&th::Rect::new(x, y, width, height));
+                self.s_surf_damage.add(&dak::Rect::new(x, y, width, height));
             }
             wlsi::Request::DamageBuffer {
                 x,
@@ -152,7 +150,7 @@ impl Surface {
                 width,
                 height,
             } => {
-                self.s_damage.add(&th::Rect::new(x, y, width, height));
+                self.s_damage.add(&dak::Rect::new(x, y, width, height));
             }
             wlsi::Request::SetOpaqueRegion { region } => {
                 self.s_opaque = self.get_priv_from_region(region);
@@ -335,13 +333,13 @@ impl Surface {
         atmos.set_surface_size(self.s_id, surf_size.0, surf_size.1);
 
         if !self.s_surf_damage.is_empty() {
-            let mut nd = th::Damage::empty();
+            let mut nd = dak::Damage::empty();
             std::mem::swap(&mut self.s_surf_damage, &mut nd);
             log::debug!("Setting surface damage of {:?} to {:?}", self.s_id, nd);
             atmos.set_surface_damage(self.s_id, nd);
         }
         if !self.s_damage.is_empty() {
-            let mut nd = th::Damage::empty();
+            let mut nd = dak::Damage::empty();
             std::mem::swap(&mut self.s_damage, &mut nd);
             log::debug!("Setting buffer damage of {:?} to {:?}", self.s_id, nd);
             atmos.set_buffer_damage(self.s_id, nd);

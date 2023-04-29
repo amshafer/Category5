@@ -226,7 +226,7 @@ struct ParseData {
     name_to_id_map: HashMap<String, DakotaId>,
 }
 
-impl<'a> Dakota<'a> {
+impl Dakota {
     /// Parse a string of Dakota XML
     ///
     /// This provides a way to initialize a full application view from a

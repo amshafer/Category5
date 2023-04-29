@@ -20,7 +20,7 @@ macro_rules! define_element_property {
     //   type - the data's return type
     ($name:ident, $sesh:ident, $val:ty) => {
         paste! {
-            impl<'a> Dakota<'a> {
+            impl Dakota {
                 // Use the paste crate to append get_ to the front of our name
                 pub fn [<get_ $name>](&self, el: &DakotaId) -> Option<ll::TableRef<$val, ll::VecContainer<$val>>> {
                     self.[<d_ $sesh>].get(el)

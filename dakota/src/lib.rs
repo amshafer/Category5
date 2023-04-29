@@ -8,6 +8,7 @@
 extern crate image;
 extern crate lluvia as ll;
 extern crate thundr as th;
+pub use th::Damage;
 pub use th::ThundrError as DakotaError;
 pub use th::{Droppable, SubsurfaceOrder};
 
@@ -23,12 +24,14 @@ pub use utils::{Dmabuf, MemImage};
 
 pub mod dom;
 pub mod input;
+pub use crate::input::{Keycode, MouseButton};
 mod platform;
 use platform::Platform;
 pub mod xml;
 
 pub mod event;
-use event::{Event, EventSystem};
+use event::EventSystem;
+pub use event::{AxisSource, Event, RawKeycode};
 
 mod font;
 use font::*;
@@ -83,7 +86,7 @@ pub enum DakotaObjectType {
 ///      then:
 ///      f.1) the elementes will be laid out horizontally first,
 ///      f.2) with vertical wrapping if there is not enough room.
-pub struct Dakota<'a> {
+pub struct Dakota {
     // GROSS: we need thund to be before plat so that it gets dropped first
     // It might reference the window inside plat, and will segfault if
     // dropped after it.
@@ -141,7 +144,7 @@ pub struct Dakota<'a> {
     d_needs_redraw: bool,
     d_needs_refresh: bool,
     d_event_sys: EventSystem,
-    d_font_inst: FontInstance<'a>,
+    d_font_inst: FontInstance,
     d_ood_counter: usize,
 
     /// Cached mouse position
@@ -269,7 +272,7 @@ macro_rules! create_component_and_table {
     };
 }
 
-impl<'a> Dakota<'a> {
+impl Dakota {
     /// Helper for initializing Thundr for a given platform.
     fn init_thundr(plat: &mut Box<dyn Platform>) -> Result<th::Thundr> {
         let info = th::CreateInfo::builder()
@@ -386,17 +389,17 @@ impl<'a> Dakota<'a> {
     }
 
     /// Create a new toplevel Dakota DOM
-    fn create_dakota_dom(&mut self) -> Result<DakotaId> {
+    pub fn create_dakota_dom(&mut self) -> Result<DakotaId> {
         self.create_new_id_common(DakotaObjectType::DakotaDOM)
     }
 
     /// Create a new Dakota element
-    fn create_element(&mut self) -> Result<DakotaId> {
+    pub fn create_element(&mut self) -> Result<DakotaId> {
         self.create_new_id_common(DakotaObjectType::Element)
     }
 
     /// Create a new Dakota resource
-    fn create_resource(&mut self) -> Result<DakotaId> {
+    pub fn create_resource(&mut self) -> Result<DakotaId> {
         self.create_new_id_common(DakotaObjectType::Resource)
     }
 
@@ -506,6 +509,36 @@ impl<'a> Dakota<'a> {
 
         self.d_resource_thundr_image.set(res, image);
         Ok(())
+    }
+
+    /// Hint that part of this resource has been damaged to the rendering stack
+    ///
+    /// This makes a hint to Thundr that only a portion of this resource is has
+    /// changed compared to the previous one. This should only be used by category5.
+    pub fn damage_resource(&mut self, resource: &DakotaId, damage: Damage) {
+        if let Some(mut image) = self.d_resource_thundr_image.get_mut(resource) {
+            image.reset_damage(damage);
+        }
+    }
+
+    /// Hint that part of this element has been damaged to the rendering stack
+    ///
+    /// This makes a hint to Thundr that only a portion of this element is has
+    /// changed compared during draw update. This should only be used by category5.
+    pub fn damage_element(&mut self, resource: &DakotaId, damage: Damage) {
+        if let Some(mut surf) = self.d_layout_node_surfaces.get_mut(resource) {
+            surf.damage(damage);
+        }
+    }
+
+    /// Get the current size of the drawing region for this display
+    pub fn get_resolution(&self) -> (u32, u32) {
+        self.d_thund.get_resolution()
+    }
+
+    /// Get the major, minor of the DRM device currently in use
+    pub fn get_drm_dev(&self) -> (i64, i64) {
+        self.d_thund.get_drm_dev()
     }
 
     /// Calculate size and position of centered content.
@@ -1188,6 +1221,34 @@ impl<'a> Dakota<'a> {
         Ok(())
     }
 
+    /// Move child to front of children in parent
+    ///
+    /// This is used for bringing an element into "focus", and placing it as
+    /// the foremost child.
+    pub fn move_child_to_front(&mut self, parent: &DakotaId, child: &DakotaId) -> Result<()> {
+        // Assert this id has the Element type
+        self.assert_id_has_type(parent, DakotaObjectType::Element);
+        self.assert_id_has_type(child, DakotaObjectType::Element);
+
+        let mut children = self
+            .d_children
+            .get_mut(parent)
+            .context("Parent does not have any children, cannot reorder")?;
+
+        // Get the indices of our two children
+        let pos = children
+            .iter()
+            .position(|c| c.get_raw_id() == child.get_raw_id())
+            .context("Could not find Child A in Parent's children")?;
+
+        // Remove child A and insert it above or below child B
+        children.remove(pos);
+        children.insert(0, child.clone());
+        // TODO: If thundr surfaces are already created for this element, reorder
+
+        Ok(())
+    }
+
     /// This refreshes the entire scene, and regenerates
     /// the Thundr surface list.
     pub fn refresh_elements(&mut self, dom_id: &DakotaId) -> Result<()> {
@@ -1580,6 +1641,8 @@ impl<'a> Dakota<'a> {
         // and will return that to the dakota user so they have a chance to resize
         // anything they want
         if self.d_needs_redraw {
+            self.d_thund.release_pending_resources();
+
             match self.draw_surfacelists() {
                 Ok(()) => {}
                 Err(th::ThundrError::OUT_OF_DATE) => {

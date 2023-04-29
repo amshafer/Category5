@@ -232,7 +232,7 @@ impl DisplayPlat {
                         (xkb::MOD_NAME_NUM, Mods::NUM),
                         (xkb::MOD_NAME_CAPS, Mods::CAPS),
                         (xkb::MOD_NAME_CTRL, Mods::LCTRL),
-                        (xkb::MOD_NAME_LOGO, Mods::LGUI),
+                        (xkb::MOD_NAME_LOGO, Mods::LMETA),
                         (xkb::MOD_NAME_SHIFT, Mods::LCTRL),
                     ];
 

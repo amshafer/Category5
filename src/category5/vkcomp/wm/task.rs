@@ -86,28 +86,17 @@ impl Drop for UpdateWindowContentsFromMem {
 // be performed
 #[derive(Debug)]
 pub enum Task {
-    begin_frame,
-    end_frame,
     create_window(WindowId),
     close_window(WindowId),
     move_to_front(WindowId),
     new_subsurface { id: WindowId, parent: WindowId },
     place_subsurface_above { id: WindowId, other: WindowId },
     place_subsurface_below { id: WindowId, other: WindowId },
-    sbfm(SetBackgroundFromMem),
     uwcfd(UpdateWindowContentsFromDmabuf),
     uwcfm(UpdateWindowContentsFromMem),
 }
 
 impl Task {
-    pub fn set_background_from_mem(tex: Vec<u8>, tex_width: u32, tex_height: u32) -> Task {
-        Task::sbfm(SetBackgroundFromMem {
-            pixels: tex,
-            width: tex_width,
-            height: tex_height,
-        })
-    }
-
     pub fn update_window_contents_from_dmabuf(
         id: WindowId,
         dmabuf: Arc<Dmabuf>,

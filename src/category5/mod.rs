@@ -1,7 +1,7 @@
 // The Category 5 wayland compositor
 //
 // Austin Shafer - 2020
-extern crate thundr;
+extern crate dakota as dak;
 extern crate utils as cat5_utils;
 extern crate wayland_protocols;
 extern crate wayland_server as ws;
@@ -11,10 +11,9 @@ mod input;
 mod vkcomp;
 mod ways;
 
-use crate::category5::input::HWInput;
+use crate::category5::input::Input;
 use atmosphere::Atmosphere;
-use cat5_utils::{fdwatch::FdWatch, log, timing::*};
-use thundr::ThundrError;
+use cat5_utils::{log, timing::*};
 use utils::ClientId;
 use vkcomp::wm::*;
 
@@ -80,17 +79,21 @@ impl Category5 {
 /// handle protocol events, and we will forward requests to said
 /// substructs with the delegate_dispatch! macro family.
 pub struct Climate {
+    /// The vulkan renderer. It implements the draw logic,
+    /// whereas WindowManager implements organizational logic
+    c_dakota: dak::Dakota,
     /// The big database of all our properties
     c_atmos: Arc<Mutex<Atmosphere>>,
     /// The input subsystem
-    c_input: HWInput,
+    c_input: Input,
 }
 
 impl Climate {
     fn new() -> Self {
         Self {
+            c_dakota: dak::Dakota::new().unwrap(),
             c_atmos: Arc::new(Mutex::new(Atmosphere::new())),
-            c_input: HWInput::new(),
+            c_input: Input::new(),
         }
     }
 }
@@ -149,8 +152,11 @@ impl EventManager {
         let display_handle = display.handle();
 
         // Our big state holder for wayland-rs
-        let state = Climate::new();
-        let wm = WindowManager::new(state.c_atmos.lock().unwrap().deref_mut());
+        let mut state = Climate::new();
+        let wm = WindowManager::new(
+            &mut state.c_dakota,
+            state.c_atmos.lock().unwrap().deref_mut(),
+        );
 
         let evman = Box::new(EventManager {
             em_wm: wm,
@@ -203,6 +209,39 @@ impl EventManager {
         return Ok(id);
     }
 
+    /// Helper to repeat Dakota's `dispatch_platform` until success
+    ///
+    /// This is needed for out of date handling.
+    pub fn dispatch_dakota_platform(&mut self) -> Result<()> {
+        let mut first_loop = true;
+        let mut timeout = None;
+
+        loop {
+            if !first_loop {
+                timeout = Some(0);
+            }
+            first_loop = false;
+
+            // First handle input and platform changes
+            match self
+                .em_climate
+                .c_dakota
+                .dispatch_platform(&self.em_wm.wm_dakota_dom, timeout)
+            {
+                Ok(()) => {}
+                Err(e) => {
+                    if e.downcast_ref::<dak::DakotaError>() == Some(&dak::DakotaError::OUT_OF_DATE)
+                    {
+                        continue;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            };
+            return Ok(());
+        }
+    }
+
     /// Each subsystem has a function that implements its main
     /// loop. This is that function
     pub fn worker_thread(&mut self) {
@@ -215,27 +254,32 @@ impl EventManager {
         // wayland-rs will not do blocking for us,
         // When registered, these will tell kqueue to notify
         // use when the wayland or libinput fds are readable
-        let mut fdw = FdWatch::new();
         // Add the libwayland internal descriptor
-        fdw.add_fd(self.em_display.backend().poll_fd().as_raw_fd());
-        // Add our libinput descriptor
-        fdw.add_fd(self.em_climate.c_input.get_poll_fd());
+        self.em_climate
+            .c_dakota
+            .add_watch_fd(self.em_display.backend().poll_fd().as_raw_fd());
         // Add the wayland socket itself
-        fdw.add_fd(self.em_socket.as_raw_fd());
-        // now register the fds we added
-        fdw.register_events();
+        self.em_climate
+            .c_dakota
+            .add_watch_fd(self.em_socket.as_raw_fd());
 
         // reset the timer before we start
         tm.reset();
         let mut needs_render = true;
-        while needs_render || fdw.wait_for_events(None) {
+        loop {
             log::profiling!("starting loop");
+
+            self.dispatch_dakota_platform()
+                .expect("Dispatching Dakota platform handlers");
+
             {
                 let mut atmos = self.em_climate.c_atmos.lock().unwrap();
                 // First thing to do is to dispatch libinput
                 // It has time sensitive operations which need to take
                 // place as soon as the fd is readable
-                self.em_climate.c_input.dispatch(atmos.deref_mut());
+                self.em_climate
+                    .c_input
+                    .dispatch(atmos.deref_mut(), &mut self.em_climate.c_dakota);
 
                 // TODO: fix frame timings to prevent the current state of
                 // 3 frames of latency
@@ -270,14 +314,16 @@ impl EventManager {
 
             if needs_render {
                 log::profiling!("trying to render frame");
-                match self
-                    .em_wm
-                    .render_frame(self.em_climate.c_atmos.lock().unwrap().deref_mut())
-                {
+                match self.em_wm.render_frame(
+                    &mut self.em_climate.c_dakota,
+                    self.em_climate.c_atmos.lock().unwrap().deref_mut(),
+                ) {
                     Ok(()) => needs_render = false,
                     Err(e) => {
-                        if let Some(err) = e.downcast_ref::<ThundrError>() {
-                            if *err == ThundrError::NOT_READY || *err == ThundrError::TIMEOUT {
+                        if let Some(err) = e.downcast_ref::<dak::DakotaError>() {
+                            if *err == dak::DakotaError::NOT_READY
+                                || *err == dak::DakotaError::TIMEOUT
+                            {
                                 // ignore the timeout, start our loop over
                                 log::profiling!("Next frame isn't ready, continuing");
                             } else {

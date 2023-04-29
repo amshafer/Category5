@@ -11,7 +11,7 @@
 //!
 //! `vkcomp` itself is just the behavior for generating draw commands and
 //! handling window presentation. The window positions are determined by
-//! `ways` and `input`, and the Vulkan rendering is handled by `thundr`.
+//! `ways` and `input`, and the Vulkan rendering is handled by `dakota`.
 //!
 //! `thundr` exists because during development I observed that the type of
 //! Vulkan renderer I was creating could be reused in other places. For
@@ -35,11 +35,12 @@
 // Austin Shafer - 2020
 
 #![allow(dead_code)]
+extern crate dakota as dak;
 extern crate image;
-extern crate thundr;
 extern crate utils;
 
-use thundr as th;
+use dak::dom;
+use dak::DakotaId;
 
 use crate::category5::atmosphere::property_list::PropertyList;
 use crate::category5::atmosphere::*;
@@ -60,9 +61,9 @@ use renderdoc::RenderDoc;
 /// to represent a titlebar
 struct Titlebar {
     /// The thick bar itself
-    bar: th::Image,
+    bar: DakotaId,
     /// One dot to rule them all. Used for buttons
-    dot: th::Image,
+    dot: DakotaId,
 }
 
 /// This represents a client window.
@@ -70,8 +71,6 @@ struct Titlebar {
 /// All drawn components are tracked with Image, this struct
 /// keeps track of the window components (content imagees and
 /// titlebar image).
-///
-/// See WindowManager::record_draw for how this is displayed.
 #[derive(Clone)]
 pub struct App {
     /// This id uniquely identifies the App
@@ -85,12 +84,12 @@ pub struct App {
     /// and will instead be destroyed
     a_marked_for_death: bool,
     /// This is the set of geometric objects in the application
-    a_surf: th::Surface,
+    a_surf: DakotaId,
     /// The image attached to `a_surf`
-    a_image: Option<th::Image>,
+    a_image: Option<DakotaId>,
     /// Any server side decorations for this app.
     /// Right now this is (dot, bar)
-    a_ssd: Option<(th::Surface, th::Surface)>,
+    a_ssd: Option<(DakotaId, DakotaId)>,
 }
 
 /// Encapsulates vkcomp and provides a sensible windowing API
@@ -103,23 +102,27 @@ pub struct App {
 /// as notifications. Sprites are not owned by a client
 /// whereas windows are.
 pub struct WindowManager {
-    /// The vulkan renderer. It implements the draw logic,
-    /// whereas WindowManager implements organizational logic
-    wm_thundr: th::Thundr,
-    /// This is the thundr surface list constructed from the resources that
-    /// ways notified us of. Our job is to keep this up to date and call Thundr.
-    wm_surfaces: th::SurfaceList,
     wm_atmos_ids: Vec<WindowId>,
+    /// The root element for our scene
+    ///
+    /// In Dakota layout is heirarchical, so we have a root node that we attach all
+    /// elements to. This is that base node.
+    wm_dakota_root: DakotaId,
+    /// Dakota DOM, the top level dakota object
+    pub wm_dakota_dom: DakotaId,
+    /// The window area for this desktop
+    ///
+    /// This is a Dakota element that represents the region where all client windows
+    /// are laid out.
+    wm_desktop: DakotaId,
     /// These are the surfaces that have been removed, and need their resources
     /// torn down. We keep this in a separate array so that we don't have to
     /// rescan the entire surface list every time we check for dead windows.
     wm_will_die: Vec<WindowId>,
     /// This is the set of applications in this scene
     wm_apps: PropertyList<App>,
-    /// The background picture of the desktop
-    wm_background: Option<th::Surface>,
     /// Image representing the software cursor
-    wm_cursor: Option<th::Surface>,
+    wm_cursor: Option<DakotaId>,
     /// Title bar to draw above the windows
     wm_titlebar: Titlebar,
     #[cfg(feature = "renderdoc")]
@@ -132,7 +135,7 @@ impl WindowManager {
     /// The Titlebar will hold all of the components which make
     /// up all of the titlebars in a scene. These imagees will
     /// be colored differently when multidrawn
-    fn get_default_titlebar(rend: &mut th::Thundr) -> Titlebar {
+    fn get_default_titlebar(dakota: &mut dak::Dakota) -> Titlebar {
         let img = image::open(format!(
             "{}/{}",
             std::env::current_dir().unwrap().to_str().unwrap(),
@@ -142,11 +145,18 @@ impl WindowManager {
         .to_rgba8();
         let pixels: Vec<u8> = img.into_vec();
 
-        let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
-
         // TODO: make a way to change titlebar colors
-        let mut bar = rend.create_image_from_bits(&mimg, None).unwrap();
-        bar.set_damage(0, 0, 64, 64);
+        let bar = dakota.create_resource().unwrap();
+        dakota
+            .define_resource_from_bits(
+                &bar,
+                pixels.as_slice(),
+                64,
+                64,
+                4,
+                dak::dom::Format::ARGB8888,
+            )
+            .unwrap();
 
         let img = image::open(format!(
             "{}/{}",
@@ -156,14 +166,23 @@ impl WindowManager {
         .unwrap()
         .to_bgra8();
         let pixels: Vec<u8> = img.into_vec();
-        let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
-        let mut dot = rend.create_image_from_bits(&mimg, None).unwrap();
-        dot.set_damage(0, 0, 64, 64);
+        let dot = dakota.create_resource().unwrap();
+        dakota
+            .define_resource_from_bits(
+                &dot,
+                pixels.as_slice(),
+                64,
+                64,
+                4,
+                dak::dom::Format::ARGB8888,
+            )
+            .unwrap();
 
         Titlebar { bar: bar, dot: dot }
     }
 
-    fn get_default_cursor(rend: &mut th::Thundr) -> Option<th::Surface> {
+    /// Returns an ID for an element bound with a defaul texture resource
+    fn get_default_cursor(dakota: &mut dak::Dakota) -> DakotaId {
         let img = image::open(format!(
             "{}/{}",
             std::env::current_dir().unwrap().to_str().unwrap(),
@@ -172,14 +191,29 @@ impl WindowManager {
         .unwrap()
         .to_bgra8();
         let pixels: Vec<u8> = img.into_vec();
-        let mimg = MemImage::new(pixels.as_slice().as_ptr() as *mut u8, 4, 64, 64);
 
-        let mut image = rend.create_image_from_bits(&mimg, None).unwrap();
-        image.set_damage(0, 0, 64, 64);
-        let mut surf = rend.create_surface(0.0, 0.0, 16.0, 16.0);
-        rend.bind_image(&mut surf, image);
+        let image = dakota.create_resource().unwrap();
+        dakota
+            .define_resource_from_bits(&image, pixels.as_slice(), 64, 64, 4, dom::Format::ARGB8888)
+            .unwrap();
+        let surf = dakota.create_element().unwrap();
+        dakota.set_offset(
+            &surf,
+            dom::RelativeOffset {
+                x: dom::Value::Constant(dom::Constant::new(0)),
+                y: dom::Value::Constant(dom::Constant::new(0)),
+            },
+        );
+        dakota.set_size(
+            &surf,
+            dom::RelativeSize {
+                width: dom::Value::Constant(dom::Constant::new(16)),
+                height: dom::Value::Constant(dom::Constant::new(16)),
+            },
+        );
+        dakota.set_resource(&surf, image.clone());
 
-        Some(surf)
+        surf
     }
 
     /// Create a new WindowManager
@@ -187,49 +221,69 @@ impl WindowManager {
     /// This will create all the graphical resources needed for
     /// the compositor. The WindowManager will create and own
     /// the Thundr, thereby readying the display to draw.
-    pub fn new(atmos: &mut Atmosphere) -> WindowManager {
+    pub fn new(dakota: &mut dak::Dakota, atmos: &mut Atmosphere) -> WindowManager {
         #[cfg(feature = "renderdoc")]
         let doc = RenderDoc::new().unwrap();
 
-        let info = th::CreateInfo::builder()
-            .enable_traditional_composition()
-            .build();
-        let mut rend = th::Thundr::new(&info).unwrap();
-        let mut list = th::SurfaceList::new(&mut rend);
-        let cursor = WindowManager::get_default_cursor(&mut rend);
-        list.push(cursor.as_ref().unwrap().clone());
-
-        let mut wm = WindowManager {
-            wm_titlebar: WindowManager::get_default_titlebar(&mut rend),
-            wm_cursor: cursor,
-            wm_thundr: rend,
-            wm_surfaces: list,
-            wm_apps: PropertyList::new(),
-            wm_will_die: Vec::new(),
-            wm_atmos_ids: Vec::new(),
-            wm_background: None,
-            #[cfg(feature = "renderdoc")]
-            wm_renderdoc: doc,
-        };
-
         // Tell the atmosphere rend's resolution
-        let res = wm.wm_thundr.get_resolution();
+        let res = dakota.get_resolution();
         atmos.set_resolution(res.0, res.1);
-        let (major, minor) = wm.wm_thundr.get_drm_dev();
+        let (major, minor) = dakota.get_drm_dev();
         atmos.set_drm_dev(major, minor);
-        // first set the background
+
+        // Create a DOM object that all others will hang off of
+        let root = dakota.create_element().unwrap();
+        let dom = dakota.create_dakota_dom().unwrap();
+        dakota.set_dakota_dom(
+            &dom,
+            dak::dom::DakotaDOM {
+                version: "0.0.1".to_string(),
+                window: dak::dom::Window {
+                    title: "Category5".to_string(),
+                    size: Some(res),
+                    events: dak::dom::WindowEvents {
+                        resize: None,
+                        redraw_complete: None,
+                        closed: None,
+                    },
+                },
+                root_element: root.clone(),
+            },
+        );
+
+        // Next add a dummy element to place all of the client window child elements
+        // inside of.
+        let desktop = dakota.create_element().unwrap();
+        // set the background for this desktop
         let img = image::open("images/beach.png").unwrap().to_bgra8();
         let dims = img.dimensions();
         let pixels: Vec<u8> = img.into_vec();
-        wm.set_background_from_mem(
+        WindowManager::set_background_from_mem(
+            dakota,
+            &desktop,
             pixels.as_slice(),
             // dimensions of the texture
             dims.0,
             dims.1,
-        )
-        .unwrap();
+        );
+        dakota.add_child_to_element(&root, desktop.clone());
 
-        return wm;
+        // now add a cursor on top of this
+        let cursor = WindowManager::get_default_cursor(dakota);
+        dakota.add_child_to_element(&root, cursor.clone());
+
+        WindowManager {
+            wm_titlebar: WindowManager::get_default_titlebar(dakota),
+            wm_cursor: Some(cursor),
+            wm_dakota_root: root,
+            wm_dakota_dom: dom,
+            wm_desktop: desktop,
+            wm_apps: PropertyList::new(),
+            wm_will_die: Vec::new(),
+            wm_atmos_ids: Vec::new(),
+            #[cfg(feature = "renderdoc")]
+            wm_renderdoc: doc,
+        }
     }
 
     /// Set the desktop background for the renderer
@@ -237,29 +291,24 @@ impl WindowManager {
     /// This basically just creates a image with the max
     /// depth that takes up the entire screen.
     fn set_background_from_mem(
-        &mut self,
+        dakota: &mut dak::Dakota,
+        elem: &DakotaId,
         texture: &[u8],
         tex_width: u32,
         tex_height: u32,
-    ) -> Result<()> {
-        let mimg = MemImage::new(
-            texture.as_ptr() as *mut u8,
-            4,
-            tex_width as usize,
-            tex_height as usize,
-        );
-
-        let mut image = self.wm_thundr.create_image_from_bits(&mimg, None).unwrap();
-        image.set_damage(0, 0, tex_width as i32, tex_height as i32);
-        let res = self.wm_thundr.get_resolution();
-        let mut surf = self
-            .wm_thundr
-            .create_surface(0.0, 0.0, res.0 as f32, res.1 as f32);
-        self.wm_thundr.bind_image(&mut surf, image);
-        self.wm_surfaces
-            .insert(self.wm_surfaces.len() as usize, surf.clone());
-        self.wm_background = Some(surf);
-        Ok(())
+    ) {
+        let image = dakota.create_resource().unwrap();
+        dakota
+            .define_resource_from_bits(
+                &image,
+                texture,
+                tex_width as usize,
+                tex_height as usize,
+                4,
+                dak::dom::Format::ARGB8888,
+            )
+            .unwrap();
+        dakota.set_resource(elem, image);
     }
 
     /// Add a image to the renderer to be displayed.
@@ -271,10 +320,10 @@ impl WindowManager {
     ///
     /// tex_res is the resolution of `texture`
     /// window_res is the size of the on screen window
-    fn create_window(&mut self, id: WindowId) -> Result<()> {
+    fn create_window(&mut self, dakota: &mut dak::Dakota, id: WindowId) -> Result<()> {
         log::info!("wm: Creating new window {:?}", id);
         // This surface will have its dimensions updated during recording
-        let surf = self.wm_thundr.create_surface(0.0, 0.0, 8.0, 8.0);
+        let surf = dakota.create_element().unwrap();
         // The bar should be a percentage of the screen height
         //let barsize = atmos.get_barsize();
 
@@ -324,6 +373,7 @@ impl WindowManager {
     fn update_window_contents_from_dmabuf(
         &mut self,
         atmos: &mut Atmosphere,
+        dakota: &mut dak::Dakota,
         info: &UpdateWindowContentsFromDmabuf,
     ) -> Result<()> {
         log::debug!("Updating window {:?} with {:#?}", info.ufd_id, info);
@@ -335,22 +385,32 @@ impl WindowManager {
             None => return Err(anyhow!("Could not find id {:?}", info.ufd_id)),
         };
 
-        app.a_image = self.wm_thundr.create_image_from_dmabuf(
-            &info.ufd_dmabuf,
-            Some(Box::new(DmabufReleaseInfo {
-                dr_fd: info.ufd_dmabuf.db_fd.try_clone()?,
-                dr_wl_buffer: info.ufd_wl_buffer.clone(),
-            })),
-        );
+        // Create a new resource from this dmabuf
+        let res = dakota.create_resource().unwrap();
+        dakota
+            .define_resource_from_dmabuf(
+                &res,
+                info.ufd_dmabuf.db_fd.try_clone().unwrap(),
+                info.ufd_dmabuf.db_plane_idx,
+                info.ufd_dmabuf.db_offset,
+                info.ufd_dmabuf.db_stride,
+                info.ufd_dmabuf.db_mods,
+                Some(Box::new(DmabufReleaseInfo {
+                    dr_fd: info.ufd_dmabuf.db_fd.try_clone()?,
+                    dr_wl_buffer: info.ufd_wl_buffer.clone(),
+                })),
+            )
+            .unwrap();
+        dakota.set_resource(&app.a_surf, res.clone());
+        app.a_image = Some(res);
 
         if let Some(damage) = atmos.take_buffer_damage(info.ufd_id) {
-            app.a_image.as_mut().map(|i| i.reset_damage(damage));
+            if let Some(image) = app.a_image.as_ref() {
+                dakota.damage_resource(image, damage);
+            }
         }
         if let Some(damage) = atmos.take_surface_damage(info.ufd_id) {
-            app.a_surf.damage(damage);
-        }
-        if let Some(image) = app.a_image.as_ref() {
-            self.wm_thundr.bind_image(&mut app.a_surf, image.clone());
+            dakota.damage_element(&app.a_surf, damage);
         }
 
         Ok(())
@@ -363,6 +423,7 @@ impl WindowManager {
     fn update_window_contents_from_mem(
         &mut self,
         atmos: &mut Atmosphere,
+        dakota: &mut dak::Dakota,
         info: &UpdateWindowContentsFromMem,
     ) -> Result<()> {
         log::debug!("Updating window {:?} with {:#?}", info.id, info);
@@ -378,17 +439,31 @@ impl WindowManager {
         let surface_damage = atmos.take_surface_damage(info.id);
         // Damage the image
         if let Some(damage) = buffer_damage {
-            app.a_image.as_mut().map(|i| i.reset_damage(damage));
+            if let Some(image) = app.a_image.as_ref() {
+                dakota.damage_resource(image, damage);
+            }
         }
         if let Some(damage) = surface_damage {
-            app.a_surf.damage(damage);
+            dakota.damage_element(&app.a_surf, damage);
         }
 
         // Create a new image, the old one will have its refcount dropped
-        app.a_image = self.wm_thundr.create_image_from_bits(&info.pixels, None);
+        // TODO: add update method here
+        let res = dakota.create_resource().unwrap();
+        dakota
+            .define_resource_from_bits(
+                &res,
+                &info.pixels,
+                info.width,
+                info.width,
+                4,
+                dak::dom::Format::ARGB8888,
+            )
+            .unwrap();
+        dakota.set_resource(&app.a_surf, res.clone());
+        app.a_image = Some(res);
 
-        self.wm_thundr
-            .bind_image(&mut app.a_surf, app.a_image.as_ref().unwrap().clone());
+        dakota.set_resource(&app.a_surf, app.a_image.as_ref().unwrap().clone());
 
         Ok(())
     }
@@ -422,98 +497,6 @@ impl WindowManager {
         )
     }
 
-    /// Record all the drawing operations for the current scene
-    ///
-    /// Vulkan requires that we record a list of operations into a command
-    /// buffer which is later submitted for display. This method organizes
-    /// the recording of draw operations for all elements in the desktop.
-    ///
-    /// params: a private info structure for the Thundr. It holds all
-    /// the data about what we are recording.
-    fn record_draw(&mut self, atmos: &mut Atmosphere) {
-        // get the latest cursor position
-        // ----------------------------------------------------------------
-        let (cursor_x, cursor_y) = atmos.get_cursor_pos();
-        log::profiling!("Drawing cursor at ({}, {})", cursor_x, cursor_y);
-        if let Some(cursor) = self.wm_cursor.as_mut() {
-            cursor.set_pos(cursor_x as f32, cursor_y as f32);
-        }
-        // ----------------------------------------------------------------
-
-        // Draw all of our windows on the desktop
-        // Each app should have one or more windows,
-        // all of which we need to draw.
-        // ----------------------------------------------------------------
-        self.wm_atmos_ids.clear();
-
-        // Cache the inorder surface list from atmos
-        // This helps us avoid nasty borrow checker stuff by avoiding recursion
-        // ----------------------------------------------------------------
-        let aids = &mut self.wm_atmos_ids;
-        atmos.map_inorder_on_surfs(|id| {
-            aids.push(id);
-            return true;
-        });
-
-        // do the draw call separately due to the borrow checker
-        // throwing a fit if it is in the loop above.
-        //
-        // This section really just updates the size and position of all the
-        // surfaces. They should already have images attached, and damage will
-        // be calculated from the result.
-        // ----------------------------------------------------------------
-        for r_id in self.wm_atmos_ids.iter() {
-            let id = *r_id;
-            // Now render the windows
-            let a = match self.wm_apps[id.into()].as_mut() {
-                Some(a) => a,
-                // app must have been closed
-                None => {
-                    log::error!("Could not find id {:?} to record for drawing", id);
-                    return;
-                }
-            };
-            // If this window has been closed or if it is not ready for
-            // rendering, ignore it
-            if a.a_marked_for_death || !atmos.get_window_in_use(a.a_id) {
-                return;
-            }
-
-            // get parameters
-            // ----------------------------------------------------------------
-            let surface_pos = atmos.get_surface_pos(a.a_id);
-            let surface_size = atmos.get_surface_size(a.a_id);
-
-            // update the th::Surface pos and size
-            a.a_surf.set_pos(surface_pos.0, surface_pos.1);
-            a.a_surf.set_size(surface_size.0, surface_size.1);
-            // ----------------------------------------------------------------
-
-            // Send any pending frame callbacks
-            atmos.send_frame_callbacks_for_surf(a.a_id);
-
-            // Only display the bar for toplevel surfaces
-            // i.e. don't for popups
-            //if atmos.get_toplevel(id) {
-            //    // The bar should be a percentage of the screen height
-            //    let barsize = atmos.get_barsize();
-
-            //    // Each toplevel window has two subsurfaces (in thundr): the
-            //    // window bar and the window dot. If it's toplevel we are drawing SSD,
-            //    // so we need to update the positions of these as well.
-            //    let mut sub = a.a_surf.get_subsurface(0);
-            //    let dims = Self::get_dot_dims(barsize, &surface_size);
-            //    sub.set_pos(dims.0, dims.1);
-            //    sub.set_size(dims.2, dims.3);
-
-            //    let dims = Self::get_bar_dims(barsize, &surface_size);
-            //    let mut sub = a.a_surf.get_subsurface(0);
-            //    sub.set_pos(dims.0, dims.1);
-            //    sub.set_size(dims.2, dims.3);
-            //}
-        }
-    }
-
     /// Flag this window to be killed.
     ///
     /// This adds it to our death list, which will be reaped next frame after
@@ -527,23 +510,6 @@ impl WindowManager {
         app.a_marked_for_death = true;
         self.wm_will_die.push(id);
 
-        // Remove the surface. The surfacelist will damage the region that the
-        // window occupied
-        // This is haneld in the reordering bits
-        // The window order is still showing removed subsurfaces....
-        match self.wm_surfaces.remove_surface(app.a_surf.clone()) {
-            Ok(()) => {}
-            // If the surface wasn't found, it's because this is
-            // the first time it's been placed in the surface list,
-            // so we can ignore this
-            Err(th::ThundrError::SURFACE_NOT_FOUND) => {}
-            Err(e) => {
-                return Err(anyhow!(e)).context(format!(
-                    "Failed to remove window {:?} from the surface list",
-                    id
-                ))
-            }
-        };
         Ok(())
     }
 
@@ -559,55 +525,6 @@ impl WindowManager {
                 self.wm_apps.deactivate(id.into())
             }
         }
-    }
-
-    /// Begin rendering a frame
-    ///
-    /// Vulkan is asynchronous, meaning that commands are submitted
-    /// and later waited on. This method records the next cbuf
-    /// and asks the Thundr to submit it.
-    ///
-    /// The frame is not presented to the display until
-    /// WindowManager::end_frame is called.
-    fn begin_frame(&mut self, atmos: &mut Atmosphere) -> Result<()> {
-        self.record_draw(atmos);
-        let res = self.wm_thundr.get_resolution();
-        let viewport = th::Viewport::new(0, 0, res.0 as i32, res.1 as i32);
-
-        // First push our CPU data to the GPU
-        self.wm_thundr.flush_surface_data(&mut self.wm_surfaces)?;
-
-        // Now kick off drawing
-        match self.wm_thundr.begin_recording() {
-            Ok(_) => Ok(()),
-            Err(th::ThundrError::OUT_OF_DATE) => Ok(()),
-            Err(e) => Err(anyhow!(e)),
-        }?;
-        self.wm_thundr
-            .draw_surfaces(&mut self.wm_surfaces, &viewport)?;
-        match self.wm_thundr.end_recording() {
-            Ok(_) => Ok(()),
-            Err(th::ThundrError::OUT_OF_DATE) => Ok(()),
-            Err(e) => Err(anyhow!(e)),
-        }
-    }
-
-    /// End a frame
-    ///
-    /// Once the frame's cbuf has been recorded and submitted, we
-    /// can present it to the physical display.
-    ///
-    /// It is possible that the upper layers may want to perform
-    /// operations between submission of the frame and when that
-    /// frame is presented, which is why begin/end frame is split
-    /// into two methods.
-    fn end_frame(&mut self) -> Result<()> {
-        match self.wm_thundr.present() {
-            Ok(_) => {}
-            Err(th::ThundrError::OUT_OF_DATE) => {}
-            Err(e) => panic!("Failed to draw frame: {:?}", e),
-        };
-        Ok(())
     }
 
     /// A helper that uses a window id to do a static lookup of
@@ -629,37 +546,30 @@ impl WindowManager {
         }
     }
 
-    /// Move the window to the front of the th::SurfaceList
+    /// Move the window to the front of the DakotaIdList
     ///
     /// There is really only one toplevel window movement
     /// event: moving something to the top of the window stack
     /// when the user clicks on it and puts it into focus.
-    fn move_to_front(&mut self, atmos: &mut Atmosphere, win: WindowId) -> Result<()> {
+    fn move_to_front(
+        &mut self,
+        atmos: &mut Atmosphere,
+        dakota: &mut dak::Dakota,
+        win: WindowId,
+    ) -> Result<()> {
         // get and use the root window for this subsurface
         // in case it is a subsurface.
         let root = match atmos.get_root_window(win) {
             Some(parent) => parent,
             None => win,
         };
-        let surf = self.lookup_app_from_id(root)?.a_surf.clone();
+        let surf = &self.lookup_app_from_id(root)?.a_surf;
 
-        match self.wm_surfaces.remove_surface(surf.clone()) {
-            Ok(()) => {}
-            // If the surface wasn't found, it's because this is
-            // the first time it's been placed in the surface list,
-            // so we can ignore this
-            Err(th::ThundrError::SURFACE_NOT_FOUND) => {}
-            Err(e) => {
-                return Err(anyhow!(e)).context(format!(
-                    "Failed to remove window {:?} from the surface list",
-                    win
-                ))
-            }
-        };
+        // Move this surface to the front child of the window parent
+        dakota
+            .move_child_to_front(&self.wm_dakota_root, surf)
+            .context(format!("Moving window {:?} to the front", win))?;
 
-        // Move to front really only moves to the second to front,
-        // since we always have a cursor surface at the front
-        self.wm_surfaces.insert(1, surf);
         Ok(())
     }
 
@@ -668,11 +578,16 @@ impl WindowManager {
     /// The new subsurface will be moved to the top of the subsurface
     /// stack, as this is the default. The position may later be changed
     /// through the wl_subsurface interface.
-    fn new_subsurface(&mut self, win: WindowId, parent: WindowId) -> Result<()> {
-        let surf = self.lookup_app_from_id(win)?.a_surf.clone();
-        let mut parent_surf = self.lookup_app_from_id(parent)?.a_surf.clone();
+    fn new_subsurface(
+        &mut self,
+        dakota: &mut dak::Dakota,
+        win: WindowId,
+        parent: WindowId,
+    ) -> Result<()> {
+        let surf = &self.lookup_app_from_id(win)?.a_surf;
+        let parent_surf = &self.lookup_app_from_id(parent)?.a_surf;
 
-        parent_surf.add_subsurface(surf);
+        dakota.add_child_to_element(parent_surf, surf.clone());
         Ok(())
     }
 
@@ -683,68 +598,75 @@ impl WindowManager {
     fn subsurf_place_above(
         &mut self,
         atmos: &mut Atmosphere,
+        dakota: &mut dak::Dakota,
         win: WindowId,
         other: WindowId,
     ) -> Result<()> {
-        self.subsurf_reorder_common(atmos, th::SubsurfaceOrder::Above, win, other)
+        self.subsurf_reorder_common(atmos, dakota, dak::SubsurfaceOrder::Above, win, other)
     }
 
     /// Same as above, but place the subsurface below other.
     fn subsurf_place_below(
         &mut self,
         atmos: &mut Atmosphere,
+        dakota: &mut dak::Dakota,
         win: WindowId,
         other: WindowId,
     ) -> Result<()> {
-        self.subsurf_reorder_common(atmos, th::SubsurfaceOrder::Below, win, other)
+        self.subsurf_reorder_common(atmos, dakota, dak::SubsurfaceOrder::Below, win, other)
     }
 
     fn subsurf_reorder_common(
         &mut self,
         atmos: &mut Atmosphere,
-        order: th::SubsurfaceOrder,
+        dakota: &mut dak::Dakota,
+        order: dak::SubsurfaceOrder,
         win: WindowId,
         other: WindowId,
     ) -> Result<()> {
-        let surf = self.lookup_app_from_id(win)?.a_surf.clone();
-        let other_surf = self.lookup_app_from_id(other)?.a_surf.clone();
+        let surf = &self.lookup_app_from_id(win)?.a_surf;
+        let other_surf = &self.lookup_app_from_id(other)?.a_surf;
         let root = atmos
             .get_root_window(win)
             .expect("The window should have a root since it is a subsurface");
-        let mut root_surf = self.lookup_app_from_id(root)?.a_surf.clone();
+        let root_surf = &self.lookup_app_from_id(root)?.a_surf;
 
-        root_surf.reorder_subsurface(order, surf, other_surf)?;
+        dakota.reorder_children_element(root_surf, order, surf, other_surf)?;
 
         Ok(())
     }
 
-    pub fn process_task(&mut self, atmos: &mut Atmosphere, task: &Task) {
+    /// Dispatch window management tasks
+    ///
+    /// This is where we handle things like surface/element creation, window creation and
+    /// destruction, etc.
+    pub fn process_task(&mut self, atmos: &mut Atmosphere, dakota: &mut dak::Dakota, task: &Task) {
         log::info!("wm: got task {:?}", task);
         let err = match task {
-            Task::begin_frame => self.begin_frame(atmos).context("Task: Starting a frame"),
-            Task::end_frame => self.end_frame().context("Task: Ending a frame"),
-            // set background from mem
-            Task::sbfm(sb) => self.set_background_from_mem(sb.pixels.as_ref(), sb.width, sb.height),
             // create new window
-            Task::create_window(id) => self.create_window(*id).context("Task: create_window"),
-            Task::move_to_front(id) => self.move_to_front(atmos, *id).context("Task: close_window"),
+            Task::create_window(id) => self
+                .create_window(dakota, *id)
+                .context("Task: create_window"),
+            Task::move_to_front(id) => self
+                .move_to_front(atmos, dakota, *id)
+                .context("Task: close_window"),
             Task::new_subsurface { id, parent } => self
-                .new_subsurface(*id, *parent)
+                .new_subsurface(dakota, *id, *parent)
                 .context("Task: new_subsurface"),
             Task::place_subsurface_above { id, other } => self
-                .subsurf_place_above(atmos, *id, *other)
+                .subsurf_place_above(atmos, dakota, *id, *other)
                 .context("Task: place_subsurface_above"),
             Task::place_subsurface_below { id, other } => self
-                .subsurf_place_below(atmos, *id, *other)
+                .subsurf_place_below(atmos, dakota, *id, *other)
                 .context("Task: place_subsurface_below"),
             Task::close_window(id) => self.close_window(*id).context("Task: close_window"),
             // update window from gpu buffer
             Task::uwcfd(uw) => self
-                .update_window_contents_from_dmabuf(atmos, uw)
+                .update_window_contents_from_dmabuf(atmos, dakota, uw)
                 .context(format!("Task: Updating window {:?} from dmabuf", uw.ufd_id)),
             // update window from shm
             Task::uwcfm(uw) => self
-                .update_window_contents_from_mem(atmos, uw)
+                .update_window_contents_from_mem(atmos, dakota, uw)
                 .context(format!(
                     "Task: Updating window {:?} from shared memory",
                     uw.id
@@ -758,15 +680,9 @@ impl WindowManager {
     }
 
     /// The main event loop of the vkcomp thread
-    pub fn render_frame(&mut self, atmos: &mut Atmosphere) -> Result<()> {
+    pub fn render_frame(&mut self, dakota: &mut dak::Dakota, atmos: &mut Atmosphere) -> Result<()> {
         // how much time is spent drawing/presenting
         let mut draw_stop = StopWatch::new();
-
-        // Now that we have completed the previous frame, we can
-        // release all the resources used to construct it while
-        // we wait for our draw calls
-        // note: -bad- this probably calls wayland locks
-        self.wm_thundr.release_pending_resources();
 
         #[cfg(feature = "renderdoc")]
         if atmos.get_renderdoc_recording() {
@@ -778,14 +694,29 @@ impl WindowManager {
         // us in this hemisphere
         //  (aka process the work queue)
         while let Some(task) = atmos.get_next_wm_task() {
-            self.process_task(atmos, &task);
+            self.process_task(atmos, dakota, &task);
         }
 
         // start recording how much time we spent doing graphics
         log::debug!("_____________________________ FRAME BEGIN");
         // Create a frame out of the hemisphere we got from ways
         draw_stop.start();
-        self.begin_frame(atmos)?;
+
+        // Rerun rendering until it succeeds, this will handle out of date swapchains
+        loop {
+            match dakota.dispatch_rendering(&self.wm_dakota_dom) {
+                Ok(()) => break,
+                Err(e) => {
+                    if e.downcast_ref::<dak::DakotaError>() == Some(&dak::DakotaError::OUT_OF_DATE)
+                    {
+                        continue;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            };
+        }
+
         draw_stop.end();
         log::debug!(
             "spent {} ms drawing this frame",
@@ -793,16 +724,6 @@ impl WindowManager {
         );
 
         atmos.print_surface_tree();
-
-        // present our frame
-        draw_stop.start();
-        self.end_frame()?;
-        draw_stop.end();
-
-        log::debug!(
-            "spent {} ms presenting this frame",
-            draw_stop.get_duration().as_millis()
-        );
 
         #[cfg(feature = "renderdoc")]
         if atmos.get_renderdoc_recording() {

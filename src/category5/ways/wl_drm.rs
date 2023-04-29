@@ -85,7 +85,7 @@ fn get_drm_dev_name(atmos: &Atmosphere) -> String {
 /// TODO: Linux stupidly doesn't have a good way to get a device path given
 /// a dev_t, so we are just hard-coding the first available device here
 #[cfg(target_os = "linux")]
-fn get_drm_dev_name(atmos: &Atmosphere) -> String {
+fn get_drm_dev_name(_atmos: &Atmosphere) -> String {
     return "/dev/dri/renderD128".to_string();
 }
 

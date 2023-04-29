@@ -293,7 +293,7 @@ pub struct DakotaDOM {
     pub root_element: DakotaId,
 }
 
-impl<'a> Dakota<'a> {
+impl Dakota {
     /// Get the final size to use as an offset into the
     /// parent space. This takes care of handling the relative
     /// proportional offset size
