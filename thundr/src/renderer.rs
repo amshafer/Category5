@@ -2087,17 +2087,17 @@ impl Renderer {
         unsafe {
             // The buffer must have been recorded before we can submit
             // it for execution.
-            let submit_info = vk::SubmitInfo::builder()
+            let submits = [vk::SubmitInfo::builder()
                 .wait_semaphores(wait_semas)
                 .wait_dst_stage_mask(wait_stages)
                 .command_buffers(&[cbuf])
                 .signal_semaphores(signal_semas)
-                .build();
+                .build()];
 
             // create a fence to be notified when the commands have finished
             // executing.
             self.dev
-                .queue_submit(queue, &[submit_info], signal_fence)
+                .queue_submit(queue, &submits, signal_fence)
                 .unwrap();
         }
     }

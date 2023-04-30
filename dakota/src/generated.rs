@@ -26,9 +26,14 @@ macro_rules! define_element_property {
                     self.[<d_ $sesh>].get(el)
                 }
                 pub fn [<get_mut_ $name>](&mut self, el: &DakotaId) -> Option<ll::TableRefMut<$val, ll::VecContainer<$val>>> {
+                    // Set needs refresh so that dakota knows to redo the layout tree
+                    self.d_needs_redraw = true;
+                    self.d_needs_refresh = true;
                     self.[<d_ $sesh>].get_mut(el)
                 }
                 pub fn [<set_ $name>](&mut self, el: &DakotaId, data: $val) {
+                    self.d_needs_redraw = true;
+                    self.d_needs_refresh = true;
                     self.[<d_ $sesh>].set(el, data)
                 }
             }

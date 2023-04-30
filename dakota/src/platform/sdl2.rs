@@ -267,7 +267,7 @@ impl Platform for SDL2Plat {
         if let Some(fds) = watch {
             loop {
                 // Wait for the first readable fd
-                if fds.wait_for_events(Some(0)) {
+                if fds.wait_for_events(Some(1)) {
                     evsys.add_event_user_fd();
                     break;
                 }

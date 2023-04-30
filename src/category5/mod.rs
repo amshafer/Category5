@@ -212,9 +212,8 @@ impl EventManager {
     /// Helper to repeat Dakota's `dispatch_platform` until success
     ///
     /// This is needed for out of date handling.
-    pub fn dispatch_dakota_platform(&mut self) -> Result<()> {
+    pub fn dispatch_dakota_platform(&mut self, mut timeout: Option<usize>) -> Result<()> {
         let mut first_loop = true;
-        let mut timeout = None;
 
         loop {
             if !first_loop {
@@ -269,17 +268,24 @@ impl EventManager {
         loop {
             log::profiling!("starting loop");
 
-            self.dispatch_dakota_platform()
-                .expect("Dispatching Dakota platform handlers");
+            self.dispatch_dakota_platform(match needs_render {
+                true => Some(0),
+                false => None,
+            })
+            .expect("Dispatching Dakota platform handlers");
 
             {
                 let mut atmos = self.em_climate.c_atmos.lock().unwrap();
                 // First thing to do is to dispatch libinput
                 // It has time sensitive operations which need to take
                 // place as soon as the fd is readable
-                self.em_climate
+                if self
+                    .em_climate
                     .c_input
-                    .dispatch(atmos.deref_mut(), &mut self.em_climate.c_dakota);
+                    .dispatch(atmos.deref_mut(), &mut self.em_climate.c_dakota)
+                {
+                    return; // if this returns we are on SDL and the window was closed
+                }
 
                 // TODO: fix frame timings to prevent the current state of
                 // 3 frames of latency

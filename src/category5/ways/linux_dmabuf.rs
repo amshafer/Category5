@@ -15,7 +15,9 @@ use wayland_protocols::wp::linux_dmabuf::zv1::server::{
     zwp_linux_buffer_params_v1 as zlbpv1, zwp_linux_dmabuf_v1 as zldv1,
 };
 
-use std::os::unix::io::{AsRawFd, OwnedFd};
+#[cfg(debug_assertions)]
+use std::os::unix::io::AsRawFd;
+use std::os::unix::io::OwnedFd;
 use std::sync::{Arc, Mutex};
 
 // drm modifier saying to implicitly infer

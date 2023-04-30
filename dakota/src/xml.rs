@@ -715,8 +715,8 @@ impl Dakota {
                     }
                     node = Some(ty);
                 }
-                Ok(Event::End(e)) => {
-                    log::verbose!("XML EVENT: {:#?}", e);
+                Ok(Event::End(_e)) => {
+                    log::verbose!("XML EVENT: {:#?}", _e);
                     let old_id = id.clone();
                     let old_node = node;
 

@@ -254,19 +254,17 @@ impl WindowManager {
         // Next add a dummy element to place all of the client window child elements
         // inside of.
         let desktop = dakota.create_element().unwrap();
-        // set the background for this desktop
-        let img = image::open("images/beach.png").unwrap().to_bgra8();
-        let dims = img.dimensions();
-        let pixels: Vec<u8> = img.into_vec();
-        WindowManager::set_background_from_mem(
-            dakota,
-            &desktop,
-            pixels.as_slice(),
-            // dimensions of the texture
-            dims.0,
-            dims.1,
-        );
         dakota.add_child_to_element(&root, desktop.clone());
+        // set the background for this desktop
+        let image = dakota.create_resource().unwrap();
+        dakota
+            .define_resource_from_image(
+                &image,
+                std::path::Path::new("images/beach.png"),
+                dom::Format::ARGB8888,
+            )
+            .expect("Could not import background image into dakota");
+        dakota.set_resource(&desktop, image);
 
         // now add a cursor on top of this
         let cursor = WindowManager::get_default_cursor(dakota);
@@ -679,6 +677,111 @@ impl WindowManager {
         }
     }
 
+    /// Record all the drawing operations for the current scene
+    ///
+    /// Vulkan requires that we record a list of operations into a command
+    /// buffer which is later submitted for display. This method organizes
+    /// the recording of draw operations for all elements in the desktop.
+    ///
+    /// params: a private info structure for the Thundr. It holds all
+    /// the data about what we are recording.
+    fn record_draw(&mut self, atmos: &mut Atmosphere, dakota: &mut dak::Dakota) {
+        // get the latest cursor position
+        // ----------------------------------------------------------------
+        let (cursor_x, cursor_y) = atmos.get_cursor_pos();
+        log::profiling!("Drawing cursor at ({}, {})", cursor_x, cursor_y);
+        if let Some(cursor) = self.wm_cursor.as_mut() {
+            dakota.set_offset(
+                &cursor,
+                dom::RelativeOffset {
+                    x: dom::Value::Constant(dom::Constant::new(cursor_x as u32)),
+                    y: dom::Value::Constant(dom::Constant::new(cursor_y as u32)),
+                },
+            );
+        }
+        // ----------------------------------------------------------------
+
+        // Draw all of our windows on the desktop
+        // Each app should have one or more windows,
+        // all of which we need to draw.
+        // ----------------------------------------------------------------
+        self.wm_atmos_ids.clear();
+        // Cache the inorder surface list from atmos
+        // This helps us avoid nasty borrow checker stuff by avoiding recursion
+        // ----------------------------------------------------------------
+        let aids = &mut self.wm_atmos_ids;
+        atmos.map_inorder_on_surfs(|id| {
+            aids.push(id);
+            return true;
+        });
+
+        // do the draw call separately due to the borrow checker
+        // throwing a fit if it is in the loop above.
+        //
+        // This section really just updates the size and position of all the
+        // surfaces. They should already have images attached, and damage will
+        // be calculated from the result.
+        // ----------------------------------------------------------------
+        for r_id in self.wm_atmos_ids.iter() {
+            let id = *r_id;
+            // Now render the windows
+            let a = self.wm_apps[id.into()]
+                .as_mut()
+                .expect(format!("Could not find id {:?} to record for drawing", id).as_str());
+
+            // If this window has been closed or if it is not ready for
+            // rendering, ignore it
+            if a.a_marked_for_death || !atmos.get_window_in_use(a.a_id) {
+                return;
+            }
+
+            // get parameters
+            // ----------------------------------------------------------------
+            let surface_pos = atmos.get_surface_pos(a.a_id);
+            let surface_size = atmos.get_surface_size(a.a_id);
+
+            // update the th::Surface pos and size
+            dakota.set_offset(
+                &a.a_surf,
+                dom::RelativeOffset {
+                    x: dom::Value::Constant(dom::Constant::new(surface_pos.0 as u32)),
+                    y: dom::Value::Constant(dom::Constant::new(surface_pos.1 as u32)),
+                },
+            );
+            dakota.set_size(
+                &a.a_surf,
+                dom::RelativeSize {
+                    width: dom::Value::Constant(dom::Constant::new(surface_size.0 as u32)),
+                    height: dom::Value::Constant(dom::Constant::new(surface_size.1 as u32)),
+                },
+            );
+            // ----------------------------------------------------------------
+
+            // Send any pending frame callbacks
+            atmos.send_frame_callbacks_for_surf(a.a_id);
+
+            // Only display the bar for toplevel surfaces
+            // i.e. don't for popups
+            //if atmos.get_toplevel(id) {
+            //    // The bar should be a percentage of the screen height
+            //    let barsize = atmos.get_barsize();
+
+            //    // Each toplevel window has two subsurfaces (in thundr): the
+            //    // window bar and the window dot. If it's toplevel we are drawing SSD,
+            //    // so we need to update the positions of these as well.
+            //    let mut sub = a.a_surf.get_subsurface(0);
+            //    let dims = Self::get_dot_dims(barsize, &surface_size);
+            //    sub.set_pos(dims.0, dims.1);
+            //    sub.set_size(dims.2, dims.3);
+
+            //    let dims = Self::get_bar_dims(barsize, &surface_size);
+            //    let mut sub = a.a_surf.get_subsurface(0);
+            //    sub.set_pos(dims.0, dims.1);
+            //    sub.set_size(dims.2, dims.3);
+            //}
+        }
+    }
+
     /// The main event loop of the vkcomp thread
     pub fn render_frame(&mut self, dakota: &mut dak::Dakota, atmos: &mut Atmosphere) -> Result<()> {
         // how much time is spent drawing/presenting
@@ -701,6 +804,15 @@ impl WindowManager {
         log::debug!("_____________________________ FRAME BEGIN");
         // Create a frame out of the hemisphere we got from ways
         draw_stop.start();
+
+        // Update our surface locations in Dakota
+        //
+        // Check if there are updates from wayland before doing this, since updating
+        // the dakota elements triggers a full redraw
+        if atmos.is_changed() {
+            self.record_draw(atmos, dakota);
+            atmos.clear_changed();
+        }
 
         // Rerun rendering until it succeeds, this will handle out of date swapchains
         loop {

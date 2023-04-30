@@ -5,7 +5,9 @@ extern crate wayland_server as ws;
 use ws::protocol::wl_buffer;
 
 use std::fmt;
-use std::os::unix::io::{AsRawFd, OwnedFd};
+#[cfg(debug_assertions)]
+use std::os::unix::io::AsRawFd;
+use std::os::unix::io::OwnedFd;
 use utils::log;
 
 /// Dmabuf release info
