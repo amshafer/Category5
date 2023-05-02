@@ -26,7 +26,7 @@ use crate::{Droppable, Surface, Viewport};
 extern crate utils as cat5_utils;
 use crate::{CreateInfo, Damage};
 use crate::{Result, ThundrError};
-use cat5_utils::{log, region::Rect, MemImage};
+use cat5_utils::{log, region::Rect};
 
 // Nvidia aftermath SDK GPU crashdump support
 #[cfg(feature = "aftermath")]
@@ -344,12 +344,14 @@ impl Renderer {
             .application_version(0)
             .engine_name(&app_name)
             .engine_version(0)
-            .api_version(vk::API_VERSION_1_2);
+            .api_version(vk::API_VERSION_1_2)
+            .build();
 
         let mut create_info = vk::InstanceCreateInfo::builder()
             .application_info(&appinfo)
             .enabled_layer_names(&layer_names_raw)
-            .enabled_extension_names(&extension_names_raw);
+            .enabled_extension_names(&extension_names_raw)
+            .build();
 
         let printf_info = vk::ValidationFeaturesEXT::builder()
             //.enabled_validation_features(&[vk::ValidationFeatureEnableEXT::DEBUG_PRINTF])
@@ -1203,12 +1205,21 @@ impl Renderer {
     /// Update a Vulkan image from a raw memory region
     ///
     /// This will upload the MemImage to the tansfer buffer, copy it to the image,
-    /// and perform any needed layout conversions along the way
-    pub unsafe fn update_image_from_memimg(&mut self, image: vk::Image, memimg: &MemImage) {
+    /// and perform any needed layout conversions along the way.
+    ///
+    /// A stride of zero implies the data is tightly packed.
+    pub unsafe fn update_image_from_data(
+        &mut self,
+        image: vk::Image,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32,
+    ) {
         self.wait_for_prev_submit();
 
         // Now copy the bits into the image
-        self.upload_memimage_to_transfer(memimg);
+        self.upload_memimage_to_transfer(data);
 
         // Reset the fences for our cbuf submission below
         self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
@@ -1254,9 +1265,8 @@ impl Renderer {
                 // 0 specifies that the pixels are tightly packed
                 .buffer_offset(0)
                 // add stride
-                // This will have been set in the memimg, defaulting to
-                // 0 which means tightly packed.
-                .buffer_row_length(memimg.stride)
+                // 0 means tightly packed.
+                .buffer_row_length(stride)
                 .buffer_image_height(0)
                 .image_subresource(
                     vk::ImageSubresourceLayers::builder()
@@ -1268,8 +1278,8 @@ impl Renderer {
                 )
                 .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
                 .image_extent(vk::Extent3D {
-                    width: memimg.width as u32,
-                    height: memimg.height as u32,
+                    width: width,
+                    height: height,
                     depth: 1,
                 })
                 .build()],
@@ -1907,26 +1917,26 @@ impl Renderer {
         }
     }
 
-    pub fn upload_memimage_to_transfer(&mut self, memimg: &MemImage) {
+    pub fn upload_memimage_to_transfer(&mut self, data: &[u8]) {
         unsafe {
             // We might be in the middle of copying the transfer buf to an image
             // wait for that if its the case
             self.wait_for_copy();
-            if memimg.as_slice().len() > self.transfer_buf_len {
+            if data.len() > self.transfer_buf_len {
                 self.free_memory(self.transfer_mem);
                 self.dev.destroy_buffer(self.transfer_buf, None);
                 let (buffer, buf_mem) = self.create_buffer(
                     vk::BufferUsageFlags::TRANSFER_SRC,
                     vk::SharingMode::EXCLUSIVE,
                     vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-                    memimg.as_slice(),
+                    data,
                 );
                 self.transfer_buf = buffer;
                 self.transfer_mem = buf_mem;
-                self.transfer_buf_len = memimg.as_slice().len();
+                self.transfer_buf_len = data.len();
             } else {
                 // copy the data into the staging buffer
-                self.update_memory(self.transfer_mem, 0, memimg.as_slice());
+                self.update_memory(self.transfer_mem, 0, data);
             }
         }
     }

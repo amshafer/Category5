@@ -153,7 +153,7 @@ impl WindowManager {
                 pixels.as_slice(),
                 64,
                 64,
-                4,
+                0,
                 dak::dom::Format::ARGB8888,
             )
             .unwrap();
@@ -173,7 +173,7 @@ impl WindowManager {
                 pixels.as_slice(),
                 64,
                 64,
-                4,
+                0,
                 dak::dom::Format::ARGB8888,
             )
             .unwrap();
@@ -194,7 +194,7 @@ impl WindowManager {
 
         let image = dakota.create_resource().unwrap();
         dakota
-            .define_resource_from_bits(&image, pixels.as_slice(), 64, 64, 4, dom::Format::ARGB8888)
+            .define_resource_from_bits(&image, pixels.as_slice(), 64, 64, 0, dom::Format::ARGB8888)
             .unwrap();
         let surf = dakota.create_element().unwrap();
         dakota.set_offset(
@@ -264,7 +264,7 @@ impl WindowManager {
                 dom::Format::ARGB8888,
             )
             .expect("Could not import background image into dakota");
-        dakota.set_resource(&desktop, image);
+        dakota.set_resource(&root, image);
 
         // now add a cursor on top of this
         let cursor = WindowManager::get_default_cursor(dakota);
@@ -300,9 +300,9 @@ impl WindowManager {
             .define_resource_from_bits(
                 &image,
                 texture,
-                tex_width as usize,
-                tex_height as usize,
-                4,
+                tex_width,
+                tex_height,
+                0,
                 dak::dom::Format::ARGB8888,
             )
             .unwrap();
@@ -322,6 +322,7 @@ impl WindowManager {
         log::info!("wm: Creating new window {:?}", id);
         // This surface will have its dimensions updated during recording
         let surf = dakota.create_element().unwrap();
+        dakota.add_child_to_element(&self.wm_dakota_root, surf.clone());
         // The bar should be a percentage of the screen height
         //let barsize = atmos.get_barsize();
 
@@ -452,16 +453,14 @@ impl WindowManager {
             .define_resource_from_bits(
                 &res,
                 &info.pixels,
-                info.width,
-                info.width,
-                4,
+                info.width as u32,
+                info.width as u32,
+                0,
                 dak::dom::Format::ARGB8888,
             )
             .unwrap();
         dakota.set_resource(&app.a_surf, res.clone());
         app.a_image = Some(res);
-
-        dakota.set_resource(&app.a_surf, app.a_image.as_ref().unwrap().clone());
 
         Ok(())
     }
@@ -499,13 +498,14 @@ impl WindowManager {
     ///
     /// This adds it to our death list, which will be reaped next frame after
     /// we are done using its resources.
-    fn close_window(&mut self, id: WindowId) -> Result<()> {
+    fn close_window(&mut self, dakota: &mut dak::Dakota, id: WindowId) -> Result<()> {
         // atmosphere skiplist not being propogated?
         assert!(self.wm_apps.id_exists(id.into()));
         log::debug!("Closing window {:?}", id);
 
         let mut app = self.wm_apps[id.into()].as_mut().unwrap();
         app.a_marked_for_death = true;
+        dakota.remove_child_from_element(&self.wm_dakota_root, &app.a_surf)?;
         self.wm_will_die.push(id);
 
         Ok(())
@@ -647,7 +647,7 @@ impl WindowManager {
                 .context("Task: create_window"),
             Task::move_to_front(id) => self
                 .move_to_front(atmos, dakota, *id)
-                .context("Task: close_window"),
+                .context("Task: Moving window to front"),
             Task::new_subsurface { id, parent } => self
                 .new_subsurface(dakota, *id, *parent)
                 .context("Task: new_subsurface"),
@@ -657,7 +657,7 @@ impl WindowManager {
             Task::place_subsurface_below { id, other } => self
                 .subsurf_place_below(atmos, dakota, *id, *other)
                 .context("Task: place_subsurface_below"),
-            Task::close_window(id) => self.close_window(*id).context("Task: close_window"),
+            Task::close_window(id) => self.close_window(dakota, *id).context("Task: close_window"),
             // update window from gpu buffer
             Task::uwcfd(uw) => self
                 .update_window_contents_from_dmabuf(atmos, dakota, uw)
@@ -739,6 +739,11 @@ impl WindowManager {
             // ----------------------------------------------------------------
             let surface_pos = atmos.get_surface_pos(a.a_id);
             let surface_size = atmos.get_surface_size(a.a_id);
+            log::debug!(
+                "placing dakota element at {:?} with size {:?}",
+                surface_pos,
+                surface_size
+            );
 
             // update the th::Surface pos and size
             dakota.set_offset(

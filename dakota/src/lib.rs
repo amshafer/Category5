@@ -437,8 +437,8 @@ impl Dakota {
         self.define_resource_from_bits(
             res,
             pixels.as_slice(),
-            resolution.0 as usize,
-            resolution.1 as usize,
+            resolution.0,
+            resolution.1,
             0,
             format,
         )
@@ -450,13 +450,15 @@ impl Dakota {
     /// the `data` slice. The `stride` and `format` arguments are used to correctly
     /// specify the layout of memory within `data`, a stride of zero implies that
     /// pixels are tightly packed.
+    ///
+    /// A stride of zero implies the pixels are tightly packed.
     pub fn define_resource_from_bits(
         &mut self,
         res: &DakotaId,
         data: &[u8],
-        width: usize,
-        height: usize,
-        _stride: usize, // TODO: Handle stride properly
+        width: u32,
+        height: u32,
+        stride: u32, // TODO: Handle stride properly
         format: dom::Format,
     ) -> Result<()> {
         if format != dom::Format::ARGB8888 {
@@ -468,12 +470,10 @@ impl Dakota {
             return Err(anyhow!("Cannot redefine Resource contents"));
         }
 
-        let mimg = MemImage::new(data.as_ptr() as *mut u8, format.get_size(), width, height);
-
         // create a thundr image for each resource
         let image = self
             .d_thund
-            .create_image_from_bits(&mimg, None)
+            .create_image_from_bits(data, width, height, stride, None)
             .ok_or(anyhow!("Could not create Thundr image"))?;
 
         self.d_resource_thundr_image.set(res, image);

@@ -367,15 +367,20 @@ impl Thundr {
     }
 
     /// create_image_from_bits
+    ///
+    /// A stride of zero implies tightly packed data
     pub fn create_image_from_bits(
         &mut self,
-        img: &MemImage,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32,
         release_info: Option<Box<dyn Droppable>>,
     ) -> Option<Image> {
         let rend_mtx = self.th_rend.clone();
         let mut rend = self.th_rend.lock().unwrap();
 
-        rend.create_image_from_bits(rend_mtx, &img, release_info)
+        rend.create_image_from_bits(rend_mtx, data, width, height, stride, release_info)
     }
 
     /// create_image_from_dmabuf
@@ -579,6 +584,19 @@ impl Thundr {
                     s.get_pos(),
                     s.get_size()
                 );
+                for (i, sub) in s.s_internal.borrow().s_subsurfaces.iter().enumerate() {
+                    let img = sub.get_image();
+                    log::debug!(
+                        "-- [{}] Image={}, Pos={:?}, Size={:?}",
+                        i,
+                        match img {
+                            Some(img) => img.get_id().get_raw_id() as i32,
+                            None => -1,
+                        },
+                        sub.get_pos(),
+                        sub.get_size()
+                    );
+                }
             }
             let rend = self.th_rend.lock().unwrap();
 

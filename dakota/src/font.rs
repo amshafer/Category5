@@ -3,13 +3,8 @@ extern crate harfbuzz_rs as hb;
 extern crate harfbuzz_sys as hb_sys;
 
 use crate::th::Thundr;
-use crate::utils::MemImage;
 use crate::{dom, DakotaId};
 use lluvia as ll;
-
-#[repr(C)]
-#[derive(Clone)]
-struct Pixel(u8, u8, u8, u8);
 
 // Define this ourselves since hb crate doesn't do it
 extern "C" {
@@ -136,9 +131,11 @@ impl FontInstance {
         // If the glyph does not have a bitmap, it's an invisible character and
         // we shouldn't make an image for it.
         let th_image = if bitmap.rows() > 0 {
-            let mut img = vec![Pixel(0, 0, 0, 0); (bitmap.width() * bitmap.rows()) as usize]
-                .into_boxed_slice();
             let width = bitmap.width() as usize;
+            let height = bitmap.rows() as usize;
+            let mut img: Vec<u8> = std::iter::repeat(0)
+                .take(width * height * 4 as usize)
+                .collect();
 
             let pixel_mode = bitmap.pixel_mode().expect("Failed to query pixel mode");
 
@@ -152,7 +149,11 @@ impl FontInstance {
                 for (i, v) in bitmap.buffer().iter().enumerate() {
                     let x = i % width;
                     let y = i / width;
-                    img[y * width + x] = Pixel(255, 255, 255, *v);
+                    let idx = y * width + x * 4;
+                    img[idx] = 255;
+                    img[idx + 1] = 255;
+                    img[idx + 2] = 255;
+                    img[idx + 3] = *v;
                 }
             } else if pixel_mode == ft::bitmap::PixelMode::Bgra {
                 // Handle Colored Pixels
@@ -164,20 +165,26 @@ impl FontInstance {
                     let pixel_off = i * 4;
                     let b = bitmap.buffer();
                     // copy the four bgra components into our memimage
-                    img[i] = Pixel(
-                        b[pixel_off],
-                        b[pixel_off + 1],
-                        b[pixel_off + 2],
-                        b[pixel_off + 3],
-                    );
+                    img[i] = b[pixel_off];
+                    img[i + 1] = b[pixel_off + 1];
+                    img[i + 2] = b[pixel_off + 2];
+                    img[i + 3] = b[pixel_off + 3];
                 }
             } else {
                 unimplemented!("Unimplemented freetype pixel mode {:?}", pixel_mode);
             }
 
-            let mimg = MemImage::new(img.as_ptr() as *mut u8, 4, width, bitmap.rows() as usize);
-
-            Some(thund.create_image_from_bits(&mimg, None).unwrap())
+            Some(
+                thund
+                    .create_image_from_bits(
+                        img.as_slice(),
+                        width as u32,
+                        bitmap.rows() as u32,
+                        0,
+                        None,
+                    )
+                    .unwrap(),
+            )
         } else {
             None
         };

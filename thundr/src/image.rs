@@ -10,7 +10,7 @@ extern crate nix;
 use super::renderer::Renderer;
 use utils::log;
 use utils::region::Rect;
-use utils::{Dmabuf, MemImage};
+use utils::Dmabuf;
 
 use std::cell::RefCell;
 use std::fmt;
@@ -232,16 +232,19 @@ impl Renderer {
     pub fn create_image_from_bits(
         &mut self,
         rend_mtx: Arc<Mutex<Renderer>>,
-        img: &MemImage,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32,
         _release: Option<Box<dyn Droppable>>,
     ) -> Option<Image> {
         unsafe {
             let tex_res = vk::Extent2D {
-                width: img.width as u32,
-                height: img.height as u32,
+                width: width,
+                height: height,
             };
 
-            log::debug!("create_image_from_bits: Image {}x{}", img.width, img.height,);
+            log::debug!("create_image_from_bits: Image {}x{}", width, height,);
 
             //log::error!(
             //    "create_image_from_bits: Image {}x{} checksum {}",
@@ -257,7 +260,7 @@ impl Renderer {
             // client window.
             let (image, view, img_mem) = self.alloc_bgra8_image(&tex_res);
 
-            self.update_image_from_memimg(image, img);
+            self.update_image_from_data(image, data, width, height, stride);
 
             return self.create_image_common(
                 rend_mtx,
