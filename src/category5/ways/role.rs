@@ -19,4 +19,5 @@ pub enum Role {
     // This window is being controlled by xdg_shell
     xdg_shell_toplevel(xdg_surface::XdgSurface, Arc<Mutex<xdg_shell::ShellSurface>>),
     xdg_shell_popup(Arc<Mutex<xdg_shell::ShellSurface>>),
+    cursor,
 }

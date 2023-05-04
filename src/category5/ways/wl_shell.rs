@@ -10,6 +10,7 @@ use ws::Resource;
 use super::role::Role;
 use super::surface::*;
 use crate::category5::atmosphere::Atmosphere;
+use crate::category5::vkcomp::wm;
 use crate::category5::Climate;
 
 use std::ops::DerefMut;
@@ -134,6 +135,7 @@ impl ShellSurface {
         println!("Setting surface {:?} to toplevel", surf.s_id);
 
         atmos.set_toplevel(surf.s_id, true);
+        atmos.add_wm_task(wm::task::Task::new_toplevel(surf.s_id));
         // This places the surface at the front of the skiplist, aka
         // makes it in focus
         atmos.focus_on(Some(surf.s_id));

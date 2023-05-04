@@ -331,7 +331,7 @@ impl Dakota {
             // sized to the available space divided by the number of
             // children.
             // Clamp to 1 to avoid dividing by zero
-            let num_children = std::cmp::max(1, space.children_at_this_level);
+            let num_children = std::cmp::max(1, space.autolayout_children_at_this_level);
             // TODO: add directional tiling of elements
             // for now just do vertical subdivision and fill horizontal
             Ok(Size::new(

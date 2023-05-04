@@ -11,6 +11,7 @@ use ws::Resource;
 
 use super::role::Role;
 use super::surface::*;
+use crate::category5::vkcomp::wm;
 use crate::category5::Climate;
 
 extern crate utils as cat5_utils;
@@ -254,6 +255,7 @@ impl ShellSurface {
             // Tell vkcomp to create a new window
             log::debug!("Setting surface {:?} to toplevel", surf.s_id);
             atmos.set_toplevel(surf.s_id, true);
+            atmos.add_wm_task(wm::task::Task::new_toplevel(surf.s_id));
             // This places the surface at the front of the skiplist, aka
             // makes it in focus
             atmos.focus_on(Some(surf.s_id));
@@ -540,7 +542,7 @@ pub struct XdgState {
     // aka making new role objects, not related to the
     // window itself
     // ------------------
-    // Should we create a new window
+    /// Should we create a new window
     xs_make_new_toplevel_window: bool,
     xs_make_new_popup_window: bool,
     xs_moving: bool,

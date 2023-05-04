@@ -300,6 +300,7 @@ impl Surface {
                 atmos.set_window_size(self.s_id, surf_size.0, surf_size.1)
             }
             Some(Role::subsurface(ss)) => ss.lock().unwrap().commit(&self, atmos),
+            Some(Role::cursor) => {}
             // if we don't have an assigned role, avoid doing
             // any real work
             None => {

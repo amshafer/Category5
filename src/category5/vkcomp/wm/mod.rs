@@ -123,6 +123,10 @@ pub struct WindowManager {
     wm_apps: PropertyList<App>,
     /// Image representing the software cursor
     wm_cursor: Option<DakotaId>,
+    /// The offset of the cursor image
+    wm_cursor_hotspot: (i32, i32),
+    /// Category5's cursor, used when the client hasn't set one.
+    wm_default_cursor: DakotaId,
     /// Title bar to draw above the windows
     wm_titlebar: Titlebar,
     #[cfg(feature = "renderdoc")]
@@ -272,7 +276,9 @@ impl WindowManager {
 
         WindowManager {
             wm_titlebar: WindowManager::get_default_titlebar(dakota),
-            wm_cursor: Some(cursor),
+            wm_cursor: Some(cursor.clone()),
+            wm_cursor_hotspot: (0, 0),
+            wm_default_cursor: cursor,
             wm_dakota_root: root,
             wm_dakota_dom: dom,
             wm_desktop: desktop,
@@ -322,7 +328,6 @@ impl WindowManager {
         log::info!("wm: Creating new window {:?}", id);
         // This surface will have its dimensions updated during recording
         let surf = dakota.create_element().unwrap();
-        dakota.add_child_to_element(&self.wm_dakota_root, surf.clone());
         // The bar should be a percentage of the screen height
         //let barsize = atmos.get_barsize();
 
@@ -498,14 +503,29 @@ impl WindowManager {
     ///
     /// This adds it to our death list, which will be reaped next frame after
     /// we are done using its resources.
-    fn close_window(&mut self, dakota: &mut dak::Dakota, id: WindowId) -> Result<()> {
+    fn close_window(
+        &mut self,
+        atmos: &mut Atmosphere,
+        dakota: &mut dak::Dakota,
+        id: WindowId,
+    ) -> Result<()> {
         // atmosphere skiplist not being propogated?
         assert!(self.wm_apps.id_exists(id.into()));
         log::debug!("Closing window {:?}", id);
 
-        let mut app = self.wm_apps[id.into()].as_mut().unwrap();
-        app.a_marked_for_death = true;
-        dakota.remove_child_from_element(&self.wm_dakota_root, &app.a_surf)?;
+        {
+            let mut app = self.lookup_app_from_id_mut(id)?;
+            app.a_marked_for_death = true;
+        }
+
+        let app = self.lookup_app_from_id(id)?;
+        // remove this surface in case it is a toplevel window
+        dakota.remove_child_from_element(&self.wm_desktop, &app.a_surf)?;
+        // If this is a subsurface, remove it from its parent
+        if let Some(parent) = atmos.get_parent_window(id) {
+            let parent_app = self.lookup_app_from_id(parent)?;
+            dakota.remove_child_from_element(&parent_app.a_surf, &app.a_surf)?;
+        }
         self.wm_will_die.push(id);
 
         Ok(())
@@ -544,7 +564,7 @@ impl WindowManager {
         }
     }
 
-    /// Move the window to the front of the DakotaIdList
+    /// Move the window to the front of the scene
     ///
     /// There is really only one toplevel window movement
     /// event: moving something to the top of the window stack
@@ -565,8 +585,82 @@ impl WindowManager {
 
         // Move this surface to the front child of the window parent
         dakota
-            .move_child_to_front(&self.wm_dakota_root, surf)
+            .move_child_to_front(&self.wm_desktop, surf)
             .context(format!("Moving window {:?} to the front", win))?;
+
+        Ok(())
+    }
+
+    /// Add a new toplevel surface
+    ///
+    /// This maps a new toplevel surface and places it in the desktop. This
+    /// is where the dakota element is added to the desktop as a child.
+    fn new_toplevel(&mut self, dakota: &mut dak::Dakota, win: WindowId) -> Result<()> {
+        let surf = self
+            .lookup_app_from_id(win)
+            .context("Could not find window")?
+            .a_surf
+            .clone();
+        // We might have not added this element to the desktop, moving to front
+        // as part of focus is one of the first things that happens when a
+        // new window is created
+        dakota.add_child_to_element(&self.wm_desktop, surf);
+
+        Ok(())
+    }
+
+    /// Update the current cursor image
+    ///
+    /// Wayland clients may assign a surface to serve as the cursor image.
+    /// Here we update the current cursor.
+    fn set_cursor(
+        &mut self,
+        atmos: &mut Atmosphere,
+        dakota: &mut dak::Dakota,
+        win: Option<WindowId>,
+        hotspot: (i32, i32),
+    ) -> Result<()> {
+        if let Some(old) = self.wm_cursor.as_ref() {
+            dakota.remove_child_from_element(&self.wm_dakota_root, old)?;
+            self.wm_cursor_hotspot = (0, 0);
+        }
+
+        // Clear the cursor if the client unset it. Otherwise get the
+        // new surface, add it as a child and set it.
+        self.wm_cursor = match win {
+            Some(win) => {
+                let surf = self.lookup_app_from_id(win)?.a_surf.clone();
+                dakota.add_child_to_element(&self.wm_dakota_root, surf.clone());
+                // Set the size of the cursor
+                let surface_size = atmos.get_surface_size(win);
+                dakota.set_size(
+                    &surf,
+                    dom::RelativeSize {
+                        width: dom::Value::Constant(dom::Constant::new(surface_size.0 as u32)),
+                        height: dom::Value::Constant(dom::Constant::new(surface_size.1 as u32)),
+                    },
+                );
+                self.wm_cursor_hotspot = hotspot;
+                Some(surf)
+            }
+            None => None,
+        };
+
+        Ok(())
+    }
+
+    /// Reset the cursor to the default.
+    ///
+    /// Used when we are no longer listening to the client's suggested
+    /// cursor
+    fn reset_cursor(&mut self, dakota: &mut dak::Dakota) -> Result<()> {
+        if let Some(old) = self.wm_cursor.as_ref() {
+            dakota.remove_child_from_element(&self.wm_dakota_root, old)?;
+        }
+
+        dakota.add_child_to_element(&self.wm_dakota_root, self.wm_default_cursor.clone());
+        self.wm_cursor = Some(self.wm_default_cursor.clone());
+        self.wm_cursor_hotspot = (0, 0);
 
         Ok(())
     }
@@ -657,7 +751,14 @@ impl WindowManager {
             Task::place_subsurface_below { id, other } => self
                 .subsurf_place_below(atmos, dakota, *id, *other)
                 .context("Task: place_subsurface_below"),
-            Task::close_window(id) => self.close_window(dakota, *id).context("Task: close_window"),
+            Task::close_window(id) => self
+                .close_window(atmos, dakota, *id)
+                .context("Task: close_window"),
+            Task::new_toplevel(id) => self.new_toplevel(dakota, *id).context("Task: new_toplevel"),
+            Task::set_cursor { id, hotspot } => self
+                .set_cursor(atmos, dakota, *id, *hotspot)
+                .context("Task: set_cursor"),
+            Task::reset_cursor => self.reset_cursor(dakota).context("Task: reset_cursor"),
             // update window from gpu buffer
             Task::uwcfd(uw) => self
                 .update_window_contents_from_dmabuf(atmos, dakota, uw)
@@ -694,8 +795,12 @@ impl WindowManager {
             dakota.set_offset(
                 &cursor,
                 dom::RelativeOffset {
-                    x: dom::Value::Constant(dom::Constant::new(cursor_x as u32)),
-                    y: dom::Value::Constant(dom::Constant::new(cursor_y as u32)),
+                    x: dom::Value::Constant(dom::Constant::new(
+                        (cursor_x as u32).saturating_sub(self.wm_cursor_hotspot.0 as u32),
+                    )),
+                    y: dom::Value::Constant(dom::Constant::new(
+                        (cursor_y as u32).saturating_sub(self.wm_cursor_hotspot.1 as u32),
+                    )),
                 },
             );
         }

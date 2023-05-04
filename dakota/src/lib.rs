@@ -260,7 +260,13 @@ pub struct LayoutSpace {
     /// This is essentially the height of the parent container
     pub avail_height: f32,
     /// This is the number of children the parent container has
-    pub children_at_this_level: u32,
+    ///
+    /// Note that this is the count of "autolayout" children, not
+    /// the true total count of children. All children that do not
+    /// have a position specified will be opted into autolayout,
+    /// and their position will be tiled and assigned. This counts
+    /// how many such children exist.
+    pub autolayout_children_at_this_level: u32,
 }
 
 macro_rules! create_component_and_table {
@@ -555,7 +561,7 @@ impl Dakota {
     ) -> Result<()> {
         let child_id = self.d_contents.get(el).unwrap().el.clone();
 
-        // num_children_at_this_level was set earlier to 0 when we
+        // num_autolayout_children_at_this_level was set earlier to 0 when we
         // created the common child space
         self.calculate_sizes(&child_id, &space)?;
         let mut child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
@@ -587,7 +593,7 @@ impl Dakota {
     fn calculate_sizes_children(
         &mut self,
         el: &DakotaId,
-        space: &LayoutSpace,
+        space: &mut LayoutSpace,
         parent: &mut LayoutNode,
     ) -> Result<()> {
         // TODO: do vertical wrapping too
@@ -602,6 +608,24 @@ impl Dakota {
             .get(el)
             .ok_or(anyhow!("Expected children"))?
             .len();
+
+        // first count how many children will have their layout
+        // done for them. It is important that this differs from the
+        // real child count, since we only want to calculate proportional
+        // sizing based on other auto children. If the user manually assigned
+        // a layout then we don't care.
+        let mut autochildren = 0;
+        for i in 0..child_count {
+            let child_id = &self
+                .d_children
+                .get(el)
+                .ok_or(anyhow!("Expected children"))?[i];
+
+            if self.get_offset(child_id).is_some() {
+                autochildren += 1;
+            }
+        }
+        space.autolayout_children_at_this_level = autochildren;
 
         for i in 0..child_count {
             let child_id = self
@@ -820,7 +844,7 @@ impl Dakota {
         let mut child_space = LayoutSpace {
             avail_width: ret.l_size.width,
             avail_height: ret.l_size.height,
-            children_at_this_level: 0,
+            autolayout_children_at_this_level: 0,
         };
 
         // ------------------------------------------
@@ -840,10 +864,7 @@ impl Dakota {
             // ------------------------------------------
             //
 
-            // update our child count
-            child_space.children_at_this_level = self.d_children.get(el).unwrap().len() as u32;
-
-            self.calculate_sizes_children(el, &child_space, &mut ret)
+            self.calculate_sizes_children(el, &mut child_space, &mut ret)
                 .context("Layout Tree Calculation: processing children of element")?;
         } else if self.get_content(el).is_some() {
             // ------------------------------------------
@@ -1130,7 +1151,7 @@ impl Dakota {
     /// Add `child` as a child element to `parent`.
     ///
     /// This operation on makes sense for Dakota objects with the `Element` object
-    /// type.
+    /// type. Will only add `child` if it is not already a child of `parent`.
     pub fn add_child_to_element(&mut self, parent: &DakotaId, child: DakotaId) {
         // Assert this id has the Element type
         self.assert_id_has_type(parent, DakotaObjectType::Element);
@@ -1140,30 +1161,38 @@ impl Dakota {
         if self.d_children.get_mut(parent).is_none() {
             self.d_children.set(parent, Vec::new());
         }
+        let mut children = self.d_children.get_mut(parent).unwrap();
 
-        self.d_children.get_mut(parent).unwrap().push(child);
+        if children
+            .iter()
+            .find(|c| c.get_raw_id() == child.get_raw_id())
+            .is_none()
+        {
+            children.push(child);
+        }
     }
 
     /// Remove `child` as a child element of `parent`.
     ///
     /// This operation on makes sense for Dakota objects with the `Element` object
-    /// type.
+    /// type. This does nothing if `child` is not a child of `parent`.
     pub fn remove_child_from_element(&mut self, parent: &DakotaId, child: &DakotaId) -> Result<()> {
         // Assert this id has the Element type
         self.assert_id_has_type(parent, DakotaObjectType::Element);
         self.assert_id_has_type(&child, DakotaObjectType::Element);
 
-        let mut children = self
-            .d_children
-            .get_mut(parent)
-            .context("Parent does not have any children, cannot remove child")?;
+        let mut children = match self.d_children.get_mut(parent) {
+            Some(children) => children,
+            None => return Ok(()),
+        };
 
         // Get the indices of our two children
-        let pos = children
+        if let Some(pos) = children
             .iter()
             .position(|c| c.get_raw_id() == child.get_raw_id())
-            .context("Could not find child in parent's children while removing")?;
-        children.remove(pos);
+        {
+            children.remove(pos);
+        }
 
         Ok(())
     }
@@ -1294,7 +1323,7 @@ impl Dakota {
             &LayoutSpace {
                 avail_width: self.d_window_dims.unwrap().0 as f32, // available width
                 avail_height: self.d_window_dims.unwrap().1 as f32, // available height
-                children_at_this_level: 1,                         // Only one child, the root node
+                autolayout_children_at_this_level: 1,              // Only one child, the root node
             },
         )?;
         // Manually mark the root node as a viewport node. It always is, and it will

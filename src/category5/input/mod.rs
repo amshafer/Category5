@@ -43,6 +43,7 @@ use ws::protocol::wl_pointer;
 use ws::Resource;
 
 use crate::category5::atmosphere::Atmosphere;
+use crate::category5::vkcomp::wm;
 use crate::category5::ways::role::Role;
 use utils::{log, timing::*, WindowId};
 
@@ -356,8 +357,12 @@ impl Input {
     ///
     /// Atmos is passed since this may be called from `atmos.focus_on`,
     /// so atmos' rc may be held.
-    pub fn pointer_leave(atmos: &Atmosphere, id: WindowId) {
+    pub fn pointer_leave(atmos: &mut Atmosphere, id: WindowId) {
         log::error!("Pointer left WindowId {:?}", id);
+
+        // Clear the current cursor image
+        atmos.add_wm_task(wm::task::Task::reset_cursor);
+
         if let Some(cell) = atmos.get_seat_from_window_id(id) {
             let seat = cell.lock().unwrap();
             // TODO: verify
@@ -399,10 +404,10 @@ impl Input {
         // pointer focus and send the leave/enter events
         if focus != self.i_pointer_focus {
             if let Some(id) = self.i_pointer_focus {
-                Input::pointer_leave(&atmos, id);
+                Input::pointer_leave(atmos, id);
             }
             if let Some(id) = focus {
-                Input::pointer_enter(&atmos, id);
+                Input::pointer_enter(atmos, id);
             }
             self.i_pointer_focus = focus;
         }

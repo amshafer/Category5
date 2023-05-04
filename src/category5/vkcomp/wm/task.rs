@@ -89,11 +89,26 @@ pub enum Task {
     create_window(WindowId),
     close_window(WindowId),
     move_to_front(WindowId),
-    new_subsurface { id: WindowId, parent: WindowId },
-    place_subsurface_above { id: WindowId, other: WindowId },
-    place_subsurface_below { id: WindowId, other: WindowId },
+    new_toplevel(WindowId),
+    new_subsurface {
+        id: WindowId,
+        parent: WindowId,
+    },
+    place_subsurface_above {
+        id: WindowId,
+        other: WindowId,
+    },
+    place_subsurface_below {
+        id: WindowId,
+        other: WindowId,
+    },
     uwcfd(UpdateWindowContentsFromDmabuf),
     uwcfm(UpdateWindowContentsFromMem),
+    set_cursor {
+        id: Option<WindowId>,
+        hotspot: (i32, i32),
+    },
+    reset_cursor,
 }
 
 impl Task {
