@@ -564,6 +564,27 @@ impl Thundr {
         self.th_rend.lock().unwrap().present()
     }
 
+    /// Helper for printing all of the subsurfaces under surf.
+    #[cfg(debug_assertions)]
+    fn print_surface(&self, surf: &Surface, i: usize, level: usize) {
+        let img = surf.get_image();
+        log::debug!(
+            "{}[{}] Image={}, Pos={:?}, Size={:?}",
+            std::iter::repeat('-').take(level).collect::<String>(),
+            i,
+            match img {
+                Some(img) => img.get_id().get_raw_id() as i32,
+                None => -1,
+            },
+            surf.get_pos(),
+            surf.get_size()
+        );
+
+        for (i, sub) in surf.s_internal.borrow().s_subsurfaces.iter().enumerate() {
+            self.print_surface(sub, i, level + 1);
+        }
+    }
+
     pub fn draw_surfaces_debug_prints(&mut self, _surfaces: &SurfaceList, _viewport: &Viewport) {
         // Debugging stats
         #[cfg(debug_assertions)]
@@ -573,30 +594,7 @@ impl Thundr {
             log::debug!("Surface List:");
             log::debug!("--------------------------------");
             for (i, s) in _surfaces.iter().enumerate() {
-                let img = s.get_image();
-                log::debug!(
-                    "[{}] Image={}, Pos={:?}, Size={:?}",
-                    i,
-                    match img {
-                        Some(img) => img.get_id().get_raw_id() as i32,
-                        None => -1,
-                    },
-                    s.get_pos(),
-                    s.get_size()
-                );
-                for (i, sub) in s.s_internal.borrow().s_subsurfaces.iter().enumerate() {
-                    let img = sub.get_image();
-                    log::debug!(
-                        "-- [{}] Image={}, Pos={:?}, Size={:?}",
-                        i,
-                        match img {
-                            Some(img) => img.get_id().get_raw_id() as i32,
-                            None => -1,
-                        },
-                        sub.get_pos(),
-                        sub.get_size()
-                    );
-                }
+                self.print_surface(s, i, 0);
             }
             let rend = self.th_rend.lock().unwrap();
 

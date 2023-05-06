@@ -566,7 +566,7 @@ impl Input {
                             pointer.button(
                                 seat.s_serial,
                                 get_current_millis(),
-                                button.to_linux_button_code() + 8,
+                                button.to_linux_button_code(),
                                 match state {
                                     ButtonState::Pressed => wl_pointer::ButtonState::Pressed,
                                     ButtonState::Released => wl_pointer::ButtonState::Released,

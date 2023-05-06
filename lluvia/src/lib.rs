@@ -179,8 +179,8 @@ impl<T: 'static> Container<T> for VecContainer<T> {
         }
 
         let mut offset = Some(block_offset + 1);
-        // Test all remaining blocks
-        for block_index in (bi + 1)..self.v_blocks.len() {
+        // Test all remaining blocks, starting with the current one
+        for block_index in bi..self.v_blocks.len() {
             if let Some(block) = self.v_blocks[block_index].as_ref() {
                 // if this is the first block, then start from our index's
                 // offset. if not, start at the beginning
@@ -837,7 +837,7 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
     pub fn iter<'a>(&'a self) -> SessionIterator<'a, T, C> {
         SessionIterator {
             si_session: self,
-            si_cur: 0,
+            si_cur: -1,
             si_next: Some(0),
         }
     }
@@ -874,7 +874,7 @@ impl<T: 'static> RawSession<T, SliceContainer<T>> {
 
 pub struct SessionIterator<'a, T: 'static, C: Container<T> + 'static> {
     si_session: &'a RawSession<T, C>,
-    si_cur: usize,
+    si_cur: isize,
     si_next: Option<usize>,
 }
 
@@ -888,22 +888,25 @@ impl<'a, T: 'static, C: Container<T> + 'static> Iterator for SessionIterator<'a,
         if self.si_next.is_none() {
             return None;
         }
-        let cur = self.si_cur;
-        self.si_cur = self.si_next.unwrap();
-        self.si_next = table_internal.t_entity.get_next_id(cur);
+        self.si_cur = self.si_next.unwrap() as isize;
+        self.si_next = table_internal.t_entity.get_next_id(self.si_next.unwrap());
 
         // Double check that this ref is good before returning it.
         //
         // Since we start at the zero offset, there's a chance it isn't
         // defined and we can't pass a TableRef that will panic back to
         // the caller. This is gross
-        match table_internal.t_entity.index(cur).as_ref() {
-            // Now we can create a ref to this id
-            Some(_) => Some(Some(TableRef {
-                tr_guard: table_internal,
-                tr_entity: TableRefEntityType::Offset(cur),
-            })),
-            None => Some(None),
+        if self.si_cur >= 0 {
+            match table_internal.t_entity.index(self.si_cur as usize).as_ref() {
+                // Now we can create a ref to this id
+                Some(_) => Some(Some(TableRef {
+                    tr_guard: table_internal,
+                    tr_entity: TableRefEntityType::Offset(self.si_cur as usize),
+                })),
+                None => Some(None),
+            }
+        } else {
+            Some(None)
         }
     }
 }
