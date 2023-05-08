@@ -187,7 +187,10 @@ impl SDL2Plat {
                     // check redraw requested?
                     WindowEvent::Resized { .. } => return Err(DakotaError::OUT_OF_DATE),
                     WindowEvent::SizeChanged { .. } => return Err(DakotaError::OUT_OF_DATE),
-                    WindowEvent::Exposed { .. } => needs_redraw = true,
+                    WindowEvent::Exposed { .. } => {
+                        evsys.add_event_window_needs_redraw();
+                        needs_redraw = true;
+                    }
                     _ => {}
                 },
                 _ => {}

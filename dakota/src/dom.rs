@@ -2,7 +2,7 @@
 ///
 /// Austin Shafer - 2022
 use crate::font::CachedChar;
-use crate::utils::{anyhow, Result};
+use crate::utils::{anyhow, log, Result};
 use crate::{Dakota, DakotaId, LayoutSpace};
 
 use std::cmp::{Ord, PartialOrd};
@@ -332,6 +332,12 @@ impl Dakota {
             // children.
             // Clamp to 1 to avoid dividing by zero
             let num_children = std::cmp::max(1, space.autolayout_children_at_this_level);
+            if num_children > 1 {
+                log::debug!(
+                    "Limiting final element size since we are part of {} children",
+                    num_children
+                );
+            }
             // TODO: add directional tiling of elements
             // for now just do vertical subdivision and fill horizontal
             Ok(Size::new(

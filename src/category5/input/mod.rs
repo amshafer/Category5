@@ -686,39 +686,12 @@ impl Input {
         // ignore it
     }
 
-    /// Processs any pending input events
-    ///
-    /// dispatch will grab the latest available data
-    /// from the devices and perform libinputs internal
-    /// (time sensitive) operations on them
-    /// It will then handle all the available input events
-    /// before returning.
-    pub fn dispatch(&mut self, atmos: &mut Atmosphere, dakota: &mut dak::Dakota) -> bool {
-        // now go through each event
-        for event in dakota.drain_events() {
-            match &event {
-                // Don't print fd events since they happen constantly and
-                // flood the output
-                dak::Event::UserFdReadable => {}
-                e => log::error!("Category5: got Dakota event: {:?}", e),
-            }
-            if self.handle_input_event(atmos, &event) {
-                return true;
-            }
-        }
-
-        false
-    }
-
     /// Dispatch an arbitrary input event
     ///
     /// Input events are either handled by us or by the wayland client
     /// we need to figure out the appropriate destination and perform
     /// the right action.
-    ///
-    /// returns true if the WindowClosed event happens, as may when dakota is running
-    /// on SDL
-    pub fn handle_input_event(&mut self, atmos: &mut Atmosphere, ev: &dak::Event) -> bool {
+    pub fn handle_input_event(&mut self, atmos: &mut Atmosphere, ev: &dak::Event) {
         match ev {
             dak::Event::InputMouseMove { dx, dy } => self.handle_pointer_move(atmos, *dx, *dy),
             dak::Event::InputScroll {
@@ -754,10 +727,7 @@ impl Input {
                 },
                 ButtonState::Released,
             ),
-            dak::Event::WindowClosed { .. } => return true,
             _ => {}
         };
-
-        false
     }
 }

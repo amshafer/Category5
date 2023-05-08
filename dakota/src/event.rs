@@ -86,6 +86,11 @@ pub enum Event {
     },
     /// The Dakota Application window has been closed
     WindowClosed { args: HandlerArgs },
+    /// The platform has lost the current output and we need to re-present
+    /// to update the display.
+    ///
+    /// This happens on window systems, when the window needs redrawn.
+    WindowNeedsRedraw,
     /// This event is triggered every time Dakota draws a frame
     WindowRedrawComplete { args: HandlerArgs },
     /// Key has been pressed. Includes the updated modifiers.
@@ -177,6 +182,17 @@ impl EventSystem {
                 size: new_size,
             });
         }
+    }
+
+    /// Add notice that the window needs redrawing.
+    ///
+    /// The platform has lost the current output and we need to re-present
+    /// to update the display.
+    ///
+    /// This happens on window systems, when the window needs redrawn.
+    pub fn add_event_window_needs_redraw(&mut self) {
+        self.es_global_event_queue
+            .push_back(Event::WindowNeedsRedraw);
     }
 
     /// Add a redraw request completion to the global queue

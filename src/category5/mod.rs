@@ -279,12 +279,21 @@ impl EventManager {
                 // First thing to do is to dispatch libinput
                 // It has time sensitive operations which need to take
                 // place as soon as the fd is readable
-                if self
-                    .em_climate
-                    .c_input
-                    .dispatch(atmos.deref_mut(), &mut self.em_climate.c_dakota)
-                {
-                    return; // if this returns we are on SDL and the window was closed
+                // now go through each event
+                for event in self.em_climate.c_dakota.drain_events() {
+                    match &event {
+                        // Don't print fd events since they happen constantly and
+                        // flood the output
+                        dak::Event::UserFdReadable => {}
+                        dak::Event::WindowNeedsRedraw => needs_render = true,
+                        dak::Event::WindowClosed { .. } => return,
+                        e => {
+                            log::error!("Category5: got Dakota event: {:?}", e);
+                            self.em_climate
+                                .c_input
+                                .handle_input_event(atmos.deref_mut(), e);
+                        }
+                    }
                 }
 
                 // TODO: fix frame timings to prevent the current state of
