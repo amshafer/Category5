@@ -459,7 +459,7 @@ impl WindowManager {
                 &res,
                 &info.pixels,
                 info.width as u32,
-                info.width as u32,
+                info.height as u32,
                 0,
                 dak::dom::Format::ARGB8888,
             )
