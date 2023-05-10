@@ -137,7 +137,7 @@ impl SDL2Plat {
                     self.update_xkb_from_scancode(scancode.unwrap(), xkb::KeyDirection::Up);
                     let (raw, _) = self.get_utf8_from_key(scancode.unwrap());
 
-                    evsys.add_event_key_down(
+                    evsys.add_event_key_up(
                         key,
                         String::with_capacity(0), // no utf8 characters are generated for lifting a key
                         RawKeycode::Linux(raw),

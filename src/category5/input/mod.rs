@@ -291,7 +291,7 @@ impl Input {
                         keyboard.enter(
                             seat.s_serial,
                             &surf,
-                            Vec::new(), // TODO: update modifiers if needed
+                            Vec::with_capacity(0), // TODO: update modifiers if needed
                         );
                     }
                 }
@@ -725,7 +725,7 @@ impl Input {
                 match raw_keycode {
                     dak::RawKeycode::Linux(k) => *k,
                 },
-                ButtonState::Released,
+                ButtonState::Pressed,
             ),
             _ => {}
         };
