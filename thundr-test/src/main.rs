@@ -122,7 +122,7 @@ fn main() {
 
         thund.begin_recording().unwrap();
         // ----------- Perform draw calls
-        match thund.draw_surfaces(&mut list, &viewport) {
+        match thund.draw_surfaces(&mut list, &viewport, 0) {
             Ok(_) => {}
             Err(th::ThundrError::OUT_OF_DATE) => continue,
             Err(e) => panic!("failed to draw frame: {:?}", e),

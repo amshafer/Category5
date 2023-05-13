@@ -409,6 +409,12 @@ impl Dakota {
         self.create_new_id_common(DakotaObjectType::Resource)
     }
 
+    /// Returns true if this element will have it's position chosen for it by
+    /// Dakota's layout engine.
+    pub fn child_uses_autolayout(&self, id: &DakotaId) -> bool {
+        self.get_offset(id).is_some()
+    }
+
     /// Create a new Dakota Id
     ///
     /// The type of the new id must be specified. In Dakota, all objects are
@@ -1502,7 +1508,7 @@ impl Dakota {
         {
             let node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
             self.d_thund
-                .draw_surfaces(&node.v_surfaces, &node.v_viewport)?;
+                .draw_surfaces(&node.v_surfaces, &node.v_viewport, 0)?;
         }
 
         let num_children = self

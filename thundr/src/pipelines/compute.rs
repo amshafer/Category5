@@ -644,6 +644,7 @@ impl Pipeline for CompPipeline {
         rend: &mut Renderer,
         _params: &RecordParams,
         _surfaces: &SurfaceList,
+        _pass_number: usize,
         _viewport: &Viewport,
     ) -> bool {
         unsafe {

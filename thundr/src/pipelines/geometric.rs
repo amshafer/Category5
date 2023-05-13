@@ -125,8 +125,11 @@ impl Pipeline for GeomPipeline {
         rend: &mut Renderer,
         params: &RecordParams,
         surfaces: &SurfaceList,
+        pass_number: usize,
         viewport: &Viewport,
     ) -> bool {
+        let pass = surfaces.l_pass[pass_number].as_ref().unwrap();
+
         unsafe {
             // Descriptor sets can be updated elsewhere, but
             // they must be bound before drawing
@@ -138,7 +141,7 @@ impl Pipeline for GeomPipeline {
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline_layout,
                 0, // first set
-                &[self.g_desc, surfaces.l_order_desc, rend.r_images_desc],
+                &[self.g_desc, pass.p_order_desc, rend.r_images_desc],
                 &[], // dynamic offsets
             );
 
@@ -200,8 +203,9 @@ impl Pipeline for GeomPipeline {
             // texture. So on AMD we do not do the instancing, but instead have a draw call for
             // every object (gross)
             if rend.dev_features.vkc_war_disable_instanced_drawing {
-                for i in 0..surfaces.l_window_order.len() as u32 {
+                for i in 0..pass.p_window_order.len() as u32 {
                     // [WAR] Launch each instance manually :(
+                    // TODO: skip if incorrect pass
                     rend.dev.cmd_draw_indexed(
                         params.cbuf,     // drawing command buffer
                         self.vert_count, // number of verts
@@ -213,15 +217,15 @@ impl Pipeline for GeomPipeline {
                 }
             } else {
                 rend.dev.cmd_draw_indexed(
-                    params.cbuf,                          // drawing command buffer
-                    self.vert_count,                      // number of verts
-                    surfaces.l_window_order.len() as u32, // number of instances
-                    0,                                    // first vertex
-                    0,                                    // vertex offset
-                    0,                                    // first instance
+                    params.cbuf,                      // drawing command buffer
+                    self.vert_count,                  // number of verts
+                    pass.p_window_order.len() as u32, // number of instances
+                    0,                                // first vertex
+                    0,                                // vertex offset
+                    0,                                // first instance
                 );
             }
-            log::info!("Drawing {} objects", surfaces.l_window_order.len());
+            log::info!("Drawing {} objects", pass.p_window_order.len());
         }
 
         return true;

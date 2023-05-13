@@ -50,6 +50,9 @@ pub trait Pipeline {
     /// recording for. We need to generate draw calls to update
     /// changes that have happened in `surfaces`.
     ///
+    /// pass_number represents the render pass id, this determines which surfaces
+    /// out of the list get drawn.
+    ///
     /// Returns if vkQueueSubmit was called, and if Renderer.render_sema
     /// should be waited on during presentation.
     fn draw(
@@ -57,6 +60,7 @@ pub trait Pipeline {
         rend: &mut Renderer,
         params: &RecordParams,
         surfaces: &SurfaceList,
+        pass_number: usize,
         viewport: &Viewport,
     ) -> bool;
 

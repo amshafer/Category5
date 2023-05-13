@@ -518,7 +518,12 @@ impl Thundr {
     ///
     /// This is the function for recording drawing of a set of surfaces. The surfaces
     /// in the list will be rendered withing the region specified by viewport.
-    pub fn draw_surfaces(&mut self, surfaces: &SurfaceList, viewport: &Viewport) -> Result<()> {
+    pub fn draw_surfaces(
+        &mut self,
+        surfaces: &SurfaceList,
+        viewport: &Viewport,
+        pass: usize,
+    ) -> Result<()> {
         let params = self
             .th_params
             .as_mut()
@@ -528,14 +533,15 @@ impl Thundr {
             let mut rend = self.th_rend.lock().unwrap();
             rend.draw_call_submitted =
                 self.th_pipe
-                    .draw(rend.deref_mut(), &params, surfaces, viewport);
+                    .draw(rend.deref_mut(), &params, surfaces, pass, viewport);
         }
 
         // Update the amount of depth used while drawing this surface list. This
         // is the depth we should start subtracting from when drawing the next
         // viewport.
         // This magic 0.0000001 must match geom.vert.glsl
-        params.starting_depth += surfaces.l_window_order.len() as f32 / 1000000000.0;
+        params.starting_depth +=
+            surfaces.l_pass[pass].as_ref().unwrap().p_window_order.len() as f32 / 1000000000.0;
 
         self.draw_surfaces_debug_prints(surfaces, viewport);
 
@@ -612,7 +618,7 @@ impl Thundr {
                     log::debug!(
                         "[{}] Image={}, Pos={:?}, Size={:?}, Opaque(Pos={:?}, Size={:?})",
                         i,
-                        w.w_id.0,
+                        w.w_id,
                         w.w_dims.r_pos,
                         w.w_dims.r_size,
                         w.w_opaque.r_pos,

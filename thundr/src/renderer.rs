@@ -235,9 +235,14 @@ pub struct Renderer {
 #[derive(Default, Copy, Clone, Serialize, Deserialize, Debug)]
 pub struct Window {
     /// The id of the image. This is the offset into the unbounded sampler array.
-    /// w_id.0: id that's the offset into the unbound sampler array
-    /// w_id.1: if we should use w_color instead of texturing
-    pub w_id: (i32, i32, i32, i32),
+    /// id that's the offset into the unbound sampler array
+    pub w_id: i32,
+    /// if we should use w_color instead of texturing
+    pub w_use_color: i32,
+    /// the render pass count
+    pub w_pass: i32,
+    /// Padding to match our shader's struct
+    w_padding: i32,
     /// Opaque color
     pub w_color: (f32, f32, f32, f32),
     /// The complete dimensions of the window.
@@ -1799,7 +1804,7 @@ impl Renderer {
             // first so that any alpha in the children will see this underneath
             let internal = surf.s_internal.borrow();
             if internal.s_image.is_some() || internal.s_color.is_some() {
-                list.l_window_order.push(surf.get_ecs_id().clone());
+                list.push_raw_order(0, surf.get_ecs_id().clone());
             }
         }
 
@@ -1827,7 +1832,7 @@ impl Renderer {
     ///
     /// This includes dimensions, the image bound, etc.
     fn update_window_list(&mut self, surfaces: &mut SurfaceList) {
-        surfaces.l_window_order.clear();
+        surfaces.clear_order_buf();
 
         for i in (0..surfaces.len()).rev() {
             let s = surfaces[i as usize].clone();
@@ -1863,7 +1868,10 @@ impl Renderer {
         self.r_windows.set(
             &surf_rc.s_window_id,
             Window {
-                w_id: (image_id, use_color as i32, 0, 0),
+                w_id: image_id,
+                w_use_color: use_color as i32,
+                w_pass: 0,
+                w_padding: 0,
                 w_color: match surf.s_color {
                     Some((r, g, b, a)) => (r, g, b, a),
                     // magic value so it's easy to debug
@@ -2603,11 +2611,11 @@ impl Renderer {
                 write_infos, // descriptor writes
                 &[],         // descriptor copies
             );
-
-            // We also need to tell the surface list to update its window
-            // order resource
-            surfaces.allocate_order_desc(self);
         }
+
+        // We also need to tell the surface list to update its window
+        // order resource
+        surfaces.allocate_order_desc(self);
     }
 
     /// This refreshes the renderer's internal variable size window
@@ -2640,11 +2648,15 @@ impl Renderer {
                         // For each valid window entry, extract the Window
                         // type from the option so that we can write it to
                         // the Vulkan memory
-                        for id in surfaces.l_window_order.iter() {
-                            let i = id.get_raw_id();
-                            let win = self.r_windows.get(&id).unwrap();
-                            log::debug!("Winlist index {}: writing window {:?}", i, *win);
-                            dst[i] = *win;
+                        for p in surfaces.l_pass.iter() {
+                            if let Some(pass) = p {
+                                for id in pass.p_window_order.iter() {
+                                    let i = id.get_raw_id();
+                                    let win = self.r_windows.get(&id).unwrap();
+                                    log::debug!("Winlist index {}: writing window {:?}", i, *win);
+                                    dst[i] = *win;
+                                }
+                            }
                         }
                     },
                 );

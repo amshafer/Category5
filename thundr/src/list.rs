@@ -13,66 +13,68 @@ use std::ops::{DerefMut, Index};
 use std::sync::{Arc, Mutex};
 use utils::log;
 
-pub struct SurfaceList {
-    l_rend: Arc<Mutex<Renderer>>,
-    /// This will get cleared during Thundr::draw
-    pub(crate) l_changed: bool,
-    l_vec: Vec<Surface>,
-    /// List of damage caused by removing/adding surfaces
-    pub(crate) l_damage: Vec<Damage>,
+pub struct Pass {
+    /// The render pass number/order.
+    pub p_num: usize,
     /// The order of windows to be drawn. References r_windows.
     ///
     /// This is sorted back to front, where back comes first. i.e. the
     /// things you want to draw first should be in front of things that
     /// you want to be able to blend overtop of.
-    pub l_window_order: Vec<ll::Entity>,
-    pub l_order_buf: vk::Buffer,
-    pub l_order_mem: vk::DeviceMemory,
-    pub l_order_capacity: usize,
+    pub p_window_order: Vec<ll::Entity>,
+    pub p_order_buf: vk::Buffer,
+    pub p_order_mem: vk::DeviceMemory,
+    pub p_order_capacity: usize,
     /// The window order descriptor
-    pub(crate) l_order_desc: vk::DescriptorSet,
-    pub(crate) l_order_desc_pool: vk::DescriptorPool,
+    pub(crate) p_order_desc: vk::DescriptorSet,
+    pub(crate) p_order_desc_pool: vk::DescriptorPool,
 }
 
-impl SurfaceList {
-    pub fn new(thund: &mut Thundr) -> Self {
+impl Pass {
+    fn new(thund: &mut Thundr, num: usize, capacity: usize) -> Self {
         let mut ret = Self {
-            l_rend: thund.th_rend.clone(),
-            l_changed: false,
-            l_vec: Vec::new(),
-            l_damage: Vec::new(),
-            l_window_order: Vec::new(),
-            l_order_buf: vk::Buffer::null(),
-            l_order_mem: vk::DeviceMemory::null(),
-            l_order_capacity: 8,
-            l_order_desc_pool: vk::DescriptorPool::null(),
-            l_order_desc: vk::DescriptorSet::null(),
+            p_num: num,
+            p_window_order: Vec::new(),
+            p_order_buf: vk::Buffer::null(),
+            p_order_mem: vk::DeviceMemory::null(),
+            p_order_capacity: capacity,
+            p_order_desc_pool: vk::DescriptorPool::null(),
+            p_order_desc: vk::DescriptorSet::null(),
         };
 
         let mut rend = thund.th_rend.lock().unwrap();
-
         unsafe {
-            ret.reallocate_order_buf_with_cap(rend.deref_mut(), ret.l_order_capacity);
+            ret.reallocate_order_buf_with_cap(rend.deref_mut(), ret.p_order_capacity);
             ret.allocate_order_resources(rend.deref_mut());
         }
 
         return ret;
     }
 
-    pub fn update_window_order_buf(&mut self, rend: &Renderer) {
+    fn destroy(&mut self, rend: &mut Renderer) {
+        unsafe {
+            rend.wait_for_prev_submit();
+            rend.dev.destroy_buffer(self.p_order_buf, None);
+            rend.free_memory(self.p_order_mem);
+            rend.dev
+                .destroy_descriptor_pool(self.p_order_desc_pool, None);
+        }
+    }
+
+    fn update_window_order_buf(&mut self, rend: &Renderer) {
         unsafe {
             // Turn our vec of ll::Entitys into a vec of actual ids.
             let mut window_order = Vec::new();
-            for ecs in self.l_window_order.iter() {
+            for ecs in self.p_window_order.iter() {
                 window_order.push(ecs.get_raw_id() as i32);
             }
             log::debug!("Window order is {:?}", window_order);
 
-            self.reallocate_order_buf_with_cap(rend, self.l_window_order.len());
+            self.reallocate_order_buf_with_cap(rend, self.p_window_order.len());
             if window_order.len() > 0 {
-                rend.update_memory(self.l_order_mem, 0, &[self.l_window_order.len()]);
+                rend.update_memory(self.p_order_mem, 0, &[self.p_window_order.len()]);
                 rend.update_memory(
-                    self.l_order_mem,
+                    self.p_order_mem,
                     WINDOW_LIST_GLSL_OFFSET,
                     window_order.as_slice(),
                 );
@@ -84,11 +86,11 @@ impl SurfaceList {
     unsafe fn reallocate_order_buf_with_cap(&mut self, rend: &Renderer, capacity: usize) {
         rend.wait_for_prev_submit();
 
-        rend.dev.destroy_buffer(self.l_order_buf, None);
-        rend.free_memory(self.l_order_mem);
+        rend.dev.destroy_buffer(self.p_order_buf, None);
+        rend.free_memory(self.p_order_mem);
 
         // create our data and a storage buffer for the window list
-        let (wl_storage, wl_storage_mem) = rend.create_buffer_with_size(
+        let (wp_storage, wp_storage_mem) = rend.create_buffer_with_size(
             vk::BufferUsageFlags::STORAGE_BUFFER,
             vk::SharingMode::EXCLUSIVE,
             vk::MemoryPropertyFlags::DEVICE_LOCAL
@@ -98,11 +100,11 @@ impl SurfaceList {
                 + WINDOW_LIST_GLSL_OFFSET as u64,
         );
         rend.dev
-            .bind_buffer_memory(wl_storage, wl_storage_mem, 0)
+            .bind_buffer_memory(wp_storage, wp_storage_mem, 0)
             .unwrap();
-        self.l_order_buf = wl_storage;
-        self.l_order_mem = wl_storage_mem;
-        self.l_order_capacity = capacity;
+        self.p_order_buf = wp_storage;
+        self.p_order_mem = wp_storage_mem;
+        self.p_order_capacity = capacity;
     }
 
     /// Alloce the window order list's vulkan resources
@@ -120,7 +122,7 @@ impl SurfaceList {
             .max_sets(1);
         let order_pool = rend.dev.create_descriptor_pool(&info, None).unwrap();
 
-        self.l_order_desc_pool = order_pool;
+        self.p_order_desc_pool = order_pool;
         self.allocate_order_desc(rend);
     }
 
@@ -132,25 +134,25 @@ impl SurfaceList {
     pub unsafe fn allocate_order_desc(&mut self, rend: &Renderer) {
         rend.dev
             .reset_descriptor_pool(
-                self.l_order_desc_pool,
+                self.p_order_desc_pool,
                 vk::DescriptorPoolResetFlags::empty(),
             )
             .unwrap();
 
         // Now allocate our descriptor
         let info = vk::DescriptorSetAllocateInfo::builder()
-            .descriptor_pool(self.l_order_desc_pool)
+            .descriptor_pool(self.p_order_desc_pool)
             .set_layouts(&[rend.r_order_desc_layout])
             .build();
-        self.l_order_desc = rend.dev.allocate_descriptor_sets(&info).unwrap()[0];
+        self.p_order_desc = rend.dev.allocate_descriptor_sets(&info).unwrap()[0];
 
         let write_info = &[vk::WriteDescriptorSet::builder()
-            .dst_set(self.l_order_desc)
+            .dst_set(self.p_order_desc)
             .dst_binding(0)
             .dst_array_element(0)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
             .buffer_info(&[vk::DescriptorBufferInfo::builder()
-                .buffer(self.l_order_buf)
+                .buffer(self.p_order_buf)
                 .offset(0)
                 .range(vk::WHOLE_SIZE)
                 .build()])
@@ -159,6 +161,66 @@ impl SurfaceList {
             write_info, // descriptor writes
             &[],        // descriptor copies
         );
+    }
+}
+
+pub struct SurfaceList {
+    l_rend: Arc<Mutex<Renderer>>,
+    /// This will get cleared during Thundr::draw
+    pub(crate) l_changed: bool,
+    l_vec: Vec<Surface>,
+    /// List of damage caused by removing/adding surfaces
+    pub(crate) l_damage: Vec<Damage>,
+    pub l_pass: Vec<Option<Pass>>,
+}
+
+impl SurfaceList {
+    pub fn new(thund: &mut Thundr) -> Self {
+        Self {
+            l_rend: thund.th_rend.clone(),
+            l_changed: false,
+            l_vec: Vec::new(),
+            l_damage: Vec::new(),
+            // Always create the "first"/zeroeth render pass
+            l_pass: vec![Some(Pass::new(thund, 0, 8))],
+        }
+    }
+
+    /// Push a window id entry for the specified render pass
+    pub(crate) fn push_raw_order(&mut self, pass: usize, entity: ll::Entity) {
+        self.l_pass[pass]
+            .as_mut()
+            .unwrap()
+            .p_window_order
+            .push(entity);
+    }
+
+    /// Flush the window order buffer(s) to vidmem
+    ///
+    /// Currently our surfacelist has a vec of window ids, but we
+    /// need to represent that in Vulkan accessible memory. This pushes
+    /// those ids to the vidmem buffer referenced by this list.
+    pub fn update_window_order_buf(&mut self, rend: &Renderer) {
+        for p in self.l_pass.iter_mut() {
+            if let Some(pass) = p {
+                pass.update_window_order_buf(rend);
+            }
+        }
+    }
+
+    /// Update the window order descriptor
+    ///
+    /// This descriptor keeps a list of the window ids that need to be presented.
+    /// These will each be rendered, and index into the global window list which
+    /// contains their details.
+    pub fn allocate_order_desc(&mut self, rend: &Renderer) {
+        for p in self.l_pass.iter_mut() {
+            if let Some(pass) = p {
+                unsafe {
+                    pass.allocate_order_desc(rend);
+                }
+            }
+        }
     }
 
     fn damage_removed_surf(&mut self, mut surf: Surface) {
@@ -249,6 +311,14 @@ impl SurfaceList {
         self.l_damage.clear();
     }
 
+    pub fn clear_order_buf(&mut self) {
+        for p in self.l_pass.iter_mut() {
+            if let Some(pass) = p {
+                pass.p_window_order.clear();
+            }
+        }
+    }
+
     pub fn clear(&mut self) {
         self.l_changed = true;
         // Get the damage from all removed surfaces
@@ -264,7 +334,7 @@ impl SurfaceList {
             surf.remove_all_subsurfaces();
         }
 
-        self.l_window_order.clear();
+        self.clear_order_buf();
         self.l_vec.clear();
     }
 
@@ -286,13 +356,11 @@ impl SurfaceList {
 
     fn destroy(&mut self) {
         self.clear();
-        let rend = self.l_rend.lock().unwrap();
-        unsafe {
-            rend.wait_for_prev_submit();
-            rend.dev.destroy_buffer(self.l_order_buf, None);
-            rend.free_memory(self.l_order_mem);
-            rend.dev
-                .destroy_descriptor_pool(self.l_order_desc_pool, None);
+        let mut rend = self.l_rend.lock().unwrap();
+        for p in self.l_pass.iter_mut() {
+            if let Some(pass) = p {
+                pass.destroy(&mut rend);
+            }
         }
     }
 }
