@@ -4,6 +4,7 @@ extern crate harfbuzz_sys as hb_sys;
 
 use crate::th::Thundr;
 use crate::{dom, DakotaId};
+use hb::HarfbuzzObject;
 use lluvia as ll;
 
 // Define this ourselves since hb crate doesn't do it
@@ -80,7 +81,7 @@ pub struct FontInstance {
     /// means Dakota can't be used in environments that require a static lifetime,
     /// so we have to do this annoying dance here to avoid all of that.
     ///
-    /// Each time you need a Font object, use hb::Owned::from_raw()
+    /// Each time you need a Font object, use hb::Font::from_raw()
     f_hb_raw_font: *mut harfbuzz_sys::hb_font_t,
     /// Map of glyphs to look up to find the thundr resources
     /// The ab::GlyphId is really just an index into this. That's all
@@ -149,7 +150,7 @@ impl FontInstance {
                 for (i, v) in bitmap.buffer().iter().enumerate() {
                     let x = i % width;
                     let y = i / width;
-                    let idx = y * width + x * 4;
+                    let idx = (y * width + x) * 4;
                     img[idx] = 255;
                     img[idx + 1] = 255;
                     img[idx + 2] = 255;
@@ -397,7 +398,7 @@ impl FontInstance {
         let mut ret = Vec::new();
 
         // Now the big call to get the shaping information
-        let font = unsafe { hb::Owned::from_raw(self.f_hb_raw_font) };
+        let font = unsafe { hb::Font::from_raw(self.f_hb_raw_font) };
         let glyph_buffer = hb::shape(&font, buffer, Vec::with_capacity(0).as_slice());
         let infos = glyph_buffer.get_glyph_infos();
         let positions = glyph_buffer.get_glyph_positions();
