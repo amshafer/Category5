@@ -627,7 +627,7 @@ impl Dakota {
                 .get(el)
                 .ok_or(anyhow!("Expected children"))?[i];
 
-            if self.get_offset(child_id).is_some() {
+            if self.get_offset(child_id).is_none() {
                 autochildren += 1;
             }
         }
