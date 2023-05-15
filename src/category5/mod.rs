@@ -84,6 +84,11 @@ pub struct Climate {
     c_dakota: dak::Dakota,
     /// The big database of all our properties
     c_atmos: Arc<Mutex<Atmosphere>>,
+    /// The list of all output objects created for clients.
+    ///
+    /// We need this so that we can iterate through and signal size
+    /// changes and the like.
+    c_outputs: Vec<wl_output::WlOutput>,
     /// The input subsystem
     c_input: Input,
 }
@@ -93,6 +98,7 @@ impl Climate {
         Self {
             c_dakota: dak::Dakota::new().unwrap(),
             c_atmos: Arc::new(Mutex::new(Atmosphere::new())),
+            c_outputs: Vec::new(),
             c_input: Input::new(),
         }
     }
@@ -209,6 +215,20 @@ impl EventManager {
         return Ok(id);
     }
 
+    /// Handle Dakota notifying us that the display surface is out of date
+    ///
+    /// This is where we update the resolution and notify clients of the
+    /// change
+    fn handle_ood(&mut self) {
+        let res = self.em_climate.c_dakota.get_resolution();
+        {
+            let mut atmos = self.em_climate.c_atmos.lock().unwrap();
+            atmos.mark_changed();
+            atmos.set_resolution(res.0, res.1);
+        }
+        self.em_climate.send_all_geometry();
+    }
+
     /// Helper to repeat Dakota's `dispatch_platform` until success
     ///
     /// This is needed for out of date handling.
@@ -231,6 +251,7 @@ impl EventManager {
                 Err(e) => {
                     if e.downcast_ref::<dak::DakotaError>() == Some(&dak::DakotaError::OUT_OF_DATE)
                     {
+                        self.handle_ood();
                         continue;
                     } else {
                         return Err(e);
