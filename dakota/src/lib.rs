@@ -1035,6 +1035,12 @@ impl Dakota {
                 surf
             };
 
+            if self.child_uses_autolayout(node) {
+                self.d_thund.surface_set_render_pass(&surf, 1);
+            } else {
+                self.d_thund.surface_set_render_pass(&surf, 0);
+            }
+
             // Handle binding images
             // We need to get the resource's content from our resource map, get
             // the thundr image for it, and bind it to our new surface.
@@ -1504,13 +1510,16 @@ impl Dakota {
         Ok(())
     }
 
+    /// Helper to recursively draw all viewports in the provided tree
     fn draw_viewports(&mut self, viewport: ViewportId) -> th::Result<()> {
+        // Draw (auto) elements in this viewport
         {
             let node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
             self.d_thund
                 .draw_surfaces(&node.v_surfaces, &node.v_viewport, 0)?;
         }
 
+        // Draw child viewports
         let num_children = self
             .d_viewport_nodes
             .get(&viewport)
@@ -1520,6 +1529,18 @@ impl Dakota {
         for i in 0..num_children {
             let child_id = self.d_viewport_nodes.get(&viewport).unwrap().v_children[i].clone();
             self.draw_viewports(child_id)?;
+        }
+
+        // Finish by drawing manual children
+        //
+        // This has to happen separately so these are laid out properly overtop
+        // of the child viewports.
+        {
+            let node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
+            if node.v_surfaces.get_num_passes() > 1 {
+                self.d_thund
+                    .draw_surfaces(&node.v_surfaces, &node.v_viewport, 1)?;
+            }
         }
 
         Ok(())

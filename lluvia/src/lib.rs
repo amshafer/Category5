@@ -367,11 +367,20 @@ impl Drop for EntityInternal {
 /// ```
 pub type Entity = Arc<EntityInternal>;
 
-#[derive(Copy, Clone)]
 pub struct RawComponent<T: 'static, C: Container<T>> {
     c_index: usize,
     _c_phantom: PhantomData<T>,
     _c_phantom_container: PhantomData<C>,
+}
+
+impl<T: 'static, C: Container<T> + 'static> Clone for RawComponent<T, C> {
+    fn clone(&self) -> Self {
+        Self {
+            c_index: self.c_index,
+            _c_phantom: PhantomData,
+            _c_phantom_container: PhantomData,
+        }
+    }
 }
 
 pub type Component<T> = RawComponent<T, VecContainer<T>>;
@@ -474,18 +483,10 @@ pub struct ComponentList {
 ///     avoid retriggering the process)
 ///   * The table releases its internal borrows, so all mutable borrows have ended
 ///   * The data is dropped
+#[derive(Clone)]
 pub struct Instance {
     i_internal: Arc<RwLock<InstanceInternal>>,
     i_component_set: Arc<RwLock<ComponentList>>,
-}
-
-impl Clone for Instance {
-    fn clone(&self) -> Self {
-        Self {
-            i_internal: self.i_internal.clone(),
-            i_component_set: self.i_component_set.clone(),
-        }
-    }
 }
 
 impl Instance {
@@ -736,6 +737,17 @@ impl<T: 'static, C: Container<T> + 'static> fmt::Debug for RawSession<T, C> {
         f.debug_struct("Session")
             .field("s_component", &self.s_component.c_index)
             .finish()
+    }
+}
+
+impl<T: 'static, C: Container<T> + 'static> Clone for RawSession<T, C> {
+    fn clone(&self) -> Self {
+        Self {
+            s_inst: self.s_inst.clone(),
+            _s_phantom: PhantomData,
+            s_component: self.s_component.clone(),
+            s_table: self.s_table.clone(),
+        }
     }
 }
 

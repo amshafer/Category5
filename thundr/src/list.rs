@@ -9,7 +9,7 @@ use crate::{Damage, Result};
 use ash::vk;
 use lluvia as ll;
 use std::iter::DoubleEndedIterator;
-use std::ops::{DerefMut, Index};
+use std::ops::Index;
 use std::sync::{Arc, Mutex};
 use utils::log;
 
@@ -31,7 +31,7 @@ pub struct Pass {
 }
 
 impl Pass {
-    fn new(thund: &mut Thundr, num: usize, capacity: usize) -> Self {
+    fn new(rend: &mut Renderer, num: usize, capacity: usize) -> Self {
         let mut ret = Self {
             p_num: num,
             p_window_order: Vec::new(),
@@ -42,10 +42,9 @@ impl Pass {
             p_order_desc: vk::DescriptorSet::null(),
         };
 
-        let mut rend = thund.th_rend.lock().unwrap();
         unsafe {
-            ret.reallocate_order_buf_with_cap(rend.deref_mut(), ret.p_order_capacity);
-            ret.allocate_order_resources(rend.deref_mut());
+            ret.reallocate_order_buf_with_cap(rend, ret.p_order_capacity);
+            ret.allocate_order_resources(rend);
         }
 
         return ret;
@@ -182,17 +181,31 @@ impl SurfaceList {
             l_vec: Vec::new(),
             l_damage: Vec::new(),
             // Always create the "first"/zeroeth render pass
-            l_pass: vec![Some(Pass::new(thund, 0, 8))],
+            l_pass: vec![Some(Pass::new(&mut thund.th_rend.lock().unwrap(), 0, 8))],
         }
     }
 
+    /// Return the number of render passes defined
+    pub fn get_num_passes(&self) -> usize {
+        self.l_pass.len()
+    }
+
     /// Push a window id entry for the specified render pass
-    pub(crate) fn push_raw_order(&mut self, pass: usize, entity: ll::Entity) {
+    pub(crate) fn push_raw_order(&mut self, rend: &mut Renderer, entity: &ll::Entity) {
+        let pass = *rend.r_surface_pass.get(entity).unwrap();
+        while pass >= self.l_pass.len() {
+            self.l_pass.push(None);
+        }
+
+        if self.l_pass[pass].is_none() {
+            self.l_pass[pass] = Some(Pass::new(rend, pass, 8));
+        }
+
         self.l_pass[pass]
             .as_mut()
             .unwrap()
             .p_window_order
-            .push(entity);
+            .push(entity.clone());
     }
 
     /// Flush the window order buffer(s) to vidmem

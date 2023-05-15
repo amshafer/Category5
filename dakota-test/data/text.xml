@@ -33,10 +33,6 @@
      <content>
       <el>
        <resource>grey</resource>
-       <offset>
-        <x><relative>0.15</relative></x>
-        <y><relative>0.15</relative></y>
-       </offset>
        <size>
         <width><relative>0.7</relative></width>
         <height><relative>0.7</relative></height>

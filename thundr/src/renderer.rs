@@ -224,6 +224,9 @@ pub struct Renderer {
     pub r_image_vk: ll::Session<ImageVk>,
     pub r_image_damage: ll::Session<Damage>,
     pub r_image_infos: ll::NonSparseSession<vk::DescriptorImageInfo>,
+
+    /// Identical to the parent Thundr struct's session
+    pub r_surface_pass: ll::Session<usize>,
 }
 
 /// This must match the definition of the Window struct in the
@@ -1482,7 +1485,11 @@ impl Renderer {
     /// All methods called after this only need to take a mutable reference to
     /// self, avoiding any nasty argument lists like the functions above.
     /// The goal is to have this make dealing with the api less wordy.
-    pub fn new(info: &CreateInfo, ecs: &mut ll::Instance) -> Result<Renderer> {
+    pub fn new(
+        info: &CreateInfo,
+        ecs: &mut ll::Instance,
+        pass_sesh: ll::Session<usize>,
+    ) -> Result<Renderer> {
         unsafe {
             let (entry, inst) = Renderer::create_instance(info);
 
@@ -1776,6 +1783,7 @@ impl Renderer {
                 r_image_vk: img_vk_sesh,
                 r_image_damage: img_damage_sesh,
                 r_image_infos: img_info_sesh,
+                r_surface_pass: pass_sesh,
             };
             rend.reallocate_windows_buf_with_cap(rend.r_windows_capacity);
 
@@ -1804,7 +1812,7 @@ impl Renderer {
             // first so that any alpha in the children will see this underneath
             let internal = surf.s_internal.borrow();
             if internal.s_image.is_some() || internal.s_color.is_some() {
-                list.push_raw_order(0, surf.get_ecs_id().clone());
+                list.push_raw_order(self, &surf.get_ecs_id());
             }
         }
 

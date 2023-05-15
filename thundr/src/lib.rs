@@ -151,6 +151,9 @@ pub struct Thundr {
     /// This is the system used to track all Thundr resources
     th_ecs_inst: ll::Instance,
 
+    /// The render pass a surface belongs to
+    th_surface_pass: ll::Session<usize>,
+
     /// Application specific stuff that will be set up after
     /// the original initialization
     pub(crate) _th_pipe_type: PipelineType,
@@ -317,10 +320,14 @@ impl Thundr {
     // TODO: make get_available_params and add customization
     pub fn new(info: &CreateInfo) -> Result<Thundr> {
         let mut ecs = ll::Instance::new();
+        let pass_comp = ecs.add_component();
+        let pass_sesh = ecs
+            .open_session(pass_comp)
+            .ok_or(ThundrError::OUT_OF_MEMORY)?;
 
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
-        let mut rend = Renderer::new(&info, &mut ecs)?;
+        let mut rend = Renderer::new(&info, &mut ecs, pass_sesh.clone())?;
 
         // Create the pipeline(s) requested
         // Record the type we are using so that we know which type to regenerate
@@ -342,6 +349,7 @@ impl Thundr {
         Ok(Thundr {
             th_rend: Arc::new(Mutex::new(rend)),
             th_ecs_inst: ecs,
+            th_surface_pass: pass_sesh,
             _th_pipe_type: ty,
             th_pipe: pipe,
             th_params: None,
@@ -412,6 +420,8 @@ impl Thundr {
     /// image can be bound to multiple surfaces.
     pub fn create_surface(&mut self, x: f32, y: f32, width: f32, height: f32) -> Surface {
         let id = self.th_ecs_inst.add_entity();
+        // Default new surfaces to the original render pass
+        self.th_surface_pass.set(&id, 0);
         let surf = Surface::create_surface(id, x, y, width, height);
         let ecs_capacity = self.th_ecs_inst.num_entities();
 
@@ -422,6 +432,19 @@ impl Thundr {
             .ensure_window_capacity(ecs_capacity);
 
         return surf;
+    }
+
+    /// Change the render pass this surface is a part of
+    ///
+    /// Render passes numbers are Thundr's way of segregating surfaces
+    /// in the same draw lists into separate sub-drawlists while still respecting
+    /// subsurface positioning. Render passes are drawn starting at zero and going
+    /// up, so the user could mark a coupl subsurfaces as pass 1 to have them
+    /// drawn after all other subsurfaces in the tree. This is useful for dakota
+    /// drawing certain elements on top of viewports. Also useful for supporting
+    /// partial drawing.
+    pub fn surface_set_render_pass(&mut self, surf: &Surface, pass: usize) {
+        self.th_surface_pass.set(&surf.get_ecs_id(), pass);
     }
 
     /// Attaches an image to this surface, when this surface
@@ -528,6 +551,14 @@ impl Thundr {
             .th_params
             .as_mut()
             .ok_or(ThundrError::RECORDING_NOT_IN_PROGRESS)?;
+        if pass >= surfaces.l_pass.len() {
+            log::error!(
+                "Pass {} requested but SurfaceList only has {} passes",
+                pass,
+                surfaces.l_pass.len()
+            );
+            return Err(ThundrError::INVALID);
+        }
 
         {
             let mut rend = self.th_rend.lock().unwrap();
