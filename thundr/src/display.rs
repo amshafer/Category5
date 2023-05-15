@@ -543,11 +543,12 @@ impl Backend for SDL2DisplayBackend {
     }
 
     fn get_vulkan_drawable_size(&self) -> Option<vk::Extent2D> {
-        let res = self.sdl_window.vulkan_drawable_size();
-        Some(vk::Extent2D {
-            width: res.0,
-            height: res.1,
-        })
+        //let res = self.sdl_window.vulkan_drawable_size();
+        //Some(vk::Extent2D {
+        //    width: res.0,
+        //    height: res.1,
+        //})
+        None
     }
 }
 

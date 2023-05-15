@@ -297,17 +297,19 @@ impl Dakota {
     /// a physical display.
     fn initialize_platform() -> Result<(Box<dyn Platform>, th::Thundr, (f32, f32))> {
         #[cfg(feature = "sdl")]
-        if let Ok(sdl) = platform::SDL2Plat::new() {
-            let mut sdl: Box<dyn Platform> = Box::new(sdl);
-            match Self::init_thundr(&mut sdl) {
-                Ok(thundr) => match thundr.get_dpi() {
-                    Ok(dpi) => {
-                        log::error!("Using SDL2 Platform Backend");
-                        return Ok((sdl, thundr, dpi));
-                    }
+        if std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok() {
+            if let Ok(sdl) = platform::SDL2Plat::new() {
+                let mut sdl: Box<dyn Platform> = Box::new(sdl);
+                match Self::init_thundr(&mut sdl) {
+                    Ok(thundr) => match thundr.get_dpi() {
+                        Ok(dpi) => {
+                            log::error!("Using SDL2 Platform Backend");
+                            return Ok((sdl, thundr, dpi));
+                        }
+                        Err(e) => log::error!("Failed to create SDL2 backend: {:?}", e),
+                    },
                     Err(e) => log::error!("Failed to create SDL2 backend: {:?}", e),
-                },
-                Err(e) => log::error!("Failed to create SDL2 backend: {:?}", e),
+                }
             }
         }
 
