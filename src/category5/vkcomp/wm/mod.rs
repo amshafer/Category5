@@ -397,6 +397,8 @@ impl WindowManager {
                 info.ufd_dmabuf.db_fd.try_clone().unwrap(),
                 info.ufd_dmabuf.db_plane_idx,
                 info.ufd_dmabuf.db_offset,
+                info.ufd_dmabuf.db_width,
+                info.ufd_dmabuf.db_height,
                 info.ufd_dmabuf.db_stride,
                 info.ufd_dmabuf.db_mods,
                 Some(Box::new(DmabufReleaseInfo {

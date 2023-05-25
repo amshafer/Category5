@@ -505,11 +505,15 @@ impl Dakota {
         fd: OwnedFd,
         plane: u32,
         offset: u32,
+        width: i32,
+        height: i32,
         stride: u32,
         modifier: u64,
         release_info: Option<Box<dyn Droppable>>,
     ) -> Result<()> {
-        let dmabuf = Dmabuf::new(fd, plane, offset, stride, modifier);
+        let mut dmabuf = Dmabuf::new(fd, plane, offset, stride, modifier);
+        dmabuf.db_width = width;
+        dmabuf.db_height = height;
 
         if self.d_resource_thundr_image.get(res).is_some() || self.get_resource_color(res).is_some()
         {
