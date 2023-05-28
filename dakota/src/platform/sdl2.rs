@@ -16,6 +16,7 @@ use crate::input::*;
 use sdl2::event::{Event, WindowEvent};
 
 extern crate xkbcommon;
+use std::os::fd::RawFd;
 use xkbcommon::xkb;
 pub use xkbcommon::xkb::{keysyms, Keysym};
 
@@ -43,6 +44,8 @@ pub struct SDL2Plat {
     sdl_xkb_keymap_name: String,
     /// xkb state machine
     sdl_xkb_state: xkb::State,
+    /// fds the user wants us to wake up on
+    sdl_user_fds: Option<FdWatch>,
 }
 
 #[cfg(feature = "sdl")]
@@ -86,6 +89,7 @@ impl SDL2Plat {
             sdl_xkb_keymap: keymap,
             sdl_xkb_keymap_name: km_name,
             sdl_xkb_state: state,
+            sdl_user_fds: None,
         })
     }
 
@@ -158,8 +162,9 @@ impl SDL2Plat {
                     evsys.add_event_mouse_button_up(button);
                 }
                 Event::MouseWheel { x, y, .. } => evsys.add_event_scroll(
-                    Some(x as f64 * SCROLL_SENSITIVITY),
-                    Some(y as f64 * SCROLL_SENSITIVITY),
+                    // reverse the scroll direction
+                    Some(x as f64 * SCROLL_SENSITIVITY * -1.0),
+                    Some(y as f64 * SCROLL_SENSITIVITY * -1.0),
                     (0.0, 0.0), // v120 value unspecified
                     AxisSource::Wheel,
                 ),
@@ -247,6 +252,15 @@ impl Platform for SDL2Plat {
         Ok(())
     }
 
+    fn add_watch_fd(&mut self, fd: RawFd) {
+        if self.sdl_user_fds.is_none() {
+            self.sdl_user_fds = Some(FdWatch::new());
+        }
+
+        let watch = self.sdl_user_fds.as_mut().unwrap();
+        watch.add_fd(fd);
+    }
+
     /// Block and handle all available events from SDL2. If timeout
     /// is specified it will be passed to SDL's wait_event_timeout function.
     fn run(
@@ -254,7 +268,6 @@ impl Platform for SDL2Plat {
         evsys: &mut EventSystem,
         dom: &DakotaDOM,
         timeout: Option<usize>,
-        watch: Option<&mut FdWatch>,
     ) -> std::result::Result<bool, DakotaError> {
         let mut needs_redraw = false;
 
@@ -267,7 +280,7 @@ impl Platform for SDL2Plat {
         // choice but to busy loop ourselves since SDL doesn't have a good way for us
         // to deal with this. If this becomes a problem hopefuly SDL3 has a good way to
         // deal with it..
-        if let Some(fds) = watch {
+        if let Some(fds) = self.sdl_user_fds.as_mut() {
             loop {
                 // Wait for the first readable fd
                 if fds.wait_for_events(Some(1)) {

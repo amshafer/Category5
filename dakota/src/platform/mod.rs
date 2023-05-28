@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 use crate::dom;
 use crate::dom::DakotaDOM;
-use crate::utils::fdwatch::FdWatch;
 use crate::{event::EventSystem, DakotaError, Result};
+use std::os::fd::RawFd;
 
 #[cfg(feature = "direct2display")]
 mod display;
@@ -19,12 +19,13 @@ pub trait Platform {
 
     fn set_output_params(&mut self, win: &dom::Window, dims: (u32, u32)) -> Result<()>;
 
+    fn add_watch_fd(&mut self, fd: RawFd);
+
     /// Returns true if we should redraw the app
     fn run(
         &mut self,
         evsys: &mut EventSystem,
         dom: &DakotaDOM,
         timeout: Option<usize>,
-        watch: Option<&mut FdWatch>,
     ) -> std::result::Result<bool, DakotaError>;
 }

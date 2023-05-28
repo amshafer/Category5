@@ -22,7 +22,7 @@ use utils::log;
 
 use std::fs::{File, OpenOptions};
 use std::marker::PhantomData;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::OwnedFd;
 use std::path::Path;
@@ -160,11 +160,12 @@ impl DisplayPlat {
         let mut horizontal = None;
         let mut vertical = None;
 
+        // reverse the scroll directions
         if ev.has_axis(pointer::Axis::Horizontal) {
-            horizontal = Some(ev.scroll_value(pointer::Axis::Horizontal));
+            horizontal = Some(ev.scroll_value(pointer::Axis::Horizontal) * -1.0);
         }
         if ev.has_axis(pointer::Axis::Vertical) {
-            vertical = Some(ev.scroll_value(pointer::Axis::Vertical));
+            vertical = Some(ev.scroll_value(pointer::Axis::Vertical) * -1.0);
         }
 
         evsys.add_event_scroll(horizontal, vertical, v120, source);
@@ -175,96 +176,96 @@ impl DisplayPlat {
     /// Dispatch should be called before this so libinput can
     /// internally read and prepare all events.
     fn process_available(&mut self, evsys: &mut EventSystem) {
-        let ev = self.dp_libin.next();
-        match ev {
-            Some(input::event::Event::Pointer(PointerEvent::Motion(m))) => {
-                evsys.add_event_mouse_move(m.dx(), m.dy());
-            }
-            // TODO: actually handle advanced scrolling/finger behavior
-            // We should track ScrollWheel using the v120 api, and handle
-            // high-res and wheel click behavior. For ScrollFinger we
-            // should handle kinetic scrolling
-            Some(input::event::Event::Pointer(PointerEvent::ScrollFinger(sf))) => {
-                self.get_scroll_event(evsys, &sf, AxisSource::Finger, (0.0, 0.0));
-            }
-            Some(input::event::Event::Pointer(PointerEvent::ScrollWheel(sw))) => {
-                let mut v120 = (0.0, 0.0);
-
-                // Mouse wheels will be handled with the higher resolution
-                // v120 API for discrete scrolling
-                if sw.has_axis(pointer::Axis::Horizontal) {
-                    v120.0 = sw.scroll_value_v120(pointer::Axis::Horizontal);
+        while let Some(ev) = self.dp_libin.next() {
+            match ev {
+                input::event::Event::Pointer(PointerEvent::Motion(m)) => {
+                    evsys.add_event_mouse_move(m.dx(), m.dy());
                 }
-                if sw.has_axis(pointer::Axis::Vertical) {
-                    v120.1 = sw.scroll_value_v120(pointer::Axis::Vertical);
+                // TODO: actually handle advanced scrolling/finger behavior
+                // We should track ScrollWheel using the v120 api, and handle
+                // high-res and wheel click behavior. For ScrollFinger we
+                // should handle kinetic scrolling
+                input::event::Event::Pointer(PointerEvent::ScrollFinger(sf)) => {
+                    self.get_scroll_event(evsys, &sf, AxisSource::Finger, (0.0, 0.0));
                 }
+                input::event::Event::Pointer(PointerEvent::ScrollWheel(sw)) => {
+                    let mut v120 = (0.0, 0.0);
 
-                self.get_scroll_event(evsys, &sw, AxisSource::Wheel, v120);
-            }
-            Some(input::event::Event::Pointer(PointerEvent::Button(b))) => {
-                let button = convert_libinput_mouse_to_dakota(b.button());
-
-                if b.button_state() == ButtonState::Pressed {
-                    evsys.add_event_mouse_button_down(button);
-                } else {
-                    evsys.add_event_mouse_button_up(button);
-                }
-            }
-            Some(input::event::Event::Keyboard(KeyboardEvent::Key(k))) => {
-                // let xkb keep track of the keyboard state
-                let changed = self.dp_xkb_state.update_key(
-                    // add 8 to account for differences between evdev and x11
-                    k.key() as u32 + 8,
-                    match k.key_state() {
-                        KeyState::Pressed => xkb::KeyDirection::Down,
-                        KeyState::Released => xkb::KeyDirection::Up,
-                    },
-                );
-
-                let keysym = self.dp_xkb_state.key_get_one_sym(k.key() + 8);
-                let key = convert_xkb_keycode_to_dakota(keysym);
-                let utf = self.dp_xkb_state.key_get_utf8(k.key() + 8);
-
-                // Update each modifier
-                if changed != 0 {
-                    let mod_options = [
-                        (xkb::MOD_NAME_ALT, Mods::LALT),
-                        (xkb::MOD_NAME_NUM, Mods::NUM),
-                        (xkb::MOD_NAME_CAPS, Mods::CAPS),
-                        (xkb::MOD_NAME_CTRL, Mods::LCTRL),
-                        (xkb::MOD_NAME_LOGO, Mods::LMETA),
-                        (xkb::MOD_NAME_SHIFT, Mods::LCTRL),
-                    ];
-
-                    for opt in mod_options.iter() {
-                        self.dp_current_modifiers |= if self
-                            .dp_xkb_state
-                            .mod_name_is_active(&opt.0, xkb::STATE_MODS_EFFECTIVE)
-                        {
-                            opt.1
-                        } else {
-                            Mods::NONE
-                        };
+                    // Mouse wheels will be handled with the higher resolution
+                    // v120 API for discrete scrolling
+                    if sw.has_axis(pointer::Axis::Horizontal) {
+                        v120.0 = sw.scroll_value_v120(pointer::Axis::Horizontal);
+                    }
+                    if sw.has_axis(pointer::Axis::Vertical) {
+                        v120.1 = sw.scroll_value_v120(pointer::Axis::Vertical);
                     }
 
-                    // Add the modifier event with the latest mods
-                    evsys.add_event_keyboard_modifiers(self.dp_current_modifiers);
+                    self.get_scroll_event(evsys, &sw, AxisSource::Wheel, v120);
                 }
+                input::event::Event::Pointer(PointerEvent::Button(b)) => {
+                    let button = convert_libinput_mouse_to_dakota(b.button());
 
-                if k.key_state() == KeyState::Pressed {
-                    evsys.add_event_key_down(key, utf, RawKeycode::Linux(k.key()));
-                } else {
-                    // Key up events do not generate utf characters
-                    evsys.add_event_key_up(
-                        key,
-                        String::with_capacity(0),
-                        RawKeycode::Linux(k.key()),
-                    );
+                    if b.button_state() == ButtonState::Pressed {
+                        evsys.add_event_mouse_button_down(button);
+                    } else {
+                        evsys.add_event_mouse_button_up(button);
+                    }
                 }
-            }
-            Some(_e) => log::debug!("Unhandled Input Event: {:?}", _e),
-            None => (),
-        };
+                input::event::Event::Keyboard(KeyboardEvent::Key(k)) => {
+                    // let xkb keep track of the keyboard state
+                    let changed = self.dp_xkb_state.update_key(
+                        // add 8 to account for differences between evdev and x11
+                        k.key() as u32 + 8,
+                        match k.key_state() {
+                            KeyState::Pressed => xkb::KeyDirection::Down,
+                            KeyState::Released => xkb::KeyDirection::Up,
+                        },
+                    );
+
+                    let keysym = self.dp_xkb_state.key_get_one_sym(k.key() + 8);
+                    let key = convert_xkb_keycode_to_dakota(keysym);
+                    let utf = self.dp_xkb_state.key_get_utf8(k.key() + 8);
+
+                    // Update each modifier
+                    if changed != 0 {
+                        let mod_options = [
+                            (xkb::MOD_NAME_ALT, Mods::LALT),
+                            (xkb::MOD_NAME_NUM, Mods::NUM),
+                            (xkb::MOD_NAME_CAPS, Mods::CAPS),
+                            (xkb::MOD_NAME_CTRL, Mods::LCTRL),
+                            (xkb::MOD_NAME_LOGO, Mods::LMETA),
+                            (xkb::MOD_NAME_SHIFT, Mods::LCTRL),
+                        ];
+
+                        for opt in mod_options.iter() {
+                            self.dp_current_modifiers |= if self
+                                .dp_xkb_state
+                                .mod_name_is_active(&opt.0, xkb::STATE_MODS_EFFECTIVE)
+                            {
+                                opt.1
+                            } else {
+                                Mods::NONE
+                            };
+                        }
+
+                        // Add the modifier event with the latest mods
+                        evsys.add_event_keyboard_modifiers(self.dp_current_modifiers);
+                    }
+
+                    if k.key_state() == KeyState::Pressed {
+                        evsys.add_event_key_down(key, utf, RawKeycode::Linux(k.key()));
+                    } else {
+                        // Key up events do not generate utf characters
+                        evsys.add_event_key_up(
+                            key,
+                            String::with_capacity(0),
+                            RawKeycode::Linux(k.key()),
+                        );
+                    }
+                }
+                _e => log::debug!("Unhandled Input Event: {:?}", _e),
+            };
+        }
     }
 }
 
@@ -280,35 +281,21 @@ impl Platform for DisplayPlat {
         Ok(())
     }
 
+    fn add_watch_fd(&mut self, fd: RawFd) {
+        self.dp_fdwatch.add_fd(fd);
+    }
+
     fn run(
         &mut self,
         evsys: &mut EventSystem,
         _dom: &DakotaDOM,
         timeout: Option<usize>,
-        mut watch: Option<&mut FdWatch>,
     ) -> std::result::Result<bool, DakotaError> {
-        let fdw = match watch.as_mut() {
-            Some(w) => {
-                // If the upper parts of the stack request us to wake up on
-                // other fds, then we need to add our libinput fd to the
-                // provided fdwatch and remove it when we are done.
-                w.add_fd(self.dp_libin.as_raw_fd());
-                w.register_events();
-                w
-            }
-            None => &mut self.dp_fdwatch,
-        };
-        fdw.wait_for_events(timeout);
+        self.dp_fdwatch.wait_for_events(timeout);
+        // TODO: return UserFdReadable?
 
         self.dp_libin.dispatch().unwrap();
         self.process_available(evsys);
-
-        // Remove our own fd if needed. TODO: Kind of hacky, clean this up
-        if let Some(w) = watch.as_mut() {
-            evsys.add_event_user_fd();
-            w.add_fd(self.dp_libin.as_raw_fd());
-            w.register_events();
-        }
 
         Ok(false)
     }
