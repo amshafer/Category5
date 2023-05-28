@@ -292,7 +292,32 @@ impl Surface {
             atmos.get_surface_size(self.s_id)
         };
 
-        // Commit any role state before we do our thing
+        // Commit our frame callbacks
+        // move the callback list from attached to the current callback list
+        self.s_frame_callbacks
+            .extend_from_slice(self.s_attached_frame_callbacks.as_slice());
+        self.s_attached_frame_callbacks.clear();
+        log::debug!(
+            "Surface {:?} New frame callbacks = {:?}",
+            self.s_id,
+            self.s_frame_callbacks
+        );
+        atmos.set_surface_size(self.s_id, surf_size.0, surf_size.1);
+
+        if !self.s_surf_damage.is_empty() {
+            let mut nd = dak::Damage::empty();
+            std::mem::swap(&mut self.s_surf_damage, &mut nd);
+            log::debug!("Setting surface damage of {:?} to {:?}", self.s_id, nd);
+            atmos.set_surface_damage(self.s_id, nd);
+        }
+        if !self.s_damage.is_empty() {
+            let mut nd = dak::Damage::empty();
+            std::mem::swap(&mut self.s_damage, &mut nd);
+            log::debug!("Setting buffer damage of {:?} to {:?}", self.s_id, nd);
+            atmos.set_buffer_damage(self.s_id, nd);
+        }
+
+        // Commit any role state before we update window bits
         match &self.s_role {
             Some(Role::xdg_shell_toplevel(_, xs)) => xs.lock().unwrap().commit(&self, atmos),
             Some(Role::xdg_shell_popup(xs)) => xs.lock().unwrap().commit(&self, atmos),
@@ -309,17 +334,6 @@ impl Surface {
             }
         }
 
-        // Commit our frame callbacks
-        // move the callback list from attached to the current callback list
-        self.s_frame_callbacks
-            .extend_from_slice(self.s_attached_frame_callbacks.as_slice());
-        self.s_attached_frame_callbacks.clear();
-        log::debug!(
-            "Surface {:?} New frame callbacks = {:?}",
-            self.s_id,
-            self.s_frame_callbacks
-        );
-
         // update the surface size of this id so that vkcomp knows what
         // size of buffer it is compositing
         let _win_size = atmos.get_window_size(self.s_id);
@@ -331,20 +345,6 @@ impl Surface {
             surf_size.0,
             surf_size.1
         );
-        atmos.set_surface_size(self.s_id, surf_size.0, surf_size.1);
-
-        if !self.s_surf_damage.is_empty() {
-            let mut nd = dak::Damage::empty();
-            std::mem::swap(&mut self.s_surf_damage, &mut nd);
-            log::debug!("Setting surface damage of {:?} to {:?}", self.s_id, nd);
-            atmos.set_surface_damage(self.s_id, nd);
-        }
-        if !self.s_damage.is_empty() {
-            let mut nd = dak::Damage::empty();
-            std::mem::swap(&mut self.s_damage, &mut nd);
-            log::debug!("Setting buffer damage of {:?} to {:?}", self.s_id, nd);
-            atmos.set_buffer_damage(self.s_id, nd);
-        }
 
         // Make sure to unmark this before returning
         self.s_commit_in_progress = false;
