@@ -511,8 +511,16 @@ impl WindowManager {
         dakota: &mut dak::Dakota,
         id: WindowId,
     ) -> Result<()> {
-        // atmosphere skiplist not being propogated?
-        assert!(self.wm_apps.id_exists(id.into()));
+        // If this window doesn't exist then we might be closing
+        // it before we have ever set it up.
+        if !self.wm_apps.id_exists(id.into()) {
+            log::debug!(
+                "WARN: closing window {:?} but we don't have an app entry for it",
+                id
+            );
+            return Ok(());
+        }
+
         log::debug!("Closing window {:?}", id);
 
         {
