@@ -317,15 +317,6 @@ impl EventManager {
                     }
                 }
 
-                // TODO: fix frame timings to prevent the current state of
-                // 3 frames of latency
-                //
-                // The input subsystem has batched the changes to the window
-                // due to resizing, we need to send those changes now
-                self.em_climate
-                    .c_input
-                    .update_from_eventloop(atmos.deref_mut());
-
                 // Try to flip hemispheres to push our updates to vkcomp
                 // If we can't recieve it, vkcomp isn't ready, and we should
                 // continue processing wayland updates so the system

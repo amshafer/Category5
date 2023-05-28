@@ -79,13 +79,6 @@ pub struct Input {
     pub i_mod_meta: bool,
     pub i_mod_num: bool,
 
-    /// Resize tracking
-    /// When we resize a window we want to batch together the
-    /// changes and send one configure message per frame
-    /// The window currently being resized
-    /// The currently grabbed resizing window is in the atmosphere
-    /// changes to the window surface to be sent this frame
-    pub i_resize_diff: (f64, f64),
     /// The surface that the pointer is currently over
     /// note that this may be different than the application focus
     pub i_pointer_focus: Option<WindowId>,
@@ -146,7 +139,6 @@ impl Input {
             i_mod_caps: false,
             i_mod_meta: false,
             i_mod_num: false,
-            i_resize_diff: (0.0, 0.0),
             i_pointer_focus: None,
         }
     }
@@ -241,35 +233,6 @@ impl Input {
                     }
                 }
             }
-        }
-    }
-
-    /// This is called once per frame by the thread's main even loop. It exists to get
-    /// the input system up to date and allow it to dispatch any cached state it has.
-    ///
-    /// Applies batched input changes to the window dimensions. We keep a `i_resize_diff`
-    /// of the current pointer changes that need to have an xdg configure event for them.
-    /// This method resets the diff and sends the value to xdg.
-    pub fn update_from_eventloop(&mut self, atmos: &mut Atmosphere) {
-        if let Some(id) = atmos.get_resizing() {
-            if let Some(cell) = atmos.get_surface_from_id(id) {
-                let surf = cell.lock().unwrap();
-                match &surf.s_role {
-                    Some(Role::xdg_shell_toplevel(xdg_surf, ss)) => {
-                        // send the xdg configure events
-                        ss.lock().unwrap().configure(
-                            atmos,
-                            xdg_surf,
-                            &surf,
-                            Some((self.i_resize_diff.0 as f32, self.i_resize_diff.1 as f32)),
-                        );
-                    }
-                    _ => (),
-                }
-            }
-
-            // clear the diff so we can batch more
-            self.i_resize_diff = (0.0, 0.0);
         }
     }
 
@@ -379,6 +342,31 @@ impl Input {
         }
     }
 
+    /// Send a resize xdg_shell resize configure
+    ///
+    /// We need to do this on pointer movement to tell the client how
+    /// to resize themselves.
+    fn send_resize_configure(&mut self, atmos: &mut Atmosphere, dx: f64, dy: f64) {
+        log::error!("Resizing in progress");
+        if let Some(id) = atmos.get_resizing() {
+            if let Some(cell) = atmos.get_surface_from_id(id) {
+                let surf = cell.lock().unwrap();
+                match &surf.s_role {
+                    Some(Role::xdg_shell_toplevel(xdg_surf, ss)) => {
+                        // send the xdg configure events
+                        ss.lock().unwrap().configure(
+                            atmos,
+                            xdg_surf,
+                            &surf,
+                            Some((dx as i32, dy as i32)),
+                        );
+                    }
+                    _ => (),
+                }
+            }
+        }
+    }
+
     /// Move the pointer
     ///
     /// Also generates wl_pointer.motion events to the surface
@@ -390,9 +378,7 @@ impl Input {
         // If a resize is happening then collect the cursor changes
         // to send at the end of the frame
         if atmos.get_resizing().is_some() {
-            log::error!("Resizing in progress");
-            self.i_resize_diff.0 += dx;
-            self.i_resize_diff.1 += dy;
+            self.send_resize_configure(atmos, dx, dy);
             return;
         }
         // Get the cursor position
@@ -471,15 +457,18 @@ impl Input {
             if let Some(id) = resizing {
                 // if on one of the edges start a resize
                 if let Some(surf) = atmos.get_surface_from_id(id) {
-                    match &surf.lock().unwrap().s_role {
-                        Some(Role::xdg_shell_toplevel(_, ss)) => {
+                    let surf = surf.lock().unwrap();
+                    match &surf.s_role {
+                        Some(Role::xdg_shell_toplevel(xdg_surf, ss)) => {
                             match state {
                                 // The release is handled above
                                 ButtonState::Released => {
                                     log::debug!("Stopping resize of {:?}", id);
                                     atmos.set_resizing(None);
-                                    ss.lock().unwrap().ss_cur_tlstate.tl_resizing = false;
-                                    // TODO: send final configure here?
+                                    let mut ss = ss.lock().unwrap();
+                                    ss.ss_cur_tlstate.tl_resizing = false;
+                                    // As per spec send final configure here
+                                    ss.configure(atmos, xdg_surf, &surf, None);
                                 }
                                 // this should never be pressed
                                 _ => (),

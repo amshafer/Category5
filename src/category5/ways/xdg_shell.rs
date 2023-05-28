@@ -290,21 +290,23 @@ impl ShellSurface {
         {
             // TODO: handle min/max/fullscreen/activated
 
-            log::debug!("xdg_surface.commit: (ev {}) vvv", tlc.tlc_serial);
+            log::error!("xdg_surface.commit: (ev {}) vvv", tlc.tlc_serial);
 
-            // use the size from the latest acked config event
-            let mut size = (tlc.tlc_size.0 as f32, tlc.tlc_size.1 as f32);
-            // UNLESS the window geom was manually set, then we need to
-            // honor that and use the double buffered value
-            if let Some((w, h)) = self.ss_xs.xs_size {
-                size = (w as f32, h as f32);
-            }
+            // The client should have updated the window geometry in reaction
+            // to the last acked configure event. If it doesn't exist then
+            // just set the window size to the surface size as per the spec
+            let size = if let Some((w, h)) = self.ss_xs.xs_size {
+                (w as f32, h as f32)
+            } else {
+                atmos.get_surface_size(surf.s_id)
+            };
 
             atmos.set_window_size(surf.s_id, size.0, size.1);
 
             self.ss_xs.xs_size = None;
             // remove all the previous/outdated configs
             self.ss_tlconfigs.drain(0..i);
+            log::error!("self.ss_tlconfigs now: {:#?}", self.ss_tlconfigs);
         }
 
         // TODO: handle the other state changes
@@ -354,7 +356,7 @@ impl ShellSurface {
         atmos: &mut Atmosphere,
         xdg_surf: &xdg_surface::XdgSurface,
         surf: &Surface,
-        resize_diff: Option<(f32, f32)>,
+        resize_diff: Option<(i32, i32)>,
     ) {
         log::debug!("xdg_surface: generating configure event {}", self.ss_serial);
         // send configuration requests to the client
@@ -366,16 +368,24 @@ impl ShellSurface {
                 size = cur_size;
             } else {
                 // If we don't have the size saved then grab the latest
-                // from atmos
-                let raw_size = atmos.get_window_size(surf.s_id);
-                size = (raw_size.0 as i32, raw_size.1 as i32);
+                // from atmos.
+                // If we have pending configs then we should get the size
+                // of the last one and update that.
+                size = match self.ss_tlconfigs.len() {
+                    0 => {
+                        let raw_size = atmos.get_window_size(surf.s_id);
+                        (raw_size.0 as i32, raw_size.1 as i32)
+                    }
+                    _ => self.ss_tlconfigs[self.ss_tlconfigs.len() - 1].tlc_size,
+                };
 
                 if let Some((x, y)) = resize_diff {
                     // update our state's dimensions
                     // We SHOULD NOT update the atmosphere until the wl_surface
                     // is committed
-                    size.0 += x as i32;
-                    size.1 += y as i32;
+                    size.0 += x;
+                    size.1 += y;
+                    log::error!("Resized to {:?}", size);
                 }
             }
 
@@ -413,7 +423,7 @@ impl ShellSurface {
                     Arc::new(self.ss_cur_tlstate),
                 ));
             }
-            log::debug!(
+            log::error!(
                 "xdg_surface: pushing config {:?}",
                 self.ss_tlconfigs[self.ss_tlconfigs.len() - 1]
             );
@@ -448,14 +458,14 @@ impl ShellSurface {
     fn set_win_geom(
         &mut self,
         atmos: &mut Atmosphere,
-        xdg_surf: &xdg_surface::XdgSurface,
+        _xdg_surf: &xdg_surface::XdgSurface,
         x: i32,
         y: i32,
         width: i32,
         height: i32,
     ) {
         let surf_cell = self.ss_surface.clone();
-        let mut surf = surf_cell.lock().unwrap();
+        let surf = surf_cell.lock().unwrap();
 
         // we need to update the *window* position
         // to be an offset from the base surface position
@@ -465,10 +475,6 @@ impl ShellSurface {
         atmos.set_window_pos(surf.s_id, surf_pos.0, surf_pos.0);
 
         self.ss_xs.xs_size = Some((width, height));
-        // Go ahead and generate a configure event.
-        // If this is called by the client, we need to trigger an event
-        // manually TODO?
-        self.configure(atmos, xdg_surf, &mut surf, None);
     }
 
     /// Get a toplevel surface
