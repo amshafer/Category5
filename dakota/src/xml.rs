@@ -96,6 +96,7 @@ enum Element {
     Resize(Option<dom::Event>),
     RedrawComplete(Option<dom::Event>),
     Closed(Option<dom::Event>),
+    UnboundedSubsurface,
 }
 
 impl Element {
@@ -176,6 +177,7 @@ impl Element {
             b"resize" => Self::Resize(None),
             b"redraw_complete" => Self::RedrawComplete(None),
             b"closed" => Self::Closed(None),
+            b"unbounded_subsurface" => Self::UnboundedSubsurface,
             _ => {
                 return Err(anyhow!(
                     "Element name {} is not a valid element name",
@@ -321,6 +323,10 @@ impl Dakota {
         old_id: &DakotaId,
         old_node: &Element,
     ) -> Result<()> {
+        // [node/id] is the current element that we are modifying
+        // old_[node/id] is the child XML element that just had its end tag
+        // complete. We are propogating its data up the tree to [node/id]
+
         match node {
             // Element
             // -------------------------------------------------------
@@ -340,6 +346,7 @@ impl Dakota {
                         .context("Getting resource reference for element")?;
                     self.set_resource(id, resource_id)
                 }
+                Element::UnboundedSubsurface => self.set_unbounded_subsurface(id, true),
                 Element::El {
                     x: _,
                     y: _,
@@ -717,6 +724,7 @@ impl Dakota {
                 }
                 Ok(Event::End(_e)) => {
                     log::verbose!("XML EVENT: {:#?}", _e);
+                    // Save a copy of the XML element that just ended
                     let old_id = id.clone();
                     let old_node = node;
 

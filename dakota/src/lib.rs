@@ -124,6 +124,7 @@ pub struct Dakota {
     d_contents: ll::Session<dom::Content>,
     d_bounds: ll::Session<dom::Edges>,
     d_children: ll::Session<Vec<DakotaId>>,
+    d_unbounded_subsurf: ll::Session<bool>,
     /// This is the corresponding thundr surface for each LayoutNode. Also
     /// indexed by DakotaId.
     d_layout_node_surfaces: ll::Session<th::Surface>,
@@ -350,6 +351,7 @@ impl Dakota {
         create_component_and_table!(layout_ecs, dom::Edges, bounds_table);
         create_component_and_table!(layout_ecs, Vec<DakotaId>, children_table);
         create_component_and_table!(layout_ecs, dom::DakotaDOM, dom_table);
+        create_component_and_table!(layout_ecs, bool, unbounded_subsurf_table);
 
         let mut viewport_ecs = ll::Instance::new();
         create_component_and_table!(viewport_ecs, ViewportNode, viewport_table);
@@ -378,6 +380,7 @@ impl Dakota {
             d_bounds: bounds_table,
             d_children: children_table,
             d_dom: dom_table,
+            d_unbounded_subsurf: unbounded_subsurf_table,
             d_viewport_ecs_inst: viewport_ecs,
             d_viewport_nodes: viewport_table,
             d_layout_tree_root: None,
@@ -561,34 +564,32 @@ impl Dakota {
     /// This box has centered content.
     /// We should either recurse the child box or calculate the
     /// size based on the centered resource.
-    fn calculate_sizes_content(
-        &mut self,
-        el: &DakotaId,
-        space: &LayoutSpace,
-        parent: &mut LayoutNode,
-    ) -> Result<()> {
+    fn calculate_sizes_content(&mut self, el: &DakotaId, space: &LayoutSpace) -> Result<()> {
         let child_id = self.d_contents.get(el).unwrap().el.clone();
 
         // num_autolayout_children_at_this_level was set earlier to 0 when we
         // created the common child space
-        self.calculate_sizes(&child_id, &space)?;
-        let mut child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
-        // At this point the size of the is calculated
-        // and we can determine the offset. We want to center the
-        // box, so that's the center point of the parent minus
-        // half the size of the child.
-        //
-        // The child size should have already been clipped to the available space
-        child_size.l_offset.x = utils::partial_max(
-            (space.avail_width / 2.0) - (child_size.l_size.width / 2.0),
-            0.0,
-        );
-        child_size.l_offset.y = utils::partial_max(
-            (space.avail_height / 2.0) - (child_size.l_size.height / 2.0),
-            0.0,
-        );
+        self.calculate_sizes(&child_id, Some(el), &space)?;
+        {
+            let mut child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
+            // At this point the size of the is calculated
+            // and we can determine the offset. We want to center the
+            // box, so that's the center point of the parent minus
+            // half the size of the child.
+            //
+            // The child size should have already been clipped to the available space
+            child_size.l_offset.x = utils::partial_max(
+                (space.avail_width / 2.0) - (child_size.l_size.width / 2.0),
+                0.0,
+            );
+            child_size.l_offset.y = utils::partial_max(
+                (space.avail_height / 2.0) - (child_size.l_size.height / 2.0),
+                0.0,
+            );
+        }
 
-        parent.add_child(child_id.clone());
+        let mut node = self.d_layout_nodes.get_mut(el).unwrap();
+        node.add_child(child_id.clone());
         Ok(())
     }
 
@@ -598,11 +599,15 @@ impl Dakota {
     /// element. After having the children calculate their sizes, it will assign
     /// them layout positions within el. This will fill from left to right by
     /// default, wrapping below if necessary.
+    ///
+    /// `grandparent` is avialable when appropriate and allows children to
+    /// reference two levels above, for use when not bounding size by the
+    /// current element.
     fn calculate_sizes_children(
         &mut self,
         el: &DakotaId,
+        grandparent: Option<&DakotaId>,
         space: &mut LayoutSpace,
-        parent: &mut LayoutNode,
     ) -> Result<()> {
         // TODO: do vertical wrapping too
         let mut tile_info = TileInfo {
@@ -641,47 +646,76 @@ impl Dakota {
                 .get(el)
                 .ok_or(anyhow!("Expected children"))?[i]
                 .clone();
-            self.calculate_sizes(&child_id, &space)?;
-            let mut child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
+            self.calculate_sizes(&child_id, Some(el), &space)?;
 
-            // now the child size has been made, but it still needs to find
-            // the proper position inside the parent container. If the child
-            // already had an offset specified, it is "out of the loop", and
-            // doesn't get used for pretty formatting, it just gets placed
-            // wherever.
-            if !child_size.l_offset_specified {
-                // if this element exceeds the horizontal space, set it on a
-                // new line
-                if tile_info.t_last_x as f32 + child_size.l_size.width > space.avail_width {
-                    tile_info.t_last_x = 0;
-                    tile_info.t_last_y = tile_info.t_greatest_y;
+            // ----- adjust child size ----
+            {
+                let mut child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
+
+                // now the child size has been made, but it still needs to find
+                // the proper position inside the parent container. If the child
+                // already had an offset specified, it is "out of the loop", and
+                // doesn't get used for pretty formatting, it just gets placed
+                // wherever.
+                if !child_size.l_offset_specified {
+                    // if this element exceeds the horizontal space, set it on a
+                    // new line
+                    if tile_info.t_last_x as f32 + child_size.l_size.width > space.avail_width {
+                        tile_info.t_last_x = 0;
+                        tile_info.t_last_y = tile_info.t_greatest_y;
+                    }
+
+                    child_size.l_offset = dom::Offset {
+                        x: tile_info.t_last_x as f32,
+                        y: tile_info.t_last_y as f32,
+                    };
+
+                    // now we need to update the space that we have seen children
+                    // occupy, so we know where to place the next children in the
+                    // tiling formation.
+                    tile_info.t_last_x += child_size.l_size.width as u32;
+                    tile_info.t_greatest_y = std::cmp::max(
+                        tile_info.t_greatest_y,
+                        tile_info.t_last_y + child_size.l_size.height as u32,
+                    );
                 }
+            }
 
-                child_size.l_offset = dom::Offset {
-                    x: tile_info.t_last_x as f32,
-                    y: tile_info.t_last_y as f32,
+            // ----- check if we overflow our bounds and need to enable scrolling ----
+            {
+                // Test if the child exceeds the parent space. If so, this is a scrolling
+                // region and we should mark it as a viewport boundary. In a separate pass
+                // we will go through and create all the viewports.
+                let (child_offset, child_size) = {
+                    let child_size = self.d_layout_nodes.get(&child_id).unwrap();
+                    (child_size.l_offset, child_size.l_size)
+                };
+                // The parent we are bounding inside of doesn't necessarily have to be the
+                // element this child is attached to. Elements marked as unbounded subsurfaces
+                // will actually be "layered" ontop of their parent, which means being bound
+                // within the grandparent.
+                let bounding_id = {
+                    let mut ret = el;
+                    if self.d_unbounded_subsurf.get(&child_id).is_some() {
+                        if let Some(gp) = grandparent {
+                            ret = gp;
+                        }
+                    }
+                    ret
                 };
 
-                // now we need to update the space that we have seen children
-                // occupy, so we know where to place the next children in the
-                // tiling formation.
-                tile_info.t_last_x += child_size.l_size.width as u32;
-                tile_info.t_greatest_y = std::cmp::max(
-                    tile_info.t_greatest_y,
-                    tile_info.t_last_y + child_size.l_size.height as u32,
-                );
+                let mut bounding_parent = self.d_layout_nodes.get_mut(bounding_id).unwrap();
+                if child_offset.x + child_size.width > bounding_parent.l_size.width
+                    || child_offset.y + child_size.height > bounding_parent.l_size.height
+                {
+                    bounding_parent.l_is_viewport = true;
+                }
             }
 
-            // Test if the child exceeds the parent space. If so, this is a scrolling
-            // region and we should mark it as a viewport boundary. In a separate pass
-            // we will go through and create all the viewports.
-            if child_size.l_offset.x + child_size.l_size.width > parent.l_size.width
-                || child_size.l_offset.y + child_size.l_size.height > parent.l_size.height
-            {
-                parent.l_is_viewport = true;
-            }
-
-            parent.add_child(child_id.clone());
+            self.d_layout_nodes
+                .get_mut(el)
+                .unwrap()
+                .add_child(child_id.clone());
         }
 
         Ok(())
@@ -695,12 +729,9 @@ impl Dakota {
     /// we have, then the size is available_space
     /// 3. No size and no bounds means we are inside of a scrolling arena, and
     /// we should grow this box to hold all of its children.
-    fn calculate_sizes_el(
-        &mut self,
-        el: &DakotaId,
-        node: &mut LayoutNode,
-        space: &LayoutSpace,
-    ) -> Result<()> {
+    fn calculate_sizes_el(&mut self, el: &DakotaId, space: &LayoutSpace) -> Result<()> {
+        let mut node = LayoutNode::new(None, dom::Offset::new(0.0, 0.0), dom::Size::new(0.0, 0.0));
+
         node.l_offset_specified = self.get_offset(el).is_some();
         node.l_offset = self
             .get_final_offset(el, &space)
@@ -709,13 +740,17 @@ impl Dakota {
 
         node.l_size = self.get_final_size(el, space)?.into();
 
+        log::debug!("Offset of element is {:?}", node.l_offset);
+        log::debug!("Size of element is {:?}", node.l_size);
+        self.d_layout_nodes.take(el);
+        self.d_layout_nodes.set(el, node);
         Ok(())
     }
 
     /// Handles creating LayoutNodes for every glyph in a passage
     ///
     /// This is the handler for the text field in the dakota file
-    fn calculate_sizes_text(&mut self, el: &DakotaId, node: &mut LayoutNode) -> Result<()> {
+    fn calculate_sizes_text(&mut self, el: &DakotaId) -> Result<()> {
         let mut text = self.d_texts.get_mut(el).unwrap();
         let line_space = self.d_font_inst.get_vertical_line_spacing();
 
@@ -724,12 +759,15 @@ impl Dakota {
         // with the problem that ft/hb want to index by the bottom left corner
         // and all my stuff wants to index from the top left corner. Without this
         // text starts being written "above" the element it is assigned to.
-        let mut cursor = Cursor {
-            c_i: 0,
-            c_x: node.l_offset.x,
-            c_y: node.l_offset.y + line_space,
-            c_min: node.l_offset.x,
-            c_max: node.l_offset.x + node.l_size.width,
+        let mut cursor = {
+            let node = self.d_layout_nodes.get(el).unwrap();
+            Cursor {
+                c_i: 0,
+                c_x: node.l_offset.x,
+                c_y: node.l_offset.y + line_space,
+                c_min: node.l_offset.x,
+                c_max: node.l_offset.x + node.l_size.width,
+            }
         };
 
         log::info!("Drawing text");
@@ -784,20 +822,24 @@ impl Dakota {
                             );
                             log::info!("Character size is {:?}", size);
 
-                            // Test if the text exceeds the parent space. If so then we need
-                            // to mark this node as a viewport node
-                            if child_size.l_offset.x + child_size.l_size.width > node.l_size.width
-                                || child_size.l_offset.y + child_size.l_size.height
-                                    > node.l_size.height
                             {
-                                node.l_is_viewport = true;
+                                // Test if the text exceeds the parent space. If so then we need
+                                // to mark this node as a viewport node
+                                let mut node = layouts.get_mut(el).unwrap();
+                                if child_size.l_offset.x + child_size.l_size.width
+                                    > node.l_size.width
+                                    || child_size.l_offset.y + child_size.l_size.height
+                                        > node.l_size.height
+                                {
+                                    node.l_is_viewport = true;
+                                }
+                                // What we have done here is create a "fake" element (fake since
+                                // the user didn't specify it) that represents a glyph.
+                                node.add_child(ch.node.clone());
                             }
 
                             layouts.take(&ch.node);
                             layouts.set(&ch.node, child_size);
-                            // What we have done here is create a "fake" element (fake since
-                            // the user didn't specify it) that represents a glyph.
-                            node.add_child(ch.node.clone());
                         },
                     );
                 }
@@ -837,22 +879,28 @@ impl Dakota {
     /// created, and can set its final size accordingly. This should prevent
     /// us from having to do more recursion later since everything is calculated
     /// now.
-    fn calculate_sizes(&mut self, el: &DakotaId, space: &LayoutSpace) -> Result<()> {
-        let mut ret = LayoutNode::new(None, dom::Offset::new(0.0, 0.0), dom::Size::new(0.0, 0.0));
-
+    fn calculate_sizes(
+        &mut self,
+        el: &DakotaId,
+        parent: Option<&DakotaId>,
+        space: &LayoutSpace,
+    ) -> Result<()> {
         // ------------------------------------------
         // HANDLE THIS ELEMENT
         // ------------------------------------------
         // Must be done before anything referencing the size of this element
-        self.calculate_sizes_el(el, &mut ret, space)
+        self.calculate_sizes_el(el, space)
             .context("Layout Tree Calculation: processing element")?;
 
         // This space is what the children/content will use
         // it is restricted in size to this element (their parent)
-        let mut child_space = LayoutSpace {
-            avail_width: ret.l_size.width,
-            avail_height: ret.l_size.height,
-            autolayout_children_at_this_level: 0,
+        let mut child_space = {
+            let node = self.d_layout_nodes.get(el).unwrap();
+            LayoutSpace {
+                avail_width: node.l_size.width,
+                avail_height: node.l_size.height,
+                autolayout_children_at_this_level: 0,
+            }
         };
 
         // ------------------------------------------
@@ -861,7 +909,7 @@ impl Dakota {
         // We do this after handling the size of the current element so that we
         // can know what width we have available to fill in with text.
         if self.get_text(el).is_some() {
-            self.calculate_sizes_text(el, &mut ret)?;
+            self.calculate_sizes_text(el)?;
         }
 
         // if the box has children, then recurse through them and calculate our
@@ -872,20 +920,15 @@ impl Dakota {
             // ------------------------------------------
             //
 
-            self.calculate_sizes_children(el, &mut child_space, &mut ret)
+            self.calculate_sizes_children(el, parent, &mut child_space)
                 .context("Layout Tree Calculation: processing children of element")?;
         } else if self.get_content(el).is_some() {
             // ------------------------------------------
             // CENTERED CONTENT
             // ------------------------------------------
-            self.calculate_sizes_content(el, space, &mut ret)
+            self.calculate_sizes_content(el, space)
                 .context("Layout Tree Calculation: processing centered content of element")?;
         }
-
-        log::debug!("Final offset of element is {:?}", ret.l_offset);
-        log::debug!("Final size of element is {:?}", ret.l_size);
-        self.d_layout_nodes.take(el);
-        self.d_layout_nodes.set(el, ret);
 
         return Ok(());
     }
@@ -1334,6 +1377,7 @@ impl Dakota {
         // construct layout tree with sizes of all boxes
         self.calculate_sizes(
             &root_node_id,
+            None, // no parent since we are the root node
             &LayoutSpace {
                 avail_width: self.d_window_dims.unwrap().0 as f32, // available width
                 avail_height: self.d_window_dims.unwrap().1 as f32, // available height

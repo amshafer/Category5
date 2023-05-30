@@ -57,20 +57,21 @@
      <y><constant>64</constant></y>
     </offset>
     <size>
-     <width><constant>128</constant></width>
-     <height><constant>128</constant></height>
+     <width><constant>256</constant></width>
+     <height><constant>256</constant></height>
     </size>
-   </el>
-   <el>
-    <resource>cursor</resource>
-    <offset>
-     <x><constant>32</constant></x>
-     <y><constant>64</constant></y>
-    </offset>
-    <size>
-     <width><constant>128</constant></width>
-     <height><constant>128</constant></height>
-    </size>
+    <el>
+     <unbounded_subsurface></unbounded_subsurface>
+     <resource>cursor</resource>
+     <offset>
+      <x><constant>220</constant></x>
+      <y><constant>64</constant></y>
+     </offset>
+     <size>
+      <width><constant>128</constant></width>
+      <height><constant>128</constant></height>
+     </size>
+    </el>
    </el>
   </el>
  </layout>

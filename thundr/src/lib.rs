@@ -202,9 +202,9 @@ impl Viewport {
 
     /// Set the scrolling within this viewport. This is a global transform
     ///
-    /// This performs bounds checking of `x` and `y` to ensure the are within
+    /// This performs bounds checking of `dx` and `dy` to ensure the are within
     /// `scroll_region`. If they are not, then no scrolling is performed.
-    pub fn set_scroll_amount(&mut self, x: i32, y: i32) {
+    pub fn set_scroll_amount(&mut self, dx: i32, dy: i32) {
         // The min and max bounds here are weird. Think of it like moving the
         // scroll region, not moving the scroll area. It looks like this:
         //
@@ -225,13 +225,13 @@ impl Viewport {
         let min_x = -1 * (self.scroll_region.0 - self.size.0);
         let max_x = 0;
         // now get the new offset
-        let x_offset = self.scroll_offset.0 + x;
+        let x_offset = self.scroll_offset.0 - dx;
         // clamp this offset within our bounds
         let x_clamped = x_offset.clamp(min_x, max_x);
 
         let min_y = -1 * (self.scroll_region.1 - self.size.1);
         let max_y = 0;
-        let y_offset = self.scroll_offset.1 + y;
+        let y_offset = self.scroll_offset.1 - dy;
         let y_clamped = y_offset.clamp(min_y, max_y);
 
         self.scroll_offset = (x_clamped, y_clamped);

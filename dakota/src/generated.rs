@@ -54,3 +54,4 @@ define_element_property!(content, contents, dom::Content);
 define_element_property!(bounds, bounds, dom::Edges);
 define_element_property!(children, children, Vec<DakotaId>);
 define_element_property!(dakota_dom, dom, dom::DakotaDOM);
+define_element_property!(unbounded_subsurface, unbounded_subsurf, bool);
