@@ -646,8 +646,8 @@ impl WindowManager {
                 dakota.set_size(
                     &surf,
                     dom::RelativeSize {
-                        width: dom::Value::Constant(dom::Constant::new(surface_size.0 as u32)),
-                        height: dom::Value::Constant(dom::Constant::new(surface_size.1 as u32)),
+                        width: dom::Value::Constant(dom::Constant::new(surface_size.0 as i32)),
+                        height: dom::Value::Constant(dom::Constant::new(surface_size.1 as i32)),
                     },
                 );
                 self.wm_cursor_hotspot = hotspot;
@@ -690,6 +690,11 @@ impl WindowManager {
         let parent_surf = &self.lookup_app_from_id(parent)?.a_surf;
 
         dakota.add_child_to_element(parent_surf, surf.clone());
+        // Under normal operation Dakota elements are restricted to the size of
+        // their parent. We do not want this for XDG popup surfaces, which are
+        // layered ontop of toplevel windows but are not restricted by their
+        // bounds. This special attribute tells dakota not to clip them.
+        dakota.set_unbounded_subsurface(surf, true);
         Ok(())
     }
 
@@ -806,10 +811,10 @@ impl WindowManager {
                 &cursor,
                 dom::RelativeOffset {
                     x: dom::Value::Constant(dom::Constant::new(
-                        (cursor_x as u32).saturating_sub(self.wm_cursor_hotspot.0 as u32),
+                        (cursor_x as i32).saturating_sub(self.wm_cursor_hotspot.0),
                     )),
                     y: dom::Value::Constant(dom::Constant::new(
-                        (cursor_y as u32).saturating_sub(self.wm_cursor_hotspot.1 as u32),
+                        (cursor_y as i32).saturating_sub(self.wm_cursor_hotspot.1),
                     )),
                 },
             );
@@ -864,15 +869,15 @@ impl WindowManager {
             dakota.set_offset(
                 &a.a_surf,
                 dom::RelativeOffset {
-                    x: dom::Value::Constant(dom::Constant::new(surface_pos.0 as u32)),
-                    y: dom::Value::Constant(dom::Constant::new(surface_pos.1 as u32)),
+                    x: dom::Value::Constant(dom::Constant::new(surface_pos.0 as i32)),
+                    y: dom::Value::Constant(dom::Constant::new(surface_pos.1 as i32)),
                 },
             );
             dakota.set_size(
                 &a.a_surf,
                 dom::RelativeSize {
-                    width: dom::Value::Constant(dom::Constant::new(surface_size.0 as u32)),
-                    height: dom::Value::Constant(dom::Constant::new(surface_size.1 as u32)),
+                    width: dom::Value::Constant(dom::Constant::new(surface_size.0 as i32)),
+                    height: dom::Value::Constant(dom::Constant::new(surface_size.1 as i32)),
                 },
             );
             // ----------------------------------------------------------------

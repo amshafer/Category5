@@ -705,7 +705,9 @@ impl Dakota {
                 };
 
                 let mut bounding_parent = self.d_layout_nodes.get_mut(bounding_id).unwrap();
-                if child_offset.x + child_size.width > bounding_parent.l_size.width
+                if child_offset.x < 0.0
+                    || child_offset.y < 0.0
+                    || child_offset.x + child_size.width > bounding_parent.l_size.width
                     || child_offset.y + child_size.height > bounding_parent.l_size.height
                 {
                     bounding_parent.l_is_viewport = true;

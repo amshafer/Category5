@@ -90,6 +90,12 @@ pub fn xdg_wm_base_handle_request(
                 ss_xdg_popup: None,
                 ss_cur_tlstate: TLState::empty(),
                 ss_tlconfigs: Vec::new(),
+                ss_max_size: (i32::MAX, i32::MAX),
+                ss_min_size: (1, 1),
+                ss_resize_right: false,
+                ss_resize_left: false,
+                ss_resize_top: false,
+                ss_resize_bottom: false,
             }));
 
             // Pass ourselves as user data
@@ -239,6 +245,13 @@ pub struct ShellSurface {
     pub ss_cur_tlstate: TLState,
     // The list of pending configuration events
     ss_tlconfigs: Vec<TLConfig>,
+    /// The max and min sizes set by the client
+    ss_max_size: (i32, i32),
+    ss_min_size: (i32, i32),
+    ss_resize_right: bool,
+    ss_resize_left: bool,
+    ss_resize_top: bool,
+    ss_resize_bottom: bool,
 }
 
 impl ShellSurface {
@@ -268,6 +281,21 @@ impl ShellSurface {
             self.ss_xs.xs_moving = false;
         }
 
+        let check_default = |d, v| match v {
+            0 => d,
+            _ => v,
+        };
+
+        // values of zero implies no min/max
+        if let Some(max) = self.ss_xs.xs_max_size {
+            self.ss_max_size.0 = check_default(i32::MAX, max.0);
+            self.ss_max_size.1 = check_default(i32::MAX, max.1);
+        }
+        if let Some(min) = self.ss_xs.xs_min_size {
+            self.ss_min_size.0 = check_default(1, min.0);
+            self.ss_min_size.1 = check_default(1, min.1);
+        }
+
         // Handle popup surface updates
         if let Some(popup) = self.ss_xdg_popup.as_mut() {
             popup.commit(surf, atmos, self.ss_xs.xs_make_new_popup_window);
@@ -295,11 +323,38 @@ impl ShellSurface {
             // The client should have updated the window geometry in reaction
             // to the last acked configure event. If it doesn't exist then
             // just set the window size to the surface size as per the spec
+            let ws = atmos.get_window_size(surf.s_id);
             let size = if let Some((w, h)) = self.ss_xs.xs_size {
                 (w as f32, h as f32)
             } else {
-                atmos.get_surface_size(surf.s_id)
+                ws
             };
+            let size_diff = (size.0 - ws.0, size.1 - ws.1);
+            log::error!("size_diff is {:?}", size_diff);
+
+            // If we are resizing the left or top, then we need to offset
+            // our window position by the change in size
+            if (self.ss_resize_left || self.ss_resize_top) && size_diff != (0.0, 0.0) {
+                // We need to update both the window and surace size.
+                //
+                // The surface pos controlls where this surface actually
+                // is in the desktop. The window pos is a section inside
+                // of the surface where content is displayed
+                let mut sp = atmos.get_surface_pos(surf.s_id);
+                let mut wp = atmos.get_window_pos(surf.s_id);
+                log::error!("Old surface pos is {:?}", sp);
+                if self.ss_resize_left {
+                    sp.0 -= size_diff.0;
+                    wp.0 -= size_diff.0;
+                }
+                if self.ss_resize_top {
+                    sp.1 -= size_diff.1;
+                    wp.1 -= size_diff.1;
+                }
+                log::error!("New surface pos is {:?}", sp);
+                atmos.set_surface_pos(surf.s_id, sp.0, sp.1);
+                atmos.set_window_pos(surf.s_id, wp.0, wp.1);
+            }
 
             atmos.set_window_size(surf.s_id, size.0, size.1);
 
@@ -361,32 +416,70 @@ impl ShellSurface {
         log::debug!("xdg_surface: generating configure event {}", self.ss_serial);
         // send configuration requests to the client
         if let Some(toplevel) = &self.ss_xdg_toplevel {
-            // Get the current window position
-            let mut size;
-            // if the client manually requested a size, honor that
-            if let Some(cur_size) = self.ss_xs.xs_size {
-                size = cur_size;
+            // Get the current window size
+            let mut size = if let Some(cur_size) = self.ss_xs.xs_size {
+                // if the client manually requested a size, honor that
+                cur_size
             } else {
                 // If we don't have the size saved then grab the latest
                 // from atmos.
                 // If we have pending configs then we should get the size
                 // of the last one and update that.
-                size = match self.ss_tlconfigs.len() {
+                match self.ss_tlconfigs.len() {
                     0 => {
                         let raw_size = atmos.get_window_size(surf.s_id);
                         (raw_size.0 as i32, raw_size.1 as i32)
                     }
                     _ => self.ss_tlconfigs[self.ss_tlconfigs.len() - 1].tlc_size,
-                };
-
-                if let Some((x, y)) = resize_diff {
-                    // update our state's dimensions
-                    // We SHOULD NOT update the atmosphere until the wl_surface
-                    // is committed
-                    size.0 += x;
-                    size.1 += y;
-                    log::error!("Resized to {:?}", size);
                 }
+            };
+
+            if let Some((x, y)) = resize_diff {
+                // Check that our cursor is not within the min size or exceeds the max
+                // size before we apply this mouse diff. If we start adding mouse movements
+                // to the size but we haven't returned to the edge then the resize doesn't
+                // match the mouse position.
+                let (cx, cy) = atmos.get_cursor_pos();
+                let (cx, cy) = (cx as f32, cy as f32);
+                let sp = atmos.get_surface_pos(surf.s_id);
+                let ss = atmos.get_surface_size(surf.s_id);
+                // TODO: subtrace size from pos if left or bottom_left?
+                let min = self.ss_min_size;
+                let max = self.ss_max_size;
+
+                // For right edge growing:
+                //    |------------|~~~~~~~~~~~~~~~~~~~~~~~~|
+                //   pos          min                      max
+                //
+                // For left edge growing:
+                //    |~~~~~~~~~~~~~~~~~~~~|~~~~~~~~~~|-----|
+                //   max                  pos        min   edge
+                let grow_mode_right = |c, pos, min, max| c > pos + min && c < pos + max;
+                let grow_mode_left = |c, pos, min, max, edge| c < edge - min && c > edge - max;
+
+                // For edges that don't require position adjustment it is easy, we just
+                // update the size if it passed the bounds check
+                if self.ss_resize_right && grow_mode_right(cx, sp.0, min.0 as f32, max.0 as f32) {
+                    // add but don't exceed the min/max bounds requested
+                    size.0 = (size.0 + x).clamp(min.0, max.0);
+                }
+                if self.ss_resize_bottom && grow_mode_right(cy, sp.1, min.1 as f32, max.1 as f32) {
+                    size.1 = (size.1 + y).clamp(min.1, max.1);
+                }
+                // For edges that do require position adjustment we also have to calculate
+                // a new position offset by our size change
+                if self.ss_resize_left
+                    && grow_mode_left(cx, sp.0, min.0 as f32, max.0 as f32, sp.0 + ss.0)
+                {
+                    size.0 = (size.0 - x).clamp(min.0, max.0);
+                }
+                if self.ss_resize_top
+                    && grow_mode_left(cx, sp.1, min.1 as f32, max.1 as f32, sp.1 + ss.1)
+                {
+                    size.1 = (size.1 - y).clamp(min.1, max.1);
+                }
+
+                log::error!("Resized to {:?}", size);
             }
 
             // build an array of state flags to pass to toplevel.configure
@@ -423,7 +516,7 @@ impl ShellSurface {
                     Arc::new(self.ss_cur_tlstate),
                 ));
             }
-            log::error!(
+            log::info!(
                 "xdg_surface: pushing config {:?}",
                 self.ss_tlconfigs[self.ss_tlconfigs.len() - 1]
             );
@@ -645,6 +738,22 @@ impl ShellSurface {
                 // Moving is NOT double buffered so just grab it now
                 let id = self.ss_surface.lock().unwrap().s_id;
                 atmos.set_resizing(Some(id));
+                (
+                    self.ss_resize_right,
+                    self.ss_resize_left,
+                    self.ss_resize_top,
+                    self.ss_resize_bottom,
+                ) = match edges.into_result().expect("Invalid resize edge flag") {
+                    xdg_toplevel::ResizeEdge::Right => (true, false, false, false),
+                    xdg_toplevel::ResizeEdge::Left => (false, true, false, false),
+                    xdg_toplevel::ResizeEdge::Top => (false, false, true, false),
+                    xdg_toplevel::ResizeEdge::Bottom => (false, false, false, true),
+                    xdg_toplevel::ResizeEdge::TopRight => (true, false, true, false),
+                    xdg_toplevel::ResizeEdge::BottomRight => (true, false, false, true),
+                    xdg_toplevel::ResizeEdge::TopLeft => (false, true, true, false),
+                    xdg_toplevel::ResizeEdge::BottomLeft => (false, true, false, true),
+                    _ => (false, false, false, false),
+                };
                 self.ss_cur_tlstate.tl_resizing = true;
             }
             xdg_toplevel::Request::SetMaxSize { width, height } => {

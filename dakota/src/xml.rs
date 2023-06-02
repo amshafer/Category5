@@ -59,7 +59,7 @@ enum Element {
     X(Option<dom::Value>),
     Y(Option<dom::Value>),
     Relative(Option<f32>),
-    Constant(Option<u32>),
+    Constant(Option<i32>),
     R(Option<f32>),
     G(Option<f32>),
     B(Option<f32>),
@@ -640,10 +640,14 @@ impl Dakota {
                                 .context("Could not parse float value for text in element")?,
                         )
                     }
+                    Element::Constant(data) => {
+                        *data =
+                            Some(text.parse::<i32>().context(
+                                "Could not parse unsigned int value for text in element",
+                            )?)
+                    }
                     // unsigned int fields
-                    Element::Constant(data)
-                    | Element::WindowWidth(data)
-                    | Element::WindowHeight(data) => {
+                    Element::WindowWidth(data) | Element::WindowHeight(data) => {
                         *data =
                             Some(text.parse::<u32>().context(
                                 "Could not parse unsigned int value for text in element",

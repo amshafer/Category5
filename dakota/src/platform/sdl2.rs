@@ -259,6 +259,7 @@ impl Platform for SDL2Plat {
 
         let watch = self.sdl_user_fds.as_mut().unwrap();
         watch.add_fd(fd);
+        watch.register_events();
     }
 
     /// Block and handle all available events from SDL2. If timeout

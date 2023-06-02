@@ -283,6 +283,7 @@ impl Platform for DisplayPlat {
 
     fn add_watch_fd(&mut self, fd: RawFd) {
         self.dp_fdwatch.add_fd(fd);
+        self.dp_fdwatch.register_events();
     }
 
     fn run(

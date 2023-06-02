@@ -104,11 +104,11 @@ impl Relative {
 
 #[derive(Debug, PartialEq, PartialOrd, Copy, Clone)]
 pub struct Constant {
-    val: u32,
+    val: i32,
 }
 
 impl Constant {
-    pub fn new(val: u32) -> Self {
+    pub fn new(val: i32) -> Self {
         Self { val: val }
     }
 }
@@ -123,9 +123,9 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn get_value(&self, avail_space: f32) -> Result<u32> {
+    pub fn get_value(&self, avail_space: f32) -> Result<i32> {
         Ok(match self {
-            Self::Relative(r) => r.scale(avail_space)?,
+            Self::Relative(r) => r.scale(avail_space)? as i32,
             Self::Constant(c) => c.val,
         })
     }
@@ -165,8 +165,8 @@ impl<T: PartialOrd + Copy> Offset<T> {
     }
 }
 
-impl From<Offset<u32>> for Offset<f32> {
-    fn from(item: Offset<u32>) -> Self {
+impl From<Offset<i32>> for Offset<f32> {
+    fn from(item: Offset<i32>) -> Self {
         Self {
             x: item.x as f32,
             y: item.y as f32,
@@ -297,7 +297,7 @@ impl Dakota {
     /// Get the final size to use as an offset into the
     /// parent space. This takes care of handling the relative
     /// proportional offset size
-    pub fn get_final_offset(&self, el: &DakotaId, space: &LayoutSpace) -> Result<Offset<u32>> {
+    pub fn get_final_offset(&self, el: &DakotaId, space: &LayoutSpace) -> Result<Offset<i32>> {
         if let Some(offset) = self.d_offsets.get(el) {
             Ok(Offset::new(
                 offset.x.get_value(space.avail_width)?,
@@ -323,8 +323,8 @@ impl Dakota {
     pub fn get_final_size(&self, el: &DakotaId, space: &LayoutSpace) -> Result<Size<u32>> {
         if let Some(size) = self.d_sizes.get(el) {
             Ok(Size::new(
-                size.width.get_value(space.avail_width)?,
-                size.height.get_value(space.avail_height)?,
+                size.width.get_value(space.avail_width)? as u32,
+                size.height.get_value(space.avail_height)? as u32,
             ))
         } else {
             // if the size is still empty, there were no children. This should just be
