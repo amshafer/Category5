@@ -16,7 +16,7 @@ use ash::vk;
 use ash::{Entry, Instance};
 
 use crate::pipelines::PipelineType;
-use crate::{CreateInfo, Result as ThundrResult, SurfaceType, ThundrError};
+use crate::{CreateInfo, Result as ThundrResult, SurfaceType};
 use utils::log;
 
 use std::str::FromStr;
@@ -529,7 +529,7 @@ impl Backend for SDL2DisplayBackend {
         let dpi = self
             .sdl_video
             .display_dpi(self.sdl_window.display_index().unwrap())
-            .or(Err(ThundrError::INVALID))?;
+            .or(Err(crate::ThundrError::INVALID))?;
 
         // Scale the reported DPI by the scaling factor
         let win_size = self.sdl_window.size();

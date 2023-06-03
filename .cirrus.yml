@@ -2,18 +2,7 @@ freebsd_instance:
         image_family: freebsd-13-1
 
 category5_freebsd_task:
-        install_dependencies_script: pkg install -y rust vulkan-loader mesa-libs mesa-dri libxkbcommon libinput wayland wayland-protocols libudev-devd pkgconf sdl2 cmake ninja
-
-        # From the Cirrus Rust examples
-        registry_cache:
-                folder: $CARGO_HOME/registry
-        fingerprint_script: cat Cargo.lock
-        target_cache:
-                folder: target
-        fingerprint_script:
-                - rustc --version
-                - cat Cargo.lock
-        before_cache_script: rm -rf $CARGO_HOME/registry/index
+        install_dependencies_script: pkg install -y rust vulkan-loader mesa-libs mesa-dri libxkbcommon libinput wayland wayland-protocols libudev-devd pkgconf sdl2 cmake ninja harfbuzz
 
         # Now do the build
         build_lluvia_script: cd lluvia && cargo build
@@ -29,7 +18,7 @@ category5_linux_task:
 
         install_dependencies_script:
                 - apt update
-                - apt install -y libudev-dev clang libvulkan-dev libxkbcommon-dev libsdl2-dev git meson ninja-build libmtdev-dev libevdev-dev
+                - apt install -y libudev-dev clang libvulkan-dev libxkbcommon-dev libsdl2-dev git meson ninja-build libmtdev-dev libevdev-dev libharfbuzz-dev
 
         install_libinput_script:
                 - cd ~/
@@ -37,16 +26,5 @@ category5_linux_task:
                 - cd libinput
                 - meson linux_build --prefix /usr -Dtests=false -Ddebug-gui=false -Dcoverity=false -Dlibwacom=false -Ddocumentation=false
                 - ninja -C linux_build install
-
-        # From the Cirrus Rust examples
-        registry_cache:
-                folder: $CARGO_HOME/registry
-        fingerprint_script: cat Cargo.lock
-        target_cache:
-                folder: target
-        fingerprint_script:
-                - rustc --version
-                - cat Cargo.lock
-        before_cache_script: rm -rf $CARGO_HOME/registry/index
 
         build_script: cargo build
