@@ -2,7 +2,7 @@
 ///
 /// Austin Shafer - 2022
 use crate::font::CachedChar;
-use crate::utils::{anyhow, log, Result};
+use crate::utils::{anyhow, Result};
 use crate::{Dakota, DakotaId, LayoutSpace};
 
 use std::cmp::{Ord, PartialOrd};
@@ -58,12 +58,23 @@ impl Data {
     }
 }
 
+/// Color definition for a resource
+///
+/// Resources that are not defined by images may instead be defined
+/// by a color. Values are in the range [0.0, 1.0].
 #[derive(Copy, Clone, Debug)]
 pub struct Color {
     pub r: f32,
     pub g: f32,
     pub b: f32,
     pub a: f32,
+}
+
+impl Color {
+    /// Create a new color from values [0.0, 1.0]
+    pub fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
+        Self { r, g, b, a }
+    }
 }
 
 #[derive(Debug)]
@@ -88,7 +99,7 @@ pub struct Relative {
 
 impl Relative {
     pub fn new(v: f32) -> Self {
-        assert!(v >= 0.0 && v < 1.0);
+        assert!(v >= 0.0 && v <= 1.0);
         Self { val: v }
     }
 
@@ -327,22 +338,11 @@ impl Dakota {
                 size.height.get_value(space.avail_height)? as u32,
             ))
         } else {
-            // if the size is still empty, there were no children. This should just be
-            // sized to the available space divided by the number of
-            // children.
-            // Clamp to 1 to avoid dividing by zero
-            let num_children = std::cmp::max(1, space.autolayout_children_at_this_level);
-            if num_children > 1 {
-                log::debug!(
-                    "Limiting final element size since we are part of {} children",
-                    num_children
-                );
-            }
-            // TODO: add directional tiling of elements
-            // for now just do vertical subdivision and fill horizontal
+            // If no size was specified then this defaults to the size of its
+            // container
             Ok(Size::new(
                 space.avail_width as u32,
-                (space.avail_height / num_children as f32) as u32,
+                space.avail_height as u32,
             ))
         }
     }

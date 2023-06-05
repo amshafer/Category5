@@ -101,7 +101,15 @@ macro_rules! log_internal{
         // !! NOTE: current log level set here !!
         //
         // Currently set to the debug level (2)
-        if $loglevel.get_level() <= *LOG_LEVEL_RAW {
+        let mut should_log = $loglevel.get_level() <= *LOG_LEVEL_RAW;
+
+        // If this variable is defined check that our log statements
+        // come from files that contain this string
+        if let Ok(m) = std::env::var("CATEGORY5_LOG_MATCH") {
+            should_log = should_log && file!().contains(m.as_str());
+        }
+
+        if should_log {
             let fmtstr = format!("[{:?}]<{}> {}:{} - {}",
                 log::get_current_millis(),
                 $loglevel.get_name(),

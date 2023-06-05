@@ -455,7 +455,7 @@ impl ShellSurface {
                 //    |~~~~~~~~~~~~~~~~~~~~|~~~~~~~~~~|-----|
                 //   max                  pos        min   edge
                 let grow_mode_right = |c, pos, min, max| c > pos + min && c < pos + max;
-                let grow_mode_left = |c, pos, min, max, edge| c < edge - min && c > edge - max;
+                let grow_mode_left = |c, min, max, edge| c < edge - min && c > edge - max;
 
                 // For edges that don't require position adjustment it is easy, we just
                 // update the size if it passed the bounds check
@@ -469,12 +469,11 @@ impl ShellSurface {
                 // For edges that do require position adjustment we also have to calculate
                 // a new position offset by our size change
                 if self.ss_resize_left
-                    && grow_mode_left(cx, sp.0, min.0 as f32, max.0 as f32, sp.0 + ss.0)
+                    && grow_mode_left(cx, min.0 as f32, max.0 as f32, sp.0 + ss.0)
                 {
                     size.0 = (size.0 - x).clamp(min.0, max.0);
                 }
-                if self.ss_resize_top
-                    && grow_mode_left(cx, sp.1, min.1 as f32, max.1 as f32, sp.1 + ss.1)
+                if self.ss_resize_top && grow_mode_left(cx, min.1 as f32, max.1 as f32, sp.1 + ss.1)
                 {
                     size.1 = (size.1 - y).clamp(min.1, max.1);
                 }

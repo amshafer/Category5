@@ -50,7 +50,6 @@ impl DescPool {
 
     /// Returns the index of the new pool
     pub fn add_pool(&mut self, dev: &Device) -> usize {
-        println!("Adding another descriptor pool");
         let sizes = [vk::DescriptorPoolSize::builder()
             .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .descriptor_count(POOL_SIZE)

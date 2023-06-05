@@ -110,6 +110,11 @@ pub struct WindowManager {
     wm_dakota_root: DakotaId,
     /// Dakota DOM, the top level dakota object
     pub wm_dakota_dom: DakotaId,
+    /// The menu bar across the top of the screen
+    ///
+    /// This is a Dakota element that holds all of the menu items and widgets
+    /// in the top screen bar.
+    wm_menubar: DakotaId,
     /// The window area for this desktop
     ///
     /// This is a Dakota element that represents the region where all client windows
@@ -220,6 +225,30 @@ impl WindowManager {
         surf
     }
 
+    /// Define all of the Dakota elements that make up the menu bar
+    /// at the top of the screen
+    fn create_menubar(dakota: &mut dak::Dakota) -> DakotaId {
+        let barcolor = dakota.create_resource().unwrap();
+        dakota.set_resource_color(&barcolor, dak::dom::Color::new(0.235, 0.24, 0.238, 0.9));
+
+        let menubar = dakota.create_element().unwrap();
+        dakota.set_size(
+            &menubar,
+            dom::RelativeSize {
+                // Make our bar 16 px tall but stretch across the screen
+                width: dom::Value::Relative(dom::Relative::new(1.0)),
+                height: dom::Value::Constant(dom::Constant::new(20)),
+            },
+        );
+        dakota.set_resource(&menubar, barcolor);
+
+        let name = dakota.create_element().unwrap();
+        dakota.set_text_regular(&name, "Category5");
+        dakota.add_child_to_element(&menubar, name);
+
+        return menubar;
+    }
+
     /// Create a new WindowManager
     ///
     /// This will create all the graphical resources needed for
@@ -236,6 +265,7 @@ impl WindowManager {
         atmos.set_drm_dev(major, minor);
 
         // Create a DOM object that all others will hang off of
+        // ------------------------------------------------------------------
         let root = dakota.create_element().unwrap();
         let dom = dakota.create_dakota_dom().unwrap();
         dakota.set_dakota_dom(
@@ -255,8 +285,14 @@ impl WindowManager {
             },
         );
 
+        // First create our menu bar across the top of the screen
+        // ------------------------------------------------------------------
+        let menubar = Self::create_menubar(dakota);
+        dakota.add_child_to_element(&root, menubar.clone());
+
         // Next add a dummy element to place all of the client window child elements
         // inside of.
+        // ------------------------------------------------------------------
         let desktop = dakota.create_element().unwrap();
         dakota.add_child_to_element(&root, desktop.clone());
         // set the background for this desktop
@@ -271,6 +307,7 @@ impl WindowManager {
         dakota.set_resource(&root, image);
 
         // now add a cursor on top of this
+        // ------------------------------------------------------------------
         let cursor = WindowManager::get_default_cursor(dakota);
         dakota.add_child_to_element(&root, cursor.clone());
 
@@ -281,6 +318,7 @@ impl WindowManager {
             wm_default_cursor: cursor,
             wm_dakota_root: root,
             wm_dakota_dom: dom,
+            wm_menubar: menubar,
             wm_desktop: desktop,
             wm_apps: PropertyList::new(),
             wm_will_die: Vec::new(),

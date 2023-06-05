@@ -672,10 +672,10 @@ impl Renderer {
             .contains(vk::ImageUsageFlags::STORAGE)
         {
             extra_usage |= vk::ImageUsageFlags::STORAGE;
-            log::debug!("Format {:?} supports Storage usage", surface_format.format);
+            log::info!("Format {:?} supports Storage usage", surface_format.format);
         } else {
             assert!(dev_features.vkc_supports_mut_swapchain);
-            log::debug!(
+            log::info!(
                 "Format {:?} does not support Storage usage, using mutable swapchain",
                 surface_format.format
             );
@@ -790,7 +790,7 @@ impl Renderer {
             .map(|&image| {
                 let format_props =
                     inst.get_physical_device_format_properties(pdev, surface_format.format);
-                log::debug!("format props: {:#?}", format_props);
+                log::info!("format props: {:#?}", format_props);
 
                 // we want to interact with this image as a 2D
                 // array of RGBA pixels (i.e. the "normal" way)
@@ -2609,7 +2609,7 @@ impl Renderer {
                 .image_info(self.r_image_infos.get_data_slice().data())
                 .build(),
         ];
-        log::debug!(
+        log::info!(
             "Raw image infos is {:#?}",
             self.r_image_infos.get_data_slice().data()
         );

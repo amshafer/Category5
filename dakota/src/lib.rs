@@ -257,14 +257,6 @@ pub struct LayoutSpace {
     pub avail_width: f32,
     /// This is essentially the height of the parent container
     pub avail_height: f32,
-    /// This is the number of children the parent container has
-    ///
-    /// Note that this is the count of "autolayout" children, not
-    /// the true total count of children. All children that do not
-    /// have a position specified will be opted into autolayout,
-    /// and their position will be tiled and assigned. This counts
-    /// how many such children exist.
-    pub autolayout_children_at_this_level: u32,
 }
 
 macro_rules! create_component_and_table {
@@ -528,6 +520,21 @@ impl Dakota {
         Ok(())
     }
 
+    /// Helper for populating an element with default formatting
+    /// regular text. This saves the user from fully specifying the details
+    /// of the text objects for this common operation.
+    pub fn set_text_regular(&mut self, resource: &DakotaId, text: &str) {
+        self.set_text(
+            resource,
+            dom::Text {
+                items: vec![dom::TextItem::p(dom::TextRun {
+                    value: text.to_owned(),
+                    cache: None,
+                })],
+            },
+        );
+    }
+
     /// Hint that part of this resource has been damaged to the rendering stack
     ///
     /// This makes a hint to Thundr that only a portion of this resource is has
@@ -622,24 +629,6 @@ impl Dakota {
             .ok_or(anyhow!("Expected children"))?
             .len();
 
-        // first count how many children will have their layout
-        // done for them. It is important that this differs from the
-        // real child count, since we only want to calculate proportional
-        // sizing based on other auto children. If the user manually assigned
-        // a layout then we don't care.
-        let mut autochildren = 0;
-        for i in 0..child_count {
-            let child_id = &self
-                .d_children
-                .get(el)
-                .ok_or(anyhow!("Expected children"))?[i];
-
-            if self.get_offset(child_id).is_none() {
-                autochildren += 1;
-            }
-        }
-        space.autolayout_children_at_this_level = autochildren;
-
         for i in 0..child_count {
             let child_id = self
                 .d_children
@@ -648,7 +637,7 @@ impl Dakota {
                 .clone();
             self.calculate_sizes(&child_id, Some(el), &space)?;
 
-            // ----- adjust child size ----
+            // ----- adjust child position ----
             {
                 let mut child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
 
@@ -658,9 +647,11 @@ impl Dakota {
                 // doesn't get used for pretty formatting, it just gets placed
                 // wherever.
                 if !child_size.l_offset_specified {
-                    // if this element exceeds the horizontal space, set it on a
+                    // if this element exceeds the horizontal or vertical space, set it on a
                     // new line
-                    if tile_info.t_last_x as f32 + child_size.l_size.width > space.avail_width {
+                    if tile_info.t_last_x as f32 + child_size.l_size.width > space.avail_width
+                        || tile_info.t_last_y as f32 + child_size.l_size.height > space.avail_height
+                    {
                         tile_info.t_last_x = 0;
                         tile_info.t_last_y = tile_info.t_greatest_y;
                     }
@@ -710,6 +701,7 @@ impl Dakota {
                     || child_offset.x + child_size.width > bounding_parent.l_size.width
                     || child_offset.y + child_size.height > bounding_parent.l_size.height
                 {
+                    log::debug!("Element exceeds available space, marking parent as viewport");
                     bounding_parent.l_is_viewport = true;
                 }
             }
@@ -731,7 +723,12 @@ impl Dakota {
     /// we have, then the size is available_space
     /// 3. No size and no bounds means we are inside of a scrolling arena, and
     /// we should grow this box to hold all of its children.
-    fn calculate_sizes_el(&mut self, el: &DakotaId, space: &LayoutSpace) -> Result<()> {
+    fn calculate_sizes_el(
+        &mut self,
+        el: &DakotaId,
+        parent: Option<&DakotaId>,
+        space: &LayoutSpace,
+    ) -> Result<()> {
         let mut node = LayoutNode::new(None, dom::Offset::new(0.0, 0.0), dom::Size::new(0.0, 0.0));
 
         node.l_offset_specified = self.get_offset(el).is_some();
@@ -741,6 +738,18 @@ impl Dakota {
             .into();
 
         node.l_size = self.get_final_size(el, space)?.into();
+
+        // if this has a parent and exceeds its size then mark that
+        // parent as a viewport
+        if node.l_offset.x + node.l_size.width > space.avail_width
+            || node.l_offset.y + node.l_size.height > space.avail_height
+        {
+            if let Some(parent) = parent {
+                log::debug!("Element exceeds available space, marking parent as viewport");
+                let mut parent_node = self.d_layout_nodes.get_mut(parent).unwrap();
+                parent_node.l_is_viewport = true;
+            }
+        }
 
         log::debug!("Offset of element is {:?}", node.l_offset);
         log::debug!("Size of element is {:?}", node.l_size);
@@ -891,7 +900,7 @@ impl Dakota {
         // HANDLE THIS ELEMENT
         // ------------------------------------------
         // Must be done before anything referencing the size of this element
-        self.calculate_sizes_el(el, space)
+        self.calculate_sizes_el(el, parent, space)
             .context("Layout Tree Calculation: processing element")?;
 
         // This space is what the children/content will use
@@ -901,7 +910,6 @@ impl Dakota {
             LayoutSpace {
                 avail_width: node.l_size.width,
                 avail_height: node.l_size.height,
-                autolayout_children_at_this_level: 0,
             }
         };
 
@@ -1383,7 +1391,6 @@ impl Dakota {
             &LayoutSpace {
                 avail_width: self.d_window_dims.unwrap().0 as f32, // available width
                 avail_height: self.d_window_dims.unwrap().1 as f32, // available height
-                autolayout_children_at_this_level: 1,              // Only one child, the root node
             },
         )?;
         // Manually mark the root node as a viewport node. It always is, and it will

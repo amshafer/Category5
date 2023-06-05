@@ -613,7 +613,7 @@ impl Renderer {
             .unwrap()
             .iv_image_view;
 
-        log::debug!(
+        log::info!(
             "Image list index {}: writing view {:?}",
             internal.i_id.get_raw_id(),
             view
