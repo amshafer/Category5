@@ -58,7 +58,7 @@ extern crate renderdoc;
 use renderdoc::RenderDoc;
 
 // Menu bar is 16 pixels tall
-static MENUBAR_SIZE: i32 = 16;
+static MENUBAR_SIZE: i32 = 32;
 pub static DESKTOP_OFFSET: i32 = MENUBAR_SIZE;
 
 /// This consolidates the multiple resources needed
@@ -209,19 +209,14 @@ impl WindowManager {
 
     /// Returns an ID for an element bound with a defaul texture resource
     fn get_default_cursor(dakota: &mut dak::Dakota) -> DakotaId {
-        let img = image::open(format!(
-            "{}/{}",
-            std::env::current_dir().unwrap().to_str().unwrap(),
-            "images/cursor.png"
-        ))
-        .unwrap()
-        .to_bgra8();
-        let pixels: Vec<u8> = img.into_vec();
-
         let image = dakota.create_resource().unwrap();
         dakota
-            .define_resource_from_bits(&image, pixels.as_slice(), 64, 64, 0, dom::Format::ARGB8888)
-            .unwrap();
+            .define_resource_from_image(
+                &image,
+                std::path::Path::new("images/cursor.png"),
+                dom::Format::ARGB8888,
+            )
+            .expect("Could not import background image into dakota");
         let surf = dakota.create_element().unwrap();
         dakota.set_offset(
             &surf,
@@ -233,8 +228,8 @@ impl WindowManager {
         dakota.set_size(
             &surf,
             dom::RelativeSize {
-                width: dom::Value::Constant(dom::Constant::new(MENUBAR_SIZE)),
-                height: dom::Value::Constant(dom::Constant::new(MENUBAR_SIZE)),
+                width: dom::Value::Constant(dom::Constant::new(10)),
+                height: dom::Value::Constant(dom::Constant::new(15)),
             },
         );
         dakota.set_resource(&surf, image.clone());
@@ -246,7 +241,7 @@ impl WindowManager {
     /// at the top of the screen
     fn create_menubar(dakota: &mut dak::Dakota) -> DakotaId {
         let barcolor = dakota.create_resource().unwrap();
-        dakota.set_resource_color(&barcolor, dak::dom::Color::new(0.235, 0.24, 0.238, 0.9));
+        dakota.set_resource_color(&barcolor, dak::dom::Color::new(0.085, 0.09, 0.088, 0.9));
 
         let menubar = dakota.create_element().unwrap();
         dakota.set_size(
@@ -254,7 +249,7 @@ impl WindowManager {
             dom::RelativeSize {
                 // Make our bar 16 px tall but stretch across the screen
                 width: dom::Value::Relative(dom::Relative::new(1.0)),
-                height: dom::Value::Constant(dom::Constant::new(20)),
+                height: dom::Value::Constant(dom::Constant::new(MENUBAR_SIZE)),
             },
         );
         dakota.set_resource(&menubar, barcolor);
@@ -317,7 +312,7 @@ impl WindowManager {
         dakota
             .define_resource_from_image(
                 &image,
-                std::path::Path::new("images/beach.png"),
+                std::path::Path::new("images/cat5_desktop.png"),
                 dom::Format::ARGB8888,
             )
             .expect("Could not import background image into dakota");

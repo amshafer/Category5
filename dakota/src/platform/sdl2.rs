@@ -55,7 +55,7 @@ impl SDL2Plat {
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
         let window = video_subsystem
-            .window("dakota", 800, 600)
+            .window("dakota", 640, 480)
             .vulkan()
             .resizable()
             .position_centered()
