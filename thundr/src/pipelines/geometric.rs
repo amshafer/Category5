@@ -202,28 +202,30 @@ impl Pipeline for GeomPipeline {
             // little squares which make it look like compressed pixel data was written to a linear
             // texture. So on AMD we do not do the instancing, but instead have a draw call for
             // every object (gross)
-            if rend.dev_features.vkc_war_disable_instanced_drawing {
-                for i in 0..pass.p_window_order.len() as u32 {
-                    // [WAR] Launch each instance manually :(
-                    // TODO: skip if incorrect pass
+            if pass.p_window_order.len() > 0 {
+                if rend.dev_features.vkc_war_disable_instanced_drawing {
+                    for i in 0..pass.p_window_order.len() as u32 {
+                        // [WAR] Launch each instance manually :(
+                        // TODO: skip if incorrect pass
+                        rend.dev.cmd_draw_indexed(
+                            params.cbuf,     // drawing command buffer
+                            self.vert_count, // number of verts
+                            1,               // number of instances
+                            0,               // first vertex
+                            0,               // vertex offset
+                            i as u32,        // first instance
+                        );
+                    }
+                } else {
                     rend.dev.cmd_draw_indexed(
-                        params.cbuf,     // drawing command buffer
-                        self.vert_count, // number of verts
-                        1,               // number of instances
-                        0,               // first vertex
-                        0,               // vertex offset
-                        i as u32,        // first instance
+                        params.cbuf,                      // drawing command buffer
+                        self.vert_count,                  // number of verts
+                        pass.p_window_order.len() as u32, // number of instances
+                        0,                                // first vertex
+                        0,                                // vertex offset
+                        0,                                // first instance
                     );
                 }
-            } else {
-                rend.dev.cmd_draw_indexed(
-                    params.cbuf,                      // drawing command buffer
-                    self.vert_count,                  // number of verts
-                    pass.p_window_order.len() as u32, // number of instances
-                    0,                                // first vertex
-                    0,                                // vertex offset
-                    0,                                // first instance
-                );
             }
             log::info!("Drawing {} objects", pass.p_window_order.len());
         }
