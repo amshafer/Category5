@@ -227,6 +227,7 @@ impl EventManager {
             atmos.set_resolution(res.0, res.1);
         }
         self.em_climate.send_all_geometry();
+        self.em_wm.handle_ood(&mut self.em_climate.c_dakota);
     }
 
     /// Helper to repeat Dakota's `dispatch_platform` until success
@@ -341,10 +342,12 @@ impl EventManager {
 
             if needs_render {
                 log::profiling!("trying to render frame");
-                match self.em_wm.render_frame(
+                let result = self.em_wm.render_frame(
                     &mut self.em_climate.c_dakota,
                     self.em_climate.c_atmos.lock().unwrap().deref_mut(),
-                ) {
+                );
+
+                match result {
                     Ok(()) => needs_render = false,
                     Err(e) => {
                         if let Some(err) = e.downcast_ref::<dak::DakotaError>() {
@@ -353,6 +356,8 @@ impl EventManager {
                             {
                                 // ignore the timeout, start our loop over
                                 log::profiling!("Next frame isn't ready, continuing");
+                            } else if *err == dak::DakotaError::OUT_OF_DATE {
+                                self.handle_ood();
                             } else {
                                 panic!("Rendering a frame failed with {:?}", e);
                             }

@@ -57,6 +57,10 @@ extern crate renderdoc;
 #[cfg(feature = "renderdoc")]
 use renderdoc::RenderDoc;
 
+// Menu bar is 16 pixels tall
+static MENUBAR_SIZE: i32 = 16;
+pub static DESKTOP_OFFSET: i32 = MENUBAR_SIZE;
+
 /// This consolidates the multiple resources needed
 /// to represent a titlebar
 struct Titlebar {
@@ -190,6 +194,19 @@ impl WindowManager {
         Titlebar { bar: bar, dot: dot }
     }
 
+    /// Called when the swapchain image resizes
+    pub fn handle_ood(&mut self, dakota: &mut dak::Dakota) {
+        dakota.set_size(
+            &self.wm_desktop,
+            dom::RelativeSize {
+                width: dom::Value::Relative(dom::Relative::new(1.0)),
+                height: dom::Value::Constant(dom::Constant::new(
+                    dakota.get_resolution().1 as i32 - MENUBAR_SIZE,
+                )),
+            },
+        );
+    }
+
     /// Returns an ID for an element bound with a defaul texture resource
     fn get_default_cursor(dakota: &mut dak::Dakota) -> DakotaId {
         let img = image::open(format!(
@@ -216,8 +233,8 @@ impl WindowManager {
         dakota.set_size(
             &surf,
             dom::RelativeSize {
-                width: dom::Value::Constant(dom::Constant::new(16)),
-                height: dom::Value::Constant(dom::Constant::new(16)),
+                width: dom::Value::Constant(dom::Constant::new(MENUBAR_SIZE)),
+                height: dom::Value::Constant(dom::Constant::new(MENUBAR_SIZE)),
             },
         );
         dakota.set_resource(&surf, image.clone());
@@ -311,7 +328,7 @@ impl WindowManager {
         let cursor = WindowManager::get_default_cursor(dakota);
         dakota.add_child_to_element(&root, cursor.clone());
 
-        WindowManager {
+        let mut ret = WindowManager {
             wm_titlebar: WindowManager::get_default_titlebar(dakota),
             wm_cursor: Some(cursor.clone()),
             wm_cursor_hotspot: (0, 0),
@@ -325,7 +342,11 @@ impl WindowManager {
             wm_atmos_ids: Vec::new(),
             #[cfg(feature = "renderdoc")]
             wm_renderdoc: doc,
-        }
+        };
+        // This sets the desktop size
+        ret.handle_ood(dakota);
+
+        return ret;
     }
 
     /// Set the desktop background for the renderer
@@ -981,14 +1002,9 @@ impl WindowManager {
         loop {
             match dakota.dispatch_rendering(&self.wm_dakota_dom) {
                 Ok(()) => break,
-                Err(e) => {
-                    if e.downcast_ref::<dak::DakotaError>() == Some(&dak::DakotaError::OUT_OF_DATE)
-                    {
-                        continue;
-                    } else {
-                        return Err(e);
-                    }
-                }
+                // Do not call handle_ood here. This will propogate the error back up to
+                // the main event loop which will call back to us from there.
+                Err(e) => return Err(e),
             };
         }
 

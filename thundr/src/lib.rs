@@ -167,7 +167,7 @@ pub struct Thundr {
 ///
 /// The viewport will control what section of the screen is rendered
 /// to. You will specify it when performing draw calls.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Viewport {
     /// This is the position of the viewport on the output
     pub offset: (i32, i32),

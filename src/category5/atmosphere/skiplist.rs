@@ -254,27 +254,26 @@ impl Atmosphere {
         });
     }
 
+    /// Convert a global position in the screen to a position
+    /// within the usable desktop region. This offsets the menubar
+    /// at the top of the screen
+    pub fn get_adjusted_desktop_coord(&self, x: f32, y: f32) -> (f32, f32) {
+        (x, y - wm::DESKTOP_OFFSET as f32)
+    }
+
     /// Checks if the point (x, y) overlaps with the window surface.
     ///
     /// This does not accound for any regions, just the surface size.
-    pub fn surface_is_at_point(&self, win: WindowId, barsize: f32, x: f32, y: f32) -> bool {
+    pub fn surface_is_at_point(&self, win: WindowId, x: f32, y: f32) -> bool {
         log::info!("surface_is_at_point(win={:?}, x={}, y={})", win, x, y);
+        let (x, y) = self.get_adjusted_desktop_coord(x, y);
         let (wx, wy) = self.get_surface_pos(win);
         let (ww, wh) = self.get_surface_size(win);
         log::info!("surface {:?} pos x={}, y={}", win, wx, wy);
         log::info!("surface {:?} size x={}, y={}", win, ww, wh);
 
-        // Ugly:
-        // For the barsize to be included in our calculations,
-        // we need to be sure that win is a root window, since only
-        // root windows will have server-side decorations.
-        let bs = match self.get_root_window(win) {
-            Some(_) => 0.0, // Don't use a barsize offset
-            None => barsize,
-        };
-
         // If this window contains (x, y) then return it
-        x > wx && y > (wy - bs) && x < (wx + ww) && y < (wy + wh)
+        x > wx && y > wy && x < (wx + ww) && y < (wy + wh)
     }
 
     /// Find the window id of the top window whose input region contains (x, y).
@@ -284,7 +283,6 @@ impl Atmosphere {
     /// input region contain the point.
     pub fn find_window_with_input_at_point(&self, x: f32, y: f32) -> Option<WindowId> {
         log::info!("find_window_with_input_at_point {},{}", x, y);
-        let barsize = self.get_barsize();
         let mut ret = None;
 
         self.map_inorder_on_surfs(|win| {
@@ -295,6 +293,8 @@ impl Atmosphere {
                 let (wx, wy) = self.get_surface_pos(win);
 
                 if let Some(input_region) = surf.s_input.as_ref() {
+                    // Adjust for offsetting into the desktop
+                    let (x, y) = self.get_adjusted_desktop_coord(x, y);
                     log::info!(
                         "Checking input region {:?} against {:?}",
                         input_region,
@@ -318,7 +318,7 @@ impl Atmosphere {
                     // TODO: VERIFY
                     // If the window does not have an attached input region,
                     // then we need to check against the entire surface area.
-                    if self.surface_is_at_point(win, barsize, x, y) {
+                    if self.surface_is_at_point(win, x, y) {
                         ret = Some(win);
                         return false;
                     }
@@ -337,11 +337,9 @@ impl Atmosphere {
     /// with a window. If it does, point_is_on_titlebar is
     /// used to check for a grab or relay input event.
     pub fn find_window_at_point(&self, x: f32, y: f32) -> Option<WindowId> {
-        let barsize = self.get_barsize();
-
         let mut ret = None;
         self.map_inorder_on_surfs(|win| {
-            if self.surface_is_at_point(win, barsize, x, y) {
+            if self.surface_is_at_point(win, x, y) {
                 ret = Some(win);
                 return false;
             }

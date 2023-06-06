@@ -152,9 +152,22 @@ pub struct Dakota {
     d_mouse_pos: (f64, f64),
 }
 
+/// Viewport tracking
+///
+/// We represent scrolling regions using Thundr's Viewport struct. This
+/// allows us to only render a part of the scene, and handles any scrolling
+/// offsets that may have occurred.
 struct ViewportNode {
     v_children: Vec<ViewportId>,
     v_root_node: Option<DakotaId>,
+    /// The real offset of this viewport within the parent
+    v_offset: (i32, i32),
+    /// The real total size of this viewport before clipping
+    v_size: (i32, i32),
+    /// This represents the current viewport that we are
+    /// *actually* using for drawing. This may be smaller
+    /// than the original due to subviewports being scrolled
+    /// and clipped.
     v_viewport: th::Viewport,
     v_surfaces: th::SurfaceList,
 }
@@ -726,7 +739,7 @@ impl Dakota {
     fn calculate_sizes_el(
         &mut self,
         el: &DakotaId,
-        parent: Option<&DakotaId>,
+        _parent: Option<&DakotaId>,
         space: &LayoutSpace,
     ) -> Result<()> {
         let mut node = LayoutNode::new(None, dom::Offset::new(0.0, 0.0), dom::Size::new(0.0, 0.0));
@@ -738,18 +751,8 @@ impl Dakota {
             .into();
 
         node.l_size = self.get_final_size(el, space)?.into();
-
-        // if this has a parent and exceeds its size then mark that
-        // parent as a viewport
-        if node.l_offset.x + node.l_size.width > space.avail_width
-            || node.l_offset.y + node.l_size.height > space.avail_height
-        {
-            if let Some(parent) = parent {
-                log::debug!("Element exceeds available space, marking parent as viewport");
-                let mut parent_node = self.d_layout_nodes.get_mut(parent).unwrap();
-                parent_node.l_is_viewport = true;
-            }
-        }
+        // Bounds will be checked in caller to see if the parent needs to be
+        // marked as a viewport.
 
         log::debug!("Offset of element is {:?}", node.l_offset);
         log::debug!("Size of element is {:?}", node.l_size);
@@ -964,6 +967,11 @@ impl Dakota {
         return ret;
     }
 
+    /// Create and define the viewport objects given an initialized tree of elements
+    ///
+    /// We walk the element tree to see which are in need of scrolling support. If an
+    /// Element's contents are too large it was marked as needing a viewport, and we
+    /// will create one for it here. Viewports are nested.
     fn calculate_viewports(
         &mut self,
         id: DakotaId,
@@ -982,11 +990,14 @@ impl Dakota {
                 let node = self.d_layout_nodes.get_mut(&id).unwrap();
                 let new_id = self.d_viewport_ecs_inst.add_entity();
 
+                let mut parent_offset = (0, 0);
+
                 // Add this as a child of the parent
                 // Do this first to please the borrow checker
                 if let Some(parent_id) = parent_viewport.as_ref() {
                     let mut parent = self.d_viewport_nodes.get_mut(&parent_id).unwrap();
                     parent.v_children.push(new_id.clone());
+                    parent_offset = (parent.v_viewport.offset.0, parent.v_viewport.offset.1);
                 }
 
                 let mut th_viewport = th::Viewport::new(
@@ -999,6 +1010,11 @@ impl Dakota {
 
                 let viewport = ViewportNode {
                     v_root_node: Some(id.clone()),
+                    v_offset: (
+                        offset.0 as i32 - parent_offset.0,
+                        offset.1 as i32 - parent_offset.1,
+                    ),
+                    v_size: (node.l_size.width as i32, node.l_size.height as i32),
                     v_viewport: th_viewport,
                     v_children: Vec::new(),
                     v_surfaces: th::SurfaceList::new(&mut self.d_thund),
@@ -1545,6 +1561,10 @@ impl Dakota {
         Ok(())
     }
 
+    /// Flush the viewport data to GPU memory
+    ///
+    /// This will update vidmem with the data from `calculate_sizes` on the CPU. We
+    /// can then draw these surfaces at their new positions.
     fn flush_viewports(&mut self, viewport: ViewportId) -> th::Result<()> {
         {
             let mut node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
@@ -1566,6 +1586,10 @@ impl Dakota {
     }
 
     /// Helper to recursively draw all viewports in the provided tree
+    ///
+    /// NOTE: Make sure to call `flush_viewports` first. This will also update
+    /// the viewport current offset and size according to any scrolling that has
+    /// taken place, to handle subviewport scrolling.
     fn draw_viewports(&mut self, viewport: ViewportId) -> th::Result<()> {
         // Draw (auto) elements in this viewport
         {
@@ -1583,6 +1607,113 @@ impl Dakota {
             .len();
         for i in 0..num_children {
             let child_id = self.d_viewport_nodes.get(&viewport).unwrap().v_children[i].clone();
+            {
+                // Update the visible location and bounds of this viewport first
+                //
+                // The parent viewport may have had some scrolling action happen to
+                // it. Right before drawing we ensure that this viewport is still
+                // in view, and update the offset and size accordingly. If it is
+                // out of view we can bail and save us from drawing its contents
+                let parent_vp = self
+                    .d_viewport_nodes
+                    .get(&viewport)
+                    .unwrap()
+                    .v_viewport
+                    .clone();
+                let mut child_vp = self.d_viewport_nodes.get_mut(&child_id).unwrap();
+
+                log::info!("child_vp.v_offset: {:?}", child_vp.v_offset);
+                log::info!("child_vp.v_size: {:?}", child_vp.v_size);
+                log::info!("child_vp.v_viewport: {:?}", child_vp.v_viewport);
+                log::info!("parent_vp: {:?}", parent_vp);
+
+                child_vp.v_viewport.offset = (
+                    parent_vp.offset.0 + parent_vp.scroll_offset.0 + child_vp.v_offset.0,
+                    parent_vp.offset.1 + parent_vp.scroll_offset.1 + child_vp.v_offset.1,
+                );
+
+                // If our child has scrolled off the edge of the parent viewport,
+                // skip drawing it. This checks if it has scrolled past the end
+                // of the parent viewport or if it has already been scrolled past
+                // and is out of view. Remember all of these are in global coord
+                // space.
+                //
+                // Have we not yet scrolled so this viewport is in view
+                if (child_vp.v_viewport.offset.0 > parent_vp.size.0
+                    && child_vp.v_viewport.offset.1 > parent_vp.size.1)
+                    // Have we scrolled past this horizontally
+                    || (child_vp.v_viewport.offset.0 < parent_vp.offset.0
+                        && child_vp.v_viewport.offset.0 * -1 > child_vp.v_viewport.size.0)
+                    // Have we scrolled past this vertically
+                    || (child_vp.v_viewport.offset.1  < parent_vp.offset.1
+                        && child_vp.v_viewport.offset.1 * -1 > child_vp.v_viewport.size.1)
+                {
+                    continue;
+                }
+
+                // If the child is partially scrolled past, then update its offset to
+                // zero and limit the size by that amount
+                let clamp_to_parent_base =
+                    |child_original_size,
+                     child_offset: &mut i32,
+                     child_size: &mut i32,
+                     parent_offset| {
+                        if *child_offset < parent_offset {
+                            *child_size = child_original_size - *child_offset;
+                            // Now clamp it  to the parent's base
+                            *child_offset = parent_offset;
+                        }
+                    };
+
+                // Stash these to let the borrow checker look inside Lluvia's TableRef
+                let child_vp_v_offset = child_vp.v_offset;
+                let child_vp_v_size = child_vp.v_size;
+                let child_vp_v_viewport = &mut child_vp.v_viewport;
+
+                clamp_to_parent_base(
+                    child_vp_v_size.0,
+                    &mut child_vp_v_viewport.offset.0,
+                    &mut child_vp_v_viewport.size.0,
+                    parent_vp.offset.0,
+                );
+                clamp_to_parent_base(
+                    child_vp_v_size.1,
+                    &mut child_vp_v_viewport.offset.1,
+                    &mut child_vp_v_viewport.size.1,
+                    parent_vp.offset.1,
+                );
+
+                // If the child is scrolled but at the bottom, limit it to the remaining
+                // size of the parent viewport
+                let clamp_to_parent_size =
+                    |child_offset,
+                     child_original_size,
+                     child_size: &mut i32,
+                     parent_offset,
+                     parent_size| {
+                        if child_offset + child_original_size > parent_offset + parent_size {
+                            // Now clamp it to the parent's size
+                            *child_size = (*child_size).clamp(0, parent_size - child_offset);
+                        }
+                    };
+
+                clamp_to_parent_size(
+                    child_vp_v_offset.0,
+                    child_vp_v_size.0,
+                    &mut child_vp_v_viewport.size.0,
+                    parent_vp.offset.0,
+                    parent_vp.size.0,
+                );
+                clamp_to_parent_size(
+                    child_vp_v_offset.1,
+                    child_vp_v_size.1,
+                    &mut child_vp_v_viewport.size.1,
+                    parent_vp.offset.1,
+                    parent_vp.size.1,
+                );
+                log::info!("UPDATED child_vp.v_viewport: {:?}", child_vp.v_viewport);
+            }
+
             self.draw_viewports(child_id)?;
         }
 

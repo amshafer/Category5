@@ -676,6 +676,8 @@ impl Atmosphere {
     /// convert a global location to a surface local coordinates.
     /// Returns None if the location given is not over the surface
     pub fn global_coords_to_surf(&self, id: WindowId, x: f64, y: f64) -> Option<(f64, f64)> {
+        let (x, y) = self.get_adjusted_desktop_coord(x as f32, y as f32);
+        let (x, y) = (x as f64, y as f64);
         // get the surface-local position
         let (wx, wy) = self.get_surface_pos(id);
         let (ww, wh) = self.get_surface_size(id);
