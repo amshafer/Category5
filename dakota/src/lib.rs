@@ -364,7 +364,7 @@ impl Dakota {
         let inst = FontInstance::new(
             "./SourceCodePro-Regular.ttf",
             (dpi.0 as u32, dpi.1 as u32),
-            12.0,
+            16,
         );
 
         Ok(Self {

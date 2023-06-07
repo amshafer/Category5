@@ -536,10 +536,13 @@ impl Backend for SDL2DisplayBackend {
         let vk_size = self.sdl_window.vulkan_drawable_size();
 
         // return hdpi and vdpi
-        Ok((
+        let ret = Ok((
             dpi.1 * (win_size.0 as f32 / vk_size.0 as f32),
             dpi.2 * (win_size.1 as f32 / vk_size.1 as f32),
-        ))
+        ));
+
+        log::info!("Final DPI: {:?}", ret);
+        return ret;
     }
 
     fn get_vulkan_drawable_size(&self) -> Option<vk::Extent2D> {

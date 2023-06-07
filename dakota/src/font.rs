@@ -94,18 +94,14 @@ impl FontInstance {
     ///
     /// This is a particular font from a typeface at a
     /// particular size. Size is specified in points.
-    pub fn new(font_path: &str, dpi: (u32, u32), point_size: f32) -> Self {
+    pub fn new(font_path: &str, _dpi: (u32, u32), pixel_size: u32) -> Self {
         let ft_lib = ft::Library::init().unwrap();
         let mut ft_face: ft::Face = ft_lib.new_face(font_path, 0).unwrap();
         let raw_font =
             unsafe { hb_ft_font_create_referenced(ft_face.raw_mut() as *mut ft::ffi::FT_FaceRec) };
 
-        // set our font size
-        // The sizes come in 1/64th of a point. See the tutorial. Zeroes
-        // default to matching that size, and defaults to 72 dpi
-        // TODO: account for display info
         ft_face
-            .set_char_size(point_size as isize * 64, 0, dpi.0, dpi.1)
+            .set_pixel_sizes(pixel_size, pixel_size)
             //.set_point_sizes(point_size as u32, point_size as u32)
             .expect("Could not set freetype char size");
 
