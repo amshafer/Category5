@@ -362,7 +362,7 @@ impl Dakota {
         create_component_and_table!(viewport_ecs, ViewportNode, viewport_table);
 
         let inst = FontInstance::new(
-            "./SourceCodePro-Regular.ttf",
+            "./JetBrainsMono-Regular.ttf",
             (dpi.0 as u32, dpi.1 as u32),
             16,
         );

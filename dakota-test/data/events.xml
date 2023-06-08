@@ -68,6 +68,7 @@
 			</el>
 			<el>
 				<resource>blue</resource>
+				<text><p>Category5</p></text>
 				<size>
 					<width><constant>256</constant></width>
 					<height><constant>256</constant></height>
