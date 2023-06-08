@@ -50,6 +50,7 @@ define_element_property!(resource, resources, DakotaId);
 define_element_property!(offset, offsets, dom::RelativeOffset);
 define_element_property!(size, sizes, dom::RelativeSize);
 define_element_property!(text, texts, dom::Text);
+define_element_property!(text_font, text_font, DakotaId);
 define_element_property!(content, contents, dom::Content);
 define_element_property!(bounds, bounds, dom::Edges);
 define_element_property!(children, children, Vec<DakotaId>);

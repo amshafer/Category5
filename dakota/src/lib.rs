@@ -1,3 +1,4 @@
+extern crate freetype as ft;
 /// Dakota UI Toolkit
 ///
 /// Dakota is a UI toolkit designed for rendering trees of surfaces. These
@@ -62,6 +63,7 @@ pub enum DakotaObjectType {
     Element,
     DakotaDOM,
     Resource,
+    FontInstance,
 }
 
 /// Only one of content or children may be defined,
@@ -120,7 +122,10 @@ pub struct Dakota {
     d_resources: ll::Session<DakotaId>,
     d_offsets: ll::Session<dom::RelativeOffset>,
     d_sizes: ll::Session<dom::RelativeSize>,
+    d_font_instances: ll::Session<FontInstance>,
     d_texts: ll::Session<dom::Text>,
+    /// points to an id with font instance
+    d_text_font: ll::Session<DakotaId>,
     d_contents: ll::Session<dom::Content>,
     d_bounds: ll::Session<dom::Edges>,
     d_children: ll::Session<Vec<DakotaId>>,
@@ -142,7 +147,9 @@ pub struct Dakota {
     d_needs_redraw: bool,
     d_needs_refresh: bool,
     d_event_sys: EventSystem,
-    d_font_inst: FontInstance,
+    /// Default Font instance
+    d_default_font_inst: DakotaId,
+    d_freetype: ft::Library,
     d_ood_counter: usize,
 
     /// Cached mouse position
@@ -339,7 +346,7 @@ impl Dakota {
     /// This will initialize the window system platform layer, create a thundr
     /// instance from it, and wrap it in Dakota.
     pub fn new() -> Result<Self> {
-        let (plat, thundr, dpi) = Self::initialize_platform()?;
+        let (plat, thundr, _dpi) = Self::initialize_platform()?;
 
         let mut layout_ecs = ll::Instance::new();
         create_component_and_table!(layout_ecs, LayoutNode, layout_table);
@@ -352,6 +359,8 @@ impl Dakota {
         create_component_and_table!(layout_ecs, dom::RelativeOffset, offsets_table);
         create_component_and_table!(layout_ecs, dom::RelativeSize, sizes_table);
         create_component_and_table!(layout_ecs, dom::Text, texts_table);
+        create_component_and_table!(layout_ecs, FontInstance, font_instance_table);
+        create_component_and_table!(layout_ecs, DakotaId, text_font_table);
         create_component_and_table!(layout_ecs, dom::Content, content_table);
         create_component_and_table!(layout_ecs, dom::Edges, bounds_table);
         create_component_and_table!(layout_ecs, Vec<DakotaId>, children_table);
@@ -361,13 +370,10 @@ impl Dakota {
         let mut viewport_ecs = ll::Instance::new();
         create_component_and_table!(viewport_ecs, ViewportNode, viewport_table);
 
-        let inst = FontInstance::new(
-            "./JetBrainsMono-Regular.ttf",
-            (dpi.0 as u32, dpi.1 as u32),
-            16,
-        );
+        // Create a default Font instance
+        let default_inst = layout_ecs.add_entity();
 
-        Ok(Self {
+        let mut ret = Self {
             d_plat: plat,
             d_thund: thundr,
             d_ecs_inst: layout_ecs,
@@ -380,7 +386,9 @@ impl Dakota {
             d_resources: resources_table,
             d_offsets: offsets_table,
             d_sizes: sizes_table,
+            d_font_instances: font_instance_table,
             d_texts: texts_table,
+            d_text_font: text_font_table,
             d_contents: content_table,
             d_bounds: bounds_table,
             d_children: children_table,
@@ -394,10 +402,24 @@ impl Dakota {
             d_needs_redraw: false,
             d_needs_refresh: false,
             d_event_sys: EventSystem::new(),
-            d_font_inst: inst,
+            d_default_font_inst: default_inst.clone(),
+            d_freetype: ft::Library::init().context(anyhow!("Could not get freetype library"))?,
             d_ood_counter: 30,
             d_mouse_pos: (0.0, 0.0),
-        })
+        };
+
+        ret.d_node_types
+            .set(&default_inst, DakotaObjectType::FontInstance);
+        ret.define_font(
+            &default_inst,
+            dom::Font {
+                name: "Default Font".to_string(),
+                path: "./JetBrainsMono-Regular.ttf".to_string(),
+                pixel_size: 16,
+            },
+        );
+
+        return Ok(ret);
     }
 
     /// Create a new toplevel Dakota DOM
@@ -413,6 +435,18 @@ impl Dakota {
     /// Create a new Dakota resource
     pub fn create_resource(&mut self) -> Result<DakotaId> {
         self.create_new_id_common(DakotaObjectType::Resource)
+    }
+
+    /// Create a new Dakota Font
+    pub fn create_font_instance(&mut self) -> Result<DakotaId> {
+        self.create_new_id_common(DakotaObjectType::FontInstance)
+    }
+
+    pub fn define_font(&mut self, id: &DakotaId, font: dom::Font) {
+        self.d_font_instances.set(
+            id,
+            FontInstance::new(&self.d_freetype, &font.path, font.pixel_size),
+        );
     }
 
     /// Returns true if this element will have it's position chosen for it by
@@ -761,12 +795,26 @@ impl Dakota {
         Ok(())
     }
 
+    /// Helper to get the Font Instance for a particular element
+    ///
+    /// This will choose the default font (including size) if none
+    /// has been assigned.
+    fn get_font_id_for_el(&self, el: &DakotaId) -> DakotaId {
+        match self.d_text_font.get(el) {
+            Some(f) => f.clone(),
+            None => self.d_default_font_inst.clone(),
+        }
+    }
+
     /// Handles creating LayoutNodes for every glyph in a passage
     ///
     /// This is the handler for the text field in the dakota file
     fn calculate_sizes_text(&mut self, el: &DakotaId) -> Result<()> {
+        let font_id = self.get_font_id_for_el(el);
+        let mut font_inst = self.d_font_instances.get_mut(&font_id).unwrap();
+
         let mut text = self.d_texts.get_mut(el).unwrap();
-        let line_space = self.d_font_inst.get_vertical_line_spacing();
+        let line_space = font_inst.get_vertical_line_spacing();
 
         // This is how far we have advanced on a line
         // Go down by one line space before writing the first line. This deals
@@ -795,8 +843,8 @@ impl Dakota {
                     // We need to take references to everything at once before the closure
                     // so that the borrow checker can see we aren't trying to reference all
                     // of self
-                    let font_inst = &mut self.d_font_inst;
                     let layouts = &mut self.d_layout_nodes;
+                    let text_fonts = &mut self.d_text_font;
 
                     if run.cache.is_none() {
                         // TODO: we can get the available height from above, pass it to a font instance
@@ -854,6 +902,10 @@ impl Dakota {
 
                             layouts.take(&ch.node);
                             layouts.set(&ch.node, child_size);
+                            // We need to assign a font here or else later when we
+                            // create thundr surfaces for these glyphs we will index
+                            // the wrong font using this glyph_id
+                            text_fonts.set(&ch.node, font_id.clone());
                         },
                     );
                 }
@@ -1130,11 +1182,13 @@ impl Dakota {
 
                 assert!(content_num == 1);
             } else if let Some(glyph_id) = layout.l_glyph_id {
+                let font_id = self.get_font_id_for_el(node);
+                let mut font_inst = self.d_font_instances.get_mut(&font_id).unwrap();
                 // If this path is hit, then this layout node is really a glyph in a
                 // larger block of text. It has been created as a child, and isn't
                 // a real element. We ask the font code to give us a surface for
                 // it that we can display.
-                self.d_font_inst.get_thundr_surf_for_glyph(
+                font_inst.get_thundr_surf_for_glyph(
                     &mut self.d_thund,
                     &mut surf,
                     glyph_id,

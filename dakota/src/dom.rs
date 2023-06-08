@@ -263,6 +263,15 @@ pub struct WindowEvents {
     pub closed: Option<Event>,
 }
 
+/// A description of the typeface and size of the
+/// font to use for this text block
+#[derive(Debug, Clone)]
+pub struct Font {
+    pub name: String,
+    pub path: String,
+    pub pixel_size: u32,
+}
+
 /// A run of characters of the same format type
 #[derive(Debug, Clone)]
 pub struct TextRun {

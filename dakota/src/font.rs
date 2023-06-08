@@ -69,7 +69,6 @@ pub struct CachedChar {
 }
 
 pub struct FontInstance {
-    _f_freetype: ft::Library,
     /// The font reference for our rasterizer
     f_ft_face: ft::Face,
     /// Our rustybuzz font face (see harfbuzz docs)
@@ -94,8 +93,7 @@ impl FontInstance {
     ///
     /// This is a particular font from a typeface at a
     /// particular size. Size is specified in points.
-    pub fn new(font_path: &str, _dpi: (u32, u32), pixel_size: u32) -> Self {
-        let ft_lib = ft::Library::init().unwrap();
+    pub fn new(ft_lib: &ft::Library, font_path: &str, pixel_size: u32) -> Self {
         let mut ft_face: ft::Face = ft_lib.new_face(font_path, 0).unwrap();
         let raw_font =
             unsafe { hb_ft_font_create_referenced(ft_face.raw_mut() as *mut ft::ffi::FT_FaceRec) };
@@ -106,7 +104,6 @@ impl FontInstance {
             .expect("Could not set freetype char size");
 
         Self {
-            _f_freetype: ft_lib,
             f_ft_face: ft_face,
             f_hb_raw_font: raw_font,
             f_glyphs: Vec::new(),

@@ -19,6 +19,11 @@
     <a>1</a>
    </color>
   </define_resource>
+  <define_font>
+   <name>Inconsolata</name>
+   <relPath>./Inconsolata.otf</relPath>
+   <pixel_size>64</pixel_size>
+  </define_font>
  </resourceMap>
  <window>
   <title>Dakota Test</title>
@@ -86,6 +91,7 @@
         </el>
         <el>
          <text>
+          <font>Inconsolata</font>
           <p>
            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed at
            faucibus mi, a condimentum ligula.  Maecenas eu ligula dapibus,
