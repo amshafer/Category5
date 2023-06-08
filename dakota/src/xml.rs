@@ -73,7 +73,7 @@ enum Element {
     Data(dom::Data),
     ResourceMap,
     Resource(Option<String>),
-    FontDefinition(Option<String>, Option<String>, u32),
+    FontDefinition(Option<String>, Option<String>, u32, Option<dom::Color>),
     ResourceDefinition {
         name: Option<String>,
         image: Option<dom::Image>,
@@ -157,7 +157,7 @@ impl Element {
             }),
             b"resourceMap" => Self::ResourceMap,
             b"resource" => Self::Resource(None),
-            b"define_font" => Self::FontDefinition(None, None, 0),
+            b"define_font" => Self::FontDefinition(None, None, 0, None),
             b"define_resource" => Self::ResourceDefinition {
                 name: None,
                 image: None,
@@ -271,7 +271,7 @@ impl Dakota {
                 color: _,
                 hints: _,
             } => Ok(Some(self.create_resource()?)),
-            Element::FontDefinition(_, _, _) => Ok(Some(self.create_font_instance()?)),
+            Element::FontDefinition(_, _, _, _) => Ok(Some(self.create_font_instance()?)),
             Element::El {
                 x: _,
                 y: _,
@@ -511,7 +511,7 @@ impl Dakota {
             },
             // -------------------------------------------------------
             Element::ResourceMap => match old_node {
-                Element::FontDefinition(name, path, size) => {
+                Element::FontDefinition(name, path, size, color) => {
                     let resource_id = self
                         .get_id_for_name(
                             &mut parse.font_name_to_id_map,
@@ -530,6 +530,7 @@ impl Dakota {
                                 .clone()
                                 .ok_or(anyhow!("Font Definition requires name tag"))?,
                             pixel_size: *size,
+                            color: *color,
                         },
                     );
                 }
@@ -562,10 +563,18 @@ impl Dakota {
                 }
                 e => return Err(anyhow!("Unexpected child element: {:?}", e)),
             },
-            Element::FontDefinition(name, path, size) => match old_node {
+            Element::FontDefinition(name, path, size, color) => match old_node {
                 Element::Name(n) => *name = n.clone(),
                 Element::AbsPath(p) | Element::RelPath(p) => *path = p.clone(),
                 Element::PixelSize(s) => *size = s.context("PixelSize was not populated")?,
+                Element::Color { r, g, b, a } => {
+                    *color = Some(dom::Color {
+                        r: r.clone().ok_or(anyhow!("Color value R not specified"))?,
+                        g: g.clone().ok_or(anyhow!("Color value G not specified"))?,
+                        b: b.clone().ok_or(anyhow!("Color value B not specified"))?,
+                        a: a.clone().ok_or(anyhow!("Color value A not specified"))?,
+                    })
+                }
                 e => return Err(anyhow!("Unexpected child element: {:?}", e)),
             },
             Element::ResourceDefinition {

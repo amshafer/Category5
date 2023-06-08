@@ -246,7 +246,6 @@ impl Surface {
     pub fn set_color(&mut self, color: (f32, f32, f32, f32)) {
         self.set_modified(true);
         let mut surf = self.s_internal.borrow_mut();
-        assert!(surf.s_image.is_none());
         surf.s_color = Some(color);
     }
 

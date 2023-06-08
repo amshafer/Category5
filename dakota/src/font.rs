@@ -86,6 +86,7 @@ pub struct FontInstance {
     /// The ab::GlyphId is really just an index into this. That's all
     /// glyph ids are, is the index of the glyph in the font.
     f_glyphs: Vec<Option<Glyph>>,
+    pub f_color: Option<dom::Color>,
 }
 
 impl FontInstance {
@@ -93,7 +94,12 @@ impl FontInstance {
     ///
     /// This is a particular font from a typeface at a
     /// particular size. Size is specified in points.
-    pub fn new(ft_lib: &ft::Library, font_path: &str, pixel_size: u32) -> Self {
+    pub fn new(
+        ft_lib: &ft::Library,
+        font_path: &str,
+        pixel_size: u32,
+        color: Option<dom::Color>,
+    ) -> Self {
         let mut ft_face: ft::Face = ft_lib.new_face(font_path, 0).unwrap();
         let raw_font =
             unsafe { hb_ft_font_create_referenced(ft_face.raw_mut() as *mut ft::ffi::FT_FaceRec) };
@@ -107,6 +113,7 @@ impl FontInstance {
             f_ft_face: ft_face,
             f_hb_raw_font: raw_font,
             f_glyphs: Vec::new(),
+            f_color: color,
         }
     }
 

@@ -270,6 +270,7 @@ pub struct Font {
     pub name: String,
     pub path: String,
     pub pixel_size: u32,
+    pub color: Option<Color>,
 }
 
 /// A run of characters of the same format type

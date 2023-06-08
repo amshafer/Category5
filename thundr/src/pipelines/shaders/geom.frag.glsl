@@ -51,7 +51,7 @@ void main() {
   // If we have a color but also have an image, then
   // we should only update the color but keep the alpha
   // set by the image. This lets us color text for example.
-  res = vec4(windows[window_index].color.xyz, 
+  res = vec4(windows[window_index].color.xyz,
              windows[window_index].image_id >= 0
               ? res.a : windows[window_index].color.a);
  }

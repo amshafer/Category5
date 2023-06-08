@@ -416,6 +416,7 @@ impl Dakota {
                 name: "Default Font".to_string(),
                 path: "./JetBrainsMono-Regular.ttf".to_string(),
                 pixel_size: 16,
+                color: None,
             },
         );
 
@@ -445,7 +446,7 @@ impl Dakota {
     pub fn define_font(&mut self, id: &DakotaId, font: dom::Font) {
         self.d_font_instances.set(
             id,
-            FontInstance::new(&self.d_freetype, &font.path, font.pixel_size),
+            FontInstance::new(&self.d_freetype, &font.path, font.pixel_size, font.color),
         );
     }
 
@@ -994,7 +995,9 @@ impl Dakota {
 
             self.calculate_sizes_children(el, parent, &mut child_space)
                 .context("Layout Tree Calculation: processing children of element")?;
-        } else if self.get_content(el).is_some() {
+        }
+
+        if self.get_content(el).is_some() {
             // ------------------------------------------
             // CENTERED CONTENT
             // ------------------------------------------
@@ -1065,6 +1068,7 @@ impl Dakota {
                     node.l_size.width as i32,
                     node.l_size.height as i32,
                 );
+                log::error!("Setting scroll region to {:?}", scroll_region);
                 th_viewport.set_scroll_region(scroll_region.0 as i32, scroll_region.1 as i32);
 
                 let viewport = ViewportNode {
@@ -1203,6 +1207,25 @@ impl Dakota {
                 }
 
                 assert!(content_num == 1);
+            } else if let Some(glyph_id) = layout.l_glyph_id {
+                let font_id = self.get_font_id_for_el(node);
+                let mut font_inst = self.d_font_instances.get_mut(&font_id).unwrap();
+                // If this path is hit, then this layout node is really a glyph in a
+                // larger block of text. It has been created as a child, and isn't
+                // a real element. We ask the font code to give us a surface for
+                // it that we can display.
+                font_inst.get_thundr_surf_for_glyph(
+                    &mut self.d_thund,
+                    &mut surf,
+                    glyph_id,
+                    layout.l_offset,
+                );
+                // If this text has a color set the surface now
+                if let Some(color) = font_inst.f_color {
+                    surf.set_color((color.r, color.g, color.b, color.a));
+                }
+
+                return Ok(surf);
             }
 
             surf
@@ -1612,6 +1635,9 @@ impl Dakota {
 
                     node.v_viewport.set_scroll_amount(x as i32, y as i32);
                     self.d_needs_redraw = true;
+
+                    // TODO: move all subviewports by the scroll amount
+                    // They will later be clipped in draw_viewports
                 }
                 // Ignore all other events for now
                 _ => {}
@@ -1720,7 +1746,11 @@ impl Dakota {
                      child_size: &mut i32,
                      parent_offset| {
                         if *child_offset < parent_offset {
-                            *child_size = child_original_size - *child_offset;
+                            // Adjust the child size by the difference between the parent and child
+                            // offsets. Get this as an absolute value twice, in case child < 0 or
+                            // the difference is negative due to parent_offset == 0
+                            *child_size =
+                                child_original_size - (parent_offset - child_offset.abs()).abs();
                             // Now clamp it  to the parent's base
                             *child_offset = parent_offset;
                         }

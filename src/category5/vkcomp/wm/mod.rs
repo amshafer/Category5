@@ -120,6 +120,8 @@ pub struct WindowManager {
     /// This is a Dakota element that holds all of the menu items and widgets
     /// in the top screen bar.
     wm_menubar: DakotaId,
+    /// Font definition for UI widgets
+    wm_menubar_font: DakotaId,
     /// The date time string UI element.
     wm_datetime: DakotaId,
     /// The window area for this desktop
@@ -242,7 +244,7 @@ impl WindowManager {
 
     /// Define all of the Dakota elements that make up the menu bar
     /// at the top of the screen
-    fn create_menubar(dakota: &mut dak::Dakota) -> DakotaId {
+    fn create_menubar(dakota: &mut dak::Dakota, menubar_font: DakotaId) -> DakotaId {
         let barcolor = dakota.create_resource().unwrap();
         dakota.set_resource_color(&barcolor, dak::dom::Color::new(0.085, 0.09, 0.088, 0.9));
 
@@ -266,6 +268,7 @@ impl WindowManager {
             },
         );
         dakota.set_text_regular(&name, "Category5");
+        dakota.set_text_font(&name, menubar_font);
         dakota.add_child_to_element(&menubar, name);
 
         return menubar;
@@ -281,6 +284,7 @@ impl WindowManager {
             &self.wm_datetime,
             &date.format("%a %B %e %l:%M %p").to_string(),
         );
+        dakota.set_text_font(&self.wm_datetime, self.wm_menubar_font.clone());
         dakota.set_size(
             &self.wm_datetime,
             dom::RelativeSize {
@@ -332,11 +336,31 @@ impl WindowManager {
 
         // First create our menu bar across the top of the screen
         // ------------------------------------------------------------------
-        let menubar = Self::create_menubar(dakota);
+        let menubar_font = dakota.create_font_instance().unwrap();
+        let menubar = Self::create_menubar(dakota, menubar_font.clone());
         dakota.add_child_to_element(&root, menubar.clone());
 
+        dakota.define_font(
+            &menubar_font,
+            dom::Font {
+                name: "Default Font".to_string(),
+                path: "./JetBrainsMono-Regular.ttf".to_string(),
+                pixel_size: 16,
+                color: Some(dom::Color {
+                    r: 0.941,
+                    g: 0.921,
+                    b: 0.807,
+                    a: 1.0,
+                }),
+            },
+        );
         let datetime = dakota.create_element().unwrap();
-        dakota.add_child_to_element(&menubar, datetime.clone());
+        dakota.set_content(
+            &menubar,
+            dom::Content {
+                el: datetime.clone(),
+            },
+        );
 
         // Next add a dummy element to place all of the client window child elements
         // inside of.
@@ -367,6 +391,7 @@ impl WindowManager {
             wm_dakota_root: root,
             wm_dakota_dom: dom,
             wm_menubar: menubar,
+            wm_menubar_font: menubar_font,
             wm_datetime: datetime,
             wm_desktop: desktop,
             wm_apps: PropertyList::new(),
