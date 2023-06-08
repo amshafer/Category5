@@ -1868,16 +1868,16 @@ impl Renderer {
             // to tell the shader to ignore this
             None => Rect::new(-1, 0, -1, 0),
         };
-        let (image_id, use_color) = match surf.s_image.as_ref() {
-            Some(i) => (i.get_id().get_raw_id() as i32, false),
-            None => (-1, true),
+        let image_id = match surf.s_image.as_ref() {
+            Some(i) => i.get_id().get_raw_id() as i32,
+            None => -1,
         };
 
         self.r_windows.set(
             &surf_rc.s_window_id,
             Window {
                 w_id: image_id,
-                w_use_color: use_color as i32,
+                w_use_color: surf.s_color.is_some() as i32,
                 w_pass: 0,
                 w_padding: 0,
                 w_color: match surf.s_color {

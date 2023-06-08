@@ -23,6 +23,7 @@ xkbcommon="0.5"
 atmos_gen={path="atmos_gen"}
 utils={path="utils"}
 lazy_static="1.4"
+chrono="0.4"
 
 renderdoc={version="0.10", optional=true}
 

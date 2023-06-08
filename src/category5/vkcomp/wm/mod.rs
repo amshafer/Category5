@@ -35,6 +35,7 @@
 // Austin Shafer - 2020
 
 #![allow(dead_code)]
+extern crate chrono;
 extern crate dakota as dak;
 extern crate image;
 extern crate utils;
@@ -119,6 +120,8 @@ pub struct WindowManager {
     /// This is a Dakota element that holds all of the menu items and widgets
     /// in the top screen bar.
     wm_menubar: DakotaId,
+    /// The date time string UI element.
+    wm_datetime: DakotaId,
     /// The window area for this desktop
     ///
     /// This is a Dakota element that represents the region where all client windows
@@ -255,10 +258,40 @@ impl WindowManager {
         dakota.set_resource(&menubar, barcolor);
 
         let name = dakota.create_element().unwrap();
+        dakota.set_size(
+            &name,
+            dom::RelativeSize {
+                width: dom::Value::Constant(dom::Constant::new(128)),
+                height: dom::Value::Relative(dom::Relative::new(1.0)),
+            },
+        );
         dakota.set_text_regular(&name, "Category5");
         dakota.add_child_to_element(&menubar, name);
 
         return menubar;
+    }
+
+    /// Refresh the date and time string in the menubar
+    ///
+    /// This should be called every time change.
+    pub fn refresh_datetime(&mut self, dakota: &mut dak::Dakota) {
+        let date = chrono::Local::now();
+        // https://docs.rs/chrono-wasi07/latest/chrono/format/strftime/index.html
+        dakota.set_text_regular(
+            &self.wm_datetime,
+            &date.format("%a %B %e %l:%M %p").to_string(),
+        );
+        dakota.set_size(
+            &self.wm_datetime,
+            dom::RelativeSize {
+                width: dom::Value::Constant(dom::Constant::new(256)),
+                height: dom::Value::Relative(dom::Relative::new(1.0)),
+            },
+        );
+        log::error!(
+            "Updated time to: {}",
+            date.format("%a %B %e %l:%M %p").to_string()
+        );
     }
 
     /// Create a new WindowManager
@@ -302,6 +335,9 @@ impl WindowManager {
         let menubar = Self::create_menubar(dakota);
         dakota.add_child_to_element(&root, menubar.clone());
 
+        let datetime = dakota.create_element().unwrap();
+        dakota.add_child_to_element(&menubar, datetime.clone());
+
         // Next add a dummy element to place all of the client window child elements
         // inside of.
         // ------------------------------------------------------------------
@@ -331,6 +367,7 @@ impl WindowManager {
             wm_dakota_root: root,
             wm_dakota_dom: dom,
             wm_menubar: menubar,
+            wm_datetime: datetime,
             wm_desktop: desktop,
             wm_apps: PropertyList::new(),
             wm_will_die: Vec::new(),
@@ -338,6 +375,7 @@ impl WindowManager {
             #[cfg(feature = "renderdoc")]
             wm_renderdoc: doc,
         };
+        ret.refresh_datetime(dakota);
         // This sets the desktop size
         ret.handle_ood(dakota);
 

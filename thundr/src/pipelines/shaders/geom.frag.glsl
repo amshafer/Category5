@@ -43,9 +43,16 @@ layout(set = 1, binding = 1, std140) buffer order_list
 layout(set = 2, binding = 1) uniform sampler2D images[];
 
 void main() {
- if (windows[window_index].use_color > 0) {
-  res = windows[window_index].color;
- } else {
+ if (windows[window_index].image_id >= 0) {
   res = texture(images[image_index], coord);
+ }
+
+ if (windows[window_index].use_color > 0) {
+  // If we have a color but also have an image, then
+  // we should only update the color but keep the alpha
+  // set by the image. This lets us color text for example.
+  res = vec4(windows[window_index].color.xyz, 
+             windows[window_index].image_id >= 0
+              ? res.a : windows[window_index].color.a);
  }
 }

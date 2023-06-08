@@ -815,6 +815,7 @@ impl Dakota {
 
         let mut text = self.d_texts.get_mut(el).unwrap();
         let line_space = font_inst.get_vertical_line_spacing();
+        let resource = self.d_resources.get(el).map(|r| r.clone());
 
         // This is how far we have advanced on a line
         // Go down by one line space before writing the first line. This deals
@@ -845,6 +846,7 @@ impl Dakota {
                     // of self
                     let layouts = &mut self.d_layout_nodes;
                     let text_fonts = &mut self.d_text_font;
+                    let resources = &mut self.d_resources;
 
                     if run.cache.is_none() {
                         // TODO: we can get the available height from above, pass it to a font instance
@@ -906,6 +908,11 @@ impl Dakota {
                             // create thundr surfaces for these glyphs we will index
                             // the wrong font using this glyph_id
                             text_fonts.set(&ch.node, font_id.clone());
+                            // Set any resources for this child glyph node to assign
+                            // it any colors set on the parent element
+                            if let Some(res) = resource.as_ref() {
+                                resources.set(&ch.node, res.clone());
+                            }
                         },
                     );
                 }
@@ -1164,6 +1171,21 @@ impl Dakota {
                 self.d_thund.surface_set_render_pass(&surf, 0);
             }
 
+            if let Some(glyph_id) = layout.l_glyph_id {
+                let font_id = self.get_font_id_for_el(node);
+                let mut font_inst = self.d_font_instances.get_mut(&font_id).unwrap();
+                // If this path is hit, then this layout node is really a glyph in a
+                // larger block of text. It has been created as a child, and isn't
+                // a real element. We ask the font code to give us a surface for
+                // it that we can display.
+                font_inst.get_thundr_surf_for_glyph(
+                    &mut self.d_thund,
+                    &mut surf,
+                    glyph_id,
+                    layout.l_offset,
+                );
+            }
+
             // Handle binding images
             // We need to get the resource's content from our resource map, get
             // the thundr image for it, and bind it to our new surface.
@@ -1181,21 +1203,6 @@ impl Dakota {
                 }
 
                 assert!(content_num == 1);
-            } else if let Some(glyph_id) = layout.l_glyph_id {
-                let font_id = self.get_font_id_for_el(node);
-                let mut font_inst = self.d_font_instances.get_mut(&font_id).unwrap();
-                // If this path is hit, then this layout node is really a glyph in a
-                // larger block of text. It has been created as a child, and isn't
-                // a real element. We ask the font code to give us a surface for
-                // it that we can display.
-                font_inst.get_thundr_surf_for_glyph(
-                    &mut self.d_thund,
-                    &mut surf,
-                    glyph_id,
-                    layout.l_offset,
-                );
-
-                return Ok(surf);
             }
 
             surf
