@@ -260,13 +260,6 @@ impl WindowManager {
         dakota.set_resource(&menubar, barcolor);
 
         let name = dakota.create_element().unwrap();
-        dakota.set_size(
-            &name,
-            dom::RelativeSize {
-                width: dom::Value::Constant(dom::Constant::new(128)),
-                height: dom::Value::Relative(dom::Relative::new(1.0)),
-            },
-        );
         dakota.set_text_regular(&name, "Category5");
         dakota.set_text_font(&name, menubar_font);
         dakota.add_child_to_element(&menubar, name);
@@ -285,13 +278,6 @@ impl WindowManager {
             &date.format("%a %B %e %l:%M %p").to_string(),
         );
         dakota.set_text_font(&self.wm_datetime, self.wm_menubar_font.clone());
-        dakota.set_size(
-            &self.wm_datetime,
-            dom::RelativeSize {
-                width: dom::Value::Constant(dom::Constant::new(256)),
-                height: dom::Value::Relative(dom::Relative::new(1.0)),
-            },
-        );
         log::error!(
             "Updated time to: {}",
             date.format("%a %B %e %l:%M %p").to_string()
@@ -316,6 +302,16 @@ impl WindowManager {
         // Create a DOM object that all others will hang off of
         // ------------------------------------------------------------------
         let root = dakota.create_element().unwrap();
+        // Manually set the size to the parent container so that its size
+        // isn't derived from the image we set as the desktop background
+        dakota.set_size(
+            &root,
+            dom::RelativeSize {
+                width: dom::Value::Relative(dom::Relative::new(1.0)),
+                height: dom::Value::Relative(dom::Relative::new(1.0)),
+            },
+        );
+
         let dom = dakota.create_dakota_dom().unwrap();
         dakota.set_dakota_dom(
             &dom,
@@ -376,7 +372,7 @@ impl WindowManager {
                 dom::Format::ARGB8888,
             )
             .expect("Could not import background image into dakota");
-        dakota.set_resource(&root, image);
+        dakota.set_resource(&desktop, image);
 
         // now add a cursor on top of this
         // ------------------------------------------------------------------

@@ -622,9 +622,9 @@ impl Dakota {
     fn calculate_sizes_content(&mut self, el: &DakotaId, space: &LayoutSpace) -> Result<()> {
         let child_id = self.d_contents.get(el).unwrap().el.clone();
 
-        // num_autolayout_children_at_this_level was set earlier to 0 when we
-        // created the common child space
         self.calculate_sizes(&child_id, Some(el), &space)?;
+        let parent_size = self.d_layout_nodes.get(el).unwrap().l_size;
+
         {
             let mut child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
             // At this point the size of the is calculated
@@ -634,11 +634,11 @@ impl Dakota {
             //
             // The child size should have already been clipped to the available space
             child_size.l_offset.x = utils::partial_max(
-                (space.avail_width / 2.0) - (child_size.l_size.width / 2.0),
+                (parent_size.width / 2.0) - (child_size.l_size.width / 2.0),
                 0.0,
             );
             child_size.l_offset.y = utils::partial_max(
-                (space.avail_height / 2.0) - (child_size.l_size.height / 2.0),
+                (parent_size.height / 2.0) - (child_size.l_size.height / 2.0),
                 0.0,
             );
         }
@@ -848,6 +848,7 @@ impl Dakota {
                     let layouts = &mut self.d_layout_nodes;
                     let text_fonts = &mut self.d_text_font;
                     let resources = &mut self.d_resources;
+                    let sizes = &mut self.d_sizes;
 
                     if run.cache.is_none() {
                         // TODO: we can get the available height from above, pass it to a font instance
@@ -888,15 +889,34 @@ impl Dakota {
                             log::info!("Character size is {:?}", size);
 
                             {
+                                use std::ops::DerefMut;
+
                                 // Test if the text exceeds the parent space. If so then we need
                                 // to mark this node as a viewport node
-                                let mut node = layouts.get_mut(el).unwrap();
-                                if child_size.l_offset.x + child_size.l_size.width
-                                    > node.l_size.width
-                                    || child_size.l_offset.y + child_size.l_size.height
-                                        > node.l_size.height
-                                {
-                                    node.l_is_viewport = true;
+                                let mut node_raw = layouts.get_mut(el).unwrap();
+                                let mut node = node_raw.deref_mut();
+                                // If the user assigned this element a predefined size
+                                if sizes.get(el).is_some() {
+                                    if child_size.l_offset.x + child_size.l_size.width
+                                        > node.l_size.width
+                                        || child_size.l_offset.y + child_size.l_size.height
+                                            > node.l_size.height
+                                    {
+                                        // If this element has been assigned a size, then mark it as
+                                        // a viewport.
+                                        node.l_is_viewport = true;
+                                    }
+                                } else {
+                                    // If it has not been assigned a size, then grow or possibly
+                                    // shrink it to hold the text
+                                    node.l_size.width =
+                                        child_size.l_offset.x + child_size.l_size.width;
+                                    node.l_size.height =
+                                        child_size.l_offset.y + child_size.l_size.height;
+                                    log::error!(
+                                        "Updating based on text size to size: {:?}",
+                                        node.l_size
+                                    );
                                 }
                                 // What we have done here is create a "fake" element (fake since
                                 // the user didn't specify it) that represents a glyph.

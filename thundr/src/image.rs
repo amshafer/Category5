@@ -100,12 +100,15 @@ impl Image {
         return image_vk.iv_image_view;
     }
 
-    pub(crate) fn get_resolution(&self) -> vk::Extent2D {
+    pub fn get_size(&self) -> (u32, u32) {
         let internal = self.i_internal.borrow_mut();
         let rend = internal.i_rend.lock().unwrap();
 
         let image_vk = rend.r_image_vk.get(&internal.i_id).unwrap();
-        return image_vk.iv_image_resolution;
+        (
+            image_vk.iv_image_resolution.width,
+            image_vk.iv_image_resolution.height,
+        )
     }
 
     /// Sets an opaque region for the image to help the internal compositor

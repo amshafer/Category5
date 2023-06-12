@@ -348,6 +348,16 @@ impl Dakota {
                 size.height.get_value(space.avail_height)? as u32,
             ))
         } else {
+            // If no size was provided but an image resource has been assigned, then
+            // size this element to the resource. Text resource sizing will be
+            // handled in calculate_sizes_text.
+            if let Some(res) = self.d_resources.get(el) {
+                if let Some(image) = self.d_resource_thundr_image.get(&res) {
+                    let size = image.get_size();
+                    return Ok(Size::new(size.0, size.1));
+                }
+            }
+
             // If no size was specified then this defaults to the size of its
             // container
             Ok(Size::new(
