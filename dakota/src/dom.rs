@@ -338,10 +338,11 @@ impl Dakota {
         }
     }
 
-    /// Get the final size to use within the parent space.
-    /// This takes care of handling the relative
-    /// proportional size.
-    pub fn get_final_size(&self, el: &DakotaId, space: &LayoutSpace) -> Result<Size<u32>> {
+    /// Get the default starting size to use within the parent space.
+    ///
+    /// This either returns the size set by the user, otherwise the size of the image
+    /// resource assigned, otherwise the size of the parent space.
+    pub fn get_default_size(&self, el: &DakotaId, space: &LayoutSpace) -> Result<Size<u32>> {
         if let Some(size) = self.d_sizes.get(el) {
             Ok(Size::new(
                 size.width.get_value(space.avail_width)? as u32,
@@ -351,6 +352,13 @@ impl Dakota {
             // If no size was provided but an image resource has been assigned, then
             // size this element to the resource. Text resource sizing will be
             // handled in calculate_sizes_text.
+            //
+            // If there are children and no resource was provided, then we will
+            // limit this node to the size of the children later after processing
+            // all of them.
+            //
+            // TODO: use LayoutSpace for all sizing decisions, then calculate the
+            // final element size here, sizing to children if needed?
             if let Some(res) = self.d_resources.get(el) {
                 if let Some(image) = self.d_resource_thundr_image.get(&res) {
                     let size = image.get_size();
@@ -358,12 +366,51 @@ impl Dakota {
                 }
             }
 
-            // If no size was specified then this defaults to the size of its
-            // container
+            // If no size was specified then this defaults to the size of its container
             Ok(Size::new(
                 space.avail_width as u32,
                 space.avail_height as u32,
             ))
         }
+    }
+
+    /// Get the final size to use within the parent space.
+    ///
+    /// This is the same as the default size, but in the case where no size is set by the user
+    /// and there is no image resource assigned it will be resized to hold all the child
+    /// content.
+    pub fn get_final_size(&self, el: &DakotaId, space: &LayoutSpace) -> Result<Size<u32>> {
+        let mut ret = self.get_default_size(el, space)?;
+        let mut is_image_resource = false;
+        if let Some(res) = self.d_resources.get(el) {
+            if self.d_resource_thundr_image.get(&res).is_some() {
+                is_image_resource = true;
+            }
+        }
+
+        // If no size was specified by the user and no image has been assigned then we
+        // will limit this element to the size of its children if there are any
+        if self.d_sizes.get(el).is_none()
+            && !is_image_resource
+            && self.d_layout_nodes.get(el).unwrap().l_children.len() > 0
+        {
+            let max_size = ret;
+            ret = Size::new(0, 0);
+            for i in 0..self.d_layout_nodes.get(el).unwrap().l_children.len() {
+                let child_id = self.d_layout_nodes.get(el).unwrap().l_children[i].clone();
+                let child_size = self.d_layout_nodes.get(&child_id).unwrap();
+
+                ret.width = ret
+                    .width
+                    .max(child_size.l_offset.x as u32 + child_size.l_size.width as u32)
+                    .clamp(0, max_size.width);
+                ret.height = ret
+                    .height
+                    .max(child_size.l_offset.y as u32 + child_size.l_size.height as u32)
+                    .clamp(0, max_size.height);
+            }
+        }
+
+        return Ok(ret);
     }
 }

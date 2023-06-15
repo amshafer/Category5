@@ -4,9 +4,9 @@
   <define_resource>
    <name>blue</name>
    <color>
-    <r>0.109</r>
-    <g>0.403</g>
-    <b>0.345</b>
+    <r>0.125</r>
+    <g>0.251</g>
+    <b>0.317</b>
     <a>1</a>
    </color>
   </define_resource>
@@ -31,36 +31,25 @@
   <define_resource>
    <name>grey</name>
    <color>
-    <r>0.517</r>
-    <g>0.662</g>
-    <b>0.674</b>
+    <r>0.717</r>
+    <g>0.717</g>
+    <b>0.717</b>
     <a>1</a>
    </color>
   </define_resource>
   <define_resource>
    <name>white</name>
    <color>
-    <r>0.933</r>
-    <g>0.949</g>
-    <b>0.901</b>
+    <r>1.0</r>
+    <g>1.0</g>
+    <b>1.0</b>
     <a>1</a>
    </color>
   </define_resource>
   <define_font>
-   <name>Heading</name>
-   <relPath>./Inconsolata.otf</relPath>
-   <pixel_size>64</pixel_size>
-   <color>
-    <r>0.933</r>
-    <g>0.949</g>
-    <b>0.901</b>
-    <a>1</a>
-   </color>
-  </define_font>
-  <define_font>
    <name>Inconsolata</name>
    <relPath>./Inconsolata.otf</relPath>
-   <pixel_size>16</pixel_size>
+   <pixel_size>64</pixel_size>
    <color>
     <r>0.933</r>
     <g>0.949</g>
@@ -100,8 +89,8 @@
       <y><constant>0</constant></y>
      </offset>
      <text>
-      <font>Heading</font>
-      <p>Dakota Text Rendering</p>
+      <font>Inconsolata</font>
+      <p>Sub Viewport Scrolling</p>
      </text>
     </el>
    </el>
@@ -174,43 +163,33 @@
         </size>
        </el>
        <el>
+        <resource>grey</resource>
         <size>
          <width><relative>1.0</relative></width>
-         <height><constant>256</constant></height>
+         <height><constant>512</constant></height>
         </size>
         <content>
          <el>
-          <resource>grey</resource>
-          <el>
-           <content>
-            <el>
-             <size>
-              <width><relative>0.9</relative></width>
-              <height><relative>0.9</relative></height>
-             </size>
-             <text>
-              <font>Inconsolata</font>
-              <p>
-               El origen de Caifanes se dio, en parte, por un proyecto musical anterior
-               denominado Las Insólitas Imágenes de Aurora. Este surgió en 1984 por
-               iniciativa de Alejandro Marcovich a pedido de su hermano Carlos,
-               quien para entonces estudiaba cine y requería conseguir dinero para
-               desarrollar su tesis de grado y así conseguir su título profesional.
-               Carlos le planteó a su hermano que organizara una fiesta que tuviera
-               un grupo musical en escena.
+          <text>
+           <font>Inconsolata</font>
+           <p>
+           El origen de Caifanes se dio, en parte, por un proyecto musical anterior
+           denominado Las Insólitas Imágenes de Aurora. Este surgió en 1984 por
+           iniciativa de Alejandro Marcovich a pedido de su hermano Carlos,
+           quien para entonces estudiaba cine y requería conseguir dinero para
+           desarrollar su tesis de grado y así conseguir su título profesional.
+           Carlos le planteó a su hermano que organizara una fiesta que tuviera
+           un grupo musical en escena.
 
-               Alejandro buscó a otros músicos para integrar la nueva banda:
-               Alfonso André, baterista amigo de su hermano Carlos, y Saúl
-               Hernández, quien para el momento formaba parte de otra agrupación
-               llamada Frac y quien inicialmente se negó a participar en el
-               naciente conjunto; a dos días de la fecha prevista para la fiesta,
-               Saúl cambió de opinión y empezó a ensayar con Alfonso y Alejandro.
-               Así, Hernández sería el vocalista e intérprete del bajo, Marcovich
-               el guitarrista y André el baterista.
-             </p></text>
-            </el>
-           </content>
-          </el>
+           Alejandro buscó a otros músicos para integrar la nueva banda:
+           Alfonso André, baterista amigo de su hermano Carlos, y Saúl
+           Hernández, quien para el momento formaba parte de otra agrupación
+           llamada Frac y quien inicialmente se negó a participar en el
+           naciente conjunto; a dos días de la fecha prevista para la fiesta,
+           Saúl cambió de opinión y empezó a ensayar con Alfonso y Alejandro.
+           Así, Hernández sería el vocalista e intérprete del bajo, Marcovich
+           el guitarrista y André el baterista.
+          </p></text>
          </el>
         </content>
        </el>

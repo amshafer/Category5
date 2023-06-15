@@ -204,7 +204,7 @@ impl Viewport {
     ///
     /// This performs bounds checking of `dx` and `dy` to ensure the are within
     /// `scroll_region`. If they are not, then no scrolling is performed.
-    pub fn set_scroll_amount(&mut self, dx: i32, dy: i32) {
+    pub fn update_scroll_amount(&mut self, dx: i32, dy: i32) {
         // The min and max bounds here are weird. Think of it like moving the
         // scroll region, not moving the scroll area. It looks like this:
         //

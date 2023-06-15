@@ -42,6 +42,7 @@ mod generated;
 pub use generated::*;
 
 use std::ops::Deref;
+use std::ops::DerefMut;
 use std::os::fd::RawFd;
 use std::os::unix::io::OwnedFd;
 extern crate regex;
@@ -626,7 +627,8 @@ impl Dakota {
         let parent_size = self.d_layout_nodes.get(el).unwrap().l_size;
 
         {
-            let mut child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
+            let mut child_size_raw = self.d_layout_nodes.get_mut(&child_id).unwrap();
+            let child_size = child_size_raw.deref_mut();
             // At this point the size of the is calculated
             // and we can determine the offset. We want to center the
             // box, so that's the center point of the parent minus
@@ -771,6 +773,9 @@ impl Dakota {
     /// we have, then the size is available_space
     /// 3. No size and no bounds means we are inside of a scrolling arena, and
     /// we should grow this box to hold all of its children.
+    ///
+    /// The final size of this element will be amended after all child content
+    /// has been calculated.
     fn calculate_sizes_el(
         &mut self,
         el: &DakotaId,
@@ -785,7 +790,7 @@ impl Dakota {
             .context("Failed to calculate offset size of Element")?
             .into();
 
-        node.l_size = self.get_final_size(el, space)?.into();
+        node.l_size = self.get_default_size(el, space)?.into();
         // Bounds will be checked in caller to see if the parent needs to be
         // marked as a viewport.
 
@@ -816,7 +821,6 @@ impl Dakota {
 
         let mut text = self.d_texts.get_mut(el).unwrap();
         let line_space = font_inst.get_vertical_line_spacing();
-        let resource = self.d_resources.get(el).map(|r| r.clone());
 
         // This is how far we have advanced on a line
         // Go down by one line space before writing the first line. This deals
@@ -847,8 +851,6 @@ impl Dakota {
                     // of self
                     let layouts = &mut self.d_layout_nodes;
                     let text_fonts = &mut self.d_text_font;
-                    let resources = &mut self.d_resources;
-                    let sizes = &mut self.d_sizes;
 
                     if run.cache.is_none() {
                         // TODO: we can get the available height from above, pass it to a font instance
@@ -889,34 +891,17 @@ impl Dakota {
                             log::info!("Character size is {:?}", size);
 
                             {
-                                use std::ops::DerefMut;
-
+                                let mut node = layouts.get_mut(el).unwrap();
                                 // Test if the text exceeds the parent space. If so then we need
                                 // to mark this node as a viewport node
-                                let mut node_raw = layouts.get_mut(el).unwrap();
-                                let mut node = node_raw.deref_mut();
-                                // If the user assigned this element a predefined size
-                                if sizes.get(el).is_some() {
-                                    if child_size.l_offset.x + child_size.l_size.width
-                                        > node.l_size.width
-                                        || child_size.l_offset.y + child_size.l_size.height
-                                            > node.l_size.height
-                                    {
-                                        // If this element has been assigned a size, then mark it as
-                                        // a viewport.
-                                        node.l_is_viewport = true;
-                                    }
-                                } else {
-                                    // If it has not been assigned a size, then grow or possibly
-                                    // shrink it to hold the text
-                                    node.l_size.width =
-                                        child_size.l_offset.x + child_size.l_size.width;
-                                    node.l_size.height =
-                                        child_size.l_offset.y + child_size.l_size.height;
-                                    log::error!(
-                                        "Updating based on text size to size: {:?}",
-                                        node.l_size
-                                    );
+                                if child_size.l_offset.x + child_size.l_size.width
+                                    > node.l_size.width
+                                    || child_size.l_offset.y + child_size.l_size.height
+                                        > node.l_size.height
+                                {
+                                    // If this element has been assigned a size, then mark it as
+                                    // a viewport.
+                                    node.l_is_viewport = true;
                                 }
                                 // What we have done here is create a "fake" element (fake since
                                 // the user didn't specify it) that represents a glyph.
@@ -929,11 +914,6 @@ impl Dakota {
                             // create thundr surfaces for these glyphs we will index
                             // the wrong font using this glyph_id
                             text_fonts.set(&ch.node, font_id.clone());
-                            // Set any resources for this child glyph node to assign
-                            // it any colors set on the parent element
-                            if let Some(res) = resource.as_ref() {
-                                resources.set(&ch.node, res.clone());
-                            }
                         },
                     );
                 }
@@ -1021,9 +1001,13 @@ impl Dakota {
             // ------------------------------------------
             // CENTERED CONTENT
             // ------------------------------------------
-            self.calculate_sizes_content(el, space)
+            self.calculate_sizes_content(el, &child_space)
                 .context("Layout Tree Calculation: processing centered content of element")?;
         }
+
+        // Update the size of this element after calculating the content
+        let final_size = self.get_final_size(el, space)?.into();
+        self.d_layout_nodes.get_mut(el).unwrap().l_size = final_size;
 
         return Ok(());
     }
@@ -1146,6 +1130,102 @@ impl Dakota {
         self.d_thund.clear_all();
     }
 
+    /// Helper for creating a thundr surface for only this element
+    ///
+    /// This does not recurse and create elements for the children.
+    fn create_thundr_surf_for_el_no_recurse(&mut self, node: &DakotaId) -> Result<th::Surface> {
+        let layout = self.d_layout_nodes.get(node).unwrap();
+
+        // If this node is a viewport then ignore its offset since its surface
+        // is going to be added to a different surfacelist
+        let offset = match layout.l_is_viewport {
+            true => (0.0, 0.0),
+            false => (layout.l_offset.x, layout.l_offset.y),
+        };
+
+        // first create a surface for this element, or get an existing one
+        // This starts as an empty unbound surface but may be assigned content below
+        let mut surf = if self.d_layout_node_surfaces.get_mut(node).is_some() {
+            // Do this here to avoid hogging the borrow with the above line
+            let mut surf = self.d_layout_node_surfaces.get_mut(node).unwrap();
+            surf.reset_surface(
+                offset.0,
+                offset.1,
+                layout.l_size.width,
+                layout.l_size.height,
+            );
+            surf.clone()
+        } else {
+            let surf = self.d_thund.create_surface(
+                offset.0,
+                offset.1,
+                layout.l_size.width,
+                layout.l_size.height,
+            );
+            // Set and get this to match the RefMut in the first if branch
+            self.d_layout_node_surfaces.set(node, surf.clone());
+            surf
+        };
+
+        if self.child_uses_autolayout(node) {
+            self.d_thund.surface_set_render_pass(&surf, 1);
+        } else {
+            self.d_thund.surface_set_render_pass(&surf, 0);
+        }
+
+        if let Some(glyph_id) = layout.l_glyph_id {
+            let font_id = self.get_font_id_for_el(node);
+            let mut font_inst = self.d_font_instances.get_mut(&font_id).unwrap();
+            // If this path is hit, then this layout node is really a glyph in a
+            // larger block of text. It has been created as a child, and isn't
+            // a real element. We ask the font code to give us a surface for
+            // it that we can display.
+            font_inst.get_thundr_surf_for_glyph(
+                &mut self.d_thund,
+                &mut surf,
+                glyph_id,
+                layout.l_offset,
+            );
+        }
+
+        // Handle binding images
+        // We need to get the resource's content from our resource map, get
+        // the thundr image for it, and bind it to our new surface.
+        if let Some(resource_id) = self.d_resources.get(node) {
+            // Assert that only one content type is set
+            let mut content_num = 0;
+
+            if let Some(image) = self.d_resource_thundr_image.get(&resource_id) {
+                self.d_thund.bind_image(&mut surf, image.clone());
+                content_num += 1;
+            }
+            if let Some(color) = self.get_resource_color(&resource_id) {
+                surf.set_color((color.r, color.g, color.b, color.a));
+                content_num += 1;
+            }
+
+            assert!(content_num == 1);
+        } else if let Some(glyph_id) = layout.l_glyph_id {
+            let font_id = self.get_font_id_for_el(node);
+            let mut font_inst = self.d_font_instances.get_mut(&font_id).unwrap();
+            // If this path is hit, then this layout node is really a glyph in a
+            // larger block of text. It has been created as a child, and isn't
+            // a real element. We ask the font code to give us a surface for
+            // it that we can display.
+            font_inst.get_thundr_surf_for_glyph(
+                &mut self.d_thund,
+                &mut surf,
+                glyph_id,
+                layout.l_offset,
+            );
+            // If this text has a color set the surface now
+            if let Some(color) = font_inst.f_color {
+                surf.set_color((color.r, color.g, color.b, color.a));
+            }
+        }
+        return Ok(surf);
+    }
+
     /// Create the thundr surfaces from the Element layout tree.
     ///
     /// At this point the layout tree should have been constructed, aka
@@ -1155,101 +1235,7 @@ impl Dakota {
     /// This does not cross viewport boundaries. This function will be called on
     /// the root node for every viewport.
     fn create_thundr_surf_for_el(&mut self, node: &DakotaId) -> Result<th::Surface> {
-        let mut surf = {
-            let layout = self.d_layout_nodes.get(node).unwrap();
-
-            // If this node is a viewport then ignore its offset since its surface
-            // is going to be added to a different surfacelist
-            let offset = match layout.l_is_viewport {
-                true => (0.0, 0.0),
-                false => (layout.l_offset.x, layout.l_offset.y),
-            };
-
-            // first create a surface for this element, or get an existing one
-            // This starts as an empty unbound surface but may be assigned content below
-            let mut surf = if self.d_layout_node_surfaces.get_mut(node).is_some() {
-                // Do this here to avoid hogging the borrow with the above line
-                let mut surf = self.d_layout_node_surfaces.get_mut(node).unwrap();
-                surf.reset_surface(
-                    offset.0,
-                    offset.1,
-                    layout.l_size.width,
-                    layout.l_size.height,
-                );
-                surf.clone()
-            } else {
-                let surf = self.d_thund.create_surface(
-                    offset.0,
-                    offset.1,
-                    layout.l_size.width,
-                    layout.l_size.height,
-                );
-                // Set and get this to match the RefMut in the first if branch
-                self.d_layout_node_surfaces.set(node, surf.clone());
-                surf
-            };
-
-            if self.child_uses_autolayout(node) {
-                self.d_thund.surface_set_render_pass(&surf, 1);
-            } else {
-                self.d_thund.surface_set_render_pass(&surf, 0);
-            }
-
-            if let Some(glyph_id) = layout.l_glyph_id {
-                let font_id = self.get_font_id_for_el(node);
-                let mut font_inst = self.d_font_instances.get_mut(&font_id).unwrap();
-                // If this path is hit, then this layout node is really a glyph in a
-                // larger block of text. It has been created as a child, and isn't
-                // a real element. We ask the font code to give us a surface for
-                // it that we can display.
-                font_inst.get_thundr_surf_for_glyph(
-                    &mut self.d_thund,
-                    &mut surf,
-                    glyph_id,
-                    layout.l_offset,
-                );
-            }
-
-            // Handle binding images
-            // We need to get the resource's content from our resource map, get
-            // the thundr image for it, and bind it to our new surface.
-            if let Some(resource_id) = self.d_resources.get(node) {
-                // Assert that only one content type is set
-                let mut content_num = 0;
-
-                if let Some(image) = self.d_resource_thundr_image.get(&resource_id) {
-                    self.d_thund.bind_image(&mut surf, image.clone());
-                    content_num += 1;
-                }
-                if let Some(color) = self.get_resource_color(&resource_id) {
-                    surf.set_color((color.r, color.g, color.b, color.a));
-                    content_num += 1;
-                }
-
-                assert!(content_num == 1);
-            } else if let Some(glyph_id) = layout.l_glyph_id {
-                let font_id = self.get_font_id_for_el(node);
-                let mut font_inst = self.d_font_instances.get_mut(&font_id).unwrap();
-                // If this path is hit, then this layout node is really a glyph in a
-                // larger block of text. It has been created as a child, and isn't
-                // a real element. We ask the font code to give us a surface for
-                // it that we can display.
-                font_inst.get_thundr_surf_for_glyph(
-                    &mut self.d_thund,
-                    &mut surf,
-                    glyph_id,
-                    layout.l_offset,
-                );
-                // If this text has a color set the surface now
-                if let Some(color) = font_inst.f_color {
-                    surf.set_color((color.r, color.g, color.b, color.a));
-                }
-
-                return Ok(surf);
-            }
-
-            surf
-        };
+        let mut surf = self.create_thundr_surf_for_el_no_recurse(node)?;
 
         // now iterate through all of it's children, and recursively do the same
         // This is written kind of weird to work around some annoying borrow checker
@@ -1304,23 +1290,71 @@ impl Dakota {
 
     /// This pass recursively generates the surfacelists for each
     /// Viewport in the scene.
-    fn calculate_thundr_surfaces(&mut self, id: ViewportId) -> Result<()> {
+    fn calculate_thundr_surfaces(
+        &mut self,
+        id: ViewportId,
+        parent_viewport: Option<ViewportId>,
+    ) -> Result<()> {
         let root_node_raw = self.d_viewport_nodes.get(&id).unwrap().v_root_node.clone();
         if let Some(root_node_id) = root_node_raw {
-            // Create our thundr surface and add it to the list
-            let root_surf = self
-                .create_thundr_surf_for_el(&root_node_id)
-                .context("Could not construct Thundr surface tree")?;
+            // If we have a parent viewport, then we do not want to add the root surface
+            // to this viewport, we want to add it to the parent. The reason for this is we
+            // want to scroll the *child* elements in this element, but not the element
+            // content itself.
+            if let Some(parent_id) = parent_viewport.as_ref() {
+                {
+                    // Add our surface to the parent viewport
+                    let root_surf = self
+                        .create_thundr_surf_for_el_no_recurse(&root_node_id)
+                        .context("Could not construct Thundr surface tree")?;
+                    let parent_vp = &mut self.d_viewport_nodes.get_mut(&parent_id).unwrap();
+                    parent_vp.v_surfaces.push(root_surf.clone());
+                }
+                {
+                    // Clear our children from the last run
+                    let viewport = &mut self.d_viewport_nodes.get_mut(&id).unwrap();
+                    viewport.v_surfaces.clear();
+                }
 
-            let viewport = &mut self.d_viewport_nodes.get_mut(&id).unwrap();
-            viewport.v_surfaces.clear();
-            viewport.v_surfaces.push(root_surf.clone());
+                // Now add all the children to this viewport
+                let num_children = self
+                    .d_layout_nodes
+                    .get(&root_node_id)
+                    .unwrap()
+                    .l_children
+                    .len();
+                for i in 0..num_children {
+                    let child_id = {
+                        let layout = self.d_layout_nodes.get(&root_node_id).unwrap();
+                        layout.l_children[i].clone()
+                    };
+
+                    let child_surf = self
+                        .create_thundr_surf_for_el(&child_id)
+                        .context("Could not construct Thundr surface tree")?;
+                    self.d_viewport_nodes
+                        .get_mut(&id)
+                        .unwrap()
+                        .v_surfaces
+                        .push(child_surf.clone());
+                }
+            } else {
+                // If there is no parent then just add this surface and its children to
+                // the current viewport. This means we must be the root viewport
+                let root_surf = self
+                    .create_thundr_surf_for_el(&root_node_id)
+                    .context("Could not construct Thundr surface tree")?;
+
+                let viewport = &mut self.d_viewport_nodes.get_mut(&id).unwrap();
+                viewport.v_surfaces.clear();
+                viewport.v_surfaces.push(root_surf.clone());
+            }
         }
 
         let num_children = self.d_viewport_nodes.get(&id).unwrap().v_children.len();
         for i in 0..num_children {
             let child_viewport = self.d_viewport_nodes.get(&id).unwrap().v_children[i].clone();
-            self.calculate_thundr_surfaces(child_viewport)?;
+            self.calculate_thundr_surfaces(child_viewport, Some(id.clone()))?;
         }
 
         Ok(())
@@ -1538,7 +1572,7 @@ impl Dakota {
         // This generates thundr resources for all viewports and nodes in the
         // layout tree. This is the last step needed before drawing.
         // We can expect the root viewport to exist since we just did it above
-        self.calculate_thundr_surfaces(self.d_root_viewport.clone().unwrap())?;
+        self.calculate_thundr_surfaces(self.d_root_viewport.clone().unwrap(), None)?;
 
         self.d_layout_tree_root = Some(root_node_id);
         self.d_needs_refresh = false;
@@ -1623,11 +1657,119 @@ impl Dakota {
         }
     }
 
+    /// Helper for recursively updating viewports
+    fn update_viewport_tree(&mut self, viewport: &DakotaId) {
+        // move all subviewports by the scroll amount
+        // They will later be clipped in draw_viewports
+        let num_children = self
+            .d_viewport_nodes
+            .get(&viewport)
+            .unwrap()
+            .v_children
+            .len();
+        for i in 0..num_children {
+            let child_id = self.d_viewport_nodes.get(&viewport).unwrap().v_children[i].clone();
+            {
+                // Update the visible location and bounds of this viewport first
+                //
+                // The parent viewport may have had some scrolling action happen to
+                // it. Right before drawing we ensure that this viewport is still
+                // in view, and update the offset and size accordingly. If it is
+                // out of view we can bail and save us from drawing its contents
+                let parent_vp = self
+                    .d_viewport_nodes
+                    .get(&viewport)
+                    .unwrap()
+                    .v_viewport
+                    .clone();
+                let mut child_vp_raw = self.d_viewport_nodes.get_mut(&child_id).unwrap();
+                let child_vp = child_vp_raw.deref_mut();
+
+                log::info!("child_vp.v_offset: {:?}", child_vp.v_offset);
+                log::info!("child_vp.v_size: {:?}", child_vp.v_size);
+                log::info!("child_vp.v_viewport: {:?}", child_vp.v_viewport);
+                log::info!("parent_vp: {:?}", parent_vp);
+
+                child_vp.v_viewport.offset = (
+                    parent_vp.offset.0 + parent_vp.scroll_offset.0 + child_vp.v_offset.0,
+                    parent_vp.offset.1 + parent_vp.scroll_offset.1 + child_vp.v_offset.1,
+                );
+
+                // If our child has scrolled off the edge of the parent viewport,
+                // skip drawing it. This checks if it has scrolled past the end
+                // of the parent viewport or if it has already been scrolled past
+                // and is out of view. Remember all of these are in global coord
+                // space.
+                //
+                // Have we not yet scrolled so this viewport is in view
+                if (child_vp.v_offset.0 > parent_vp.size.0
+                    && child_vp.v_offset.1 > parent_vp.size.1)
+                    // Have we scrolled past this horizontally
+                    || (child_vp.v_offset.0 < parent_vp.offset.0
+                        && child_vp.v_offset.0 * -1 > child_vp.v_size.0)
+                    // Have we scrolled past this vertically
+                    || (child_vp.v_offset.1  < parent_vp.offset.1
+                        && child_vp.v_offset.1 * -1 > child_vp.v_size.1)
+                {
+                    continue;
+                }
+
+                // If the child is partially scrolled past, then update its offset to
+                // zero and limit the size by that amount
+                let clamp_to_parent_base =
+                    |child_original_size,
+                     child_offset: &mut i32,
+                     child_size: &mut i32,
+                     parent_offset: i32,
+                     parent_size: i32| {
+                        // The child size is either size reduced by the amount this
+                        // child is behind the parent, or the size reduced by the amount
+                        // this child exceeds the parent, or the size
+                        *child_size = if *child_offset < parent_offset {
+                            child_original_size - (parent_offset - *child_offset).abs()
+                        } else if *child_offset + child_original_size > parent_offset + parent_size
+                        {
+                            (parent_offset + parent_size) - *child_offset
+                        } else {
+                            child_original_size
+                        };
+                        // Now clamp it to the parent's region
+                        *child_offset =
+                            (*child_offset).clamp(parent_offset, parent_offset + parent_size);
+                    };
+
+                // Stash these to let the borrow checker look inside Lluvia's TableRef
+                let child_vp_v_size = child_vp.v_size;
+                let child_vp_v_viewport = &mut child_vp.v_viewport;
+
+                clamp_to_parent_base(
+                    child_vp_v_size.0,
+                    &mut child_vp_v_viewport.offset.0,
+                    &mut child_vp_v_viewport.size.0,
+                    parent_vp.offset.0,
+                    parent_vp.size.0,
+                );
+                clamp_to_parent_base(
+                    child_vp_v_size.1,
+                    &mut child_vp_v_viewport.offset.1,
+                    &mut child_vp_v_viewport.size.1,
+                    parent_vp.offset.1,
+                    parent_vp.size.1,
+                );
+                log::info!("UPDATED child_vp.v_viewport: {:?}", child_vp.v_viewport);
+            }
+
+            // Now that we have updated the child, tell it to update its children
+            self.update_viewport_tree(&child_id);
+        }
+    }
+
     /// Handle dakota-only events coming from the event system
     ///
     /// Most notably this handles scrolling
     fn handle_private_events(&mut self) -> Result<()> {
-        for ev in self.d_event_sys.es_dakota_event_queue.iter() {
+        for i in 0..self.d_event_sys.es_dakota_event_queue.len() {
+            let ev = &self.d_event_sys.es_dakota_event_queue[i];
             match ev {
                 Event::InputScroll {
                     position,
@@ -1650,14 +1792,28 @@ impl Dakota {
                     let viewport =
                         self.viewport_at_pos(self.d_mouse_pos.0 as i32, self.d_mouse_pos.1 as i32);
 
-                    // set its scrolling offset to be used for the next draw
-                    let mut node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
+                    let original_scroll_offset = self
+                        .d_viewport_nodes
+                        .get_mut(&viewport)
+                        .unwrap()
+                        .v_viewport
+                        .scroll_offset;
+                    log::error!("original_scroll_offset: {:?}", original_scroll_offset);
 
-                    node.v_viewport.set_scroll_amount(x as i32, y as i32);
+                    let new_scroll_offset = {
+                        // set its scrolling offset to be used for the next draw
+                        let mut node = self.d_viewport_nodes.get_mut(&viewport).unwrap();
+                        node.v_viewport.update_scroll_amount(x as i32, y as i32);
+                        node.v_viewport.scroll_offset
+                    };
+                    log::error!("new_scroll_offset: {:?}", new_scroll_offset);
+
                     self.d_needs_redraw = true;
-
-                    // TODO: move all subviewports by the scroll amount
-                    // They will later be clipped in draw_viewports
+                    // Only move/resize the subviewports if this scroll event
+                    // actually caused this viewport to move
+                    if original_scroll_offset != new_scroll_offset {
+                        self.update_viewport_tree(&viewport);
+                    }
                 }
                 // Ignore all other events for now
                 _ => {}
@@ -1714,117 +1870,27 @@ impl Dakota {
             .len();
         for i in 0..num_children {
             let child_id = self.d_viewport_nodes.get(&viewport).unwrap().v_children[i].clone();
+            // Test that this viewport is visible before drawing it
             {
-                // Update the visible location and bounds of this viewport first
-                //
-                // The parent viewport may have had some scrolling action happen to
-                // it. Right before drawing we ensure that this viewport is still
-                // in view, and update the offset and size accordingly. If it is
-                // out of view we can bail and save us from drawing its contents
                 let parent_vp = self
                     .d_viewport_nodes
                     .get(&viewport)
                     .unwrap()
                     .v_viewport
                     .clone();
-                let mut child_vp = self.d_viewport_nodes.get_mut(&child_id).unwrap();
-
-                log::info!("child_vp.v_offset: {:?}", child_vp.v_offset);
-                log::info!("child_vp.v_size: {:?}", child_vp.v_size);
-                log::info!("child_vp.v_viewport: {:?}", child_vp.v_viewport);
-                log::info!("parent_vp: {:?}", parent_vp);
-
-                child_vp.v_viewport.offset = (
-                    parent_vp.offset.0 + parent_vp.scroll_offset.0 + child_vp.v_offset.0,
-                    parent_vp.offset.1 + parent_vp.scroll_offset.1 + child_vp.v_offset.1,
-                );
-
-                // If our child has scrolled off the edge of the parent viewport,
-                // skip drawing it. This checks if it has scrolled past the end
-                // of the parent viewport or if it has already been scrolled past
-                // and is out of view. Remember all of these are in global coord
-                // space.
-                //
-                // Have we not yet scrolled so this viewport is in view
-                if (child_vp.v_viewport.offset.0 > parent_vp.size.0
-                    && child_vp.v_viewport.offset.1 > parent_vp.size.1)
+                let child_vp = self.d_viewport_nodes.get(&child_id).unwrap();
+                if (child_vp.v_offset.0 > parent_vp.size.0
+                    && child_vp.v_offset.1 > parent_vp.size.1)
                     // Have we scrolled past this horizontally
-                    || (child_vp.v_viewport.offset.0 < parent_vp.offset.0
-                        && child_vp.v_viewport.offset.0 * -1 > child_vp.v_viewport.size.0)
+                    || (child_vp.v_offset.0 < parent_vp.offset.0
+                        && child_vp.v_offset.0 * -1 > child_vp.v_size.0)
                     // Have we scrolled past this vertically
-                    || (child_vp.v_viewport.offset.1  < parent_vp.offset.1
-                        && child_vp.v_viewport.offset.1 * -1 > child_vp.v_viewport.size.1)
+                    || (child_vp.v_offset.1  < parent_vp.offset.1
+                        && child_vp.v_offset.1 * -1 > child_vp.v_size.1)
                 {
                     continue;
                 }
-
-                // If the child is partially scrolled past, then update its offset to
-                // zero and limit the size by that amount
-                let clamp_to_parent_base =
-                    |child_original_size,
-                     child_offset: &mut i32,
-                     child_size: &mut i32,
-                     parent_offset| {
-                        if *child_offset < parent_offset {
-                            // Adjust the child size by the difference between the parent and child
-                            // offsets. Get this as an absolute value twice, in case child < 0 or
-                            // the difference is negative due to parent_offset == 0
-                            *child_size =
-                                child_original_size - (parent_offset - child_offset.abs()).abs();
-                            // Now clamp it  to the parent's base
-                            *child_offset = parent_offset;
-                        }
-                    };
-
-                // Stash these to let the borrow checker look inside Lluvia's TableRef
-                let child_vp_v_offset = child_vp.v_offset;
-                let child_vp_v_size = child_vp.v_size;
-                let child_vp_v_viewport = &mut child_vp.v_viewport;
-
-                clamp_to_parent_base(
-                    child_vp_v_size.0,
-                    &mut child_vp_v_viewport.offset.0,
-                    &mut child_vp_v_viewport.size.0,
-                    parent_vp.offset.0,
-                );
-                clamp_to_parent_base(
-                    child_vp_v_size.1,
-                    &mut child_vp_v_viewport.offset.1,
-                    &mut child_vp_v_viewport.size.1,
-                    parent_vp.offset.1,
-                );
-
-                // If the child is scrolled but at the bottom, limit it to the remaining
-                // size of the parent viewport
-                let clamp_to_parent_size =
-                    |child_offset,
-                     child_original_size,
-                     child_size: &mut i32,
-                     parent_offset,
-                     parent_size| {
-                        if child_offset + child_original_size > parent_offset + parent_size {
-                            // Now clamp it to the parent's size
-                            *child_size = (*child_size).clamp(0, parent_size - child_offset);
-                        }
-                    };
-
-                clamp_to_parent_size(
-                    child_vp_v_offset.0,
-                    child_vp_v_size.0,
-                    &mut child_vp_v_viewport.size.0,
-                    parent_vp.offset.0,
-                    parent_vp.size.0,
-                );
-                clamp_to_parent_size(
-                    child_vp_v_offset.1,
-                    child_vp_v_size.1,
-                    &mut child_vp_v_viewport.size.1,
-                    parent_vp.offset.1,
-                    parent_vp.size.1,
-                );
-                log::info!("UPDATED child_vp.v_viewport: {:?}", child_vp.v_viewport);
             }
-
             self.draw_viewports(child_id)?;
         }
 
