@@ -1138,10 +1138,7 @@ impl Dakota {
 
         // If this node is a viewport then ignore its offset since its surface
         // is going to be added to a different surfacelist
-        let offset = match layout.l_is_viewport {
-            true => (0.0, 0.0),
-            false => (layout.l_offset.x, layout.l_offset.y),
-        };
+        let offset = (layout.l_offset.x, layout.l_offset.y);
 
         // first create a surface for this element, or get an existing one
         // This starts as an empty unbound surface but may be assigned content below
