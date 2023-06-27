@@ -119,6 +119,7 @@
      <height><constant>16</constant></height>
     </size>
    </el>
+
    <el>
     <content>
      <el>
@@ -173,6 +174,7 @@
          <height><relative>0.5</relative></height>
         </size>
        </el>
+
        <el>
         <size>
          <width><relative>1.0</relative></width>
@@ -181,39 +183,42 @@
         <content>
          <el>
           <resource>grey</resource>
-          <el>
-           <content>
-            <el>
-             <size>
-              <width><relative>0.9</relative></width>
-              <height><relative>0.9</relative></height>
-             </size>
-             <text>
-              <font>Inconsolata</font>
-              <p>
-               El origen de Caifanes se dio, en parte, por un proyecto musical anterior
-               denominado Las Insólitas Imágenes de Aurora. Este surgió en 1984 por
-               iniciativa de Alejandro Marcovich a pedido de su hermano Carlos,
-               quien para entonces estudiaba cine y requería conseguir dinero para
-               desarrollar su tesis de grado y así conseguir su título profesional.
-               Carlos le planteó a su hermano que organizara una fiesta que tuviera
-               un grupo musical en escena.
+          <size>
+           <width><relative>0.9</relative></width>
+           <height><relative>1.0</relative></height>
+          </size>
+          <content>
+           <el>
+            <size>
+             <width><relative>0.9</relative></width>
+             <height><relative>0.9</relative></height>
+            </size>
+            <text>
+             <font>Inconsolata</font>
+             <p>
+              El origen de Caifanes se dio, en parte, por un proyecto musical anterior
+              denominado Las Insólitas Imágenes de Aurora. Este surgió en 1984 por
+              iniciativa de Alejandro Marcovich a pedido de su hermano Carlos,
+              quien para entonces estudiaba cine y requería conseguir dinero para
+              desarrollar su tesis de grado y así conseguir su título profesional.
+              Carlos le planteó a su hermano que organizara una fiesta que tuviera
+              un grupo musical en escena.
 
-               Alejandro buscó a otros músicos para integrar la nueva banda:
-               Alfonso André, baterista amigo de su hermano Carlos, y Saúl
-               Hernández, quien para el momento formaba parte de otra agrupación
-               llamada Frac y quien inicialmente se negó a participar en el
-               naciente conjunto; a dos días de la fecha prevista para la fiesta,
-               Saúl cambió de opinión y empezó a ensayar con Alfonso y Alejandro.
-               Así, Hernández sería el vocalista e intérprete del bajo, Marcovich
-               el guitarrista y André el baterista.
-             </p></text>
-            </el>
-           </content>
-          </el>
+              Alejandro buscó a otros músicos para integrar la nueva banda:
+              Alfonso André, baterista amigo de su hermano Carlos, y Saúl
+              Hernández, quien para el momento formaba parte de otra agrupación
+              llamada Frac y quien inicialmente se negó a participar en el
+              naciente conjunto; a dos días de la fecha prevista para la fiesta,
+              Saúl cambió de opinión y empezó a ensayar con Alfonso y Alejandro.
+              Así, Hernández sería el vocalista e intérprete del bajo, Marcovich
+              el guitarrista y André el baterista.
+            </p></text>
+           </el>
+          </content>
          </el>
         </content>
        </el>
+
        <el>
         <text>
          <font>JetBrainsMono</font>
@@ -273,6 +278,60 @@
          </p>
         </text>
        </el>
+
+       <el>
+        <size>
+         <width><relative>1.0</relative></width>
+         <height><constant>256</constant></height>
+        </size>
+        <content>
+         <el>
+          <resource>grey</resource>
+          <el>
+           <content>
+            <el>
+             <size>
+              <width><relative>0.9</relative></width>
+              <height><relative>0.9</relative></height>
+             </size>
+             <text>
+              <font>Inconsolata</font>
+              <p>
+               Con un futuro incierto el grupo trabaja en nuevos demos y hace
+               sus propias grabaciones. Busca una nueva compañía discográfica y
+               con el apoyo del productor Pepe Quintana logran firmar con
+               Warner Music México.
+
+               Tras la mala experiencia del primer disco, Fher y Álex eran
+               conscientes de los riesgos que implicaba ponerse en las manos de
+               un productor que no entendía el concepto del grupo ni su
+               propuesta artística, por lo que optaron por iniciarse en un
+               camino del cual no se han apartado desde entonces: asumir ellos
+               la producción de todos sus discos.
+             </p></text>
+            </el>
+           </content>
+          </el>
+         </el>
+        </content>
+       </el>
+
+       <el>
+        <size>
+         <width><relative>1.0</relative></width>
+         <height><constant>64</constant></height>
+        </size>
+        <content>
+         <el>
+          <resource>grey</resource>
+          <size>
+           <width><relative>0.8</relative></width>
+           <height><constant>3</constant></height>
+          </size>
+         </el>
+        </content>
+       </el>
+
       </el>
      </el>
     </content>

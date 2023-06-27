@@ -621,6 +621,7 @@ impl Dakota {
     /// We should either recurse the child box or calculate the
     /// size based on the centered resource.
     fn calculate_sizes_content(&mut self, el: &DakotaId, space: &LayoutSpace) -> Result<()> {
+        log::debug!("Calculating content size");
         let child_id = self.d_contents.get(el).unwrap().el.clone();
 
         self.calculate_sizes(&child_id, Some(el), &space)?;
@@ -666,6 +667,7 @@ impl Dakota {
         grandparent: Option<&DakotaId>,
         space: &mut LayoutSpace,
     ) -> Result<()> {
+        log::debug!("Calculating children size");
         // TODO: do vertical wrapping too
         let mut tile_info = TileInfo {
             t_last_x: 0,
@@ -831,15 +833,15 @@ impl Dakota {
             let node = self.d_layout_nodes.get(el).unwrap();
             Cursor {
                 c_i: 0,
-                c_x: node.l_offset.x,
-                c_y: node.l_offset.y + line_space,
+                c_x: 0.0,
+                c_y: line_space,
                 c_min: node.l_offset.x,
                 c_max: node.l_offset.x + node.l_size.width,
             }
         };
 
-        log::info!("Drawing text");
-        log::info!("{:#?}", cursor);
+        log::debug!("Calculating text size");
+        log::debug!("{:?}", cursor);
 
         // Trim out newlines and tabs. Styling is done with entries in the DOM, not
         // through text formatting in the dakota file.
