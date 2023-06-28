@@ -376,9 +376,14 @@ impl Dakota {
 
     /// Get the final size to use within the parent space.
     ///
-    /// This is the same as the default size, but in the case where no size is set by the user
-    /// and there is no image resource assigned it will be resized to hold all the child
-    /// content.
+    /// This is the same as the (original) default size, unless the following conditions are
+    /// met:
+    /// - no size was set by the user
+    /// - no image resource is assigned
+    /// - element does not have any positioned content
+    ///
+    /// If those conditions are met, then the element will be shrunk/grown to contain all
+    /// child elements.
     pub fn get_final_size(&self, el: &DakotaId, space: &LayoutSpace) -> Result<Size<u32>> {
         let mut ret = self.get_default_size(el, space)?;
         let mut is_image_resource = false;
@@ -391,6 +396,7 @@ impl Dakota {
         // If no size was specified by the user and no image has been assigned then we
         // will limit this element to the size of its children if there are any
         if self.d_sizes.get(el).is_none()
+            && self.d_contents.get(el).is_none()
             && !is_image_resource
             && self.d_layout_nodes.get(el).unwrap().l_children.len() > 0
         {
