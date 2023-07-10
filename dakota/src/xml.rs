@@ -357,9 +357,9 @@ impl Dakota {
                                 .ok_or(anyhow!("Element was not assigned a resource"))?,
                         )
                         .context("Getting resource reference for element")?;
-                    self.set_resource(id, resource_id)
+                    self.d_resources.set(id, resource_id)
                 }
-                Element::UnboundedSubsurface => self.set_unbounded_subsurface(id, true),
+                Element::UnboundedSubsurface => self.d_unbounded_subsurf.set(id, true),
                 Element::El {
                     x: _,
                     y: _,
@@ -371,7 +371,7 @@ impl Dakota {
                 Element::Width(val) => *width = *val,
                 Element::Height(val) => *height = *val,
                 Element::Text(data, font) => {
-                    self.set_text(
+                    self.d_texts.set(
                         id,
                         dom::Text {
                             items: data.clone(),
@@ -382,10 +382,10 @@ impl Dakota {
                         let resource_id = self
                             .get_id_for_name(&mut parse.font_name_to_id_map, name)
                             .context("Getting resource reference for element")?;
-                        self.set_text_font(id, resource_id);
+                        self.d_text_font.set(id, resource_id);
                     }
                 }
-                Element::Content(data) => self.set_content(
+                Element::Content(data) => self.d_contents.set(
                     id,
                     dom::Content {
                         el: data
@@ -393,7 +393,7 @@ impl Dakota {
                             .ok_or(anyhow!("Content does not contain an element"))?,
                     },
                 ),
-                Element::Size(width, height) => self.set_size(
+                Element::Size(width, height) => self.d_sizes.set(
                     id,
                     dom::RelativeSize {
                         width: width
@@ -404,7 +404,7 @@ impl Dakota {
                             .ok_or(anyhow!("Content does not contain an element"))?,
                     },
                 ),
-                Element::Offset(x, y) => self.set_offset(
+                Element::Offset(x, y) => self.d_offsets.set(
                     id,
                     dom::RelativeOffset {
                         x: x.clone()
@@ -550,7 +550,7 @@ impl Dakota {
                         .context("Getting resource id for resource definition")?;
 
                     if let Some(h) = hints.clone() {
-                        self.set_resource_hints(&resource_id, h);
+                        self.d_resource_hints.set(&resource_id, h);
                     }
 
                     // If this resource is backed by an image, populate it
@@ -558,7 +558,7 @@ impl Dakota {
                         let file_path = std::path::Path::new(i.data.get_fs_path()?);
                         self.define_resource_from_image(&resource_id, &file_path, i.format)?;
                     } else if let Some(c) = color.as_ref() {
-                        self.set_resource_color(&resource_id, *c);
+                        self.d_resource_color.set(&resource_id, *c);
                     }
                 }
                 e => return Err(anyhow!("Unexpected child element: {:?}", e)),
@@ -810,7 +810,7 @@ impl Dakota {
                                     window,
                                     root_element,
                                 }) => {
-                                    self.set_dakota_dom(
+                                    self.d_dom.set(
                                         old_id.as_ref().unwrap(),
                                         dom::DakotaDOM {
                                             version: version

@@ -152,7 +152,7 @@ pub struct Thundr {
     th_ecs_inst: ll::Instance,
 
     /// The render pass a surface belongs to
-    th_surface_pass: ll::Session<usize>,
+    th_surface_pass: ll::Component<usize>,
 
     /// Application specific stuff that will be set up after
     /// the original initialization
@@ -321,13 +321,10 @@ impl Thundr {
     pub fn new(info: &CreateInfo) -> Result<Thundr> {
         let mut ecs = ll::Instance::new();
         let pass_comp = ecs.add_component();
-        let pass_sesh = ecs
-            .open_session(pass_comp)
-            .ok_or(ThundrError::OUT_OF_MEMORY)?;
 
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
-        let mut rend = Renderer::new(&info, &mut ecs, pass_sesh.clone())?;
+        let mut rend = Renderer::new(&info, &mut ecs, pass_comp.clone())?;
 
         // Create the pipeline(s) requested
         // Record the type we are using so that we know which type to regenerate
@@ -349,7 +346,7 @@ impl Thundr {
         Ok(Thundr {
             th_rend: Arc::new(Mutex::new(rend)),
             th_ecs_inst: ecs,
-            th_surface_pass: pass_sesh,
+            th_surface_pass: pass_comp,
             _th_pipe_type: ty,
             th_pipe: pipe,
             th_params: None,

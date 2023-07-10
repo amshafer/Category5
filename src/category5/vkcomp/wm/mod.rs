@@ -201,7 +201,7 @@ impl WindowManager {
 
     /// Called when the swapchain image resizes
     pub fn handle_ood(&mut self, dakota: &mut dak::Dakota) {
-        dakota.set_size(
+        dakota.size().set(
             &self.wm_desktop,
             dom::RelativeSize {
                 width: dom::Value::Relative(dom::Relative::new(1.0)),
@@ -223,21 +223,21 @@ impl WindowManager {
             )
             .expect("Could not import background image into dakota");
         let surf = dakota.create_element().unwrap();
-        dakota.set_offset(
+        dakota.offset().set(
             &surf,
             dom::RelativeOffset {
                 x: dom::Value::Constant(dom::Constant::new(0)),
                 y: dom::Value::Constant(dom::Constant::new(0)),
             },
         );
-        dakota.set_size(
+        dakota.size().set(
             &surf,
             dom::RelativeSize {
                 width: dom::Value::Constant(dom::Constant::new(10)),
                 height: dom::Value::Constant(dom::Constant::new(15)),
             },
         );
-        dakota.set_resource(&surf, image.clone());
+        dakota.resource().set(&surf, image.clone());
 
         surf
     }
@@ -246,10 +246,12 @@ impl WindowManager {
     /// at the top of the screen
     fn create_menubar(dakota: &mut dak::Dakota, menubar_font: DakotaId) -> DakotaId {
         let barcolor = dakota.create_resource().unwrap();
-        dakota.set_resource_color(&barcolor, dak::dom::Color::new(0.085, 0.09, 0.088, 0.9));
+        dakota
+            .resource_color()
+            .set(&barcolor, dak::dom::Color::new(0.085, 0.09, 0.088, 0.9));
 
         let menubar = dakota.create_element().unwrap();
-        dakota.set_size(
+        dakota.size().set(
             &menubar,
             dom::RelativeSize {
                 // Make our bar 16 px tall but stretch across the screen
@@ -257,11 +259,11 @@ impl WindowManager {
                 height: dom::Value::Constant(dom::Constant::new(MENUBAR_SIZE)),
             },
         );
-        dakota.set_resource(&menubar, barcolor);
+        dakota.resource().set(&menubar, barcolor);
 
         let name = dakota.create_element().unwrap();
         dakota.set_text_regular(&name, "Category5");
-        dakota.set_text_font(&name, menubar_font);
+        dakota.text_font().set(&name, menubar_font);
         dakota.add_child_to_element(&menubar, name);
 
         return menubar;
@@ -277,7 +279,9 @@ impl WindowManager {
             &self.wm_datetime,
             &date.format("%a %B %e %l:%M %p").to_string(),
         );
-        dakota.set_text_font(&self.wm_datetime, self.wm_menubar_font.clone());
+        dakota
+            .text_font()
+            .set(&self.wm_datetime, self.wm_menubar_font.clone());
         log::error!(
             "Updated time to: {}",
             date.format("%a %B %e %l:%M %p").to_string()
@@ -304,7 +308,7 @@ impl WindowManager {
         let root = dakota.create_element().unwrap();
         // Manually set the size to the parent container so that its size
         // isn't derived from the image we set as the desktop background
-        dakota.set_size(
+        dakota.size().set(
             &root,
             dom::RelativeSize {
                 width: dom::Value::Relative(dom::Relative::new(1.0)),
@@ -313,7 +317,7 @@ impl WindowManager {
         );
 
         let dom = dakota.create_dakota_dom().unwrap();
-        dakota.set_dakota_dom(
+        dakota.dakota_dom().set(
             &dom,
             dak::dom::DakotaDOM {
                 version: "0.0.1".to_string(),
@@ -351,7 +355,7 @@ impl WindowManager {
             },
         );
         let datetime = dakota.create_element().unwrap();
-        dakota.set_content(
+        dakota.content().set(
             &menubar,
             dom::Content {
                 el: datetime.clone(),
@@ -372,7 +376,7 @@ impl WindowManager {
                 dom::Format::ARGB8888,
             )
             .expect("Could not import background image into dakota");
-        dakota.set_resource(&desktop, image);
+        dakota.resource().set(&desktop, image);
 
         // now add a cursor on top of this
         // ------------------------------------------------------------------
@@ -425,7 +429,7 @@ impl WindowManager {
                 dak::dom::Format::ARGB8888,
             )
             .unwrap();
-        dakota.set_resource(elem, image);
+        dakota.resource().set(elem, image);
     }
 
     /// Add a image to the renderer to be displayed.
@@ -520,7 +524,7 @@ impl WindowManager {
                 })),
             )
             .unwrap();
-        dakota.set_resource(&app.a_surf, res.clone());
+        dakota.resource().set(&app.a_surf, res.clone());
         app.a_image = Some(res);
 
         if let Some(damage) = atmos.take_buffer_damage(info.ufd_id) {
@@ -579,7 +583,7 @@ impl WindowManager {
                 dak::dom::Format::ARGB8888,
             )
             .unwrap();
-        dakota.set_resource(&app.a_surf, res.clone());
+        dakota.resource().set(&app.a_surf, res.clone());
         app.a_image = Some(res);
 
         Ok(())
@@ -756,7 +760,7 @@ impl WindowManager {
                 dakota.add_child_to_element(&self.wm_dakota_root, surf.clone());
                 // Set the size of the cursor
                 let surface_size = atmos.get_surface_size(win);
-                dakota.set_size(
+                dakota.size().set(
                     &surf,
                     dom::RelativeSize {
                         width: dom::Value::Constant(dom::Constant::new(surface_size.0 as i32)),
@@ -807,7 +811,7 @@ impl WindowManager {
         // their parent. We do not want this for XDG popup surfaces, which are
         // layered ontop of toplevel windows but are not restricted by their
         // bounds. This special attribute tells dakota not to clip them.
-        dakota.set_unbounded_subsurface(surf, true);
+        dakota.unbounded_subsurface().set(surf, true);
         Ok(())
     }
 
@@ -920,7 +924,7 @@ impl WindowManager {
         let (cursor_x, cursor_y) = atmos.get_cursor_pos();
         log::profiling!("Drawing cursor at ({}, {})", cursor_x, cursor_y);
         if let Some(cursor) = self.wm_cursor.as_mut() {
-            dakota.set_offset(
+            dakota.offset().set(
                 &cursor,
                 dom::RelativeOffset {
                     x: dom::Value::Constant(dom::Constant::new(
@@ -979,14 +983,14 @@ impl WindowManager {
             );
 
             // update the th::Surface pos and size
-            dakota.set_offset(
+            dakota.offset().set(
                 &a.a_surf,
                 dom::RelativeOffset {
                     x: dom::Value::Constant(dom::Constant::new(surface_pos.0 as i32)),
                     y: dom::Value::Constant(dom::Constant::new(surface_pos.1 as i32)),
                 },
             );
-            dakota.set_size(
+            dakota.size().set(
                 &a.a_surf,
                 dom::RelativeSize {
                     width: dom::Value::Constant(dom::Constant::new(surface_size.0 as i32)),

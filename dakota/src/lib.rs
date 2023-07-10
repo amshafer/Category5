@@ -103,44 +103,44 @@ pub struct Dakota {
     d_ecs_inst: ll::Instance,
     /// This is all of the LayoutNodes in the system, each corresponding to
     /// an Element or a subcomponent of an Element. Indexed by DakotaId.
-    d_layout_nodes: ll::Session<LayoutNode>,
+    d_layout_nodes: ll::Component<LayoutNode>,
     // NOTE: --------------------------------
     //
     // If you update the following you may have to edit the generated
     // getters/setters in generated.rs
-    d_node_types: ll::Session<DakotaObjectType>,
+    d_node_types: ll::Component<DakotaObjectType>,
 
     // Resource components
     // --------------------------------------------
     /// The resource info configured by the user
-    d_resource_hints: ll::Session<dom::Hints>,
-    d_resource_thundr_image: ll::Session<th::Image>,
-    d_resource_color: ll::Session<dom::Color>,
+    d_resource_hints: ll::Component<dom::Hints>,
+    d_resource_thundr_image: ll::Component<th::Image>,
+    d_resource_color: ll::Component<dom::Color>,
 
     // Element components
     // --------------------------------------------
     /// The resource currently assigned to this element
-    d_resources: ll::Session<DakotaId>,
-    d_offsets: ll::Session<dom::RelativeOffset>,
-    d_sizes: ll::Session<dom::RelativeSize>,
-    d_font_instances: ll::Session<FontInstance>,
-    d_texts: ll::Session<dom::Text>,
+    d_resources: ll::Component<DakotaId>,
+    d_offsets: ll::Component<dom::RelativeOffset>,
+    d_sizes: ll::Component<dom::RelativeSize>,
+    d_font_instances: ll::Component<FontInstance>,
+    d_texts: ll::Component<dom::Text>,
     /// points to an id with font instance
-    d_text_font: ll::Session<DakotaId>,
-    d_contents: ll::Session<dom::Content>,
-    d_bounds: ll::Session<dom::Edges>,
-    d_children: ll::Session<Vec<DakotaId>>,
-    d_unbounded_subsurf: ll::Session<bool>,
+    d_text_font: ll::Component<DakotaId>,
+    d_contents: ll::Component<dom::Content>,
+    d_bounds: ll::Component<dom::Edges>,
+    d_children: ll::Component<Vec<DakotaId>>,
+    d_unbounded_subsurf: ll::Component<bool>,
     /// This is the corresponding thundr surface for each LayoutNode. Also
     /// indexed by DakotaId.
-    d_layout_node_surfaces: ll::Session<th::Surface>,
+    d_layout_node_surfaces: ll::Component<th::Surface>,
 
     // DOM components
     // --------------------------------------------
-    d_dom: ll::Session<dom::DakotaDOM>,
+    d_dom: ll::Component<dom::DakotaDOM>,
 
     d_viewport_ecs_inst: ll::Instance,
-    d_viewport_nodes: ll::Session<ViewportNode>,
+    d_viewport_nodes: ll::Component<ViewportNode>,
     /// This is the root node in the scene tree
     d_layout_tree_root: Option<DakotaId>,
     d_root_viewport: Option<ViewportId>,
@@ -282,10 +282,7 @@ pub struct LayoutSpace {
 
 macro_rules! create_component_and_table {
     ($ecs:ident, $llty:ty, $name:ident) => {
-        let comp: ll::Component<$llty> = $ecs.add_component();
-        let $name = $ecs
-            .open_session(comp)
-            .ok_or(anyhow!("Could not create an ECS session"))?;
+        let $name: ll::Component<$llty> = $ecs.add_component();
     };
 }
 
@@ -454,7 +451,7 @@ impl Dakota {
     /// Returns true if this element will have it's position chosen for it by
     /// Dakota's layout engine.
     pub fn child_uses_autolayout(&self, id: &DakotaId) -> bool {
-        self.get_offset(id).is_some()
+        self.d_offsets.get(id).is_some()
     }
 
     /// Create a new Dakota Id
@@ -466,7 +463,7 @@ impl Dakota {
     fn create_new_id_common(&mut self, element_type: DakotaObjectType) -> Result<DakotaId> {
         let id = self.d_ecs_inst.add_entity();
 
-        self.set_object_type(&id, element_type);
+        self.d_node_types.set(&id, element_type);
         return Ok(id);
     }
 
@@ -519,7 +516,8 @@ impl Dakota {
             return Err(anyhow!("Invalid image format"));
         }
 
-        if self.d_resource_thundr_image.get(res).is_some() || self.get_resource_color(res).is_some()
+        if self.d_resource_thundr_image.get(res).is_some()
+            || self.d_resource_color.get(res).is_some()
         {
             return Err(anyhow!("Cannot redefine Resource contents"));
         }
@@ -555,7 +553,8 @@ impl Dakota {
         dmabuf.db_width = width;
         dmabuf.db_height = height;
 
-        if self.d_resource_thundr_image.get(res).is_some() || self.get_resource_color(res).is_some()
+        if self.d_resource_thundr_image.get(res).is_some()
+            || self.d_resource_color.get(res).is_some()
         {
             return Err(anyhow!("Cannot redefine Resource contents"));
         }
@@ -573,7 +572,7 @@ impl Dakota {
     /// regular text. This saves the user from fully specifying the details
     /// of the text objects for this common operation.
     pub fn set_text_regular(&mut self, resource: &DakotaId, text: &str) {
-        self.set_text(
+        self.d_texts.set(
             resource,
             dom::Text {
                 items: vec![dom::TextItem::p(dom::TextRun {
@@ -786,7 +785,7 @@ impl Dakota {
     ) -> Result<()> {
         let mut node = LayoutNode::new(None, dom::Offset::new(0.0, 0.0), dom::Size::new(0.0, 0.0));
 
-        node.l_offset_specified = self.get_offset(el).is_some();
+        node.l_offset_specified = self.d_offsets.get(el).is_some();
         node.l_offset = self
             .get_final_offset(el, &space)
             .context("Failed to calculate offset size of Element")?
@@ -983,13 +982,13 @@ impl Dakota {
         // ------------------------------------------
         // We do this after handling the size of the current element so that we
         // can know what width we have available to fill in with text.
-        if self.get_text(el).is_some() {
+        if self.d_texts.get(el).is_some() {
             self.calculate_sizes_text(el)?;
         }
 
         // if the box has children, then recurse through them and calculate our
         // box size based on the fill type.
-        if self.get_children(el).is_some() && self.get_children(el).unwrap().len() > 0 {
+        if self.d_children.get(el).is_some() && self.d_children.get(el).unwrap().len() > 0 {
             // ------------------------------------------
             // CHILDREN
             // ------------------------------------------
@@ -999,7 +998,7 @@ impl Dakota {
                 .context("Layout Tree Calculation: processing children of element")?;
         }
 
-        if self.get_content(el).is_some() {
+        if self.d_contents.get(el).is_some() {
             // ------------------------------------------
             // CENTERED CONTENT
             // ------------------------------------------
@@ -1198,7 +1197,7 @@ impl Dakota {
                 self.d_thund.bind_image(&mut surf, image.clone());
                 content_num += 1;
             }
-            if let Some(color) = self.get_resource_color(&resource_id) {
+            if let Some(color) = self.d_resource_color.get(&resource_id) {
                 surf.set_color((color.r, color.g, color.b, color.a));
                 content_num += 1;
             }

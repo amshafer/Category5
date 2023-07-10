@@ -192,7 +192,7 @@ pub struct Renderer {
     pub r_order_desc_layout: vk::DescriptorSetLayout,
 
     /// The list of window dimensions that is passed to the shader
-    pub r_windows: ll::Session<Window>,
+    pub r_windows: ll::Component<Window>,
     pub r_windows_buf: vk::Buffer,
     pub r_windows_mem: vk::DeviceMemory,
     /// The number of Windows that r_winlist_mem was allocate to hold
@@ -221,12 +221,12 @@ pub struct Renderer {
     pub r_image_ecs: ll::Instance,
     // We keep this around to ensure the image array isn't empty
     r_null_image: ll::Entity,
-    pub r_image_vk: ll::Session<ImageVk>,
-    pub r_image_damage: ll::Session<Damage>,
-    pub r_image_infos: ll::NonSparseSession<vk::DescriptorImageInfo>,
+    pub r_image_vk: ll::Component<ImageVk>,
+    pub r_image_damage: ll::Component<Damage>,
+    pub r_image_infos: ll::NonSparseComponent<vk::DescriptorImageInfo>,
 
     /// Identical to the parent Thundr struct's session
-    pub r_surface_pass: ll::Session<usize>,
+    pub r_surface_pass: ll::Component<usize>,
 }
 
 /// This must match the definition of the Window struct in the
@@ -1488,7 +1488,7 @@ impl Renderer {
     pub fn new(
         info: &CreateInfo,
         ecs: &mut ll::Instance,
-        pass_sesh: ll::Session<usize>,
+        pass_comp: ll::Component<usize>,
     ) -> Result<Renderer> {
         unsafe {
             let (entry, inst) = Renderer::create_instance(info);
@@ -1669,23 +1669,14 @@ impl Renderer {
 
             // Create the window list component
             let win_comp = ecs.add_component();
-            let win_sesh = ecs
-                .open_session(win_comp)
-                .ok_or(ThundrError::OUT_OF_MEMORY)?;
 
             // Create our own ECS for the image resources
             let mut img_ecs = ll::Instance::new();
 
             let img_damage_comp = img_ecs.add_component();
-            let img_damage_sesh = img_ecs
-                .open_session(img_damage_comp)
-                .ok_or(ThundrError::OUT_OF_MEMORY)?;
 
             // Add our vulkan resource ECS entry
             let img_vk_comp = img_ecs.add_component();
-            let img_vk_sesh = img_ecs
-                .open_session(img_vk_comp)
-                .ok_or(ThundrError::OUT_OF_MEMORY)?;
 
             // Create the image vk info component
             // We have deleted this image, but it's invalid to pass a
@@ -1693,20 +1684,17 @@ impl Renderer {
             // it with our "null"/"tmp" image, which is just a black square
             let null_sampler = sampler;
             let null_view = tmp_view;
-            let img_info_comp = img_ecs.add_non_sparse_component(move || {
+            let mut img_info_comp = img_ecs.add_non_sparse_component(move || {
                 vk::DescriptorImageInfo::builder()
                     .sampler(null_sampler)
                     .image_view(null_view)
                     .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .build()
             });
-            let mut img_info_sesh = img_ecs
-                .open_session(img_info_comp)
-                .ok_or(ThundrError::OUT_OF_MEMORY)?;
 
             // Add our null image
             let null_image = img_ecs.add_entity();
-            img_info_sesh.set(
+            img_info_comp.set(
                 &null_image,
                 vk::DescriptorImageInfo::builder()
                     .sampler(sampler)
@@ -1766,7 +1754,7 @@ impl Renderer {
                 r_images_desc_layout: bindless_layout,
                 r_images_desc: bindless_desc,
                 r_images_desc_size: 0,
-                r_windows: win_sesh,
+                r_windows: win_comp,
                 r_windows_buf: vk::Buffer::null(),
                 r_windows_mem: vk::DeviceMemory::null(),
                 r_windows_capacity: 8,
@@ -1780,10 +1768,10 @@ impl Renderer {
                 r_aftermath: aftermath,
                 r_image_ecs: img_ecs,
                 r_null_image: null_image,
-                r_image_vk: img_vk_sesh,
-                r_image_damage: img_damage_sesh,
-                r_image_infos: img_info_sesh,
-                r_surface_pass: pass_sesh,
+                r_image_vk: img_vk_comp,
+                r_image_damage: img_damage_comp,
+                r_image_infos: img_info_comp,
+                r_surface_pass: pass_comp,
             };
             rend.reallocate_windows_buf_with_cap(rend.r_windows_capacity);
 
