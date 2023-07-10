@@ -21,9 +21,8 @@
 //! validity of `Entity` objects in the system, and will hold references
 //! to data tables used for storage.
 //!
-//! The `Instance` can then be used to add `Component` tables, and access
-//! them using a `Session` object. The `Session` allows for getting and
-//! setting components for each `Entity`.
+//! The `Instance` can then be used to add `Component` tables. The `Component` allows for getting
+//! and setting components for each `Entity`.
 //!
 //! Basic usage looks like:
 //! ```
@@ -35,18 +34,13 @@
 //!
 //! // Now add our component. This will be a string, but
 //! // we don't have to specify that for now
-//! let c = inst.add_component();
-//!
-//! // Get a session to access data for component c. This
-//! // allows access to the per-entity data for this component and
-//! // lets us perform queries.
-//! let mut sesh = inst.open_session(c).unwrap();
+//! let mut c = inst.add_component();
 //!
 //! // Before querying the value, we first need to set a valid value
 //! // for this component. Afterwards, we can get it and check that
 //! // it is unchanged.
-//! sesh.set(&entity, "Hola Lluvia");
-//! let data_ref = sesh.get(&entity).unwrap();
+//! c.set(&entity, "Hola Lluvia");
+//! let data_ref = c.get(&entity).unwrap();
 //! assert_eq!(*data_ref, "Hola Lluvia");
 //! ```
 // Austin Shafer - 2022
@@ -367,25 +361,6 @@ impl Drop for EntityInternal {
 /// ```
 pub type Entity = Arc<EntityInternal>;
 
-pub struct RawComponent<T: 'static, C: Container<T>> {
-    c_index: usize,
-    _c_phantom: PhantomData<T>,
-    _c_phantom_container: PhantomData<C>,
-}
-
-impl<T: 'static, C: Container<T> + 'static> Clone for RawComponent<T, C> {
-    fn clone(&self) -> Self {
-        Self {
-            c_index: self.c_index,
-            _c_phantom: PhantomData,
-            _c_phantom_container: PhantomData,
-        }
-    }
-}
-
-pub type Component<T> = RawComponent<T, VecContainer<T>>;
-pub type NonSparseComponent<T> = RawComponent<T, SliceContainer<T>>;
-
 /// A component table wrapper trait
 ///
 /// This lets us do some type-agnostic operations on a table from
@@ -563,11 +538,18 @@ impl Instance {
         let new_table = Table::new(container);
         cl.cl_components.push(Box::new(new_table));
 
-        RawComponent {
-            c_index: component_id,
+        let table = cl.cl_components[component_id]
+            .as_any()
+            .downcast_ref::<Table<T, C>>()
+            .unwrap();
+
+        let new_inst = self.clone();
+        return RawComponent {
+            c_inst: new_inst,
             _c_phantom: PhantomData,
-            _c_phantom_container: PhantomData,
-        }
+            c_table: table.clone(),
+            c_component_id: component_id,
+        };
     }
 
     /// Add a new entity to the system
@@ -641,117 +623,58 @@ impl Instance {
 
         id.ecs_id < internal.i_valid_ids.len() && internal.i_valid_ids[id.ecs_id]
     }
-
-    fn component_is_valid<T: 'static, C: Container<T>>(
-        &self,
-        component: &RawComponent<T, C>,
-    ) -> bool {
-        let cl = self.i_component_set.read().unwrap();
-
-        component.c_index < cl.cl_components.len()
-    }
-
-    /// Open a Session for the specified component
-    ///
-    /// A session will provide query access for the values of this component
-    /// for each entity. We will branch off a session and return it, allowing the
-    /// user to interact with data.
-    ///
-    /// If `component` is invalid, return None.
-    pub fn open_session<T: 'static, C: Container<T>>(
-        &self,
-        component: RawComponent<T, C>,
-    ) -> Option<RawSession<T, C>> {
-        self.open_raw_session(component)
-    }
-
-    pub fn open_raw_session<T: 'static, C: Container<T> + 'static>(
-        &self,
-        component: RawComponent<T, C>,
-    ) -> Option<RawSession<T, C>> {
-        // validate component
-        if !self.component_is_valid(&component) {
-            return None;
-        }
-
-        let cl = self.i_component_set.read().unwrap();
-
-        // Ensure that this component table is of the right type
-        if let Some(table) = cl.cl_components[component.c_index]
-            .as_any()
-            .downcast_ref::<Table<T, C>>()
-        {
-            let new_inst = self.clone();
-            return Some(RawSession {
-                s_inst: new_inst,
-                _s_phantom: PhantomData,
-                s_table: table.clone(),
-                s_component: component,
-            });
-        }
-        None
-    }
 }
 
-/// A Session providing access to a component
+/// A Component holding values for each Entity
 ///
-/// The Session abstraction allows for getting a separate reference
-/// to the data table holding the populated values of entities and
-/// components. This is where all the querying information can happen and
-/// must be opened from the Instance.
-///
-/// Sessions really wrap RefCells used internally to hold data, and therefore the
-/// same runtime validation rules apply. There can be many outstanding read-only
-/// references in usage but only one mutable reference at a time.
-///
-/// Additionally, you must keep in mind that Entities will also adhere to these
-/// rules when dropped, as they must free their data held in the internal component
-/// data tables. You should not have long-outsanding references floating around
-/// that will cause a panic when an Entity is dropped and the Session is already
-/// borrowed.
-pub struct RawSession<T: 'static, C: Container<T> + 'static> {
-    s_inst: Instance,
-    _s_phantom: PhantomData<T>,
-    s_component: RawComponent<T, C>,
-    s_table: Table<T, C>,
+/// Each Component in the system is really a key-value store for each
+/// Entity: values of type `T` can be retrieved by fetching the entry
+/// for an Entity. Components have an internal Table which holds an
+/// array of values indexed by the Entity's id.
+pub struct RawComponent<T: 'static, C: Container<T> + 'static> {
+    c_inst: Instance,
+    _c_phantom: PhantomData<T>,
+    c_component_id: usize,
+    c_table: Table<T, C>,
 }
 
-/// The default session type
+/// General Purpose Component
 ///
-/// This uses the sparse allocation container as a storage backend, and
-/// is intended for general usage.
-///
-/// See `RawSession` for details and usage
-pub type Session<T> = RawSession<T, VecContainer<T>>;
+/// This is the default component type. See `RawComponent` for an overview
+/// of the component object, this type defines a component whose internal
+/// memory tracking is "sparse". This is the best all-purpose component type
+/// as it will not overallocate when only a few entities have assigned values
+/// of this component.
+pub type Component<T> = RawComponent<T, VecContainer<T>>;
 
-/// This session type represents a contiguously allocated table
+/// Component with non-sparse data allocation
 ///
-/// This type should only be used if you need to hand a slice of all
-/// data off to something else.
-///
-/// See `RawSession` for details and usage
-pub type NonSparseSession<T> = RawSession<T, SliceContainer<T>>;
+/// This Component type uses a contiguous array internally to track data. This
+/// is useful for when you need to be able to pass a slice of `T` objects to
+/// other libraries without copying. This is not well suited for scenarios where
+/// you have a lot of entities and only a few of them have values.
+pub type NonSparseComponent<T> = RawComponent<T, SliceContainer<T>>;
 
-impl<T: 'static, C: Container<T> + 'static> fmt::Debug for RawSession<T, C> {
+impl<T: 'static, C: Container<T> + 'static> fmt::Debug for RawComponent<T, C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Session")
-            .field("s_component", &self.s_component.c_index)
+            .field("c_component", &self.c_component_id)
             .finish()
     }
 }
 
-impl<T: 'static, C: Container<T> + 'static> Clone for RawSession<T, C> {
+impl<T: 'static, C: Container<T> + 'static> Clone for RawComponent<T, C> {
     fn clone(&self) -> Self {
         Self {
-            s_inst: self.s_inst.clone(),
-            _s_phantom: PhantomData,
-            s_component: self.s_component.clone(),
-            s_table: self.s_table.clone(),
+            c_inst: self.c_inst.clone(),
+            _c_phantom: PhantomData,
+            c_component_id: self.c_component_id,
+            c_table: self.c_table.clone(),
         }
     }
 }
 
-impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
+impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     /// Get a reference to data corresponding to the (component, entity) pair
     ///
     /// This provides read-only access to the component value for an Entity. This
@@ -764,11 +687,11 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
     ///
     /// If this entity has not had a value set, None will be returned.
     pub fn get(&self, entity: &Entity) -> Option<TableRef<T, C>> {
-        if !self.s_inst.id_is_valid(entity) {
+        if !self.c_inst.id_is_valid(entity) {
             return None;
         }
 
-        let table_internal = self.s_table.t_internal.read().unwrap();
+        let table_internal = self.c_table.t_internal.read().unwrap();
         if table_internal.t_entity.index(entity.ecs_id).is_none() {
             return None;
         }
@@ -790,11 +713,11 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
     /// value of the entity for this property cannot be determined and None
     /// will be returned.
     pub fn get_mut(&mut self, entity: &Entity) -> Option<TableRefMut<T, C>> {
-        if !self.s_inst.id_is_valid(entity) {
+        if !self.c_inst.id_is_valid(entity) {
             return None;
         }
 
-        let table_internal = self.s_table.t_internal.write().unwrap();
+        let table_internal = self.c_table.t_internal.write().unwrap();
         if table_internal.t_entity.index(entity.ecs_id).is_none() {
             return None;
         }
@@ -811,9 +734,9 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
     /// the entity. This will set the initial value, which can then be modified
     /// with `get_mut`
     pub fn set(&mut self, entity: &Entity, val: T) {
-        assert!(self.s_inst.id_is_valid(entity));
+        assert!(self.c_inst.id_is_valid(entity));
 
-        let mut table_internal = self.s_table.t_internal.write().unwrap();
+        let mut table_internal = self.c_table.t_internal.write().unwrap();
         table_internal.t_entity.set(entity.ecs_id, val);
     }
 
@@ -823,11 +746,11 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
     /// entity and will return the value that was stored there. The component entry will
     /// be undefined after this.
     pub fn take(&mut self, entity: &Entity) -> Option<T> {
-        if !self.s_inst.id_is_valid(entity) {
+        if !self.c_inst.id_is_valid(entity) {
             return None;
         }
 
-        let mut table_internal = self.s_table.t_internal.write().unwrap();
+        let mut table_internal = self.c_table.t_internal.write().unwrap();
         table_internal.t_entity.take(entity.ecs_id)
     }
 
@@ -836,7 +759,7 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
     /// This will drop all values in this component table, and in the case of
     /// non-sparse allocations will replace it with the default value.
     pub fn clear(&mut self) {
-        let mut table_internal = self.s_table.t_internal.write().unwrap();
+        let mut table_internal = self.c_table.t_internal.write().unwrap();
         table_internal.t_entity.clear();
     }
 
@@ -846,8 +769,8 @@ impl<T: 'static, C: Container<T> + 'static> RawSession<T, C> {
     /// component array. None values can be returned by the iterator,
     /// as it allows for you to use `.enumerate()` to mirror the
     /// component table into other resources.
-    pub fn iter<'a>(&'a self) -> SessionIterator<'a, T, C> {
-        SessionIterator {
+    pub fn iter<'a>(&'a self) -> ComponentIterator<'a, T, C> {
+        ComponentIterator {
             si_session: self,
             si_cur: -1,
             si_next: Some(0),
@@ -872,29 +795,29 @@ impl<'a, T: 'static> SliceRef<'a, T> {
     }
 }
 
-impl<T: 'static> RawSession<T, SliceContainer<T>> {
+impl<T: 'static> RawComponent<T, SliceContainer<T>> {
     /// Get the backing slice where all data is stored
     ///
     /// This is useful if you want to pass the raw data array to
     /// another library, such as ECS objects being passed to Vulkan
     pub fn get_data_slice<'a>(&'a self) -> SliceRef<'a, T> {
         SliceRef {
-            sr_guard: self.s_table.t_internal.read().unwrap(),
+            sr_guard: self.c_table.t_internal.read().unwrap(),
         }
     }
 }
 
-pub struct SessionIterator<'a, T: 'static, C: Container<T> + 'static> {
-    si_session: &'a RawSession<T, C>,
+pub struct ComponentIterator<'a, T: 'static, C: Container<T> + 'static> {
+    si_session: &'a RawComponent<T, C>,
     si_cur: isize,
     si_next: Option<usize>,
 }
 
-impl<'a, T: 'static, C: Container<T> + 'static> Iterator for SessionIterator<'a, T, C> {
+impl<'a, T: 'static, C: Container<T> + 'static> Iterator for ComponentIterator<'a, T, C> {
     type Item = Option<TableRef<'a, T, C>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let table_internal = self.si_session.s_table.t_internal.read().unwrap();
+        let table_internal = self.si_session.c_table.t_internal.read().unwrap();
         // Now update our current to our next pointer. If it is None, then
         // we don't have any more valid indices
         if self.si_next.is_none() {

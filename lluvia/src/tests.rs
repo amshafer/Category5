@@ -11,18 +11,13 @@ fn basic_test() {
 
     // Now add our component. This will be a string, but
     // we don't have to specify that for now
-    let c = inst.add_component();
-
-    // Get a session to access data for component c. This
-    // allows access to the per-entity data for this component and
-    // lets us perform queries.
-    let mut sesh = inst.open_session(c).unwrap();
+    let mut c = inst.add_component();
 
     // Before querying the value, we first need to set a valid value
     // for this component. Afterwards, we can get it and check that
     // it is unchanged.
-    sesh.set(&entity, "Hola Lluvia");
-    let data_ref = sesh.get(&entity).unwrap();
+    c.set(&entity, "Hola Lluvia");
+    let data_ref = c.get(&entity).unwrap();
     assert_eq!(*data_ref, "Hola Lluvia");
 }
 
@@ -35,18 +30,13 @@ fn basic_non_sparse_test() {
 
     // Now add our component. This will be a string, but
     // we don't have to specify that for now
-    let c = inst.add_non_sparse_component(|| "");
-
-    // Get a session to access data for component c. This
-    // allows access to the per-entity data for this component and
-    // lets us perform queries.
-    let mut sesh = inst.open_session(c).unwrap();
+    let mut c = inst.add_non_sparse_component(|| "");
 
     // Before querying the value, we first need to set a valid value
     // for this component. Afterwards, we can get it and check that
     // it is unchanged.
-    sesh.set(&entity, "Hola Lluvia");
-    let data_ref = sesh.get(&entity).unwrap();
+    c.set(&entity, "Hola Lluvia");
+    let data_ref = c.get(&entity).unwrap();
     assert_eq!(*data_ref, "Hola Lluvia");
 }
 
@@ -75,24 +65,22 @@ impl Drop for Empty {
 #[test]
 fn entity_in_component_data() {
     let mut inst = ll::Instance::new();
-    let c = inst.add_component();
-    let mut sesh = inst.open_session(c).unwrap();
-    let c1 = inst.add_component();
-    let mut sesh1 = inst.open_session(c1).unwrap();
+    let mut c = inst.add_component();
+    let mut c1 = inst.add_component();
 
     let container = Rc::new(RefCell::new(TestData { e: true, e1: true }));
     {
         let e1 = inst.add_entity();
-        sesh1.set(&e1, Empty("e1", container.clone()));
+        c1.set(&e1, Empty("e1", container.clone()));
 
         {
             let e = inst.add_entity();
-            sesh1.set(&e, Empty("e", container.clone()));
+            c1.set(&e, Empty("e", container.clone()));
             let e_id = e.get_raw_id();
 
-            sesh.set(&e1, e);
+            c.set(&e1, e);
 
-            let data_ref = sesh.get(&e1).unwrap();
+            let data_ref = c.get(&e1).unwrap();
             assert_eq!(data_ref.ecs_id, e_id);
         }
 
