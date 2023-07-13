@@ -922,7 +922,7 @@ impl WindowManager {
         // get the latest cursor position
         // ----------------------------------------------------------------
         let (cursor_x, cursor_y) = atmos.get_cursor_pos();
-        log::profiling!("Drawing cursor at ({}, {})", cursor_x, cursor_y);
+        log::debug!("Drawing cursor at ({}, {})", cursor_x, cursor_y);
         if let Some(cursor) = self.wm_cursor.as_mut() {
             dakota.offset().set(
                 &cursor,

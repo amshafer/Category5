@@ -421,6 +421,45 @@ impl Dakota {
         return Ok(ret);
     }
 
+    /// Do we need to refresh the layout tree and rerender
+    fn needs_refresh(&self) -> bool {
+        self.d_needs_refresh
+            || self.d_node_types.is_modified()
+            || self.d_resource_hints.is_modified()
+            || self.d_resource_thundr_image.is_modified()
+            || self.d_resource_color.is_modified()
+            || self.d_resources.is_modified()
+            || self.d_offsets.is_modified()
+            || self.d_sizes.is_modified()
+            || self.d_font_instances.is_modified()
+            || self.d_texts.is_modified()
+            || self.d_text_font.is_modified()
+            || self.d_contents.is_modified()
+            || self.d_bounds.is_modified()
+            || self.d_children.is_modified()
+            || self.d_dom.is_modified()
+            || self.d_unbounded_subsurf.is_modified()
+    }
+
+    fn clear_needs_refresh(&mut self) {
+        self.d_needs_refresh = false;
+        self.d_node_types.clear_modified();
+        self.d_resource_hints.clear_modified();
+        self.d_resource_thundr_image.clear_modified();
+        self.d_resource_color.clear_modified();
+        self.d_resources.clear_modified();
+        self.d_offsets.clear_modified();
+        self.d_sizes.clear_modified();
+        self.d_font_instances.clear_modified();
+        self.d_texts.clear_modified();
+        self.d_text_font.clear_modified();
+        self.d_contents.clear_modified();
+        self.d_bounds.clear_modified();
+        self.d_children.clear_modified();
+        self.d_dom.clear_modified();
+        self.d_unbounded_subsurf.clear_modified();
+    }
+
     /// Create a new toplevel Dakota DOM
     pub fn create_dakota_dom(&mut self) -> Result<DakotaId> {
         self.create_new_id_common(DakotaObjectType::DakotaDOM)
@@ -1573,14 +1612,14 @@ impl Dakota {
         self.calculate_thundr_surfaces(self.d_root_viewport.clone().unwrap(), None)?;
 
         self.d_layout_tree_root = Some(root_node_id);
-        self.d_needs_refresh = false;
+        self.d_needs_redraw = true;
+        self.clear_needs_refresh();
 
         Ok(())
     }
 
     /// Completely flush the thundr surfaces/images and recreate the scene
     pub fn refresh_full(&mut self, dom: &DakotaId) -> Result<()> {
-        self.d_needs_redraw = true;
         self.clear_thundr();
         self.refresh_elements(dom)
             .context("Refreshing element layout")
@@ -2035,7 +2074,7 @@ impl Dakota {
         // Now handle events like scrolling before we calculate sizes
         self.handle_private_events()?;
 
-        if self.d_needs_refresh {
+        if self.needs_refresh() {
             let mut layout_stop = StopWatch::new();
             layout_stop.start();
             self.refresh_elements(dom)?;

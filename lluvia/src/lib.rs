@@ -49,7 +49,7 @@ use std::any::Any;
 use std::fmt;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{atomic::AtomicBool, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 #[cfg(test)]
 mod tests;
@@ -549,6 +549,7 @@ impl Instance {
             _c_phantom: PhantomData,
             c_table: table.clone(),
             c_component_id: component_id,
+            c_modified: Arc::new(AtomicBool::new(false)),
         };
     }
 
@@ -632,10 +633,16 @@ impl Instance {
 /// for an Entity. Components have an internal Table which holds an
 /// array of values indexed by the Entity's id.
 pub struct RawComponent<T: 'static, C: Container<T> + 'static> {
+    /// Instance this component belongs to
     c_inst: Instance,
     _c_phantom: PhantomData<T>,
+    /// The index into the component data list inside c_inst
     c_component_id: usize,
+    /// The storage table holding per-entity values
     c_table: Table<T, C>,
+    /// Marked true when this component table has outstanding changes
+    /// not processed by the user.
+    c_modified: Arc<AtomicBool>,
 }
 
 /// General Purpose Component
@@ -670,11 +677,26 @@ impl<T: 'static, C: Container<T> + 'static> Clone for RawComponent<T, C> {
             _c_phantom: PhantomData,
             c_component_id: self.c_component_id,
             c_table: self.c_table.clone(),
+            c_modified: self.c_modified.clone(),
         }
     }
 }
 
 impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
+    /// Get if changes have taken place in this Component
+    ///
+    /// This can be used to check if a property has been updated for some number
+    /// of entities, if you need to take action based on that.
+    pub fn is_modified(&self) -> bool {
+        self.c_modified.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Reset the modified tracker
+    pub fn clear_modified(&mut self) {
+        self.c_modified
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+
     /// Get a reference to data corresponding to the (component, entity) pair
     ///
     /// This provides read-only access to the component value for an Entity. This
@@ -722,6 +744,9 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
             return None;
         }
 
+        self.c_modified
+            .store(true, std::sync::atomic::Ordering::Release);
+
         return Some(TableRefMut {
             tr_guard: table_internal,
             tr_entity: entity.clone(),
@@ -736,6 +761,8 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     pub fn set(&mut self, entity: &Entity, val: T) {
         assert!(self.c_inst.id_is_valid(entity));
 
+        self.c_modified
+            .store(true, std::sync::atomic::Ordering::Release);
         let mut table_internal = self.c_table.t_internal.write().unwrap();
         table_internal.t_entity.set(entity.ecs_id, val);
     }
@@ -750,6 +777,8 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
             return None;
         }
 
+        self.c_modified
+            .store(true, std::sync::atomic::Ordering::Release);
         let mut table_internal = self.c_table.t_internal.write().unwrap();
         table_internal.t_entity.take(entity.ecs_id)
     }
@@ -759,6 +788,8 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     /// This will drop all values in this component table, and in the case of
     /// non-sparse allocations will replace it with the default value.
     pub fn clear(&mut self) {
+        self.c_modified
+            .store(true, std::sync::atomic::Ordering::Release);
         let mut table_internal = self.c_table.t_internal.write().unwrap();
         table_internal.t_entity.clear();
     }
