@@ -393,17 +393,15 @@ impl Dakota {
                             .ok_or(anyhow!("Content does not contain an element"))?,
                     },
                 ),
-                Element::Size(width, height) => self.d_sizes.set(
-                    id,
-                    dom::RelativeSize {
-                        width: width
-                            .clone()
-                            .ok_or(anyhow!("Content does not contain an element"))?,
-                        height: height
-                            .clone()
-                            .ok_or(anyhow!("Content does not contain an element"))?,
-                    },
-                ),
+                Element::Size(width, height) => {
+                    // Widths and heights are optional
+                    if let Some(width) = width {
+                        self.d_widths.set(id, *width);
+                    }
+                    if let Some(height) = height {
+                        self.d_heights.set(id, *height);
+                    }
+                }
                 Element::Offset(x, y) => self.d_offsets.set(
                     id,
                     dom::RelativeOffset {

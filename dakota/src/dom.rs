@@ -150,14 +150,6 @@ pub struct RelativeOffset {
     pub y: Value,
 }
 
-/// This is a relative size that sizes an element
-/// by a percentage of the size of the available space.
-#[derive(Debug, PartialEq, PartialOrd, Copy, Clone)]
-pub struct RelativeSize {
-    pub width: Value,
-    pub height: Value,
-}
-
 #[derive(Debug, PartialEq, Eq, PartialOrd, Copy, Clone)]
 pub struct Offset<T: Copy> {
     pub x: T,
@@ -338,16 +330,14 @@ impl Dakota {
         }
     }
 
-    /// Get the default starting size to use within the parent space.
-    ///
-    /// This either returns the size set by the user, otherwise the size of the image
-    /// resource assigned, otherwise the size of the parent space.
-    pub fn get_default_size(&self, el: &DakotaId, space: &LayoutSpace) -> Result<Size<u32>> {
-        if let Some(size) = self.d_sizes.get(el) {
-            Ok(Size::new(
-                size.width.get_value(space.avail_width)? as u32,
-                size.height.get_value(space.avail_height)? as u32,
-            ))
+    pub fn get_default_size_val(
+        &self,
+        avail_space: u32,
+        resource_size: Option<u32>,
+        val: Option<Value>,
+    ) -> Result<u32> {
+        if let Some(size) = val {
+            Ok(size.get_value(avail_space as f32)? as u32)
         } else {
             // If no size was provided but an image resource has been assigned, then
             // size this element to the resource. Text resource sizing will be
@@ -359,19 +349,52 @@ impl Dakota {
             //
             // TODO: use LayoutSpace for all sizing decisions, then calculate the
             // final element size here, sizing to children if needed?
-            if let Some(res) = self.d_resources.get(el) {
-                if let Some(image) = self.d_resource_thundr_image.get(&res) {
-                    let size = image.get_size();
-                    return Ok(Size::new(size.0, size.1));
-                }
+            if let Some(size) = resource_size {
+                return Ok(size);
             }
 
             // If no size was specified then this defaults to the size of its container
-            Ok(Size::new(
-                space.avail_width as u32,
-                space.avail_height as u32,
-            ))
+            Ok(avail_space)
         }
+    }
+
+    /// Get the default starting size to use within the parent space.
+    ///
+    /// This either returns the size set by the user, otherwise the size of the image
+    /// resource assigned, otherwise the size of the parent space.
+    pub fn get_default_size(&self, el: &DakotaId, space: &LayoutSpace) -> Result<Size<u32>> {
+        let get_image_size = |is_width| match self.d_resources.get(el).as_deref().clone() {
+            Some(res) => self
+                .d_resource_thundr_image
+                .get(&res)
+                .map(|image| match is_width {
+                    true => image.get_size().0,
+                    false => image.get_size().1,
+                }),
+            None => None,
+        };
+
+        let width = self.get_default_size_val(
+            space.avail_width as u32,
+            get_image_size(true),
+            self.d_widths.get(el).map(|val| *val),
+        )?;
+        let height = self.get_default_size_val(
+            space.avail_height as u32,
+            get_image_size(false),
+            self.d_heights.get(el).map(|val| *val),
+        )?;
+
+        Ok(Size::new(width, height))
+    }
+
+    fn get_child_size(&self, el: &DakotaId, is_width: bool, size: u32) -> u32 {
+        // First adjust by the size of this element
+        let el_size = self.d_layout_nodes.get(&el).unwrap();
+        size.max(match is_width {
+            true => el_size.l_offset.x as u32 + el_size.l_size.width as u32,
+            false => el_size.l_offset.y as u32 + el_size.l_size.height as u32,
+        })
     }
 
     /// Get the final size to use within the parent space.
@@ -381,6 +404,9 @@ impl Dakota {
     /// - no size was set by the user
     /// - no image resource is assigned
     /// - element does not have any positioned content
+    ///
+    /// The above criterea are evaluated per-dimension with respect to width/height. It is
+    /// possible that one dimension is grown and the other is not.
     ///
     /// If those conditions are met, then the element will be shrunk/grown to contain all
     /// child elements.
@@ -393,27 +419,39 @@ impl Dakota {
             }
         }
 
+        let needs_size_to_child = !self.d_layout_nodes.get(el).unwrap().l_is_viewport
+            && !is_image_resource
+            && self.d_layout_nodes.get(el).unwrap().l_children.len() > 0;
+
+        // Does the content have a width/height assigned
+        //
+        // If one of these dimensions was assigned, then we do not want to shrink this element
+        // by that amount since the alignment was based on the original size.
+        let (content_has_width, content_has_height) = match self.d_contents.get(el) {
+            Some(cont) => (
+                self.d_widths.get(&cont.el).is_some(),
+                self.d_heights.get(&cont.el).is_some(),
+            ),
+            None => (false, false),
+        };
+
         // If no size was specified by the user and no image has been assigned then we
         // will limit this element to the size of its children if there are any
-        if self.d_sizes.get(el).is_none()
-            && self.d_contents.get(el).is_none()
-            && !is_image_resource
-            && self.d_layout_nodes.get(el).unwrap().l_children.len() > 0
-        {
-            let max_size = ret;
-            ret = Size::new(0, 0);
+        if self.d_widths.get(el).is_none() && needs_size_to_child && !content_has_width {
+            ret.width = 0;
             for i in 0..self.d_layout_nodes.get(el).unwrap().l_children.len() {
                 let child_id = self.d_layout_nodes.get(el).unwrap().l_children[i].clone();
-                let child_size = self.d_layout_nodes.get(&child_id).unwrap();
 
-                ret.width = ret
-                    .width
-                    .max(child_size.l_offset.x as u32 + child_size.l_size.width as u32)
-                    .clamp(0, max_size.width);
-                ret.height = ret
-                    .height
-                    .max(child_size.l_offset.y as u32 + child_size.l_size.height as u32)
-                    .clamp(0, max_size.height);
+                ret.width = self.get_child_size(&child_id, true, ret.width);
+            }
+        }
+
+        if self.d_heights.get(el).is_none() && needs_size_to_child && !content_has_height {
+            ret.height = 0;
+            for i in 0..self.d_layout_nodes.get(el).unwrap().l_children.len() {
+                let child_id = self.d_layout_nodes.get(el).unwrap().l_children[i].clone();
+
+                ret.height = self.get_child_size(&child_id, false, ret.height);
             }
         }
 

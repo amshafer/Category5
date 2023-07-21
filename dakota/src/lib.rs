@@ -122,7 +122,8 @@ pub struct Dakota {
     /// The resource currently assigned to this element
     d_resources: ll::Component<DakotaId>,
     d_offsets: ll::Component<dom::RelativeOffset>,
-    d_sizes: ll::Component<dom::RelativeSize>,
+    d_widths: ll::Component<dom::Value>,
+    d_heights: ll::Component<dom::Value>,
     d_font_instances: ll::Component<FontInstance>,
     d_texts: ll::Component<dom::Text>,
     /// points to an id with font instance
@@ -355,7 +356,8 @@ impl Dakota {
         create_component_and_table!(layout_ecs, dom::Color, resource_color_table);
         create_component_and_table!(layout_ecs, DakotaId, resources_table);
         create_component_and_table!(layout_ecs, dom::RelativeOffset, offsets_table);
-        create_component_and_table!(layout_ecs, dom::RelativeSize, sizes_table);
+        create_component_and_table!(layout_ecs, dom::Value, width_table);
+        create_component_and_table!(layout_ecs, dom::Value, height_table);
         create_component_and_table!(layout_ecs, dom::Text, texts_table);
         create_component_and_table!(layout_ecs, FontInstance, font_instance_table);
         create_component_and_table!(layout_ecs, DakotaId, text_font_table);
@@ -383,7 +385,8 @@ impl Dakota {
             d_resource_color: resource_color_table,
             d_resources: resources_table,
             d_offsets: offsets_table,
-            d_sizes: sizes_table,
+            d_widths: width_table,
+            d_heights: height_table,
             d_font_instances: font_instance_table,
             d_texts: texts_table,
             d_text_font: text_font_table,
@@ -430,7 +433,8 @@ impl Dakota {
             || self.d_resource_color.is_modified()
             || self.d_resources.is_modified()
             || self.d_offsets.is_modified()
-            || self.d_sizes.is_modified()
+            || self.d_widths.is_modified()
+            || self.d_heights.is_modified()
             || self.d_font_instances.is_modified()
             || self.d_texts.is_modified()
             || self.d_text_font.is_modified()
@@ -449,7 +453,8 @@ impl Dakota {
         self.d_resource_color.clear_modified();
         self.d_resources.clear_modified();
         self.d_offsets.clear_modified();
-        self.d_sizes.clear_modified();
+        self.d_widths.clear_modified();
+        self.d_heights.clear_modified();
         self.d_font_instances.clear_modified();
         self.d_texts.clear_modified();
         self.d_text_font.clear_modified();
@@ -699,12 +704,7 @@ impl Dakota {
     /// `grandparent` is avialable when appropriate and allows children to
     /// reference two levels above, for use when not bounding size by the
     /// current element.
-    fn calculate_sizes_children(
-        &mut self,
-        el: &DakotaId,
-        grandparent: Option<&DakotaId>,
-        space: &mut LayoutSpace,
-    ) -> Result<()> {
+    fn calculate_sizes_children(&mut self, el: &DakotaId, space: &mut LayoutSpace) -> Result<()> {
         log::debug!("Calculating children size");
         // TODO: do vertical wrapping too
         let mut tile_info = TileInfo {
@@ -759,40 +759,6 @@ impl Dakota {
                         tile_info.t_greatest_y,
                         tile_info.t_last_y + child_size.l_size.height as u32,
                     );
-                }
-            }
-
-            // ----- check if we overflow our bounds and need to enable scrolling ----
-            {
-                // Test if the child exceeds the parent space. If so, this is a scrolling
-                // region and we should mark it as a viewport boundary. In a separate pass
-                // we will go through and create all the viewports.
-                let (child_offset, child_size) = {
-                    let child_size = self.d_layout_nodes.get(&child_id).unwrap();
-                    (child_size.l_offset, child_size.l_size)
-                };
-                // The parent we are bounding inside of doesn't necessarily have to be the
-                // element this child is attached to. Elements marked as unbounded subsurfaces
-                // will actually be "layered" ontop of their parent, which means being bound
-                // within the grandparent.
-                let bounding_id = {
-                    let mut ret = el;
-                    if self.d_unbounded_subsurf.get(&child_id).is_some() {
-                        if let Some(gp) = grandparent {
-                            ret = gp;
-                        }
-                    }
-                    ret
-                };
-
-                let mut bounding_parent = self.d_layout_nodes.get_mut(bounding_id).unwrap();
-                if child_offset.x < 0.0
-                    || child_offset.y < 0.0
-                    || child_offset.x + child_size.width > bounding_parent.l_size.width
-                    || child_offset.y + child_size.height > bounding_parent.l_size.height
-                {
-                    log::debug!("Element exceeds available space, marking parent as viewport");
-                    bounding_parent.l_is_viewport = true;
                 }
             }
 
@@ -932,17 +898,6 @@ impl Dakota {
 
                             {
                                 let mut node = layouts.get_mut(el).unwrap();
-                                // Test if the text exceeds the parent space. If so then we need
-                                // to mark this node as a viewport node
-                                if child_size.l_offset.x + child_size.l_size.width
-                                    > node.l_size.width
-                                    || child_size.l_offset.y + child_size.l_size.height
-                                        > node.l_size.height
-                                {
-                                    // If this element has been assigned a size, then mark it as
-                                    // a viewport.
-                                    node.l_is_viewport = true;
-                                }
                                 // What we have done here is create a "fake" element (fake since
                                 // the user didn't specify it) that represents a glyph.
                                 node.add_child(ch.node.clone());
@@ -1033,7 +988,7 @@ impl Dakota {
             // ------------------------------------------
             //
 
-            self.calculate_sizes_children(el, parent, &mut child_space)
+            self.calculate_sizes_children(el, &mut child_space)
                 .context("Layout Tree Calculation: processing children of element")?;
         }
 
@@ -1049,7 +1004,64 @@ impl Dakota {
         let final_size = self.get_final_size(el, space)?.into();
         self.d_layout_nodes.get_mut(el).unwrap().l_size = final_size;
 
+        // Test if our children exceed our final size
+        self.calculate_needs_viewport(el, parent)?;
+
         return Ok(());
+    }
+
+    fn calculate_needs_viewport(
+        &mut self,
+        el: &DakotaId,
+        grandparent: Option<&DakotaId>,
+    ) -> Result<()> {
+        // Now check if child elements overflow our final size to determine if this
+        // needs to be a new viewport boundary
+        let child_count = self.d_layout_nodes.get(el).unwrap().l_children.len();
+
+        // If this element does not have children then it can't overflow
+        if child_count == 0 {
+            return Ok(());
+        }
+
+        for i in 0..child_count {
+            let child_id = self.d_layout_nodes.get(el).unwrap().l_children[i].clone();
+            // ----- check if we overflow our bounds and need to enable scrolling ----
+            {
+                // Test if the child exceeds the parent space. If so, this is a scrolling
+                // region and we should mark it as a viewport boundary. In a separate pass
+                // we will go through and create all the viewports.
+                let (child_offset, child_size) = {
+                    let child_size = self.d_layout_nodes.get(&child_id).unwrap();
+                    (child_size.l_offset, child_size.l_size)
+                };
+                // The parent we are bounding inside of doesn't necessarily have to be the
+                // element this child is attached to. Elements marked as unbounded subsurfaces
+                // will actually be "layered" ontop of their parent, which means being bound
+                // within the grandparent.
+                let bounding_id = {
+                    let mut ret = el;
+                    if self.d_unbounded_subsurf.get(&child_id).is_some() {
+                        if let Some(gp) = grandparent {
+                            ret = gp;
+                        }
+                    }
+                    ret
+                };
+
+                let mut bounding_parent = self.d_layout_nodes.get_mut(bounding_id).unwrap();
+                if child_offset.x < 0.0
+                    || child_offset.y < 0.0
+                    || child_offset.x + child_size.width > bounding_parent.l_size.width
+                    || child_offset.y + child_size.height > bounding_parent.l_size.height
+                {
+                    log::debug!("Element exceeds available space, marking parent as viewport");
+                    bounding_parent.l_is_viewport = true;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Get the total internal size for this layout node. This is used to calculate
@@ -1568,6 +1580,19 @@ impl Dakota {
             }
             dom.root_element.clone()
         };
+
+        // Set the size of our root node. We need to assign this a size manually so
+        // that it doesn't default and size itself to its children, causing the viewport
+        // scroll region calculation to go wrong.
+        let resolution = self.get_resolution();
+        self.d_widths.set(
+            &root_node_id,
+            dom::Value::Constant(dom::Constant::new(resolution.0 as i32)),
+        );
+        self.d_heights.set(
+            &root_node_id,
+            dom::Value::Constant(dom::Constant::new(resolution.1 as i32)),
+        );
 
         // reset our thundr surface list. If the set of resources has
         // changed, then we should have called clear_thundr to do so by now.

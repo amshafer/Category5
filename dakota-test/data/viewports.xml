@@ -162,6 +162,7 @@
          <height><relative>0.5</relative></height>
         </size>
        </el>
+
        <el>
         <resource>grey</resource>
         <size>
@@ -193,6 +194,7 @@
          </el>
         </content>
        </el>
+
        <el>
         <text>
          <font>JetBrainsMono</font>

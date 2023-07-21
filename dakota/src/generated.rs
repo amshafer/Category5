@@ -81,7 +81,8 @@ impl Dakota {
     // If the dimensions of an Element exceed that of the parent then the
     // parent will have scrolling activated, but the child Element will be
     // clipped to the parent's dimensions during drawing.
-    define_element_property!(size, sizes, dom::RelativeSize);
+    define_element_property!(width, widths, dom::Value);
+    define_element_property!(height, heights, dom::Value);
     // Default Text block
     //
     // This is the default text drawing element. The text provided will be
