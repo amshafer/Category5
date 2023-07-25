@@ -1057,6 +1057,7 @@ impl Dakota {
                 {
                     log::debug!("Element exceeds available space, marking parent as viewport");
                     bounding_parent.l_is_viewport = true;
+                    return Ok(());
                 }
             }
         }
@@ -1068,10 +1069,7 @@ impl Dakota {
     /// the scrolling region within this node, useful if it is a viewport node.
     fn get_node_internal_size(&self, id: DakotaId) -> (f32, f32) {
         let node = self.d_layout_nodes.get(&id).unwrap();
-        let mut ret = (
-            node.l_offset.x + node.l_size.width,
-            node.l_offset.y + node.l_size.height,
-        );
+        let mut ret = (node.l_size.width, node.l_size.height);
 
         for child_id in node.l_children.iter() {
             let child = self.d_layout_nodes.get(&child_id).unwrap();
@@ -1298,10 +1296,12 @@ impl Dakota {
             };
             // add the new child surface as a subsurface
             // don't do this if this is a viewport boundary
-            if !self.d_layout_nodes.get(&child_id).unwrap().l_is_viewport {
-                let child_surf = self.create_thundr_surf_for_el(&child_id)?;
-                surf.add_subsurface(child_surf);
-            }
+            let is_viewport = self.d_layout_nodes.get(&child_id).unwrap().l_is_viewport;
+            let child_surf = match is_viewport {
+                true => self.create_thundr_surf_for_el_no_recurse(&child_id)?,
+                false => self.create_thundr_surf_for_el(&child_id)?,
+            };
+            surf.add_subsurface(child_surf);
         }
 
         return Ok(surf);
@@ -1350,15 +1350,7 @@ impl Dakota {
             // to this viewport, we want to add it to the parent. The reason for this is we
             // want to scroll the *child* elements in this element, but not the element
             // content itself.
-            if let Some(parent_id) = parent_viewport.as_ref() {
-                {
-                    // Add our surface to the parent viewport
-                    let root_surf = self
-                        .create_thundr_surf_for_el_no_recurse(&root_node_id)
-                        .context("Could not construct Thundr surface tree")?;
-                    let parent_vp = &mut self.d_viewport_nodes.get_mut(&parent_id).unwrap();
-                    parent_vp.v_surfaces.push(root_surf.clone());
-                }
+            if parent_viewport.is_some() {
                 {
                     // Clear our children from the last run
                     let viewport = &mut self.d_viewport_nodes.get_mut(&id).unwrap();
@@ -1756,6 +1748,7 @@ impl Dakota {
                     parent_vp.offset.0 + parent_vp.scroll_offset.0 + child_vp.v_offset.0,
                     parent_vp.offset.1 + parent_vp.scroll_offset.1 + child_vp.v_offset.1,
                 );
+                log::info!("Adjusted child_vp.v_viewport: {:?}", child_vp.v_viewport);
 
                 // If our child has scrolled off the edge of the parent viewport,
                 // skip drawing it. This checks if it has scrolled past the end
@@ -1764,14 +1757,14 @@ impl Dakota {
                 // space.
                 //
                 // Have we not yet scrolled so this viewport is in view
-                if (child_vp.v_offset.0 > parent_vp.size.0
-                    && child_vp.v_offset.1 > parent_vp.size.1)
+                if child_vp.v_viewport.offset.0 > parent_vp.offset.0 + parent_vp.size.0
+                    || child_vp.v_viewport.offset.1 > parent_vp.offset.1 + parent_vp.size.1
                     // Have we scrolled past this horizontally
-                    || (child_vp.v_offset.0 < parent_vp.offset.0
-                        && child_vp.v_offset.0 * -1 > child_vp.v_size.0)
+                    || (child_vp.v_viewport.offset.0 < parent_vp.offset.0
+                        && child_vp.v_viewport.offset.0 + child_vp.v_size.0 < parent_vp.offset.0)
                     // Have we scrolled past this vertically
-                    || (child_vp.v_offset.1  < parent_vp.offset.1
-                        && child_vp.v_offset.1 * -1 > child_vp.v_size.1)
+                    || (child_vp.v_viewport.offset.1  < parent_vp.offset.1
+                        && child_vp.v_viewport.offset.1 + child_vp.v_size.1 < parent_vp.offset.1)
                 {
                     continue;
                 }
@@ -1801,6 +1794,7 @@ impl Dakota {
                     };
 
                 // Stash these to let the borrow checker look inside Lluvia's TableRef
+                log::info!("ORIGINAL child_vp.v_viewport: {:?}", child_vp.v_viewport);
                 let child_vp_v_size = child_vp.v_size;
                 let child_vp_v_viewport = &mut child_vp.v_viewport;
 

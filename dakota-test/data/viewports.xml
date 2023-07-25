@@ -254,6 +254,39 @@
          </p>
         </text>
        </el>
+
+       <el>
+        <size>
+         <width><relative>1.0</relative></width>
+         <height><constant>256</constant></height>
+        </size>
+        <el>
+         <resource>grey</resource>
+         <content>
+          <el>
+           <size>
+            <width><relative>0.9</relative></width>
+           </size>
+           <text>
+            <font>Inconsolata</font>
+            <p>
+             Con un futuro incierto el grupo trabaja en nuevos demos y hace
+             sus propias grabaciones. Busca una nueva compañía discográfica y
+             con el apoyo del productor Pepe Quintana logran firmar con
+             Warner Music México.
+
+             Tras la mala experiencia del primer disco, Fher y Álex eran
+             conscientes de los riesgos que implicaba ponerse en las manos de
+             un productor que no entendía el concepto del grupo ni su
+             propuesta artística, por lo que optaron por iniciarse en un
+             camino del cual no se han apartado desde entonces: asumir ellos
+             la producción de todos sus discos.
+           </p></text>
+          </el>
+         </content>
+        </el>
+       </el>
+
       </el>
      </el>
     </content>
