@@ -432,7 +432,7 @@ impl Renderer {
         // here to tell vulkan that we should import mem
         // instead of allocating it.
         let mut alloc_info = vk::MemoryAllocateInfo::builder()
-            .allocation_size(dmabuf_priv.dp_mem_reqs.size)
+            .allocation_size(dmabuf.db_stride as u64 * dmabuf.db_height as u64)
             .memory_type_index(dmabuf_priv.dp_memtype_index);
 
         // Since we are VERY async/threading friendly here, it is
