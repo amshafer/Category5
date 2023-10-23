@@ -98,6 +98,13 @@ struct VCBlock<T: 'static> {
 const DEFAULT_LLUVIA_BLOCK_SIZE: usize = 32;
 
 impl<T: 'static> VecContainer<T> {
+    fn new(block_size: usize) -> Self {
+        Self {
+            v_block_size: block_size,
+            v_blocks: Vec::new(),
+        }
+    }
+
     /// Helper that turns a global index into a block + offset index pair
     fn get_indices(&self, index: usize) -> (usize, usize) {
         (index / self.v_block_size, index % self.v_block_size)
@@ -126,6 +133,13 @@ impl<T: 'static> VecContainer<T> {
 
             assert!(i < new_vec.len());
             self.v_blocks[bi] = Some(VCBlock { v_vec: new_vec });
+        }
+    }
+
+    fn _iter<'a>(&'a mut self) -> VecContainerIter<'a, T> {
+        VecContainerIter {
+            vi_cont: self,
+            vi_index: 0,
         }
     }
 }
@@ -193,6 +207,7 @@ impl<T: 'static> Container<T> for VecContainer<T> {
 
         None
     }
+
     fn clear(&mut self) {
         for b in self.v_blocks.iter_mut() {
             if let Some(block) = b {
@@ -200,6 +215,30 @@ impl<T: 'static> Container<T> for VecContainer<T> {
                     *item = None;
                 }
             }
+        }
+    }
+}
+
+pub struct VecContainerIter<'a, T: 'static> {
+    vi_cont: &'a VecContainer<T>,
+    vi_index: usize,
+}
+
+impl<'a, T: 'static> Iterator for VecContainerIter<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.vi_index >= self.vi_cont.v_blocks.len() * self.vi_cont.v_block_size {
+                return None;
+            }
+
+            if let Some(ret) = self.vi_cont.index(self.vi_index) {
+                self.vi_index += 1;
+                return Some(ret);
+            }
+
+            self.vi_index += 1;
         }
     }
 }
@@ -427,13 +466,84 @@ impl<T: 'static, C: Container<T> + 'static> Table<T, C> {
     }
 }
 
-pub struct InstanceInternal {
+struct IdTable {
     /// The number of ids we have allocated out of the list above. This
     /// allows us to optimize the case of a full id list: We don't have to
     /// scan the entire list if it's full
     i_total_num_ids: usize,
     /// This is a list of active ids in the system.
     i_valid_ids: Vec<bool>,
+}
+
+impl IdTable {
+    fn new() -> Self {
+        Self {
+            i_total_num_ids: 0,
+            i_valid_ids: Vec::new(),
+        }
+    }
+
+    /// Get the total number of entities that have been allocated.
+    ///
+    /// This returns the number of "live" ids
+    fn num_entities(&self) -> usize {
+        self.i_total_num_ids
+    }
+
+    /// Get the largest entity value
+    ///
+    /// This is essentially the capacity of the entity array
+    fn capacity(&self) -> usize {
+        self.i_valid_ids.len()
+    }
+
+    /// Mint a new id number
+    fn create_id(&mut self) -> usize {
+        // Find the first free id that is not in use or make one
+        let first_valid_id = {
+            let mut index = None;
+
+            // first check the array from back to front
+            // Don't do this if the array is full, just skip to extending the
+            // array if that is the case
+            if self.i_total_num_ids != self.i_valid_ids.len() {
+                for (i, is_valid) in self.i_valid_ids.iter().enumerate().rev() {
+                    if !*is_valid {
+                        index = Some(i);
+                        break;
+                    }
+                }
+            }
+
+            // if that didn't work then add one to the back
+            if index.is_none() {
+                self.i_valid_ids.push(true);
+                index = Some(self.i_valid_ids.len() - 1);
+            }
+
+            index.unwrap()
+        };
+        // Mark this new id as active
+        self.i_valid_ids[first_valid_id] = true;
+        self.i_total_num_ids += 1;
+
+        first_valid_id
+    }
+
+    /// Free an id and mark it unused
+    fn release_id(&mut self, id: usize) {
+        assert!(self.i_valid_ids[id]);
+        self.i_valid_ids[id] = false;
+        self.i_total_num_ids -= 1;
+    }
+
+    fn id_is_valid(&self, id: usize) -> bool {
+        id < self.i_valid_ids.len() && self.i_valid_ids[id]
+    }
+}
+
+pub struct InstanceInternal {
+    i_ids: IdTable,
 }
 
 pub struct ComponentList {
@@ -469,8 +579,7 @@ impl Instance {
     pub fn new() -> Self {
         Self {
             i_internal: Arc::new(RwLock::new(InstanceInternal {
-                i_valid_ids: Vec::new(),
-                i_total_num_ids: 0,
+                i_ids: IdTable::new(),
             })),
             i_component_set: Arc::new(RwLock::new(ComponentList {
                 cl_components: Vec::new(),
@@ -482,14 +591,14 @@ impl Instance {
     ///
     /// This returns the number of "live" ids
     pub fn num_entities(&self) -> usize {
-        self.i_internal.read().unwrap().i_total_num_ids
+        self.i_internal.read().unwrap().i_ids.num_entities()
     }
 
     /// Get the largest entity value
     ///
     /// This is essentially the capacity of the entity array
     pub fn capacity(&self) -> usize {
-        self.i_internal.read().unwrap().i_valid_ids.len()
+        self.i_internal.read().unwrap().i_ids.capacity()
     }
 
     /// Allocate a new component table
@@ -500,10 +609,7 @@ impl Instance {
     ///
     /// This uses the default storage container which supports sparse memory usage.
     pub fn add_component<T: 'static>(&mut self) -> Component<T> {
-        self.add_raw_component(VecContainer {
-            v_block_size: DEFAULT_LLUVIA_BLOCK_SIZE,
-            v_blocks: Vec::new(),
-        })
+        self.add_raw_component(VecContainer::new(DEFAULT_LLUVIA_BLOCK_SIZE))
     }
 
     /// Allocate a new component table with contiguous storage
@@ -548,7 +654,6 @@ impl Instance {
             c_inst: new_inst,
             _c_phantom: PhantomData,
             c_table: table.clone(),
-            c_component_id: component_id,
             c_modified: Arc::new(AtomicBool::new(false)),
         };
     }
@@ -565,33 +670,7 @@ impl Instance {
         let new_self = self.clone();
         let mut internal = self.i_internal.write().unwrap();
 
-        // Find the first free id that is not in use or make one
-        let first_valid_id = {
-            let mut index = None;
-
-            // first check the array from back to front
-            // Don't do this if the array is full, just skip to extending the
-            // array if that is the case
-            if internal.i_total_num_ids != internal.i_valid_ids.len() {
-                for (i, is_valid) in internal.i_valid_ids.iter().enumerate().rev() {
-                    if !*is_valid {
-                        index = Some(i);
-                        break;
-                    }
-                }
-            }
-
-            // if that didn't work then add one to the back
-            if index.is_none() {
-                internal.i_valid_ids.push(true);
-                index = Some(internal.i_valid_ids.len() - 1);
-            }
-
-            index.unwrap()
-        };
-        // Mark this new id as active
-        internal.i_valid_ids[first_valid_id] = true;
-        internal.i_total_num_ids += 1;
+        let first_valid_id = internal.i_ids.create_id();
 
         return Arc::new(EntityInternal {
             ecs_id: first_valid_id,
@@ -602,12 +681,7 @@ impl Instance {
     /// Invalidate an Entity and free all of its component values
     fn invalidate_id(&mut self, id: usize) {
         // First remove this id from the valid list
-        {
-            let mut internal = self.i_internal.write().unwrap();
-            assert!(internal.i_valid_ids[id]);
-            internal.i_valid_ids[id] = false;
-            internal.i_total_num_ids -= 1;
-        }
+        self.i_internal.write().unwrap().i_ids.release_id(id);
 
         // Now that we have dropped our ref for the id tracking we can
         // tell each table to free the entity
@@ -620,9 +694,7 @@ impl Instance {
     }
 
     fn id_is_valid(&self, id: &Entity) -> bool {
-        let internal = self.i_internal.read().unwrap();
-
-        id.ecs_id < internal.i_valid_ids.len() && internal.i_valid_ids[id.ecs_id]
+        self.i_internal.read().unwrap().i_ids.id_is_valid(id.ecs_id)
     }
 }
 
@@ -636,8 +708,6 @@ pub struct RawComponent<T: 'static, C: Container<T> + 'static> {
     /// Instance this component belongs to
     c_inst: Instance,
     _c_phantom: PhantomData<T>,
-    /// The index into the component data list inside c_inst
-    c_component_id: usize,
     /// The storage table holding per-entity values
     c_table: Table<T, C>,
     /// Marked true when this component table has outstanding changes
@@ -664,9 +734,7 @@ pub type NonSparseComponent<T> = RawComponent<T, SliceContainer<T>>;
 
 impl<T: 'static, C: Container<T> + 'static> fmt::Debug for RawComponent<T, C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Session")
-            .field("c_component", &self.c_component_id)
-            .finish()
+        f.debug_struct("Component").finish()
     }
 }
 
@@ -675,7 +743,6 @@ impl<T: 'static, C: Container<T> + 'static> Clone for RawComponent<T, C> {
         Self {
             c_inst: self.c_inst.clone(),
             _c_phantom: PhantomData,
-            c_component_id: self.c_component_id,
             c_table: self.c_table.clone(),
             c_modified: self.c_modified.clone(),
         }
@@ -809,6 +876,18 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     }
 }
 
+impl<T: Clone + 'static> RawComponent<T, VecContainer<T>> {
+    /// Create a snapshot of this component at the current state
+    ///
+    /// Snapshots are mutable component copies which allow for transactions to
+    /// take place.
+    ///
+    /// This can only be called on sparse components.
+    pub fn snapshot(&self) -> Snapshot<T> {
+        Snapshot::new(Box::new(self.clone()), None)
+    }
+}
+
 /// Helper struct for a slice
 ///
 /// This is a rwlock guard for the sliced data
@@ -874,5 +953,203 @@ impl<'a, T: 'static, C: Container<T> + 'static> Iterator for ComponentIterator<'
         } else {
             Some(None)
         }
+    }
+}
+
+/// Arbitrarily chosen size of the blocks in Lluvia's snapshots. This is chosen
+/// to be much more sparse since fewer ids will be getting updated in snapshots.
+const DEFAULT_LLUVIA_SNAPSHOT_BLOCK_SIZE: usize = 4;
+
+/// Snapshot Component
+///
+/// Snapshot components are mutable snapshots of the ECS at a particular time.
+/// Any changes that take place in these snapshot component tables is not applied
+/// to the "parent" ECS until the snapshot is committed, at which point all changes
+/// are atomically applied.
+///
+/// Once committed a snapshot is considered "inert" and will panic upon any
+/// usage.  Any child snapshots will see that this snapshot is committed and
+/// reparent themselves under the root component, allowing this snapshot
+/// to be dropped.
+///
+/// A committed snapshot can be "reset" so that it starts recording changes
+/// again. This is useful to prevent having to reallocate internal snapshot
+/// resources during quick one-shot transactions.
+///
+/// Snapshots can be layered, creating a history of transactions. Ordering
+/// is not guaranteed, any changes in a child snapshot that are followed by
+/// and update and commit in the parent snapshot will be overwritten by the
+/// child when it is committed.
+#[derive(Clone)]
+pub struct Snapshot<T: Clone + 'static> {
+    /// The parent component that we are applying changes on top of.
+    s_parent: Box<Component<T>>,
+    /// If this snapshot was layered from an existing snapshot, this will
+    /// be the parent snapshot
+    s_parent_snapshot: Option<Box<Snapshot<T>>>,
+    /// Has this snapshot been committed already. If so, all requests
+    /// are passed through to the parent component table since they
+    /// are now synced up.
+    s_committed: Arc<AtomicBool>,
+    /// Lookup table to see if we have defined a value for a particular
+    /// id in this diff. If so, s_data will contain an updated snapshot
+    /// value.
+    /// This needs to hold the `Entity`s so that we can use the entity
+    /// ids to replay changes on the parent component.
+    s_ids: Component<Entity>,
+    /// sparse blocks holding updated values.
+    s_data: Component<T>,
+}
+
+impl<T: Clone + 'static> Snapshot<T> {
+    fn new(parent: Box<Component<T>>, parent_snapshot: Option<Box<Snapshot<T>>>) -> Self {
+        Self {
+            s_data: RawComponent {
+                c_table: Table::new(VecContainer::new(DEFAULT_LLUVIA_SNAPSHOT_BLOCK_SIZE)),
+                c_inst: parent.c_inst.clone(),
+                _c_phantom: PhantomData,
+                c_modified: Arc::new(AtomicBool::new(false)),
+            },
+            s_ids: RawComponent {
+                c_table: Table::new(VecContainer::new(DEFAULT_LLUVIA_SNAPSHOT_BLOCK_SIZE)),
+                c_inst: parent.c_inst.clone(),
+                _c_phantom: PhantomData,
+                c_modified: Arc::new(AtomicBool::new(false)),
+            },
+            s_parent: parent,
+            s_parent_snapshot: parent_snapshot,
+            s_committed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn assert_alive(&self) {
+        assert!(!self.is_committed());
+    }
+
+    fn is_id_in_snapshot(&self, entity: &Entity) -> bool {
+        self.s_ids.get(entity).is_some()
+    }
+    /// record that we updated this entity in the snapshot
+    fn mark_entity(&mut self, entity: &Entity) {
+        self.assert_alive();
+        self.s_ids.set(&entity, entity.clone());
+    }
+
+    fn ensure_value(&mut self, entity: &Entity) {
+        // If we haven't yet set this id in this snapshot then
+        // try to grab it from the parent
+        if self.s_ids.get(entity).is_none() {
+            self.mark_entity(entity);
+
+            // If we have a parent snapshot use that, otherwise
+            // get our original vaule from the parent component
+            let val = match self.s_parent_snapshot.as_ref() {
+                Some(snap) => snap.get(entity),
+                None => self.s_parent.get(entity),
+            };
+
+            if let Some(val) = val {
+                self.s_data.set(entity, val.clone());
+            }
+        }
+    }
+
+    fn is_committed(&self) -> bool {
+        self.s_committed.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Reset the modified tracker
+    fn set_committed(&mut self, val: bool) {
+        self.s_committed
+            .store(val, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Commit this snapshot
+    ///
+    /// This will merge all changes back into the parent component atomically.
+    /// This snapshot must be reset after this before it can be used again.
+    pub fn commit(&mut self) {
+        // First ensure the parent snapshot (if it exists) has already
+        // been committed
+        if let Some(parent_snap) = self.s_parent_snapshot.as_ref() {
+            assert!(parent_snap.is_committed());
+        }
+
+        // for each entity in the snapshot
+        // set the parent value to whatever's contained in the snapshot
+        for i in self.s_ids.iter() {
+            if let Some(id) = &i {
+                if let Some(val) = self.s_data.take(id) {
+                    self.s_parent.set(id, val);
+                } else {
+                    // if the snapshot has this value cleared, do the same for
+                    // the parent
+                    self.s_parent.take(id);
+                }
+            }
+        }
+
+        self.set_committed(true);
+    }
+
+    /// Clear and reset the snapshot to a fresh unmodified layer on
+    /// top of the parent component.
+    pub fn reset(&mut self) {
+        self.s_parent_snapshot = None;
+        self.set_committed(false);
+        self.s_ids.clear();
+        self.s_data.clear();
+    }
+
+    /// Create a snapshot layered on top of this one
+    ///
+    /// Child snapshots will overwrite any of their changes over the parent
+    /// snapshot, even if the parent has been updated after the child snapshot
+    /// has been created.
+    pub fn snapshot(&self) -> Snapshot<T> {
+        Snapshot::new(self.s_parent.clone(), Some(Box::new(self.clone())))
+    }
+
+    /// Get a reference to data corresponding to the (component, entity) pair
+    pub fn get(&self, entity: &Entity) -> Option<TableRef<T, VecContainer<T>>> {
+        self.assert_alive();
+
+        if self.is_id_in_snapshot(entity) {
+            return self.s_data.get(entity);
+        }
+
+        match self.s_parent_snapshot.as_ref() {
+            Some(snap) => snap.get(entity),
+            None => self.s_parent.get(entity),
+        }
+    }
+
+    /// Get a mutable reference to data corresponding to the (component, entity) pair
+    pub fn get_mut(&mut self, entity: &Entity) -> Option<TableRefMut<T, VecContainer<T>>> {
+        self.ensure_value(entity);
+
+        self.s_data.get_mut(entity)
+    }
+
+    /// Set the value of an entity for the component corresponding to this session
+    pub fn set(&mut self, entity: &Entity, val: T) {
+        self.mark_entity(entity);
+
+        self.s_data.set(entity, val);
+    }
+
+    /// Take a value out of the component table
+    pub fn take(&mut self, entity: &Entity) -> Option<T> {
+        self.ensure_value(entity);
+
+        self.s_data.take(entity)
+    }
+
+    pub fn is_modified(&self) -> bool {
+        self.s_data.is_modified()
+    }
+
+    pub fn clear_modified(&mut self) {
+        self.s_data.clear_modified()
     }
 }
