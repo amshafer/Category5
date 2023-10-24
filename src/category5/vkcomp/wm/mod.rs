@@ -354,6 +354,9 @@ impl WindowManager {
             },
         );
         let datetime = dakota.create_element().unwrap();
+        dakota
+            .height()
+            .set(&datetime, dom::Value::Relative(dom::Relative::new(1.0)));
         dakota.content().set(
             &menubar,
             dom::Content {
