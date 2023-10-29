@@ -77,37 +77,45 @@
  <layout>
   <el>
    <resource>white</resource>
+
    <el>
-    <resource>blue</resource>
-    <size>
-     <width><relative>1.0</relative></width>
-     <height><constant>96</constant></height>
-    </size>
+    <offset>
+     <x><constant>0</constant></x>
+     <y><constant>0</constant></y>
+    </offset>
     <el>
-     <offset>
-      <x><constant>16</constant></x>
-      <y><constant>0</constant></y>
-     </offset>
-     <text>
-      <font>Inconsolata</font>
-      <p>Sub Viewport Scrolling</p>
-     </text>
+     <resource>blue</resource>
+     <size>
+      <width><relative>1.0</relative></width>
+      <height><constant>96</constant></height>
+     </size>
+     <el>
+      <offset>
+       <x><constant>16</constant></x>
+       <y><constant>0</constant></y>
+      </offset>
+      <text>
+       <font>Inconsolata</font>
+       <p>Sub Viewport Scrolling</p>
+      </text>
+     </el>
+    </el>
+    <el>
+     <resource>green</resource>
+     <size>
+      <width><relative>1.0</relative></width>
+      <height><constant>16</constant></height>
+     </size>
+    </el>
+    <el>
+     <resource>tan</resource>
+     <size>
+      <width><relative>1.0</relative></width>
+      <height><constant>16</constant></height>
+     </size>
     </el>
    </el>
-   <el>
-    <resource>green</resource>
-    <size>
-     <width><relative>1.0</relative></width>
-     <height><constant>16</constant></height>
-    </size>
-   </el>
-   <el>
-    <resource>tan</resource>
-    <size>
-     <width><relative>1.0</relative></width>
-     <height><constant>16</constant></height>
-    </size>
-   </el>
+
    <el>
     <content>
      <el>

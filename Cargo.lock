@@ -197,6 +197,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "nix 0.26.2",
+ "paste",
  "renderdoc",
  "utils",
  "wayland-backend",

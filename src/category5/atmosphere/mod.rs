@@ -115,6 +115,8 @@
 #![allow(dead_code)]
 extern crate wayland_server as ws;
 use ws::protocol::wl_surface;
+extern crate paste;
+use paste::paste;
 
 extern crate dakota as dak;
 
@@ -134,39 +136,6 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::vec::Vec;
-
-/// Global data not tied to a client or window
-///
-/// See `Property` for implementation comments
-#[derive(Copy, Clone, Debug, AtmosECSGetSet)]
-enum GlobalProperty {
-    /// !! IF YOU CHANGE THIS UPDATE property_count BELOW!!
-    cursor_pos(f64, f64),
-    resolution(u32, u32),
-    grabbed(Option<WindowId>),
-    resizing(Option<WindowId>),
-    /// the window the user is currently interacting with
-    /// This tells us which one to start looking at for the skiplist
-    ///
-    /// Not to be confused with `surf_focus`, this refers to the *application*
-    /// that is currently in focus. It is used to track the "root" window that
-    /// was created by xdg/wl_shell.
-    win_focus(Option<WindowId>),
-    /// This is the current surface that is in focus, not respective of application.
-    /// It is possible that this is the same as `win_focus`.
-    ///
-    /// This is the wl_surface that the user has entered, and it is highly likely
-    /// that this is a subsurface. Therefore `win_focus` will be the "root" application
-    /// toplevel window, and `surf_focus` may be a subsurface of that window tree.
-    surf_focus(Option<WindowId>),
-    /// Is recording traces with Renderdoc enabled?
-    /// This is used for debugging. input will trigger this, which tells vkcomp
-    /// to record frames.
-    renderdoc_recording(bool),
-    /// The name of the DRM node in use. This will be filled in by vkcomp
-    /// and populated from VK_EXT_physical_device_drm
-    drm_dev(i64, i64),
-}
 
 // These are indexed by ClientId
 #[derive(Clone, Debug, AtmosECSGetSet)]
@@ -306,6 +275,35 @@ impl Property for ClientPriv {
 /// exclusive to subsystems will be held by said subsystem
 #[allow(dead_code)]
 pub struct Atmosphere {
+    a_cursor_pos: (f64, f64),
+    a_resolution: (u32, u32),
+    a_grabbed: Option<WindowId>,
+    a_resizing: Option<WindowId>,
+    /// the window the user is currently interacting with
+    /// This tells us which one to start looking at for the skiplist
+    ///
+    /// Not to be confused with `surf_focus`, this refers to the *application*
+    /// that is currently in focus. It is used to track the "root" window that
+    /// was created by xdg/wl_shell.
+    a_win_focus: Option<WindowId>,
+    /// This is the current surface that is in focus, not respective of application.
+    /// It is possible that this is the same as `win_focus`.
+    ///
+    /// This is the wl_surface that the user has entered, and it is highly likely
+    /// that this is a subsurface. Therefore `win_focus` will be the "root" application
+    /// toplevel window, and `surf_focus` may be a subsurface of that window tree.
+    a_surf_focus: Option<WindowId>,
+    /// Is recording traces with Renderdoc enabled?
+    /// This is used for debugging. input will trigger this, which tells vkcomp
+    /// to record frames.
+    a_renderdoc_recording: bool,
+    /// The name of the DRM node in use. This will be filled in by vkcomp
+    /// and populated from VK_EXT_physical_device_drm
+    a_drm_dev: (i64, i64),
+
+    /// Tasks to be handled by vkcomp before rendering the next frame
+    a_wm_tasks: VecDeque<wm::task::Task>,
+
     /// The current hemisphere
     ///
     /// While this is held we will retain ownership of the
@@ -339,7 +337,32 @@ pub struct Atmosphere {
     /// patches before constructing a new changeset.
     a_window_patches: HashMap<(WindowId, PropertyId), WindowProperty>,
     a_client_patches: HashMap<(ClientId, PropertyId), ClientProperty>,
-    a_global_patches: HashMap<PropertyId, GlobalProperty>,
+}
+
+// Implement getters/setters for our global properties
+macro_rules! define_global_getters {
+    ($name:ident, $val:ty) => {
+        paste! {
+            pub fn [<get_ $name>](&self) -> $val {
+                self.[< a_ $name>]
+            }
+            pub fn [<set_ $name>](&mut self, val: $val) {
+                self.mark_changed();
+                self.[<a_ $name>] = val;
+            }
+        }
+    };
+}
+
+impl Atmosphere {
+    define_global_getters!(cursor_pos, (f64, f64));
+    define_global_getters!(resolution, (u32, u32));
+    define_global_getters!(grabbed, Option<WindowId>);
+    define_global_getters!(resizing, Option<WindowId>);
+    define_global_getters!(win_focus, Option<WindowId>);
+    define_global_getters!(surf_focus, Option<WindowId>);
+    define_global_getters!(renderdoc_recording, bool);
+    define_global_getters!(drm_dev, (i64, i64));
 }
 
 impl Atmosphere {
@@ -350,7 +373,16 @@ impl Atmosphere {
     /// One subsystem must be setup as index 0 and the other
     /// as index 1
     pub fn new() -> Atmosphere {
-        let mut atmos = Atmosphere {
+        Atmosphere {
+            a_cursor_pos: (0.0, 0.0),
+            a_resolution: (0, 0),
+            a_grabbed: None,
+            a_resizing: None,
+            a_win_focus: None,
+            a_surf_focus: None,
+            a_renderdoc_recording: false,
+            a_drm_dev: (0, 0),
+            a_wm_tasks: VecDeque::new(),
             a_hemi: Some(Box::new(Hemisphere::new())),
             // TODO: only do this for ways
             a_window_priv: PropertyMap::new(),
@@ -359,20 +391,7 @@ impl Atmosphere {
             a_window_id_map: Vec::new(),
             a_client_patches: HashMap::new(),
             a_window_patches: HashMap::new(),
-            a_global_patches: HashMap::new(),
-        };
-
-        // We need to set this property to the default since
-        // vkcomp will expect it.
-        atmos.set_cursor_pos(0.0, 0.0);
-        // resolution is set by wm
-        atmos.set_grabbed(None);
-        atmos.set_resizing(None);
-        atmos.set_win_focus(None);
-        atmos.set_surf_focus(None);
-        atmos.set_renderdoc_recording(false);
-
-        return atmos;
+        }
     }
 
     /// Gets the next available id in a vec of bools
@@ -403,31 +422,6 @@ impl Atmosphere {
         let id = WindowId(Atmosphere::get_next_id(&mut self.a_window_id_map));
         self.reserve_window_id(client, id);
         return id;
-    }
-
-    /// Add a patch to be replayed on a flip
-    ///
-    /// All changes to the current hemisphere will get
-    /// batched up into a set of patches. This is needed to
-    /// keep both hemispheres in sync.
-    fn set_global_prop(&mut self, value: &GlobalProperty) {
-        self.mark_changed();
-        let prop_id = value.get_property_id();
-        // check if there is an existing patch to overwrite
-        if let Some(v) = self.a_global_patches.get_mut(&prop_id) {
-            // if so, just update it
-            *v = *value;
-        } else {
-            self.a_global_patches.insert(prop_id, *value);
-        }
-    }
-
-    fn get_global_prop(&self, prop_id: PropertyId) -> Option<&GlobalProperty> {
-        // check if there is an existing patch to grab
-        if let Some(v) = self.a_global_patches.get(&prop_id) {
-            return Some(v);
-        }
-        return self.a_hemi.as_ref().unwrap().get_global_prop(prop_id);
     }
 
     fn set_client_prop(&mut self, client: ClientId, value: &ClientProperty) {
@@ -484,10 +478,6 @@ impl Atmosphere {
     /// update it will all the info it's missing
     fn replay(&mut self, hemi: &mut Hemisphere) {
         log::info!("replaying on hemisphere");
-        for (prop_id, prop) in self.a_global_patches.iter() {
-            log::info!("   replaying {:?}", prop);
-            hemi.set_global_prop(*prop_id, prop);
-        }
         for ((id, prop_id), prop) in self.a_client_patches.iter() {
             log::info!("   replaying {:?}", prop);
             hemi.set_client_prop(*id, *prop_id, prop);
@@ -514,7 +504,6 @@ impl Atmosphere {
         self.a_hemi = Some(new_hemi);
 
         // Clear all patches
-        self.a_global_patches.clear();
         self.a_client_patches.clear();
         self.a_window_patches.clear();
     }
@@ -695,12 +684,14 @@ impl Atmosphere {
 
     /// Adds a one-time task to the queue
     pub fn add_wm_task(&mut self, task: wm::task::Task) {
-        self.a_hemi.as_mut().unwrap().add_wm_task(task);
+        self.mark_changed();
+        self.a_wm_tasks.push_back(task);
     }
 
     /// pulls a one-time task off the queue
     pub fn get_next_wm_task(&mut self) -> Option<wm::task::Task> {
-        self.a_hemi.as_mut().unwrap().wm_task_pop()
+        self.mark_changed();
+        self.a_wm_tasks.pop_front()
     }
 
     /// Set the damage for this surface
@@ -732,7 +723,7 @@ impl Atmosphere {
     /// get replayed into the hemisphere
     pub fn add_cursor_pos(&mut self, dx: f64, dy: f64) {
         let pos = self.get_cursor_pos();
-        self.set_cursor_pos(pos.0 + dx, pos.1 + dy);
+        self.set_cursor_pos((pos.0 + dx, pos.1 + dy));
 
         // Now update the grabbed window if it exists
         let grabbed = match self.get_grabbed() {
@@ -865,7 +856,6 @@ pub struct Hemisphere {
     /// false if this hemi can be safely ignored
     h_has_changed: bool,
     /// The property database for our ECS
-    h_global_props: PropertyMap<GlobalProperty>,
     h_client_props: PropertyMap<ClientProperty>,
     h_window_props: PropertyMap<WindowProperty>,
     /// A list of tasks to be completed by vkcomp this frame
@@ -874,7 +864,6 @@ pub struct Hemisphere {
     /// Tasks are one time events. Anything related to state should
     /// be added elsewhere. A task is a transfer of ownership from
     /// ways to vkcommp
-    h_wm_tasks: VecDeque<wm::task::Task>,
     h_surf_damages: PropertyList<dak::Damage>,
     h_damages: PropertyList<dak::Damage>,
 }
@@ -883,34 +872,14 @@ impl Hemisphere {
     fn new() -> Hemisphere {
         Hemisphere {
             h_has_changed: true,
-            h_global_props: PropertyMap::new(),
             h_client_props: PropertyMap::new(),
             h_window_props: PropertyMap::new(),
             // These are added to a hemisphere by one side,
             // and are consumed by the other
             // They are not patched
-            h_wm_tasks: VecDeque::new(),
             h_surf_damages: PropertyList::new(),
             h_damages: PropertyList::new(),
         }
-    }
-
-    /// Apply a patch to this hemisphere
-    /// This is used to commit a changeset
-    ///
-    /// Changes are accrued in the patch list. Before
-    /// flipping hemispheres we will apply the patch
-    /// list to the current hemisphere, and then again
-    /// to the new one to keep things up to date.
-    fn set_global_prop(&mut self, id: PropertyId, prop: &GlobalProperty) {
-        self.mark_changed();
-        // for global properties just always pass the id as 0
-        // since we don't care about window/client indexing
-        self.h_global_props.set(0, id, prop);
-    }
-
-    fn get_global_prop(&self, id: PropertyId) -> Option<&GlobalProperty> {
-        self.h_global_props.get(0, id)
     }
 
     fn set_client_prop(&mut self, client: ClientId, id: PropertyId, prop: &ClientProperty) {
@@ -966,16 +935,6 @@ impl Hemisphere {
     // ----------------
     // modifiers
     // ----------------
-
-    fn add_wm_task(&mut self, task: wm::task::Task) {
-        self.mark_changed();
-        self.h_wm_tasks.push_back(task);
-    }
-
-    pub fn wm_task_pop(&mut self) -> Option<wm::task::Task> {
-        self.mark_changed();
-        self.h_wm_tasks.pop_front()
-    }
 
     fn set_surface_damage(&mut self, id: WindowId, damage: dak::Damage) {
         self.mark_changed();

@@ -224,7 +224,7 @@ impl EventManager {
         {
             let mut atmos = self.em_climate.c_atmos.lock().unwrap();
             atmos.mark_changed();
-            atmos.set_resolution(res.0, res.1);
+            atmos.set_resolution(res);
         }
         self.em_climate.send_all_geometry();
         self.em_wm.handle_ood(&mut self.em_climate.c_dakota);
