@@ -59,8 +59,19 @@ unsafe extern "system" fn vulkan_debug_callback(
     vk::FALSE
 }
 
-// TODO: make a "reduced" vulkan resource manager that can be Rc'ed
-// so many structs can reference it on drop
+pub struct VkBarriers {
+    /// Dmabuf import usage barrier list. Will be regenerated
+    /// during every draw
+    pub r_acquire_barriers: Vec<vk::ImageMemoryBarrier>,
+    /// Dmabuf import release barriers. These let drm know vulkan
+    /// is done using them.
+    pub r_release_barriers: Vec<vk::ImageMemoryBarrier>,
+}
+
+// Manually define these for this struct, this is safe since it
+// only references vulkan objects.
+unsafe impl Send for VkBarriers {}
+unsafe impl Sync for VkBarriers {}
 
 /// Common bits of a vulkan renderer
 ///
@@ -101,8 +112,6 @@ pub struct Renderer {
     /// queue for copy operations
     pub(crate) transfer_queue: vk::Queue,
 
-    /// vk_khr_display and vk_khr_surface wrapper.
-    pub(crate) display: Display,
     pub(crate) surface_format: vk::SurfaceFormatKHR,
     pub(crate) surface_caps: vk::SurfaceCapabilitiesKHR,
     /// resolution to create the swapchain with
@@ -159,7 +168,7 @@ pub struct Renderer {
     /// This is the set of wayland resources used last frame
     /// for rendering that should now be released
     /// See WindowManger's worker_thread for more
-    pub(crate) r_release: Vec<Box<dyn Droppable>>,
+    pub(crate) r_release: Vec<Box<dyn Droppable + Send + Sync>>,
     /// command buffer for copying shm images
     pub(crate) copy_cbuf: vk::CommandBuffer,
     pub(crate) copy_cbuf_fence: vk::Fence,
@@ -204,12 +213,8 @@ pub struct Renderer {
     tmp_image_view: vk::ImageView,
     tmp_image_mem: vk::DeviceMemory,
 
-    /// Dmabuf import usage barrier list. Will be regenerated
-    /// during every draw
-    pub r_acquire_barriers: Vec<vk::ImageMemoryBarrier>,
-    /// Dmabuf import release barriers. These let drm know vulkan
-    /// is done using them.
-    pub r_release_barriers: Vec<vk::ImageMemoryBarrier>,
+    /// Memory barriers.
+    pub r_barriers: VkBarriers,
 
     /// Nvidia Aftermath SDK instance. Inclusion of this enables
     /// GPU crashdumps.
@@ -580,29 +585,29 @@ impl Renderer {
     /// the window is being resized and we have to regenerate accordingly.
     /// Keep in mind the Pipeline in Thundr will also have to be recreated
     /// separately.
-    pub unsafe fn recreate_swapchain(&mut self) {
+    pub unsafe fn recreate_swapchain(&mut self, display: &mut Display) {
         // first wait for the device to finish working
         self.dev.device_wait_idle().unwrap();
 
         // We need to get the updated size of our swapchain. This
         // will be the current size of the surface in use. We should
         // also update Display.d_resolution while we are at it.
-        let new_res = self.display.get_vulkan_drawable_size(self.pdev);
+        let new_res = display.get_vulkan_drawable_size(self.pdev);
         // TODO: clamp resolution here
-        self.display.d_resolution = new_res;
+        display.d_resolution = new_res;
         self.resolution = new_res;
 
         let new_swapchain = Renderer::create_swapchain(
             &self.inst,
             &self.swapchain_loader,
-            self.display.d_surface,
+            display.d_surface,
             &self.surface_caps,
             self.surface_format,
             &self.resolution,
             &self.dev_features,
             self.r_pipe_type,
             Some(self.swapchain), // oldSwapChain
-            self.display.d_present_mode,
+            display.d_present_mode,
         );
 
         // Now that we recreated the swapchain destroy the old one
@@ -1065,7 +1070,7 @@ impl Renderer {
     /// freed this frame
     ///
     /// Takes care of choosing what list to add info to
-    pub fn register_for_release(&mut self, release: Box<dyn Droppable>) {
+    pub fn register_for_release(&mut self, release: Box<dyn Droppable + Send + Sync>) {
         self.r_release.push(release);
     }
 
@@ -1489,7 +1494,7 @@ impl Renderer {
         info: &CreateInfo,
         ecs: &mut ll::Instance,
         pass_comp: ll::Component<usize>,
-    ) -> Result<Renderer> {
+    ) -> Result<(Renderer, Display)> {
         unsafe {
             let (entry, inst) = Renderer::create_instance(info);
 
@@ -1719,7 +1724,6 @@ impl Renderer {
                 transfer_family_index: transfer_queue_family,
                 present_queue: present_queue,
                 transfer_queue: transfer_queue,
-                display: display,
                 surface_format: surface_format,
                 surface_caps: surface_caps,
                 resolution: surface_resolution,
@@ -1762,8 +1766,10 @@ impl Renderer {
                 tmp_image: tmp,
                 tmp_image_view: tmp_view,
                 tmp_image_mem: tmp_mem,
-                r_acquire_barriers: Vec::new(),
-                r_release_barriers: Vec::new(),
+                r_barriers: VkBarriers {
+                    r_acquire_barriers: Vec::new(),
+                    r_release_barriers: Vec::new(),
+                },
                 #[cfg(feature = "aftermath")]
                 r_aftermath: aftermath,
                 r_image_ecs: img_ecs,
@@ -1775,7 +1781,7 @@ impl Renderer {
             };
             rend.reallocate_windows_buf_with_cap(rend.r_windows_capacity);
 
-            return Ok(rend);
+            return Ok((rend, display));
         }
     }
 
@@ -2822,8 +2828,6 @@ impl Drop for Renderer {
             self.dev.destroy_fence(self.submit_fence, None);
             self.dev.destroy_fence(self.copy_cbuf_fence, None);
             self.dev.destroy_device(None);
-
-            self.display.destroy();
 
             self.debug_loader
                 .destroy_debug_utils_messenger(self.debug_callback, None);

@@ -405,7 +405,7 @@ impl CompPipeline {
         }
     }
 
-    pub fn new(rend: &mut Renderer) -> Self {
+    pub fn new(rend: &mut Renderer, display: &mut Display) -> Self {
         let vis = Self::vis_create_pass(rend);
         let comp = Self::comp_create_pass(rend);
 
@@ -455,7 +455,7 @@ impl CompPipeline {
             rend.dev.bind_buffer_memory(vis_buf, vis_mem, 0).unwrap();
         }
 
-        let family = Self::get_queue_family(&rend.inst, &rend.display, rend.pdev).unwrap();
+        let family = Self::get_queue_family(&rend.inst, display, rend.pdev).unwrap();
         let queue = unsafe { rend.dev.get_device_queue(family, 0) };
         let cpool = unsafe { Renderer::create_command_pool(&rend.dev, family) };
         let cbuf = unsafe { Renderer::create_command_buffers(&rend.dev, cpool, 1)[0] };

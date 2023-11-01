@@ -430,6 +430,9 @@ pub struct Table<T: 'static, C: Container<T> + 'static> {
     t_internal: Arc<RwLock<TableInternal<T, C>>>,
 }
 
+unsafe impl<T: Send + Sync + 'static, C: Container<T> + 'static> Send for Table<T, C> {}
+unsafe impl<T: Send + Sync + 'static, C: Container<T> + 'static> Sync for Table<T, C> {}
+
 impl<T: 'static, C: Container<T> + 'static> Clone for Table<T, C> {
     fn clone(&self) -> Self {
         Self {
@@ -551,7 +554,7 @@ pub struct ComponentList {
     ///
     /// It is a series of RefCells so that individual sessions can access
     /// different component sets mutably at the same time.
-    cl_components: Vec<Box<dyn ComponentTable>>,
+    cl_components: Vec<Box<dyn ComponentTable + Send + Sync>>,
 }
 
 /// An Entity component system.
@@ -608,7 +611,7 @@ impl Instance {
     /// data they store, and Entities are not required to have a populated value.
     ///
     /// This uses the default storage container which supports sparse memory usage.
-    pub fn add_component<T: 'static>(&mut self) -> Component<T> {
+    pub fn add_component<T: Send + Sync + 'static>(&mut self) -> Component<T> {
         self.add_raw_component(VecContainer::new(DEFAULT_LLUVIA_BLOCK_SIZE))
     }
 
@@ -623,7 +626,10 @@ impl Instance {
     /// values in the backing array. This is necessary since the backing storage is
     /// of type `&[T]`, and there needs to be a valid `T` value placed in every cell
     /// even if it has no associated entity.
-    pub fn add_non_sparse_component<T: 'static, F>(&mut self, callback: F) -> NonSparseComponent<T>
+    pub fn add_non_sparse_component<T: Send + Sync + 'static, F>(
+        &mut self,
+        callback: F,
+    ) -> NonSparseComponent<T>
     where
         F: Fn() -> T + 'static,
     {
@@ -634,7 +640,7 @@ impl Instance {
     }
 
     /// Add a component of the given containe type. This is an internal helper.
-    fn add_raw_component<T: 'static, C: Container<T> + 'static>(
+    fn add_raw_component<T: Send + Sync + 'static, C: Container<T> + 'static>(
         &mut self,
         container: C,
     ) -> RawComponent<T, C> {

@@ -83,6 +83,7 @@ mod surface;
 
 pub use self::image::Image;
 pub use damage::Damage;
+use display::Display;
 pub use list::SurfaceList;
 pub use renderer::Renderer;
 pub use surface::{SubsurfaceOrder, Surface};
@@ -148,6 +149,8 @@ pub struct Thundr {
     /// to be accessed by things in our ECS so they can tear down their
     /// vulkan allocations
     th_rend: Arc<Mutex<Renderer>>,
+    /// vk_khr_display and vk_khr_surface wrapper.
+    th_display: Display,
     /// This is the system used to track all Thundr resources
     th_ecs_inst: ll::Instance,
 
@@ -324,7 +327,7 @@ impl Thundr {
 
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
-        let mut rend = Renderer::new(&info, &mut ecs, pass_comp.clone())?;
+        let (mut rend, mut display) = Renderer::new(&info, &mut ecs, pass_comp.clone())?;
 
         // Create the pipeline(s) requested
         // Record the type we are using so that we know which type to regenerate
@@ -336,7 +339,7 @@ impl Thundr {
             )
         } else if info.enable_compute_composition {
             (
-                Box::new(CompPipeline::new(&mut rend)),
+                Box::new(CompPipeline::new(&mut rend, &mut display)),
                 PipelineType::COMPUTE,
             )
         } else {
@@ -345,6 +348,7 @@ impl Thundr {
 
         Ok(Thundr {
             th_rend: Arc::new(Mutex::new(rend)),
+            th_display: display,
             th_ecs_inst: ecs,
             th_surface_pass: pass_comp,
             _th_pipe_type: ty,
@@ -358,7 +362,7 @@ impl Thundr {
     /// For VK_KHR_display we will calculate it ourselves, and for
     /// SDL we will ask SDL to tell us it.
     pub fn get_dpi(&self) -> Result<(f32, f32)> {
-        self.th_rend.lock().unwrap().display.get_dpi()
+        self.th_display.get_dpi()
     }
 
     pub fn get_raw_vkdev_handle(&self) -> *const std::ffi::c_void {
@@ -380,7 +384,7 @@ impl Thundr {
         width: u32,
         height: u32,
         stride: u32,
-        release_info: Option<Box<dyn Droppable>>,
+        release_info: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
         let rend_mtx = self.th_rend.clone();
         let mut rend = self.th_rend.lock().unwrap();
@@ -392,7 +396,7 @@ impl Thundr {
     pub fn create_image_from_dmabuf(
         &mut self,
         dmabuf: &Dmabuf,
-        release_info: Option<Box<dyn Droppable>>,
+        release_info: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
         let rend_mtx = self.th_rend.clone();
         let mut rend = self.th_rend.lock().unwrap();
@@ -474,7 +478,7 @@ impl Thundr {
         rend.wait_for_prev_submit();
         rend.wait_for_copy();
         unsafe {
-            rend.recreate_swapchain();
+            rend.recreate_swapchain(&mut self.th_display);
         }
         self.th_pipe.handle_ood(rend.deref_mut());
     }

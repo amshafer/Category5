@@ -51,6 +51,9 @@ pub struct VKDeviceFeatures {
     pub max_sampler_count: u32,
 }
 
+unsafe impl Send for VKDeviceFeatures {}
+unsafe impl Sync for VKDeviceFeatures {}
+
 fn contains_extensions(exts: &[vk::ExtensionProperties], req: &[*const i8]) -> bool {
     let mut count = 0;
 

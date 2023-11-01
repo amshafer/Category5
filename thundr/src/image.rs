@@ -41,7 +41,7 @@ pub struct ImageVk {
     pub iv_image_resolution: vk::Extent2D,
     /// Stuff to release when we are no longer using
     /// this gpu buffer (release the wl_buffer)
-    iv_release_info: Option<Box<dyn Droppable>>,
+    iv_release_info: Option<Box<dyn Droppable + Send + Sync>>,
 }
 
 impl Drop for ImageVk {
@@ -239,7 +239,7 @@ impl Renderer {
         width: u32,
         height: u32,
         stride: u32,
-        _release: Option<Box<dyn Droppable>>,
+        _release: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
         unsafe {
             let tex_res = vk::Extent2D {
@@ -499,7 +499,7 @@ impl Renderer {
         &mut self,
         rend_mtx: Arc<Mutex<Renderer>>,
         dmabuf: &Dmabuf,
-        release: Option<Box<dyn Droppable>>,
+        release: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
         self.wait_for_prev_submit();
         self.wait_for_copy();
@@ -645,7 +645,7 @@ impl Renderer {
         image: vk::Image,
         image_mem: vk::DeviceMemory,
         view: vk::ImageView,
-        release: Option<Box<dyn Droppable>>,
+        release: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
         let image_vk = ImageVk {
             iv_rend: rend_mtx.clone(),
@@ -682,8 +682,8 @@ impl Renderer {
         cbuf: vk::CommandBuffer,
         images: &[Image],
     ) {
-        self.r_acquire_barriers.clear();
-        self.r_release_barriers.clear();
+        self.r_barriers.r_acquire_barriers.clear();
+        self.r_barriers.r_release_barriers.clear();
 
         for img_rc in images.iter() {
             let mut img = img_rc.i_internal.borrow_mut();
@@ -695,7 +695,7 @@ impl Renderer {
             };
             img.i_general_layout = true;
 
-            self.r_acquire_barriers.push(
+            self.r_barriers.r_acquire_barriers.push(
                 vk::ImageMemoryBarrier::builder()
                     .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
                     .dst_queue_family_index(self.graphics_family_index)
@@ -722,10 +722,10 @@ impl Renderer {
                 vk::DependencyFlags::empty(),
                 &[],
                 &[],
-                self.r_acquire_barriers.as_slice(),
+                self.r_barriers.r_acquire_barriers.as_slice(),
             );
 
-            self.r_release_barriers.push(
+            self.r_barriers.r_release_barriers.push(
                 vk::ImageMemoryBarrier::builder()
                     .src_queue_family_index(self.graphics_family_index)
                     .dst_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
@@ -750,7 +750,7 @@ impl Renderer {
                 vk::DependencyFlags::empty(),
                 &[],
                 &[],
-                self.r_release_barriers.as_slice(),
+                self.r_barriers.r_release_barriers.as_slice(),
             );
         }
     }

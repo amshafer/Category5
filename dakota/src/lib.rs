@@ -591,7 +591,7 @@ impl Dakota {
         height: i32,
         stride: u32,
         modifier: u64,
-        release_info: Option<Box<dyn Droppable>>,
+        release_info: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Result<()> {
         let mut dmabuf = Dmabuf::new(fd, plane, offset, stride, modifier);
         dmabuf.db_width = width;
