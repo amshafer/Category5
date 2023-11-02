@@ -7,7 +7,7 @@ use crate::dom::DakotaDOM;
 use crate::input::{Keycode, Mods, MouseButton};
 use lluvia as ll;
 use std::collections::VecDeque;
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub struct EventSystem {
     /// The global event queue
@@ -46,7 +46,7 @@ impl EventSystem {
     }
 }
 
-pub type HandlerArgs = Rc<Vec<String>>;
+pub type HandlerArgs = Arc<Vec<String>>;
 
 /// Source axis for scrolling operations
 ///
@@ -230,7 +230,7 @@ impl EventSystem {
         // If we couldn't get the arg array from the tree, then
         // just create an empty one
         self.es_global_event_queue.push_back(Event::WindowClosed {
-            args: Rc::new(Vec::with_capacity(0)),
+            args: Arc::new(Vec::with_capacity(0)),
         });
     }
 

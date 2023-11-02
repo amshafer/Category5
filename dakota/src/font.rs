@@ -68,6 +68,10 @@ pub struct CachedChar {
     pub offset: (f32, f32),
 }
 
+/// Instance of a Font
+///
+/// This refers to the instance of font shaping library context, notably Harfbuzz.
+/// This is used to perform shaping.
 pub struct FontInstance {
     /// The font reference for our rasterizer
     f_ft_face: ft::Face,

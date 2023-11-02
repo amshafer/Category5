@@ -6,7 +6,7 @@ use crate::utils::{anyhow, Result};
 use crate::{Dakota, DakotaId, LayoutSpace};
 
 use std::cmp::{Ord, PartialOrd};
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Format {
@@ -62,7 +62,7 @@ impl Data {
 ///
 /// Resources that are not defined by images may instead be defined
 /// by a color. Values are in the range [0.0, 1.0].
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, PartialEq, Clone, Debug)]
 pub struct Color {
     pub r: f32,
     pub g: f32,
@@ -241,7 +241,7 @@ impl Default for Edges {
 pub struct Event {
     pub groups: Vec<String>,
     pub id: Option<String>,
-    pub args: Rc<Vec<String>>,
+    pub args: Arc<Vec<String>>,
 }
 
 /// These are global window events that will be defined once. Events
@@ -257,7 +257,7 @@ pub struct WindowEvents {
 
 /// A description of the typeface and size of the
 /// font to use for this text block
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Font {
     pub name: String,
     pub path: String,

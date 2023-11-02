@@ -335,7 +335,7 @@ impl WindowManager {
 
         // First create our menu bar across the top of the screen
         // ------------------------------------------------------------------
-        let menubar_font = dakota.create_font_instance().unwrap();
+        let menubar_font = dakota.create_font().unwrap();
         let menubar = Self::create_menubar(dakota, menubar_font.clone());
         dakota.add_child_to_element(&root, menubar.clone());
 

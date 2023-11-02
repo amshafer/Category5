@@ -15,7 +15,7 @@ use crate::{Context, Dakota, DakotaId, Result};
 
 use std::collections::HashMap;
 use std::io::BufRead;
-use std::rc::Rc;
+use std::sync::Arc;
 use utils::log;
 
 /// A list of element names
@@ -212,7 +212,7 @@ impl Element {
             Element::Event { groups, id, args } => Ok(dom::Event {
                 groups: groups.clone(),
                 id: id.clone(),
-                args: Rc::new(args.clone()),
+                args: Arc::new(args.clone()),
             }),
             e => return Err(anyhow!("Unexpected child element: {:?}", e)),
         }
@@ -271,7 +271,7 @@ impl Dakota {
                 color: _,
                 hints: _,
             } => Ok(Some(self.create_resource()?)),
-            Element::FontDefinition(_, _, _, _) => Ok(Some(self.create_font_instance()?)),
+            Element::FontDefinition(_, _, _, _) => Ok(Some(self.create_font()?)),
             Element::El {
                 x: _,
                 y: _,

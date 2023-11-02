@@ -64,7 +64,7 @@ pub enum DakotaObjectType {
     Element,
     DakotaDOM,
     Resource,
-    FontInstance,
+    Font,
 }
 
 /// Only one of content or children may be defined,
@@ -124,7 +124,7 @@ pub struct Dakota {
     d_offsets: ll::Component<dom::RelativeOffset>,
     d_widths: ll::Component<dom::Value>,
     d_heights: ll::Component<dom::Value>,
-    d_font_instances: ll::Component<FontInstance>,
+    d_fonts: ll::Component<dom::Font>,
     d_texts: ll::Component<dom::Text>,
     /// points to an id with font instance
     d_text_font: ll::Component<DakotaId>,
@@ -153,6 +153,11 @@ pub struct Dakota {
     d_default_font_inst: DakotaId,
     d_freetype: ft::Library,
     d_ood_counter: usize,
+
+    /// Font shaping information. This is held separately outside of our ECS tables
+    /// since it is not threadsafe. This associates a Font with the corresponding
+    /// instance containing the shaping information.
+    d_font_instances: Vec<(dom::Font, FontInstance)>,
 
     /// Cached mouse position
     ///
@@ -359,7 +364,7 @@ impl Dakota {
         create_component_and_table!(layout_ecs, dom::Value, width_table);
         create_component_and_table!(layout_ecs, dom::Value, height_table);
         create_component_and_table!(layout_ecs, dom::Text, texts_table);
-        create_component_and_table!(layout_ecs, FontInstance, font_instance_table);
+        create_component_and_table!(layout_ecs, dom::Font, font_table);
         create_component_and_table!(layout_ecs, DakotaId, text_font_table);
         create_component_and_table!(layout_ecs, dom::Content, content_table);
         create_component_and_table!(layout_ecs, dom::Edges, bounds_table);
@@ -387,7 +392,7 @@ impl Dakota {
             d_offsets: offsets_table,
             d_widths: width_table,
             d_heights: height_table,
-            d_font_instances: font_instance_table,
+            d_fonts: font_table,
             d_texts: texts_table,
             d_text_font: text_font_table,
             d_contents: content_table,
@@ -406,11 +411,11 @@ impl Dakota {
             d_default_font_inst: default_inst.clone(),
             d_freetype: ft::Library::init().context(anyhow!("Could not get freetype library"))?,
             d_ood_counter: 30,
+            d_font_instances: Vec::new(),
             d_mouse_pos: (0.0, 0.0),
         };
 
-        ret.d_node_types
-            .set(&default_inst, DakotaObjectType::FontInstance);
+        ret.d_node_types.set(&default_inst, DakotaObjectType::Font);
         ret.define_font(
             &default_inst,
             dom::Font {
@@ -435,7 +440,7 @@ impl Dakota {
             || self.d_offsets.is_modified()
             || self.d_widths.is_modified()
             || self.d_heights.is_modified()
-            || self.d_font_instances.is_modified()
+            || self.d_fonts.is_modified()
             || self.d_texts.is_modified()
             || self.d_text_font.is_modified()
             || self.d_contents.is_modified()
@@ -455,7 +460,7 @@ impl Dakota {
         self.d_offsets.clear_modified();
         self.d_widths.clear_modified();
         self.d_heights.clear_modified();
-        self.d_font_instances.clear_modified();
+        self.d_fonts.clear_modified();
         self.d_texts.clear_modified();
         self.d_text_font.clear_modified();
         self.d_contents.clear_modified();
@@ -481,15 +486,29 @@ impl Dakota {
     }
 
     /// Create a new Dakota Font
-    pub fn create_font_instance(&mut self) -> Result<DakotaId> {
-        self.create_new_id_common(DakotaObjectType::FontInstance)
+    pub fn create_font(&mut self) -> Result<DakotaId> {
+        self.create_new_id_common(DakotaObjectType::Font)
     }
 
+    /// Define a Font for text rendering
+    ///
+    /// This accepts a definition of a Font, including the name and location
+    /// of the font file. This is then loaded into Dakota and text rendering
+    /// is allowed with the font.
     pub fn define_font(&mut self, id: &DakotaId, font: dom::Font) {
-        self.d_font_instances.set(
-            id,
-            FontInstance::new(&self.d_freetype, &font.path, font.pixel_size, font.color),
-        );
+        if self
+            .d_font_instances
+            .iter()
+            .find(|(f, _)| *f == font)
+            .is_none()
+        {
+            self.d_font_instances.push((
+                font.clone(),
+                FontInstance::new(&self.d_freetype, &font.path, font.pixel_size, font.color),
+            ));
+        }
+
+        self.d_fonts.set(id, font);
     }
 
     /// Returns true if this element will have it's position chosen for it by
@@ -823,7 +842,13 @@ impl Dakota {
     /// This is the handler for the text field in the dakota file
     fn calculate_sizes_text(&mut self, el: &DakotaId) -> Result<()> {
         let font_id = self.get_font_id_for_el(el);
-        let mut font_inst = self.d_font_instances.get_mut(&font_id).unwrap();
+        let font = self.d_fonts.get(&font_id).unwrap();
+        let font_inst = &mut self
+            .d_font_instances
+            .iter_mut()
+            .find(|(f, _)| *f == *font)
+            .expect("Could not find FontInstance")
+            .1;
 
         let mut text = self.d_texts.get_mut(el).unwrap();
         let line_space = font_inst.get_vertical_line_spacing();
@@ -1222,7 +1247,13 @@ impl Dakota {
 
         if let Some(glyph_id) = layout.l_glyph_id {
             let font_id = self.get_font_id_for_el(node);
-            let mut font_inst = self.d_font_instances.get_mut(&font_id).unwrap();
+            let font = self.d_fonts.get(&font_id).unwrap();
+            let font_inst = &mut self
+                .d_font_instances
+                .iter_mut()
+                .find(|(f, _)| *f == *font)
+                .expect("Could not find FontInstance")
+                .1;
             // If this path is hit, then this layout node is really a glyph in a
             // larger block of text. It has been created as a child, and isn't
             // a real element. We ask the font code to give us a surface for
@@ -1254,7 +1285,13 @@ impl Dakota {
             assert!(content_num == 1);
         } else if let Some(glyph_id) = layout.l_glyph_id {
             let font_id = self.get_font_id_for_el(node);
-            let mut font_inst = self.d_font_instances.get_mut(&font_id).unwrap();
+            let font = self.d_fonts.get(&font_id).unwrap();
+            let font_inst = &mut self
+                .d_font_instances
+                .iter_mut()
+                .find(|(f, _)| *f == *font)
+                .expect("Could not find FontInstance")
+                .1;
             // If this path is hit, then this layout node is really a glyph in a
             // larger block of text. It has been created as a child, and isn't
             // a real element. We ask the font code to give us a surface for
