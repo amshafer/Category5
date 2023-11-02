@@ -292,7 +292,7 @@ impl SurfaceList {
     where
         F: FnMut(&Surface, i32, i32) -> bool,
     {
-        let internal = surf.s_internal.borrow();
+        let internal = surf.s_internal.read().unwrap();
         let surf_pos = &internal.s_rect.r_pos;
 
         // Note that the subsurface list is "reversed", with the front subsurface

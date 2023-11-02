@@ -618,7 +618,14 @@ impl Thundr {
             surf.get_size()
         );
 
-        for (i, sub) in surf.s_internal.borrow().s_subsurfaces.iter().enumerate() {
+        for (i, sub) in surf
+            .s_internal
+            .read()
+            .unwrap()
+            .s_subsurfaces
+            .iter()
+            .enumerate()
+        {
             self.print_surface(sub, i, level + 1);
         }
     }

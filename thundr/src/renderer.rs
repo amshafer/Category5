@@ -1804,7 +1804,7 @@ impl Renderer {
             //
             // Add this surface before its children, since we need to draw it
             // first so that any alpha in the children will see this underneath
-            let internal = surf.s_internal.borrow();
+            let internal = surf.s_internal.read().unwrap();
             if internal.s_image.is_some() || internal.s_color.is_some() {
                 list.push_raw_order(self, &surf.get_ecs_id());
             }
@@ -1855,7 +1855,7 @@ impl Renderer {
         // Our iterator is going to take into account the dimensions of the
         // parent surface(s), and give us the offset from which we should start
         // doing our calculations. Basically off_x is the parent surfaces X position.
-        let surf = surf_rc.s_internal.borrow();
+        let surf = surf_rc.s_internal.read().unwrap();
         let opaque_reg = match surf_rc.get_opaque(self) {
             Some(r) => r,
             // If no opaque data was attached, place a -1 in the start.x component

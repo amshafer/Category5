@@ -12,12 +12,10 @@ use utils::log;
 use utils::region::Rect;
 use utils::Dmabuf;
 
-use std::cell::RefCell;
 use std::fmt;
 use std::ops::Drop;
 use std::os::unix::io::AsRawFd;
-use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use ash::vk;
 use nix::fcntl::{fcntl, FcntlArg};
@@ -93,7 +91,7 @@ impl ImageInternal {
 
 impl Image {
     pub(crate) fn get_view(&self) -> vk::ImageView {
-        let internal = self.i_internal.borrow_mut();
+        let internal = self.i_internal.write().unwrap();
         let rend = internal.i_rend.lock().unwrap();
 
         let image_vk = rend.r_image_vk.get(&internal.i_id).unwrap();
@@ -101,7 +99,7 @@ impl Image {
     }
 
     pub fn get_size(&self) -> (u32, u32) {
-        let internal = self.i_internal.borrow_mut();
+        let internal = self.i_internal.write().unwrap();
         let rend = internal.i_rend.lock().unwrap();
 
         let image_vk = rend.r_image_vk.get(&internal.i_id).unwrap();
@@ -114,12 +112,12 @@ impl Image {
     /// Sets an opaque region for the image to help the internal compositor
     /// optimize when possible.
     pub fn set_opaque(&mut self, opaque: Option<Rect<i32>>) {
-        self.i_internal.borrow_mut().i_opaque = opaque;
+        self.i_internal.write().unwrap().i_opaque = opaque;
     }
 
     /// Attach damage to this surface. Damage is specified in surface-coordinates.
     pub fn set_damage(&mut self, x: i32, y: i32, width: i32, height: i32) {
-        let internal = self.i_internal.borrow_mut();
+        let internal = self.i_internal.write().unwrap();
         let mut rend = internal.i_rend.lock().unwrap();
         // Check if damage is initialized. If it isn't create a new one.
         // If it is, add the damage to the existing list
@@ -134,7 +132,7 @@ impl Image {
     }
 
     pub fn reset_damage(&mut self, damage: Damage) {
-        let internal = self.i_internal.borrow_mut();
+        let internal = self.i_internal.write().unwrap();
         let mut rend = internal.i_rend.lock().unwrap();
 
         rend.r_image_damage.set(&internal.i_id, damage);
@@ -144,12 +142,12 @@ impl Image {
     /// Get the id. This is consumed by the pipelines that need to contruct the descriptor
     /// indexing array.
     pub(crate) fn get_id(&self) -> ll::Entity {
-        self.i_internal.borrow().i_id.clone()
+        self.i_internal.read().unwrap().i_id.clone()
     }
 
     /// Removes any damage from this image.
     pub fn clear_damage(&self) {
-        let internal = self.i_internal.borrow_mut();
+        let internal = self.i_internal.write().unwrap();
         let mut rend = internal.i_rend.lock().unwrap();
 
         rend.r_image_damage.take(&internal.i_id);
@@ -158,20 +156,20 @@ impl Image {
 
 #[derive(Clone)]
 pub struct Image {
-    pub(crate) i_internal: Rc<RefCell<ImageInternal>>,
+    pub(crate) i_internal: Arc<RwLock<ImageInternal>>,
 }
 
 impl PartialEq for Image {
     /// Two images are equal if their internal data is the same.
     fn eq(&self, other: &Self) -> bool {
-        &*self.i_internal.borrow() as *const ImageInternal
-            == &*other.i_internal.borrow() as *const ImageInternal
+        &*self.i_internal.read().unwrap() as *const ImageInternal
+            == &*other.i_internal.read().unwrap() as *const ImageInternal
     }
 }
 
 impl fmt::Debug for Image {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let image = self.i_internal.borrow();
+        let image = self.i_internal.read().unwrap();
         f.debug_struct("Image")
             .field("Image Private", &image.i_priv)
             .field("Release info", &"<release info omitted>".to_string())
@@ -670,7 +668,7 @@ impl Renderer {
         self.update_image_vk_info(&internal);
 
         return Some(Image {
-            i_internal: Rc::new(RefCell::new(internal)),
+            i_internal: Arc::new(RwLock::new(internal)),
         });
     }
 
@@ -686,7 +684,7 @@ impl Renderer {
         self.r_barriers.r_release_barriers.clear();
 
         for img_rc in images.iter() {
-            let mut img = img_rc.i_internal.borrow_mut();
+            let mut img = img_rc.i_internal.write().unwrap();
             let image_vk = self.r_image_vk.get_mut(&img.i_id).unwrap();
 
             let src_layout = match img.i_general_layout {

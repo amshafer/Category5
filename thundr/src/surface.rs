@@ -14,8 +14,7 @@ use lluvia as ll;
 use super::image::Image;
 use utils::{log, region::Rect};
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, RwLock};
 
 /// A surface represents a geometric region that will be
 /// drawn. It needs to have an image attached. The same
@@ -58,7 +57,7 @@ impl Drop for SurfaceInternal {
     fn drop(&mut self) {
         // Remove all references to this in the subsurface's parent fields
         for surf in self.s_subsurfaces.iter() {
-            surf.s_internal.borrow_mut().s_parent = None;
+            surf.s_internal.write().unwrap().s_parent = None;
         }
     }
 }
@@ -84,7 +83,7 @@ impl SurfaceInternal {
     /// adjusts from image-coords to surface-coords.
     pub fn get_opaque(&self, rend: &Renderer) -> Option<Rect<i32>> {
         if let Some(image_rc) = self.s_image.as_ref() {
-            let image = image_rc.i_internal.borrow();
+            let image = image_rc.i_internal.read().unwrap();
             if let Some(opaque) = image.i_opaque.as_ref() {
                 let image_vk = rend.r_image_vk.get(&image.i_id).unwrap();
                 // We need to scale from the image size to the
@@ -132,12 +131,12 @@ pub struct Surface {
     /// The Thundr window list Id. This is an ECS ID to track surface updates
     /// in the shader's list.
     pub s_window_id: ll::Entity,
-    pub(crate) s_internal: Rc<RefCell<SurfaceInternal>>,
+    pub(crate) s_internal: Arc<RwLock<SurfaceInternal>>,
 }
 
 impl PartialEq for Surface {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.s_internal, &other.s_internal)
+        Arc::ptr_eq(&self.s_internal, &other.s_internal)
     }
 }
 
@@ -151,7 +150,7 @@ impl Surface {
     ) -> Surface {
         Surface {
             s_window_id: id.clone(),
-            s_internal: Rc::new(RefCell::new(SurfaceInternal::new(x, y, width, height))),
+            s_internal: Arc::new(RwLock::new(SurfaceInternal::new(x, y, width, height))),
         }
     }
 
@@ -159,7 +158,7 @@ impl Surface {
     ///
     /// This does not remove this surface from its parent
     pub fn reset_surface(&mut self, x: f32, y: f32, width: f32, height: f32) {
-        let mut internal = self.s_internal.borrow_mut();
+        let mut internal = self.s_internal.write().unwrap();
         *internal = SurfaceInternal::new(x, y, width, height);
     }
 
@@ -171,11 +170,11 @@ impl Surface {
     /// Does this surface need to have its size and offset flushed to the
     /// GPU's window list?
     pub fn modified(&self) -> bool {
-        self.s_internal.borrow().s_modified
+        self.s_internal.read().unwrap().s_modified
     }
 
     pub fn set_modified(&mut self, modified: bool) {
-        self.s_internal.borrow_mut().s_modified = modified;
+        self.s_internal.write().unwrap().s_modified = modified;
     }
 
     /// Internally record a damage rectangle for the dimensions
@@ -184,35 +183,35 @@ impl Surface {
     /// Methods that alter the surface should be wrapped in two
     /// calls to this to record their movement.
     pub(crate) fn record_damage(&mut self) {
-        self.s_internal.borrow_mut().record_damage();
+        self.s_internal.write().unwrap().record_damage();
     }
 
     /// Thundr clients use this to add *surface* damage.
     pub fn damage(&mut self, other: Damage) {
-        self.s_internal.borrow_mut().damage(other);
+        self.s_internal.write().unwrap().damage(other);
     }
 
     /// Attaches an image to this surface, when this surface
     /// is drawn the contents will be sample from `image`
     pub fn bind_image(&mut self, image: Image) {
-        let mut surf = self.s_internal.borrow_mut();
+        let mut surf = self.s_internal.write().unwrap();
         assert!(surf.s_color.is_none());
         surf.s_modified = true;
         surf.s_image = Some(image);
     }
 
     pub fn get_image(&self) -> Option<Image> {
-        self.s_internal.borrow().s_image.clone()
+        self.s_internal.read().unwrap().s_image.clone()
     }
 
     pub fn get_pos(&self) -> (f32, f32) {
-        let surf = self.s_internal.borrow();
+        let surf = self.s_internal.read().unwrap();
 
         (surf.s_rect.r_pos.0, surf.s_rect.r_pos.1)
     }
     pub fn set_pos(&mut self, x: f32, y: f32) {
         self.set_modified(true);
-        let mut surf = self.s_internal.borrow_mut();
+        let mut surf = self.s_internal.write().unwrap();
         if surf.s_rect.r_pos.0 != x || surf.s_rect.r_pos.1 != y {
             surf.record_damage();
             surf.s_rect.r_pos.0 = x;
@@ -222,14 +221,14 @@ impl Surface {
     }
 
     pub fn get_size(&self) -> (f32, f32) {
-        let surf = self.s_internal.borrow();
+        let surf = self.s_internal.read().unwrap();
 
         (surf.s_rect.r_size.0, surf.s_rect.r_size.1)
     }
 
     pub fn set_size(&mut self, w: f32, h: f32) {
         self.set_modified(true);
-        let mut surf = self.s_internal.borrow_mut();
+        let mut surf = self.s_internal.write().unwrap();
         if surf.s_rect.r_size.0 != w || surf.s_rect.r_size.1 != h {
             surf.record_damage();
             surf.s_rect.r_size.0 = w;
@@ -239,24 +238,24 @@ impl Surface {
     }
 
     pub fn get_color(&self) -> Option<(f32, f32, f32, f32)> {
-        let surf = self.s_internal.borrow();
+        let surf = self.s_internal.read().unwrap();
         surf.s_color
     }
 
     pub fn set_color(&mut self, color: (f32, f32, f32, f32)) {
         self.set_modified(true);
-        let mut surf = self.s_internal.borrow_mut();
+        let mut surf = self.s_internal.write().unwrap();
         surf.s_color = Some(color);
     }
 
     pub fn get_opaque(&self, rend: &Renderer) -> Option<Rect<i32>> {
-        let surf = self.s_internal.borrow();
+        let surf = self.s_internal.read().unwrap();
         return surf.get_opaque(rend);
     }
 
     /// Gets damage. Returned values are in surface coordinates.
     pub(crate) fn get_surf_damage(&mut self, rend: &Renderer) -> Option<Damage> {
-        let mut surf = self.s_internal.borrow_mut();
+        let mut surf = self.s_internal.write().unwrap();
         let mut ret = Damage::empty();
         let surf_extent = Rect::new(
             0,
@@ -267,7 +266,7 @@ impl Surface {
 
         // First add up the damage from the buffer
         if let Some(image_rc) = surf.s_image.as_ref() {
-            let image = image_rc.i_internal.borrow();
+            let image = image_rc.i_internal.read().unwrap();
             if let Some(damage) = rend.r_image_damage.get(&image.i_id) {
                 let image_vk = rend.r_image_vk.get(&image.i_id).unwrap();
                 // We need to scale the damage from the image size to the
@@ -317,7 +316,7 @@ impl Surface {
     /// screen coordinate space.
     pub fn get_global_damage(&mut self, rend: &Renderer) -> Option<Damage> {
         let mut ret = self.get_surf_damage(rend);
-        let surf = self.s_internal.borrow_mut();
+        let surf = self.s_internal.write().unwrap();
 
         if let Some(surf_damage) = ret.as_mut() {
             for r in surf_damage.d_regions.iter_mut() {
@@ -334,13 +333,13 @@ impl Surface {
     /// updated by. It's a union of the unchanged image damage and the screen
     /// damage mapped on the image dimensions.
     pub(crate) fn get_image_damage(&mut self, rend: &Renderer) -> Option<Damage> {
-        let mut surf = self.s_internal.borrow_mut();
+        let mut surf = self.s_internal.write().unwrap();
         let surf_damage = surf.s_surf_damage.take();
         let mut ret = Damage::empty();
 
         // First add up the damage from the buffer
         if let Some(image_rc) = surf.s_image.as_ref() {
-            let image = image_rc.i_internal.borrow();
+            let image = image_rc.i_internal.read().unwrap();
             let image_vk = rend.r_image_vk.get(&image.i_id).unwrap();
 
             let image_extent = Rect::new(
@@ -383,26 +382,26 @@ impl Surface {
         return Some(ret);
     }
     pub(crate) fn take_surface_damage(&self) -> Option<Damage> {
-        self.s_internal.borrow_mut().s_damage.take()
+        self.s_internal.write().unwrap().s_damage.take()
     }
 
     /// This appends `surf` to the end of the subsurface list
     pub fn add_subsurface(&mut self, surf: Surface) {
         {
-            let mut internal = surf.s_internal.borrow_mut();
+            let mut internal = surf.s_internal.write().unwrap();
             // only one parent may be set at a time
             assert!(internal.s_parent.is_none());
             internal.s_parent = Some(self.clone());
         }
 
         // Push since we are reverse order
-        self.s_internal.borrow_mut().s_subsurfaces.push(surf);
+        self.s_internal.write().unwrap().s_subsurfaces.push(surf);
     }
 
     /// This appends `surf` to the end of the subsurface list
     pub fn remove_subsurface(&mut self, surf: Surface) -> Result<()> {
         {
-            let mut surf_internal = surf.s_internal.borrow_mut();
+            let mut surf_internal = surf.s_internal.write().unwrap();
             // make sure this is a subsurface
             if surf_internal.s_parent.as_ref().unwrap().clone() != *self {
                 log::debug!("Cannot remove subsurface because we are not its parent");
@@ -411,7 +410,7 @@ impl Surface {
             surf_internal.s_parent = None;
         }
 
-        let mut internal = self.s_internal.borrow_mut();
+        let mut internal = self.s_internal.write().unwrap();
         let pos = internal
             .s_subsurfaces
             .iter()
@@ -423,7 +422,7 @@ impl Surface {
 
     /// Recursively unbind all subsurfaces in this surface tree
     pub fn remove_all_subsurfaces(&mut self) {
-        let mut internal = self.s_internal.borrow_mut();
+        let mut internal = self.s_internal.write().unwrap();
 
         for surf in internal.s_subsurfaces.iter_mut() {
             surf.remove_all_subsurfaces();
@@ -435,7 +434,8 @@ impl Surface {
 
     pub fn get_parent(&self) -> Option<Surface> {
         self.s_internal
-            .borrow()
+            .write()
+            .unwrap()
             .s_parent
             .as_ref()
             .map(|p| p.clone())
@@ -448,7 +448,7 @@ impl Surface {
         surf: Surface,
         other: Surface,
     ) -> Result<()> {
-        let mut internal = self.s_internal.borrow_mut();
+        let mut internal = self.s_internal.write().unwrap();
         // The index of other within the subsurf list
         let pos = internal
             .s_subsurfaces
@@ -474,11 +474,11 @@ impl Surface {
     }
 
     pub fn get_subsurface_count(&self) -> usize {
-        self.s_internal.borrow().s_subsurfaces.len()
+        self.s_internal.read().unwrap().s_subsurfaces.len()
     }
 
     pub fn get_subsurface(&self, i: usize) -> Surface {
-        let internal = self.s_internal.borrow();
+        let internal = self.s_internal.read().unwrap();
         assert!(internal.s_subsurfaces.len() > i);
 
         internal.s_subsurfaces[i].clone()
