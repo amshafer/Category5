@@ -9,20 +9,37 @@
 //! get dropped at once when the root `Entity` goes out of scope.
 //!
 //! What sets this ECS apart is that it is very fast, very small in
-//! scope, and has a very small footprint. The implementation is ~500 lines,
-//! it has zero dependencies, and almost all operations run in O(1) time.
+//! scope, and has a very small footprint. The implementation is ~1000 lines,
+//! and almost all operations run in O(1) time.
 //! There is no archetyping, there is no rayon integration, there is no
-//! advanced iterator pattern, and there is no multi-threaded access. Emphasis
+//! advanced iterator pattern, and there are no dependencies. Emphasis
 //! is placed on minimizing complexity and avoiding scanning or re-organizing
 //! data, as Lluvia was designed to be the data engine for low-latency graphics
 //! programs.
+//!
+//! Lluvia does support multi-threaded access. `Entity` is internally an
+//! `Arc<usize>`, and each `Component` is a data table wrapped in a `RwLock`.
+//! Accessing a piece of data involves going through the overhead of unlocking
+//! the `Component` table, but data access is immediate. calling the `get`
+//! and `get_mut` methods will return a `TableRef`, which internally holds
+//! the `RwLock` open for as long as the reference is active.
+//!
+//! The two main gotcha's of using Lluvia are being aware of the locking
+//! behavior from holding open references to component values, and preventing
+//! circular references from placing `Entity`s inside of `Component`s.
+//! All data in `Component` tables is not dropped until the owning `Entity`
+//! is dropped, and placing two `Entity`s in each other's `Component`s
+//! causes that to never happen. As long as you are aware of these you can
+//! get decent performance and never leak memory.
 //!
 //! Lluvia begins with creating an `Instance` object. This will track the
 //! validity of `Entity` objects in the system, and will hold references
 //! to data tables used for storage.
 //!
-//! The `Instance` can then be used to add `Component` tables. The `Component` allows for getting
-//! and setting components for each `Entity`.
+//! The `Instance` can then be used to add `Component` tables. The `Component`
+//! allows for getting and setting components for each `Entity`.
+//!
+//! # Basic Usage
 //!
 //! Basic usage looks like:
 //! ```
@@ -43,7 +60,30 @@
 //! let data_ref = c.get(&entity).unwrap();
 //! assert_eq!(*data_ref, "Hola Lluvia");
 //! ```
-// Austin Shafer - 2022
+//!
+//! # Sparse vs Non-Sparse Components
+//!
+//! Most entities may not have values for every `Component` defined in the system.
+//! In this case it doesn't make sense to allocate an entire gigantic backing array
+//! for only 10% of the entities to be defined. For this reason the default component
+//! type in Lluvia is "Sparse". Sparse components are non-contiguous and will only
+//! allocate "blocks" of the backing store to service `Entity` usage. If only a few
+//! entities set values for that component, only a few blocks are allocated.
+//!
+//! Lluvia also handles the opposite scenario. Sometimes you really do need a contiguous
+//! array of data, and that is what the "non-sparse" component type is for. For
+//! this component type you must provide a default value and the backing array
+//! may waste memory, but it allows you to access the raw backing array if needed.
+//! Non-Sparse components are exceptionally useful for integrating with other libraries,
+//! for example keeping a list of window positions and initializing OpenGL vertex
+//! arrays from the raw backing store without having to replicate it.
+//!
+//! # Snapshots
+//!
+//! Snapshots are another advanced feature which allow you to update many `Entity`
+//! values and then apply all the changes in one commit. Snapshots are a type of
+//! `Component`, and only apply to one Sparse `Component`.
+// Austin Shafer - 2022-2023
 
 use std::any::Any;
 use std::fmt;
@@ -552,7 +592,7 @@ pub struct InstanceInternal {
 pub struct ComponentList {
     /// This is the component table list.
     ///
-    /// It is a series of RefCells so that individual sessions can access
+    /// It is a series of Mutexes so that individual sessions can access
     /// different component sets mutably at the same time.
     cl_components: Vec<Box<dyn ComponentTable + Send + Sync>>,
 }
@@ -776,7 +816,7 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     /// is the primary way through which data should be queried from the system.
     ///
     /// This will return a Ref to the underlying component, if it exists. The
-    /// ref holds open the internal refcell that this ECS instance uses, so be
+    /// ref holds open the internal RwLock that this ECS instance uses, so be
     /// careful not to drop any Entitys or request any other components
     /// while this ref is in scope.
     ///
