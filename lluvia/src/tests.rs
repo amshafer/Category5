@@ -1,6 +1,5 @@
 use crate as ll;
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 #[test]
 fn basic_test() {
@@ -44,14 +43,14 @@ struct TestData {
     e: bool,
     e1: bool,
 }
-struct Empty(&'static str, Rc<RefCell<TestData>>);
+struct Empty(&'static str, Arc<Mutex<TestData>>);
 
 impl Drop for Empty {
     fn drop(&mut self) {
         println!("Dropping {}", self.0);
         match self.0 {
-            "e" => self.1.borrow_mut().e = false,
-            "e1" => self.1.borrow_mut().e1 = false,
+            "e" => self.1.lock().unwrap().e = false,
+            "e1" => self.1.lock().unwrap().e1 = false,
             _ => panic!("Unrecognized string"),
         }
     }
@@ -68,7 +67,7 @@ fn entity_in_component_data() {
     let mut c = inst.add_component();
     let mut c1 = inst.add_component();
 
-    let container = Rc::new(RefCell::new(TestData { e: true, e1: true }));
+    let container = Arc::new(Mutex::new(TestData { e: true, e1: true }));
     {
         let e1 = inst.add_entity();
         c1.set(&e1, Empty("e1", container.clone()));
@@ -85,11 +84,11 @@ fn entity_in_component_data() {
         }
 
         // Assert the data is still valid
-        let data = container.borrow();
+        let data = container.lock().unwrap();
         assert!(data.e && data.e1);
     }
     // Assert the data is not valid since we dropped e1
-    let data = container.borrow();
+    let data = container.lock().unwrap();
     assert!(!data.e && !data.e1);
 }
 
