@@ -7,7 +7,7 @@ use wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge;
 use super::*;
 use crate::category5::input::Input;
 use crate::category5::vkcomp::wm::task::Task;
-use utils::{log, ClientId, WindowId};
+use utils::log;
 
 // A skiplist is an entry in a linked list designed to be
 // added in the atmosphere's property system
@@ -22,46 +22,46 @@ impl Atmosphere {
     /// Removes a window from the heirarchy.
     ///
     /// Use this to pull a window out, and then insert it in focus
-    pub fn skiplist_remove_window(&mut self, id: WindowId) {
-        let next = self.get_skiplist_next(id);
-        let prev = self.get_skiplist_prev(id);
+    pub fn skiplist_remove_window(&mut self, id: &SurfaceId) {
+        let next = self.a_skiplist_next.get_clone(id);
+        let prev = self.a_skiplist_prev.get_clone(id);
 
         // TODO: recalculate skip
-        if let Some(p) = prev {
-            self.set_skiplist_next(p, next);
+        if let Some(p) = prev.as_ref() {
+            self.a_skiplist_next.set_opt(p, next.clone());
         }
-        if let Some(n) = next {
-            self.set_skiplist_prev(n, prev);
+        if let Some(n) = next.as_ref() {
+            self.a_skiplist_prev.set_opt(n, prev.clone());
         }
 
         // If this id is the first subsurface, then we need
         // to remove it from the parent
-        if let Some(parent) = self.get_parent_window(id) {
-            if let Some(top_child) = self.get_top_child(parent) {
-                if top_child == id {
+        if let Some(parent) = self.a_parent_window.get_clone(id) {
+            if let Some(top_child) = self.a_top_child.get_clone(&parent) {
+                if &top_child == id {
                     // Select the next subsurface
-                    self.set_top_child(parent, next);
+                    self.a_top_child.set_opt(&parent, next);
                 }
             }
         }
     }
 
     /// Remove id from the `win_focus` visibility skiplist
-    pub fn skiplist_remove_win_focus(&mut self, id: WindowId) {
+    pub fn skiplist_remove_win_focus(&mut self, id: &SurfaceId) {
         if let Some(focus) = self.get_win_focus() {
             // verify that we are actually removing the focused win
-            if id == focus {
+            if id == &focus {
                 // get the next node in the skiplist
-                let next = self.get_skiplist_next(id);
+                let next = self.a_skiplist_next.get_clone(id);
                 // clear its prev pointer (since it should be id)
-                if let Some(n) = next {
-                    self.set_skiplist_prev(n, None);
+                if let Some(n) = next.as_ref() {
+                    self.a_skiplist_prev.take(n);
                 }
                 // actually update the focus
                 self.set_win_focus(next);
                 // clear id's pointers
-                self.set_skiplist_next(id, None);
-                self.set_skiplist_prev(id, None);
+                self.a_skiplist_next.take(id);
+                self.a_skiplist_prev.take(id);
             }
         }
     }
@@ -69,15 +69,14 @@ impl Atmosphere {
     /// Remove id from the `surf_focus` property.
     /// This assumes that the `win_focus` has been set properly. i.e.
     /// call `skiplist_remove_win_focus` first.
-    pub fn skiplist_remove_surf_focus(&mut self, id: WindowId) {
+    pub fn skiplist_remove_surf_focus(&mut self, id: &SurfaceId) {
         if let Some(focus) = self.get_surf_focus() {
             // verify that we are actually removing the focused surf
-            if id == focus {
-                let root = self.get_root_window(id);
+            if id == &focus {
                 let next_root = self.get_win_focus();
-                if root.is_some() {
+                if self.a_root_window.get(id).is_some() {
                     let next = match next_root {
-                        Some(nr) => self.get_top_child(nr),
+                        Some(nr) => self.a_top_child.get_clone(&nr),
                         None => None,
                     };
                     self.set_surf_focus(next);
@@ -95,40 +94,40 @@ impl Atmosphere {
     /// Add a window above another
     ///
     /// This is used for the subsurface ordering requests
-    pub fn skiplist_place_above(&mut self, id: WindowId, target: WindowId) {
+    pub fn skiplist_place_above(&mut self, id: &SurfaceId, target: &SurfaceId) {
         // remove id from its skiplist just in case
         self.skiplist_remove_window(id);
 
         // TODO: recalculate skip
-        let prev = self.get_skiplist_prev(target);
-        if let Some(p) = prev {
-            self.set_skiplist_next(p, Some(id));
+        let prev = self.a_skiplist_prev.get_clone(target);
+        if let Some(p) = prev.as_ref() {
+            self.a_skiplist_next.set(p, id.clone());
         }
-        self.set_skiplist_prev(target, Some(id));
+        self.a_skiplist_prev.set(target, id.clone());
 
         // Now point id to the target and its neighbor
-        self.set_skiplist_prev(id, prev);
-        self.set_skiplist_next(id, Some(target));
+        self.a_skiplist_prev.set_opt(id, prev);
+        self.a_skiplist_next.set(id, target.clone());
         // generate add above event
     }
 
     /// Add a window below another
     ///
     /// This is used for the subsurface ordering requests
-    pub fn skiplist_place_below(&mut self, id: WindowId, target: WindowId) {
+    pub fn skiplist_place_below(&mut self, id: &SurfaceId, target: &SurfaceId) {
         // remove id from its skiplist just in case
         self.skiplist_remove_window(id);
 
         // TODO: recalculate skip
-        let next = self.get_skiplist_next(target);
-        if let Some(n) = next {
-            self.set_skiplist_prev(n, Some(id));
+        let next = self.a_skiplist_next.get_clone(&target);
+        if let Some(n) = next.as_ref() {
+            self.a_skiplist_prev.set(n, id.clone());
         }
-        self.set_skiplist_next(target, Some(id));
+        self.a_skiplist_next.set(target, id.clone());
 
         // Now point id to the target and its neighbor
-        self.set_skiplist_prev(id, Some(target));
-        self.set_skiplist_next(id, next);
+        self.a_skiplist_next.set_opt(id, next);
+        self.a_skiplist_prev.set(id, target.clone());
         // generate add below event
     }
 
@@ -139,7 +138,7 @@ impl Atmosphere {
         // get the surface in focus
         if let Some(win) = self.get_win_focus() {
             // now get the client for that surface
-            return Some(self.get_owner(win));
+            return self.a_owner.get_clone(&win);
         }
         return None;
     }
@@ -148,9 +147,9 @@ impl Atmosphere {
     ///
     /// A root window is the base of a subsurface tree. i.e. the toplevel surf
     /// that all subsurfaces are attached to.
-    pub fn get_root_win_in_focus(&self) -> Option<WindowId> {
+    pub fn get_root_win_in_focus(&self) -> Option<SurfaceId> {
         if let Some(win) = self.get_win_focus() {
-            return match self.get_root_window(win) {
+            return match self.a_root_window.get_clone(&win) {
                 Some(root) => Some(root),
                 // If win doesn't have a root window, it is the root window
                 None => Some(win),
@@ -160,35 +159,30 @@ impl Atmosphere {
     }
 
     /// Set the window currently in focus
-    pub fn focus_on(&mut self, win: Option<WindowId>) {
+    pub fn focus_on(&mut self, win: Option<SurfaceId>) {
         log::debug!("focusing on window {:?}", win);
 
-        if let Some(id) = win {
-            let root = self.get_root_window(id);
+        if let Some(id) = win.as_ref() {
             // check if a new app was selected
+            let root = self.a_root_window.get_clone(id);
             let prev_win_focus = self.get_win_focus();
-            if let Some(prev) = prev_win_focus {
-                let mut update_app = false;
-                if let Some(r) = root {
-                    if r != prev {
-                        update_app = true;
-                    } else {
-                        // If this window is already selected, just bail
-                        return;
-                    }
-                } else if prev != id {
-                    // If the root window was None, then win *is* a root
-                    // window, and we still need to check it
-                    update_app = true;
-                }
+            if let Some(prev) = prev_win_focus.as_ref() {
+                // Check if we need to change focus. We either compare with this
+                // window or the root app window, if we have one.
+                let cur = match root.as_ref() {
+                    Some(r) => r,
+                    None => id,
+                };
 
-                // if so, update window focus
-                if update_app {
+                if cur != prev {
                     // point the previous focus at the new focus
-                    self.set_skiplist_prev(prev, win);
+                    self.a_skiplist_prev.set(&prev, id.clone());
 
                     // Send leave event(s) to the old focus
-                    Input::keyboard_leave(self, prev);
+                    Input::keyboard_leave(self, &prev);
+                } else {
+                    // Otherwise this window is already in focus, so bail
+                    return;
                 }
             }
 
@@ -196,9 +190,9 @@ impl Atmosphere {
             // we need to update the win focus
             if root.is_none() {
                 self.skiplist_remove_window(id);
-                self.set_skiplist_next(id, prev_win_focus);
-                self.set_skiplist_prev(id, None);
-                self.set_win_focus(win);
+                self.a_skiplist_next.set_opt(id, prev_win_focus);
+                self.a_skiplist_prev.set_opt(id, None);
+                self.set_win_focus(Some(id.clone()));
                 // Tell vkcomp to reorder its surface list. This is tricky,
                 // since we want to keep a separation between the two subsystems,
                 // and we want to avoid having to scan the skiplist to calculate
@@ -206,14 +200,12 @@ impl Atmosphere {
                 // subsurfaces are involved. So we feed vkcomp an event stream
                 // telling it to update thundr's surfacelist like we did the
                 // skiplist.
-                if let Some(id) = win {
-                    self.add_wm_task(Task::move_to_front(id));
-                }
+                self.add_wm_task(Task::move_to_front(id.clone()));
             }
             // When focus changes between subsurfaces, we don't change the order. Only
             // wl_subsurface changes the order
             // set win to the surf focus
-            self.set_surf_focus(win);
+            self.set_surf_focus(Some(id.clone()));
             // Send enter event(s) to the new focus
             // spec says this MUST be done after the leave events are sent
             Input::keyboard_enter(self, id);
@@ -228,29 +220,32 @@ impl Atmosphere {
     }
 
     /// Adds the surface `win` as the top subsurface of `parent`.
-    pub fn add_new_top_subsurf(&mut self, parent: WindowId, win: WindowId) {
-        log::info!("Adding subsurface {:?} to {:?}", win, parent);
+    pub fn add_new_top_subsurf(&mut self, parent: &SurfaceId, win: &SurfaceId) {
+        log::info!(
+            "Adding subsurface {:?} to {:?}",
+            win.get_raw_id(),
+            parent.get_raw_id()
+        );
         // Add the immediate parent
-        self.set_parent_window(win, Some(parent));
+        self.a_parent_window.set(win, parent.clone());
 
         // add the root window for this subsurface tree
         // If the parent's root is None, then the parent is the root
-        match self.get_root_window(parent) {
-            Some(root) => self.set_root_window(win, Some(root)),
-            None => self.set_root_window(win, Some(parent)),
+        match self.a_root_window.get_clone(parent) {
+            Some(root) => self.a_root_window.set(win, root),
+            None => self.a_root_window.set(win, parent.clone()),
         };
 
         // Add ourselves to the top of the skiplist
-        let old_top = self.get_top_child(parent);
-        if let Some(top) = old_top {
-            self.skiplist_place_above(win, top);
+        if let Some(top) = self.a_top_child.get_clone(parent) {
+            self.skiplist_place_above(win, &top);
         }
 
-        self.set_top_child(parent, Some(win));
+        self.a_top_child.set(parent, win.clone());
         // generate NewSubsurface event
         self.add_wm_task(Task::new_subsurface {
-            id: win,
-            parent: parent,
+            id: win.clone(),
+            parent: parent.clone(),
         });
     }
 
@@ -264,11 +259,11 @@ impl Atmosphere {
     /// Checks if the point (x, y) overlaps with the window surface.
     ///
     /// This does not accound for any regions, just the surface size.
-    pub fn surface_is_at_point(&self, win: WindowId, x: f32, y: f32) -> bool {
+    pub fn surface_is_at_point(&self, win: &SurfaceId, x: f32, y: f32) -> bool {
         log::info!("surface_is_at_point(win={:?}, x={}, y={})", win, x, y);
         let (x, y) = self.get_adjusted_desktop_coord(x, y);
-        let (wx, wy) = self.get_surface_pos(win);
-        let (ww, wh) = self.get_surface_size(win);
+        let (wx, wy) = *self.a_surface_pos.get(win).unwrap();
+        let (ww, wh) = *self.a_surface_size.get(win).unwrap();
         log::info!("surface {:?} pos x={}, y={}", win, wx, wy);
         log::info!("surface {:?} size x={}, y={}", win, ww, wh);
 
@@ -281,16 +276,16 @@ impl Atmosphere {
     /// In the case of delivering input enter/leave events, we don't just check
     /// which window contains the point, we need to check if windows with an
     /// input region contain the point.
-    pub fn find_window_with_input_at_point(&self, x: f32, y: f32) -> Option<WindowId> {
+    pub fn find_window_with_input_at_point(&self, x: f32, y: f32) -> Option<SurfaceId> {
         log::info!("find_window_with_input_at_point {},{}", x, y);
         let mut ret = None;
 
         self.map_inorder_on_surfs(|win| {
-            log::info!("checking window {:?}", win);
+            log::info!("checking window {:?}", win.get_raw_id());
             // We need to get t
-            if let Some(surf_cell) = self.get_surface_from_id(win) {
+            if let Some(surf_cell) = self.get_surface_from_id(&win) {
                 let surf = surf_cell.lock().unwrap();
-                let (wx, wy) = self.get_surface_pos(win);
+                let (wx, wy) = *self.a_surface_pos.get(&win).unwrap();
 
                 if let Some(input_region) = surf.s_input.as_ref() {
                     // Adjust for offsetting into the desktop
@@ -318,7 +313,7 @@ impl Atmosphere {
                     // TODO: VERIFY
                     // If the window does not have an attached input region,
                     // then we need to check against the entire surface area.
-                    if self.surface_is_at_point(win, x, y) {
+                    if self.surface_is_at_point(&win, x, y) {
                         ret = Some(win);
                         return false;
                     }
@@ -336,11 +331,11 @@ impl Atmosphere {
     /// This is used first to find if the cursor intersects
     /// with a window. If it does, point_is_on_titlebar is
     /// used to check for a grab or relay input event.
-    pub fn find_window_at_point(&self, x: f32, y: f32) -> Option<WindowId> {
+    pub fn find_window_at_point(&self, x: f32, y: f32) -> Option<SurfaceId> {
         let mut ret = None;
         self.map_inorder_on_surfs(|win| {
-            if self.surface_is_at_point(win, x, y) {
-                ret = Some(win);
+            if self.surface_is_at_point(&win, x, y) {
+                ret = Some(win.clone());
                 return false;
             }
             // returning true tells the map function to keep executing
@@ -353,10 +348,10 @@ impl Atmosphere {
     /// Is the current point over the titlebar of the window
     ///
     /// Id should have first been found with find_window_at_point
-    pub fn point_is_on_titlebar(&self, id: WindowId, x: f32, y: f32) -> bool {
+    pub fn point_is_on_titlebar(&self, id: &SurfaceId, x: f32, y: f32) -> bool {
         let barsize = self.get_barsize();
-        let (wx, wy) = self.get_surface_pos(id);
-        let (ww, _wh) = self.get_surface_size(id);
+        let (wx, wy) = *self.a_surface_pos.get(id).unwrap();
+        let (ww, _wh) = *self.a_surface_size.get(id).unwrap();
 
         // If this window contains (x, y) then return it
         if x > wx && y > (wy - barsize) && x < (wx + ww) && y < wy {
@@ -367,11 +362,11 @@ impl Atmosphere {
 
     /// calculates if a position is over the part of a window that
     /// procs a resize
-    pub fn point_is_on_window_edge(&self, id: WindowId, x: f32, y: f32) -> ResizeEdge {
+    pub fn point_is_on_window_edge(&self, id: &SurfaceId, x: f32, y: f32) -> ResizeEdge {
         let barsize = self.get_barsize();
         // TODO: how should this be done with xdg-decoration?
-        let (wx, wy) = self.get_surface_pos(id);
-        let (ww, wh) = self.get_surface_size(id);
+        let (wx, wy) = *self.a_surface_pos.get(id).unwrap();
+        let (ww, wh) = *self.a_surface_size.get(id).unwrap();
         let prox = 3.0; // TODO find a better val for this??
 
         // is (x,y) inside each dimension of the window
@@ -408,24 +403,24 @@ impl Atmosphere {
     }
 
     /// The recursive portion of `map_on_surfs`
-    fn map_on_surf_tree_recurse<F>(&self, inorder: bool, win: WindowId, func: &mut F) -> bool
+    fn map_on_surf_tree_recurse<F>(&self, inorder: bool, win: SurfaceId, func: &mut F) -> bool
     where
-        F: FnMut(WindowId) -> bool,
+        F: FnMut(SurfaceId) -> bool,
     {
         // First recursively check all subsurfaces
-        for sub in self.visible_subsurfaces(win) {
+        for sub in self.visible_subsurfaces(&win) {
             // If we are going out of order, the only difference is we call
             // func beforehand
             if !inorder {
-                if !func(sub) {
+                if !func(sub.clone()) {
                     return false;
                 }
             }
-            if !self.map_on_surf_tree_recurse(inorder, sub, func) {
+            if !self.map_on_surf_tree_recurse(inorder, sub.clone(), func) {
                 return false;
             }
             if inorder {
-                if !func(sub) {
+                if !func(sub.clone()) {
                     return false;
                 }
             }
@@ -437,13 +432,13 @@ impl Atmosphere {
     /// surface evaluation.
     fn map_on_surfs<F>(&self, inorder: bool, mut func: F)
     where
-        F: FnMut(WindowId) -> bool,
+        F: FnMut(SurfaceId) -> bool,
     {
         for win in self.visible_windows() {
-            if !self.map_on_surf_tree_recurse(inorder, win, &mut func) {
+            if !self.map_on_surf_tree_recurse(inorder, win.clone(), &mut func) {
                 return;
             }
-            if !func(win) {
+            if !func(win.clone()) {
                 return;
             }
         }
@@ -457,7 +452,7 @@ impl Atmosphere {
     /// continue or exit.
     pub fn map_inorder_on_surfs<F>(&self, func: F)
     where
-        F: FnMut(WindowId) -> bool,
+        F: FnMut(SurfaceId) -> bool,
     {
         self.map_on_surfs(true, func)
     }
@@ -476,7 +471,7 @@ impl Atmosphere {
     /// continue or exit.
     pub fn map_ooo_on_surfs<F>(&self, func: F)
     where
-        F: FnMut(WindowId) -> bool,
+        F: FnMut(SurfaceId) -> bool,
     {
         self.map_on_surfs(false, func)
     }
@@ -487,10 +482,10 @@ impl Atmosphere {
             log::debug!(
                 " - {:?}   windims at {:?} size {:?} surfdims at {:?} size {:?}",
                 _win,
-                self.get_window_pos(_win),
-                self.get_surface_pos(_win),
-                self.get_window_size(_win),
-                self.get_surface_size(_win),
+                *self.a_window_pos.get(&_win).unwrap(),
+                *self.a_surface_pos.get(&_win).unwrap(),
+                *self.a_window_size.get(&_win).unwrap(),
+                *self.a_surface_size.get(&_win).unwrap(),
             );
             // Return true to tell map_on_surfs to continue
             return true;
@@ -510,10 +505,10 @@ impl<'a> Atmosphere {
     /// return an iterator over the subsurfaces of id
     ///
     /// This will be all ids that are have been `activate`d
-    pub fn visible_subsurfaces(&'a self, id: WindowId) -> VisibleWindowIterator<'a> {
+    pub fn visible_subsurfaces(&'a self, id: &SurfaceId) -> VisibleWindowIterator<'a> {
         VisibleWindowIterator {
             vwi_atmos: &self,
-            vwi_cur: self.get_top_child(id),
+            vwi_cur: self.a_top_child.get_clone(id),
         }
     }
 }
@@ -522,14 +517,14 @@ impl<'a> Atmosphere {
 pub struct VisibleWindowIterator<'a> {
     vwi_atmos: &'a Atmosphere,
     // the current window we are on
-    vwi_cur: Option<WindowId>,
+    vwi_cur: Option<SurfaceId>,
 }
 
 // Non-consuming iterator over an Atmosphere
 //
 // This will only show the visible windows
 impl<'a> IntoIterator for &'a Atmosphere {
-    type Item = WindowId;
+    type Item = SurfaceId;
     type IntoIter = VisibleWindowIterator<'a>;
 
     // note that into_iter() is consuming self
@@ -542,14 +537,14 @@ impl<'a> IntoIterator for &'a Atmosphere {
 }
 
 impl<'a> Iterator for VisibleWindowIterator<'a> {
-    // Our item type is a WindowId
-    type Item = WindowId;
+    // Our item type is a SurfaceId
+    type Item = SurfaceId;
 
-    fn next(&mut self) -> Option<WindowId> {
+    fn next(&mut self) -> Option<SurfaceId> {
         let ret = self.vwi_cur.take();
         // TODO: actually skip
-        if let Some(id) = ret {
-            self.vwi_cur = self.vwi_atmos.get_skiplist_next(id);
+        if let Some(id) = ret.as_ref() {
+            self.vwi_cur = self.vwi_atmos.a_skiplist_next.get_clone(id);
         }
 
         return ret;

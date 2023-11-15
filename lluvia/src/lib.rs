@@ -423,6 +423,12 @@ impl Drop for EntityInternal {
     }
 }
 
+impl PartialEq for EntityInternal {
+    fn eq(&self, other: &Self) -> bool {
+        self.ecs_id == other.ecs_id && self.ecs_inst == other.ecs_inst
+    }
+}
+
 /// An abstract Entity
 ///
 /// This gives an entity an identity, it holds a reference
@@ -615,6 +621,13 @@ pub struct ComponentList {
 pub struct Instance {
     i_internal: Arc<RwLock<InstanceInternal>>,
     i_component_set: Arc<RwLock<ComponentList>>,
+}
+
+impl PartialEq for Instance {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.i_internal, &other.i_internal)
+            && Arc::ptr_eq(&self.i_component_set, &other.i_component_set)
+    }
 }
 
 impl Instance {
@@ -880,15 +893,26 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
         table_internal.t_entity.set(entity.ecs_id, val);
     }
 
+    /// Set the value wrapped in an Option
+    ///
+    /// This will set the value of this component only if `val` is
+    /// `Some()`. This helps avoid boilerplate Option handling.
+    pub fn set_opt(&mut self, entity: &Entity, val: Option<T>) {
+        match val {
+            Some(v) => self.set(entity, v),
+            None => {
+                self.take(entity);
+            }
+        }
+    }
+
     /// Take a value out of the component table
     ///
     /// This is the opposite of `set`. It will unset the value of the component for this
     /// entity and will return the value that was stored there. The component entry will
     /// be undefined after this.
     pub fn take(&mut self, entity: &Entity) -> Option<T> {
-        if !self.c_inst.id_is_valid(entity) {
-            return None;
-        }
+        assert!(self.c_inst.id_is_valid(entity));
 
         self.c_modified
             .store(true, std::sync::atomic::Ordering::Release);
@@ -931,6 +955,20 @@ impl<T: Clone + 'static> RawComponent<T, VecContainer<T>> {
     /// This can only be called on sparse components.
     pub fn snapshot(&self) -> Snapshot<T> {
         Snapshot::new(Box::new(self.clone()), None)
+    }
+
+    /// Get a copy of the value for this entity
+    ///
+    /// This is the same as `get`, but instead of returning an open reference
+    /// to the data it will call `clone()` on the value and return it.
+    ///
+    /// This is especially useful for fetching refcounted types without having
+    /// to do the boilerplate Option checking with each call.
+    pub fn get_clone(&self, entity: &Entity) -> Option<T> {
+        match self.get(entity) {
+            Some(v) => Some(v.clone()),
+            None => None,
+        }
     }
 }
 

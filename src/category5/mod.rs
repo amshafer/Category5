@@ -12,9 +12,8 @@ mod vkcomp;
 mod ways;
 
 use crate::category5::input::Input;
-use atmosphere::Atmosphere;
+use atmosphere::{Atmosphere, ClientId};
 use cat5_utils::{log, timing::*};
-use utils::ClientId;
 use vkcomp::wm::*;
 
 use wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_v1 as zldv1;
@@ -95,9 +94,11 @@ pub struct Climate {
 
 impl Climate {
     fn new() -> Self {
+        let dakota = dak::Dakota::new().unwrap();
+
         Self {
-            c_dakota: dak::Dakota::new().unwrap(),
-            c_atmos: Arc::new(Mutex::new(Atmosphere::new())),
+            c_atmos: Arc::new(Mutex::new(Atmosphere::new(dakota.get_ecs_instance()))),
+            c_dakota: dakota,
             c_outputs: Vec::new(),
             c_input: Input::new(),
         }
@@ -110,7 +111,7 @@ impl Climate {
 /// to clean up after itself
 pub struct ClientInfo {
     ci_id: ClientId,
-    ci_atmos: Arc<Mutex<Atmosphere>>,
+    _ci_atmos: Arc<Mutex<Atmosphere>>,
 }
 
 impl ws::backend::ClientData for ClientInfo {
@@ -120,9 +121,6 @@ impl ws::backend::ClientData for ClientInfo {
         _client_id: ws::backend::ClientId,
         _reason: ws::backend::DisconnectReason,
     ) {
-        // when the client is destroyed we need to tell the atmosphere
-        // to free the reserved space
-        self.ci_atmos.lock().unwrap().free_client_id(self.ci_id);
     }
 }
 
@@ -207,8 +205,8 @@ impl EventManager {
         self.em_display.handle().insert_client(
             client_stream,
             Arc::new(ClientInfo {
-                ci_id: id,
-                ci_atmos: self.em_climate.c_atmos.clone(),
+                ci_id: id.clone(),
+                _ci_atmos: self.em_climate.c_atmos.clone(),
             }),
         )?;
 
@@ -310,7 +308,7 @@ impl EventManager {
                         dak::Event::WindowNeedsRedraw => needs_render = true,
                         dak::Event::WindowClosed { .. } => return,
                         e => {
-                            log::error!("Category5: got Dakota event: {:?}", e);
+                            log::debug!("Category5: got Dakota event: {:?}", e);
                             self.em_climate
                                 .c_input
                                 .handle_input_event(atmos.deref_mut(), e);

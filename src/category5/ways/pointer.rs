@@ -40,7 +40,7 @@ impl ws::Dispatch<wl_pointer::WlPointer, ()> for Climate {
                     // TODO protocol error
                     surf.s_role = Some(Role::cursor);
 
-                    Some(surf.s_id)
+                    Some(surf.s_id.clone())
                 } else {
                     None
                 };

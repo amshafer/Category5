@@ -266,18 +266,18 @@ impl ShellSurface {
         // This has just been assigned role of toplevel
         if self.ss_xs.xs_make_new_toplevel_window {
             // Tell vkcomp to create a new window
-            log::debug!("Setting surface {:?} to toplevel", surf.s_id);
-            atmos.set_toplevel(surf.s_id, true);
-            atmos.add_wm_task(wm::task::Task::new_toplevel(surf.s_id));
+            log::debug!("Setting surface {:?} to toplevel", surf.s_id.get_raw_id());
+            atmos.a_toplevel.set(&surf.s_id, true);
+            atmos.add_wm_task(wm::task::Task::new_toplevel(surf.s_id.clone()));
             // This places the surface at the front of the skiplist, aka
             // makes it in focus
-            atmos.focus_on(Some(surf.s_id));
+            atmos.focus_on(Some(surf.s_id.clone()));
             self.ss_xs.xs_make_new_toplevel_window = false;
         }
 
         if self.ss_xs.xs_moving {
-            log::debug!("Moving surface {:?}", surf.s_id);
-            atmos.set_grabbed(Some(surf.s_id));
+            log::debug!("Moving surface {:?}", surf.s_id.get_raw_id());
+            atmos.set_grabbed(Some(surf.s_id.clone()));
             self.ss_xs.xs_moving = false;
         }
 
@@ -323,7 +323,7 @@ impl ShellSurface {
             // The client should have updated the window geometry in reaction
             // to the last acked configure event. If it doesn't exist then
             // just set the window size to the surface size as per the spec
-            let ws = atmos.get_window_size(surf.s_id);
+            let ws = *atmos.a_window_size.get(&surf.s_id).unwrap();
             let size = if let Some((w, h)) = self.ss_xs.xs_size {
                 (w as f32, h as f32)
             } else {
@@ -340,9 +340,9 @@ impl ShellSurface {
                 // The surface pos controlls where this surface actually
                 // is in the desktop. The window pos is a section inside
                 // of the surface where content is displayed
-                let mut sp = atmos.get_surface_pos(surf.s_id);
-                let mut wp = atmos.get_window_pos(surf.s_id);
-                log::error!("Old surface pos is {:?}", sp);
+                let mut sp = atmos.a_surface_pos.get_mut(&surf.s_id).unwrap();
+                let mut wp = atmos.a_window_pos.get_mut(&surf.s_id).unwrap();
+                log::error!("Old surface pos is {:?}", *sp);
                 if self.ss_resize_left {
                     sp.0 -= size_diff.0;
                     wp.0 -= size_diff.0;
@@ -351,12 +351,10 @@ impl ShellSurface {
                     sp.1 -= size_diff.1;
                     wp.1 -= size_diff.1;
                 }
-                log::error!("New surface pos is {:?}", sp);
-                atmos.set_surface_pos(surf.s_id, sp.0, sp.1);
-                atmos.set_window_pos(surf.s_id, wp.0, wp.1);
+                log::error!("New surface pos is {:?}", *sp);
             }
 
-            atmos.set_window_size(surf.s_id, size.0, size.1);
+            atmos.a_window_size.set(&surf.s_id, size);
 
             self.ss_xs.xs_size = None;
             // remove all the previous/outdated configs
@@ -427,7 +425,7 @@ impl ShellSurface {
                 // of the last one and update that.
                 match self.ss_tlconfigs.len() {
                     0 => {
-                        let raw_size = atmos.get_window_size(surf.s_id);
+                        let raw_size = *atmos.a_window_size.get(&surf.s_id).unwrap();
                         (raw_size.0 as i32, raw_size.1 as i32)
                     }
                     _ => self.ss_tlconfigs[self.ss_tlconfigs.len() - 1].tlc_size,
@@ -441,8 +439,8 @@ impl ShellSurface {
                 // match the mouse position.
                 let (cx, cy) = atmos.get_cursor_pos();
                 let (cx, cy) = (cx as f32, cy as f32);
-                let sp = atmos.get_surface_pos(surf.s_id);
-                let ss = atmos.get_surface_size(surf.s_id);
+                let sp = atmos.a_surface_pos.get(&surf.s_id).unwrap();
+                let ss = atmos.a_surface_size.get(&surf.s_id).unwrap();
                 // TODO: subtrace size from pos if left or bottom_left?
                 let min = self.ss_min_size;
                 let max = self.ss_max_size;
@@ -561,10 +559,10 @@ impl ShellSurface {
 
         // we need to update the *window* position
         // to be an offset from the base surface position
-        let mut surf_pos = atmos.get_surface_pos(surf.s_id);
+        let mut surf_pos = *atmos.a_surface_pos.get(&surf.s_id).unwrap();
         surf_pos.0 += x as f32;
         surf_pos.1 += y as f32;
-        atmos.set_window_pos(surf.s_id, surf_pos.0, surf_pos.0);
+        atmos.a_window_pos.set(&surf.s_id, surf_pos);
 
         self.ss_xs.xs_size = Some((width, height));
     }
@@ -726,7 +724,7 @@ impl ShellSurface {
             xdg_toplevel::Request::ShowWindowMenu { seat, serial, x, y } => (),
             xdg_toplevel::Request::Move { seat, serial } => {
                 // Moving is NOT double buffered so just grab it now
-                let id = self.ss_surface.lock().unwrap().s_id;
+                let id = self.ss_surface.lock().unwrap().s_id.clone();
                 atmos.set_grabbed(Some(id));
             }
             xdg_toplevel::Request::Resize {
@@ -735,7 +733,7 @@ impl ShellSurface {
                 edges,
             } => {
                 // Moving is NOT double buffered so just grab it now
-                let id = self.ss_surface.lock().unwrap().s_id;
+                let id = self.ss_surface.lock().unwrap().s_id.clone();
                 atmos.set_resizing(Some(id));
                 (
                     self.ss_resize_right,
@@ -1048,11 +1046,11 @@ impl Popup {
 
             // Now we can tell vkcomp to add this surface to the subsurface stack
             // in Thundr
-            atmos.add_new_top_subsurf(shsurf.ss_surface.lock().unwrap().s_id, surf.s_id);
+            atmos.add_new_top_subsurf(&shsurf.ss_surface.lock().unwrap().s_id, &surf.s_id);
             log::error!(
                 "Adding popup subsurf {:?} to parent {:?}",
-                surf.s_id,
-                shsurf.ss_surface.lock().unwrap().s_id
+                surf.s_id.get_raw_id(),
+                shsurf.ss_surface.lock().unwrap().s_id.get_raw_id(),
             );
         }
 
@@ -1065,11 +1063,12 @@ impl Popup {
         let positioner = pos_cell.lock().unwrap();
 
         let pos_loc = positioner.get_loc();
-        atmos.set_surface_pos(surf.s_id, pos_loc.0 as f32, pos_loc.1 as f32);
-        atmos.set_window_size(
-            surf.s_id,
-            positioner.p_width as f32,
-            positioner.p_height as f32,
+        atmos
+            .a_surface_pos
+            .set(&surf.s_id, (pos_loc.0 as f32, pos_loc.1 as f32));
+        atmos.a_window_size.set(
+            &surf.s_id,
+            (positioner.p_width as f32, positioner.p_height as f32),
         );
     }
 }

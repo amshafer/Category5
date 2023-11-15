@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 dakota={path="dakota", features=["direct2display"]}
+lluvia={path="lluvia"}
 # As of wayland-rs v0.30 we specify the system library feature
 # for the wayland-backend crate and all others will inherit it
 wayland-backend={version="0.1.1", features=["server_system", "dlopen"]}

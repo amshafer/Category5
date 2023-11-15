@@ -42,10 +42,10 @@ use ws::protocol::wl_keyboard;
 use ws::protocol::wl_pointer;
 use ws::Resource;
 
-use crate::category5::atmosphere::Atmosphere;
+use crate::category5::atmosphere::{Atmosphere, SurfaceId};
 use crate::category5::vkcomp::wm;
 use crate::category5::ways::role::Role;
-use utils::{log, timing::*, WindowId};
+use utils::{log, timing::*};
 
 use xkbcommon::xkb;
 pub use xkbcommon::xkb::{keysyms, Keysym};
@@ -81,7 +81,7 @@ pub struct Input {
 
     /// The surface that the pointer is currently over
     /// note that this may be different than the application focus
-    pub i_pointer_focus: Option<WindowId>,
+    pub i_pointer_focus: Option<SurfaceId>,
 }
 
 #[derive(Copy, Eq, PartialEq, Clone)]
@@ -192,9 +192,9 @@ impl Input {
         source: dak::AxisSource,
     ) {
         // Find the active window
-        if let Some(id) = self.i_pointer_focus {
+        if let Some(id) = self.i_pointer_focus.as_ref() {
             // get the seat for this client
-            if let Some(cell) = atmos.get_seat_from_window_id(id) {
+            if let Some(cell) = atmos.get_seat_from_surface_id(&id) {
                 let seat = cell.lock().unwrap();
                 // Get the pointer
                 for si in seat.s_proxies.iter() {
@@ -241,9 +241,9 @@ impl Input {
     ///
     /// Atmos is passed since this is called from `atmos.focus_on`,
     /// so atmos' rc may be held.
-    pub fn keyboard_enter(atmos: &Atmosphere, id: WindowId) {
-        log::error!("Keyboard entered WindowId {:?}", id);
-        if let Some(cell) = atmos.get_seat_from_window_id(id) {
+    pub fn keyboard_enter(atmos: &Atmosphere, id: &SurfaceId) {
+        log::error!("Keyboard entered SurfaceId {:?}", id);
+        if let Some(cell) = atmos.get_seat_from_surface_id(id) {
             let seat = cell.lock().unwrap();
             // TODO: verify
             // The client may have allocated multiple seats, and we should
@@ -267,9 +267,9 @@ impl Input {
     //
     // Atmos is passed since this is called from `atmos.focus_on`,
     // so atmos' rc may be held.
-    pub fn keyboard_leave(atmos: &Atmosphere, id: WindowId) {
-        log::error!("Keyboard left WindowId {:?}", id);
-        if let Some(cell) = atmos.get_seat_from_window_id(id) {
+    pub fn keyboard_leave(atmos: &Atmosphere, id: &SurfaceId) {
+        log::error!("Keyboard left SurfaceId {:?}", id);
+        if let Some(cell) = atmos.get_seat_from_surface_id(id) {
             let seat = cell.lock().unwrap();
             // TODO: verify
             // The client may have allocated multiple seats, and we should
@@ -289,9 +289,9 @@ impl Input {
     ///
     /// Atmos is passed since this may be called from `atmos.focus_on`,
     /// so atmos' rc may be held.
-    pub fn pointer_enter(atmos: &Atmosphere, id: WindowId) {
-        log::error!("Pointer entered WindowId {:?}", id);
-        if let Some(cell) = atmos.get_seat_from_window_id(id) {
+    pub fn pointer_enter(atmos: &Atmosphere, id: &SurfaceId) {
+        log::error!("Pointer entered SurfaceId {:?}", id);
+        if let Some(cell) = atmos.get_seat_from_surface_id(id) {
             if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                 let (cx, cy) = atmos.get_cursor_pos();
                 if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
@@ -320,13 +320,13 @@ impl Input {
     ///
     /// Atmos is passed since this may be called from `atmos.focus_on`,
     /// so atmos' rc may be held.
-    pub fn pointer_leave(atmos: &mut Atmosphere, id: WindowId) {
-        log::error!("Pointer left WindowId {:?}", id);
+    pub fn pointer_leave(atmos: &mut Atmosphere, id: &SurfaceId) {
+        log::error!("Pointer left SurfaceId {:?}", id);
 
         // Clear the current cursor image
         atmos.add_wm_task(wm::task::Task::reset_cursor);
 
-        if let Some(cell) = atmos.get_seat_from_window_id(id) {
+        if let Some(cell) = atmos.get_seat_from_surface_id(id) {
             let seat = cell.lock().unwrap();
             // TODO: verify
             // The client may have allocated multiple seats, and we should
@@ -349,7 +349,7 @@ impl Input {
     fn send_resize_configure(&mut self, atmos: &mut Atmosphere, dx: f64, dy: f64) {
         log::error!("Resizing in progress");
         if let Some(id) = atmos.get_resizing() {
-            if let Some(cell) = atmos.get_surface_from_id(id) {
+            if let Some(cell) = atmos.get_surface_from_id(&id) {
                 let surf = cell.lock().unwrap();
                 match &surf.s_role {
                     Some(Role::xdg_shell_toplevel(xdg_surf, ss)) => {
@@ -388,19 +388,21 @@ impl Input {
         let focus = atmos.find_window_with_input_at_point(cx as f32, cy as f32);
         // If the pointer is over top of a different window, change the
         // pointer focus and send the leave/enter events
-        if focus != self.i_pointer_focus {
-            if let Some(id) = self.i_pointer_focus {
+        if focus.clone().map(|e| e.get_raw_id())
+            != self.i_pointer_focus.clone().map(|e| e.get_raw_id())
+        {
+            if let Some(id) = self.i_pointer_focus.as_ref() {
                 Input::pointer_leave(atmos, id);
             }
-            if let Some(id) = focus {
+            if let Some(id) = focus.as_ref() {
                 Input::pointer_enter(atmos, id);
             }
-            self.i_pointer_focus = focus;
+            self.i_pointer_focus = focus.clone();
         }
 
         // deliver the motion event
-        if let Some(id) = focus {
-            if let Some(cell) = atmos.get_seat_from_window_id(id) {
+        if let Some(id) = focus.as_ref() {
+            if let Some(cell) = atmos.get_seat_from_surface_id(&id) {
                 // get the seat for this client
                 let seat = cell.lock().unwrap();
                 // Get the pointer
@@ -454,7 +456,7 @@ impl Input {
         if resizing.is_some() && state == ButtonState::Released {
             // We are releasing a resize, and we might not be resizing
             // the same window as find_window_at_point would report
-            if let Some(id) = resizing {
+            if let Some(id) = resizing.as_ref() {
                 // if on one of the edges start a resize
                 if let Some(surf) = atmos.get_surface_from_id(id) {
                     let surf = surf.lock().unwrap();
@@ -486,11 +488,12 @@ impl Input {
             if let Some(focus) = atmos.get_root_win_in_focus() {
                 // If this is a surface that is part of a subsurface stack,
                 // get the root id. Otherwise this is a root.
-                let root = match atmos.get_root_window(id) {
+                let root = match atmos.a_root_window.get_clone(&id) {
                     Some(root) => root,
-                    None => id,
+                    None => id.clone(),
                 };
-
+                // If we just pressed on a window that does not match the focus, we need
+                // to refocus
                 if root != focus && state == ButtonState::Pressed {
                     set_focus = true;
                 }
@@ -502,17 +505,17 @@ impl Input {
 
             if set_focus {
                 // Tell atmos that this is the one in focus
-                atmos.focus_on(Some(id));
+                atmos.focus_on(Some(id.clone()));
             }
 
             // do this first here so we don't do it more than once
-            let edge = atmos.point_is_on_window_edge(id, cursor.0 as f32, cursor.1 as f32);
+            let edge = atmos.point_is_on_window_edge(&id, cursor.0 as f32, cursor.1 as f32);
 
             // First check if we are over an edge, or if we are resizing
             // and released the click
             if edge != ResizeEdge::None {
                 // if on one of the edges start a resize
-                if let Some(surf) = atmos.get_surface_from_id(id) {
+                if let Some(surf) = atmos.get_surface_from_id(&id) {
                     match &surf.lock().unwrap().s_role {
                         Some(Role::xdg_shell_toplevel(_, ss)) => {
                             match state {
@@ -529,7 +532,7 @@ impl Input {
                         _ => (),
                     }
                 }
-            } else if atmos.point_is_on_titlebar(id, cursor.0 as f32, cursor.1 as f32) {
+            } else if atmos.point_is_on_titlebar(&id, cursor.0 as f32, cursor.1 as f32) {
                 // now check if we are over the titlebar
                 // if so we will grab the bar
                 match state {
@@ -547,7 +550,7 @@ impl Input {
                 // deliver the event to the wayland client
 
                 // get the seat for this client
-                if let Some(cell) = atmos.get_seat_from_window_id(id) {
+                if let Some(cell) = atmos.get_seat_from_surface_id(&id) {
                     let seat = cell.lock().unwrap();
                     for si in seat.s_proxies.iter() {
                         for pointer in si.si_pointers.iter() {
@@ -650,7 +653,7 @@ impl Input {
         // if there is a window in focus
         if let Some(id) = atmos.get_client_in_focus() {
             // get the seat for this client
-            if let Some(cell) = atmos.get_seat_from_client_id(id) {
+            if let Some(cell) = atmos.get_seat_from_client_id(&id) {
                 let mut seat = cell.lock().unwrap();
                 for si in seat.s_proxies.iter() {
                     for keyboard in si.si_keyboards.iter() {

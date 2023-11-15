@@ -432,6 +432,14 @@ impl Dakota {
         return Ok(ret);
     }
 
+    /// Get the Lluvia ECS backing DakotaIds
+    ///
+    /// This allows for applications using this to create their
+    /// own Components which are indexed by DakotaId.
+    pub fn get_ecs_instance(&self) -> ll::Instance {
+        self.d_ecs_inst.clone()
+    }
+
     /// Do we need to refresh the layout tree and rerender
     fn needs_refresh(&self) -> bool {
         self.d_needs_refresh
@@ -1150,7 +1158,7 @@ impl Dakota {
                     node.l_size.width as i32,
                     node.l_size.height as i32,
                 );
-                log::error!("Setting scroll region to {:?}", scroll_region);
+                log::info!("Setting scroll region to {:?}", scroll_region);
                 th_viewport.set_scroll_region(scroll_region.0 as i32, scroll_region.1 as i32);
 
                 let viewport = ViewportNode {
@@ -2134,7 +2142,7 @@ impl Dakota {
             layout_stop.start();
             self.refresh_elements(dom)?;
             layout_stop.end();
-            log::error!(
+            log::debug!(
                 "Dakota spent {} ms refreshing the layout",
                 layout_stop.get_duration().as_millis()
             );
@@ -2174,7 +2182,7 @@ impl Dakota {
                     .deref(),
             );
             stop.end();
-            log::error!(
+            log::debug!(
                 "Dakota spent {} ms drawing this frame",
                 stop.get_duration().as_millis()
             );

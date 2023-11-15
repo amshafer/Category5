@@ -14,10 +14,10 @@ use ws::Resource;
 use super::role::Role;
 use super::shm::*;
 use super::wl_region::Region;
-use crate::category5::atmosphere::Atmosphere;
+use crate::category5::atmosphere::{Atmosphere, SurfaceId};
 use crate::category5::vkcomp::wm;
 use crate::category5::Climate;
-use utils::{log, Dmabuf, WindowId};
+use utils::{log, Dmabuf};
 
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
@@ -63,7 +63,7 @@ impl ws::Dispatch<wlsi::WlSurface, Arc<Mutex<Surface>>> for Climate {
 /// will be displayed to the client when it is committed.
 #[allow(dead_code)]
 pub struct Surface {
-    pub s_id: WindowId, // The id of the window in the renderer
+    pub s_id: SurfaceId, // The id of the window in the renderer
     /// The currently attached buffer. Will be displayed on commit
     /// When the window is created a buffer is not assigned, hence the option
     s_attached_buffer: Option<wl_buffer::WlBuffer>,
@@ -97,7 +97,7 @@ pub struct Surface {
 impl Surface {
     // create a new visible surface at coordinates (x,y)
     // from the specified wayland resource
-    pub fn new(id: WindowId) -> Surface {
+    pub fn new(id: SurfaceId) -> Surface {
         Surface {
             s_id: id,
             s_attached_buffer: None,
@@ -235,9 +235,9 @@ impl Surface {
         self.s_commit_in_progress = true;
         // we need to collect the ids so that atmos won't be borrowed when
         // we recursively call commit below
-        let subsurfaces: Vec<_> = atmos.visible_subsurfaces(self.s_id).collect();
+        let subsurfaces: Vec<_> = atmos.visible_subsurfaces(&self.s_id).collect();
         for id in subsurfaces.iter() {
-            let sid = atmos.get_surface_from_id(*id);
+            let sid = atmos.get_surface_from_id(id);
             if let Some(surf) = sid {
                 surf.lock().unwrap().commit(atmos, true);
             }
@@ -263,8 +263,8 @@ impl Surface {
             // so we can set the surface size
             if let Some(dmabuf) = buf.data::<Arc<Dmabuf>>() {
                 atmos.add_wm_task(wm::task::Task::update_window_contents_from_dmabuf(
-                    self.s_id,      // ID of the new window
-                    dmabuf.clone(), // fd of the gpu buffer
+                    self.s_id.clone(), // ID of the new window
+                    dmabuf.clone(),    // fd of the gpu buffer
                     // pass the WlBuffer so it can be released
                     self.s_committed_buffer.as_ref().unwrap().clone(),
                 ));
@@ -276,8 +276,8 @@ impl Surface {
                 let fb = shm_buf.get_mem_image();
 
                 atmos.add_wm_task(wm::task::Task::update_window_contents_from_mem(
-                    self.s_id, // ID of the new window
-                    fb,        // memimage of the contents
+                    self.s_id.clone(), // ID of the new window
+                    fb,                // memimage of the contents
                     // pass the WlBuffer so it can be released
                     self.s_committed_buffer.as_ref().unwrap().clone(),
                     // window dimensions
@@ -289,7 +289,7 @@ impl Surface {
                 panic!("Could not find dmabuf or shmbuf private data for wl_buffer");
             }
         } else {
-            atmos.get_surface_size(self.s_id)
+            *atmos.a_surface_size.get(&self.s_id).unwrap()
         };
 
         // Commit our frame callbacks
@@ -299,31 +299,29 @@ impl Surface {
         self.s_attached_frame_callbacks.clear();
         log::debug!(
             "Surface {:?} New frame callbacks = {:?}",
-            self.s_id,
+            self.s_id.get_raw_id(),
             self.s_frame_callbacks
         );
-        atmos.set_surface_size(self.s_id, surf_size.0, surf_size.1);
+        atmos.a_surface_size.set(&self.s_id, surf_size);
 
         if !self.s_surf_damage.is_empty() {
             let mut nd = dak::Damage::empty();
             std::mem::swap(&mut self.s_surf_damage, &mut nd);
             log::debug!("Setting surface damage of {:?} to {:?}", self.s_id, nd);
-            atmos.set_surface_damage(self.s_id, nd);
+            atmos.a_surface_damage.set(&self.s_id, nd);
         }
         if !self.s_damage.is_empty() {
             let mut nd = dak::Damage::empty();
             std::mem::swap(&mut self.s_damage, &mut nd);
             log::debug!("Setting buffer damage of {:?} to {:?}", self.s_id, nd);
-            atmos.set_buffer_damage(self.s_id, nd);
+            atmos.a_buffer_damage.set(&self.s_id, nd);
         }
 
         // Commit any role state before we update window bits
         match &self.s_role {
             Some(Role::xdg_shell_toplevel(_, xs)) => xs.lock().unwrap().commit(&self, atmos),
             Some(Role::xdg_shell_popup(xs)) => xs.lock().unwrap().commit(&self, atmos),
-            Some(Role::wl_shell_toplevel) => {
-                atmos.set_window_size(self.s_id, surf_size.0, surf_size.1)
-            }
+            Some(Role::wl_shell_toplevel) => atmos.a_window_size.set(&self.s_id, surf_size),
             Some(Role::subsurface(ss)) => ss.lock().unwrap().commit(&self, atmos),
             Some(Role::cursor) => {}
             // if we don't have an assigned role, avoid doing
@@ -336,7 +334,7 @@ impl Surface {
 
         // update the surface size of this id so that vkcomp knows what
         // size of buffer it is compositing
-        let _win_size = atmos.get_window_size(self.s_id);
+        let _win_size = *atmos.a_window_size.get(&self.s_id).unwrap();
         log::debug!(
             "surf {:?}: new sizes are winsize={}x{} surfsize={}x{}",
             self.s_id,
@@ -373,9 +371,9 @@ impl Surface {
     // for wayland-rs to call it
     pub fn destroy(&mut self, atmos: &mut Atmosphere) {
         self.s_is_destroyed = true;
-        let client = atmos.get_owner(self.s_id);
-        atmos.free_window_id(client, self.s_id);
-        atmos.add_wm_task(wm::task::Task::close_window(self.s_id));
+        let client = atmos.a_owner.get_clone(&self.s_id).unwrap();
+        atmos.free_window_id(&client, &self.s_id);
+        atmos.add_wm_task(wm::task::Task::close_window(self.s_id.clone()));
     }
 }
 

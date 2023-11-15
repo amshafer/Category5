@@ -8,9 +8,8 @@ use ws::Resource;
 
 use super::role::Role;
 use super::surface::Surface;
-use crate::category5::atmosphere::Atmosphere;
+use crate::category5::atmosphere::{Atmosphere, SurfaceId};
 use crate::category5::Climate;
-use utils::WindowId;
 
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
@@ -113,8 +112,8 @@ pub struct SubSurface {
     /// attached new position to be applied on commit
     ss_position: Option<(f32, f32)>,
     /// these requests reorder our skiplist
-    ss_place_above: Option<WindowId>,
-    ss_place_below: Option<WindowId>,
+    ss_place_above: Option<SurfaceId>,
+    ss_place_below: Option<SurfaceId>,
     /// This will be set to true if we are a synchronized subsurface
     /// and we are waiting for the parent to commit to actually
     /// perform our own commit.
@@ -125,16 +124,21 @@ pub struct SubSurface {
 }
 
 impl SubSurface {
-    fn new(atmos: &mut Atmosphere, surf: Arc<Mutex<Surface>>, parent: Arc<Mutex<Surface>>) -> Self {
+    fn new(
+        atmos: &mut Atmosphere,
+        surf_lock: Arc<Mutex<Surface>>,
+        parent: Arc<Mutex<Surface>>,
+    ) -> Self {
+        let surf = surf_lock.lock().unwrap();
         // We need to mark this surface as the new top child
         // of the parent
-        atmos.add_new_top_subsurf(parent.lock().unwrap().s_id, surf.lock().unwrap().s_id);
+        atmos.add_new_top_subsurf(&parent.lock().unwrap().s_id, &surf.s_id);
 
         // The synchronized state defaults to true
-        atmos.set_subsurface_sync(surf.lock().unwrap().s_id, Some(true));
+        atmos.a_subsurface_sync.set(&surf.s_id, true);
 
         Self {
-            ss_surf: surf,
+            ss_surf: surf_lock.clone(),
             ss_parent: parent,
             ss_position: None,
             ss_place_above: None,
@@ -155,7 +159,8 @@ impl SubSurface {
                         .unwrap()
                         .lock()
                         .unwrap()
-                        .s_id,
+                        .s_id
+                        .clone(),
                 )
             }
             wl_subsurface::Request::PlaceBelow { sibling } => {
@@ -165,15 +170,16 @@ impl SubSurface {
                         .unwrap()
                         .lock()
                         .unwrap()
-                        .s_id,
+                        .s_id
+                        .clone(),
                 )
             }
-            wl_subsurface::Request::SetSync => {
-                atmos.set_subsurface_sync(self.ss_surf.lock().unwrap().s_id, Some(true))
-            }
-            wl_subsurface::Request::SetDesync => {
-                atmos.set_subsurface_sync(self.ss_surf.lock().unwrap().s_id, Some(false))
-            }
+            wl_subsurface::Request::SetSync => atmos
+                .a_subsurface_sync
+                .set(&self.ss_surf.lock().unwrap().s_id, true),
+            wl_subsurface::Request::SetDesync => atmos
+                .a_subsurface_sync
+                .set(&self.ss_surf.lock().unwrap().s_id, false),
             _ => (),
         };
     }
@@ -191,22 +197,22 @@ impl SubSurface {
         atmos: &mut Atmosphere,
         parent_commit_in_progress: bool,
     ) -> bool {
-        let is_sync = match atmos.get_subsurface_sync(surf.s_id) {
+        let is_sync = match atmos.a_subsurface_sync.get_clone(&surf.s_id) {
             Some(true) => true,
             Some(false) => {
                 // We got to check all the parent surfaces, if any of them
                 // are synchronized then we are too
-                let mut win = surf.s_id;
+                let mut win = surf.s_id.clone();
                 let mut sync = false;
 
-                while let Some(parent) = atmos.get_parent_window(win) {
-                    if let Some(parent_sync) = atmos.get_subsurface_sync(parent) {
+                while let Some(parent) = atmos.a_parent_window.get_clone(&win) {
+                    if let Some(parent_sync) = atmos.a_subsurface_sync.get_clone(&parent) {
                         if parent_sync {
                             sync = true;
                             break;
                         }
                     }
-                    win = parent;
+                    win = parent.clone();
                 }
                 sync
             }
@@ -229,21 +235,21 @@ impl SubSurface {
     /// This is called in an extremely recursive fashion from Surface::commit, so
     /// the surface, atmosphere, and in progress flags are all arguments.
     pub fn commit(&mut self, surf: &Surface, atmos: &mut Atmosphere) {
-        let id = surf.s_id;
+        let id = &surf.s_id;
 
         // set_position request
         if let Some((x, y)) = self.ss_position {
-            atmos.set_surface_pos(id, x, y);
+            atmos.a_surface_pos.set(id, (x, y));
         }
         self.ss_position = None;
 
         // place_above
-        if let Some(target) = self.ss_place_above {
+        if let Some(target) = self.ss_place_above.as_ref() {
             atmos.skiplist_place_above(id, target);
         }
         self.ss_place_above = None;
         // place_below
-        if let Some(target) = self.ss_place_below {
+        if let Some(target) = self.ss_place_below.as_ref() {
             atmos.skiplist_place_below(id, target);
         }
         self.ss_place_below = None;

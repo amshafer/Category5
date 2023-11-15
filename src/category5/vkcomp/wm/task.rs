@@ -5,6 +5,7 @@
 // Austin Shafer - 2020
 #![allow(dead_code)]
 use std::fmt;
+use std::sync::Arc;
 
 // This is the only place in vkcomp allowed to reference
 // wayland. We will be sticking wayland objects in tasks
@@ -13,10 +14,10 @@ extern crate wayland_server as ws;
 use ws::protocol::wl_buffer;
 
 extern crate utils;
-use utils::{log, WindowId};
+use utils::log;
 use utils::{Dmabuf, MemImage};
 
-use std::sync::Arc;
+use crate::category5::atmosphere::SurfaceId;
 
 // Tell wm the desktop background
 //
@@ -31,7 +32,7 @@ pub struct SetBackgroundFromMem {
 }
 
 pub struct UpdateWindowContentsFromDmabuf {
-    pub ufd_id: WindowId,
+    pub ufd_id: SurfaceId,
     // dmabuf from linux_dmabuf protocol
     pub ufd_dmabuf: Arc<Dmabuf>,
     // private: the wl_buffer to release when this
@@ -50,7 +51,7 @@ impl fmt::Debug for UpdateWindowContentsFromDmabuf {
 }
 
 pub struct UpdateWindowContentsFromMem {
-    pub id: WindowId,
+    pub id: SurfaceId,
     // The resolution of the texture
     pub width: usize,
     pub height: usize,
@@ -86,26 +87,26 @@ impl Drop for UpdateWindowContentsFromMem {
 // be performed
 #[derive(Debug)]
 pub enum Task {
-    create_window(WindowId),
-    close_window(WindowId),
-    move_to_front(WindowId),
-    new_toplevel(WindowId),
+    create_window(SurfaceId),
+    close_window(SurfaceId),
+    move_to_front(SurfaceId),
+    new_toplevel(SurfaceId),
     new_subsurface {
-        id: WindowId,
-        parent: WindowId,
+        id: SurfaceId,
+        parent: SurfaceId,
     },
     place_subsurface_above {
-        id: WindowId,
-        other: WindowId,
+        id: SurfaceId,
+        other: SurfaceId,
     },
     place_subsurface_below {
-        id: WindowId,
-        other: WindowId,
+        id: SurfaceId,
+        other: SurfaceId,
     },
     uwcfd(UpdateWindowContentsFromDmabuf),
     uwcfm(UpdateWindowContentsFromMem),
     set_cursor {
-        id: Option<WindowId>,
+        id: Option<SurfaceId>,
         hotspot: (i32, i32),
     },
     reset_cursor,
@@ -113,7 +114,7 @@ pub enum Task {
 
 impl Task {
     pub fn update_window_contents_from_dmabuf(
-        id: WindowId,
+        id: SurfaceId,
         dmabuf: Arc<Dmabuf>,
         buffer: wl_buffer::WlBuffer,
     ) -> Task {
@@ -125,7 +126,7 @@ impl Task {
     }
 
     pub fn update_window_contents_from_mem(
-        id: WindowId,
+        id: SurfaceId,
         tex: MemImage,
         buffer: wl_buffer::WlBuffer,
         tex_width: usize,

@@ -79,18 +79,18 @@ impl Climate {
     ) {
         let mut atmos = self.c_atmos.lock().unwrap();
         let client_id = utils::get_id_from_client(atmos.deref_mut(), client.clone());
-        let win_id = atmos.mint_window_id(client_id);
-        log::debug!("Creating new surface {:?}", win_id);
+        let win_id = atmos.mint_window_id(&client_id);
+        log::debug!("Creating new surface {:?}", win_id.get_raw_id());
 
         // Create a reference counted object
         // in charge of this new surface
-        let new_surface = Arc::new(Mutex::new(Surface::new(win_id)));
+        let new_surface = Arc::new(Mutex::new(Surface::new(win_id.clone())));
         // Add the new surface to the atmosphere
-        atmos.add_surface(win_id, new_surface.clone());
+        atmos.add_surface(&win_id, new_surface.clone());
 
         // Add the new surface to the userdata so other
         // protocols can see it
         let surf = data_init.init(id, new_surface);
-        atmos.set_wl_surface(win_id, surf.into());
+        atmos.a_wl_surface.set(&win_id, surf.into());
     }
 }

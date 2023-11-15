@@ -13,10 +13,9 @@ use ws::protocol::wl_seat::Capability;
 use ws::protocol::{wl_keyboard, wl_pointer, wl_seat};
 use ws::Resource;
 
-use crate::category5::atmosphere::Atmosphere;
+use crate::category5::atmosphere::{Atmosphere, ClientId};
 use crate::category5::input::Input;
 use crate::category5::Climate;
-use utils::ClientId;
 
 use std::fs::File;
 use std::io::Write;
@@ -40,15 +39,15 @@ impl ws::GlobalDispatch<wl_seat::WlSeat, ()> for Climate {
 
         // check if a seat exists and add this to it
         // add a new seat to this client
-        let seat = match atmos.get_seat_from_client_id(id) {
+        let seat = match atmos.get_seat_from_client_id(&id) {
             Some(seat) => {
                 // Re-use the existing seat global
                 seat
             }
             None => {
                 // Make a new seat global if one didn't exist
-                let seat = Arc::new(Mutex::new(Seat::new(id)));
-                atmos.add_seat(id, seat.clone());
+                let seat = Arc::new(Mutex::new(Seat::new(id.clone())));
+                atmos.add_seat(&id, seat.clone());
                 seat
             }
         };
@@ -170,7 +169,7 @@ impl SeatInstance {
         if let Some(focus) = atmos.get_client_in_focus() {
             if parent_focus == focus {
                 if let Some(sid) = atmos.get_win_focus() {
-                    if let Some(surf) = atmos.get_wl_surface_from_id(sid) {
+                    if let Some(surf) = atmos.get_wl_surface_from_id(&sid) {
                         // TODO: use Input::keyboard_enter and fix the refcell order
                         keyboard.enter(
                             parent_serial,
@@ -195,10 +194,10 @@ impl SeatInstance {
         // If we are in focus, then we should go ahead and generate
         // the enter event
         if let Some(sid) = atmos.get_win_focus() {
-            if let Some(pointer_focus) = input.i_pointer_focus {
+            if let Some(pointer_focus) = input.i_pointer_focus.as_ref() {
                 // check if the surface is the input sys's focus
-                if sid == pointer_focus {
-                    Input::pointer_enter(atmos, sid);
+                if &sid == pointer_focus {
+                    Input::pointer_enter(atmos, &sid);
                 }
             }
         }
@@ -275,7 +274,7 @@ impl Seat {
         match req {
             wl_seat::Request::GetKeyboard { id } => {
                 let kb = data_init.init(id, ());
-                si.get_keyboard(atmos, input, self.s_id, self.s_serial, kb);
+                si.get_keyboard(atmos, input, self.s_id.clone(), self.s_serial, kb);
             }
             wl_seat::Request::GetPointer { id } => {
                 let ptr = data_init.init(id, ());

@@ -132,13 +132,13 @@ impl ShellSurface {
 
         // Tell vkcomp to create a new window
         let mut surf = self.ss_surface.lock().unwrap();
-        println!("Setting surface {:?} to toplevel", surf.s_id);
+        println!("Setting surface {:?} to toplevel", surf.s_id.get_raw_id());
 
-        atmos.set_toplevel(surf.s_id, true);
-        atmos.add_wm_task(wm::task::Task::new_toplevel(surf.s_id));
+        atmos.a_toplevel.set(&surf.s_id, true);
+        atmos.add_wm_task(wm::task::Task::new_toplevel(surf.s_id.clone()));
         // This places the surface at the front of the skiplist, aka
         // makes it in focus
-        atmos.focus_on(Some(surf.s_id));
+        atmos.focus_on(Some(surf.s_id.clone()));
 
         // Mark our surface as being a window handled by wl_shell
         surf.s_role = Some(Role::wl_shell_toplevel);

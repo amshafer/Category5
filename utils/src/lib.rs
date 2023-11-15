@@ -15,35 +15,6 @@ use std::slice;
 extern crate anyhow;
 pub use anyhow::{anyhow, Context, Error, Result};
 
-// Client Id
-//
-// This uniquely identifies one client program connected
-// to the compositor. A client may have multiple surfaces,
-// eacho of which has a WindowId
-#[derive(Copy, Clone, PartialEq, Debug, Eq, Hash)]
-pub struct ClientId(pub usize);
-
-impl Into<usize> for ClientId {
-    fn into(self) -> usize {
-        self.0
-    }
-}
-
-// Window ID
-//
-// Every on screen surface has a window id which
-// is used as an ECS property id to tie data to
-// the resource. For now it is a u32 since there
-// is no way we have 4 million windows open
-#[derive(Copy, Clone, PartialEq, Debug, Eq, Hash)]
-pub struct WindowId(pub usize);
-
-impl Into<usize> for WindowId {
-    fn into(self) -> usize {
-        self.0
-    }
-}
-
 // Window Contents
 //
 // This allows for easy abstraction of the type

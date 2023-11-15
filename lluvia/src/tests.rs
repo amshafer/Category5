@@ -179,3 +179,29 @@ fn snapshot_reset_fail_test() {
     snap.commit();
     snap.set(&e1, 0);
 }
+
+#[test]
+fn test_eq() {
+    let mut inst = ll::Instance::new();
+    let e1 = inst.add_entity();
+    let e1_clone = e1.clone();
+    let e2 = inst.add_entity();
+
+    assert_eq!(e1, e1_clone);
+    assert_eq!(&e1, &e1_clone);
+    assert_ne!(e1, e2);
+    assert_ne!(&e1, &e2);
+}
+
+#[test]
+fn get_set_opt() {
+    let mut inst = ll::Instance::new();
+    let mut c = inst.add_component();
+    let e1 = inst.add_entity();
+
+    c.set(&e1, 1);
+    assert_eq!(c.get_clone(&e1).unwrap(), 1);
+
+    c.set_opt(&e1, None);
+    assert_eq!(c.get_clone(&e1), None);
+}

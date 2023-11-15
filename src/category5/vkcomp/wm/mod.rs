@@ -38,12 +38,12 @@
 extern crate chrono;
 extern crate dakota as dak;
 extern crate image;
+extern crate lluvia as ll;
 extern crate utils;
 
 use dak::dom;
 use dak::DakotaId;
 
-use crate::category5::atmosphere::property_list::PropertyList;
 use crate::category5::atmosphere::*;
 
 pub use crate::utils::{anyhow, Result};
@@ -79,7 +79,7 @@ struct Titlebar {
 #[derive(Clone)]
 pub struct App {
     /// This id uniquely identifies the App
-    a_id: WindowId,
+    a_id: SurfaceId,
     /// Because the images for imagees are used for both
     /// buffers in a double buffer system, when an App is
     /// deleted we need to avoid recording it in the next
@@ -107,7 +107,7 @@ pub struct App {
 /// as notifications. Sprites are not owned by a client
 /// whereas windows are.
 pub struct WindowManager {
-    wm_atmos_ids: Vec<WindowId>,
+    wm_atmos_ids: Vec<SurfaceId>,
     /// The root element for our scene
     ///
     /// In Dakota layout is heirarchical, so we have a root node that we attach all
@@ -132,9 +132,9 @@ pub struct WindowManager {
     /// These are the surfaces that have been removed, and need their resources
     /// torn down. We keep this in a separate array so that we don't have to
     /// rescan the entire surface list every time we check for dead windows.
-    wm_will_die: Vec<WindowId>,
+    wm_will_die: Vec<SurfaceId>,
     /// This is the set of applications in this scene
-    wm_apps: PropertyList<App>,
+    wm_apps: ll::Component<App>,
     /// Image representing the software cursor
     wm_cursor: Option<DakotaId>,
     /// The offset of the cursor image
@@ -380,7 +380,7 @@ impl WindowManager {
             wm_menubar_font: menubar_font,
             wm_datetime: datetime,
             wm_desktop: desktop,
-            wm_apps: PropertyList::new(),
+            wm_apps: atmos.a_surface_ecs.add_component(),
             wm_will_die: Vec::new(),
             wm_atmos_ids: Vec::new(),
             #[cfg(feature = "renderdoc")]
@@ -427,7 +427,7 @@ impl WindowManager {
     ///
     /// tex_res is the resolution of `texture`
     /// window_res is the size of the on screen window
-    fn create_window(&mut self, dakota: &mut dak::Dakota, id: WindowId) -> Result<()> {
+    fn create_window(&mut self, dakota: &mut dak::Dakota, id: &SurfaceId) -> Result<()> {
         log::info!("wm: Creating new window {:?}", id);
         // This surface will have its dimensions updated during recording
         let surf = dakota.create_element().unwrap();
@@ -459,10 +459,10 @@ impl WindowManager {
         //surf.add_subsurface(bar);
         // ----------------------------------------------------------------
 
-        self.wm_apps.update_or_create(
-            id.into(),
+        self.wm_apps.set(
+            id,
             App {
-                a_id: id,
+                a_id: id.clone(),
                 a_marked_for_death: false,
                 a_surf: surf,
                 a_image: None,
@@ -483,43 +483,51 @@ impl WindowManager {
         dakota: &mut dak::Dakota,
         info: &UpdateWindowContentsFromDmabuf,
     ) -> Result<()> {
-        log::debug!("Updating window {:?} with {:#?}", info.ufd_id, info);
-        // Find the app corresponding to that window id
-        // don't use a helper here because of the borrow checker
-        let mut app = match self.wm_apps[info.ufd_id.into()].as_mut() {
-            Some(a) => a,
-            // If the id is not found, then don't update anything
-            None => return Err(anyhow!("Could not find id {:?}", info.ufd_id)),
-        };
+        log::debug!(
+            "Updating window {:?} with {:#?}",
+            info.ufd_id.get_raw_id(),
+            info
+        );
+        let mut _old_val = None;
+        {
+            // Find the app corresponding to that window id
+            // don't use a helper here because of the borrow checker
+            let mut app = match self.wm_apps.get_mut(&info.ufd_id) {
+                Some(a) => a,
+                // If the id is not found, then don't update anything
+                None => return Err(anyhow!("Could not find id {:?}", info.ufd_id.get_raw_id())),
+            };
 
-        // Create a new resource from this dmabuf
-        let res = dakota.create_resource().unwrap();
-        dakota
-            .define_resource_from_dmabuf(
-                &res,
-                info.ufd_dmabuf.db_fd.try_clone().unwrap(),
-                info.ufd_dmabuf.db_plane_idx,
-                info.ufd_dmabuf.db_offset,
-                info.ufd_dmabuf.db_width,
-                info.ufd_dmabuf.db_height,
-                info.ufd_dmabuf.db_stride,
-                info.ufd_dmabuf.db_mods,
-                Some(Box::new(DmabufReleaseInfo {
-                    dr_fd: info.ufd_dmabuf.db_fd.try_clone()?,
-                    dr_wl_buffer: info.ufd_wl_buffer.clone(),
-                })),
-            )
-            .unwrap();
-        dakota.resource().set(&app.a_surf, res.clone());
-        app.a_image = Some(res);
+            // Create a new resource from this dmabuf
+            let res = dakota.create_resource().unwrap();
+            dakota
+                .define_resource_from_dmabuf(
+                    &res,
+                    info.ufd_dmabuf.db_fd.try_clone().unwrap(),
+                    info.ufd_dmabuf.db_plane_idx,
+                    info.ufd_dmabuf.db_offset,
+                    info.ufd_dmabuf.db_width,
+                    info.ufd_dmabuf.db_height,
+                    info.ufd_dmabuf.db_stride,
+                    info.ufd_dmabuf.db_mods,
+                    Some(Box::new(DmabufReleaseInfo {
+                        dr_fd: info.ufd_dmabuf.db_fd.try_clone()?,
+                        dr_wl_buffer: info.ufd_wl_buffer.clone(),
+                    })),
+                )
+                .unwrap();
+            dakota.resource().set(&app.a_surf, res.clone());
+            _old_val = app.a_image.take();
+            app.a_image = Some(res);
 
-        if let Some(damage) = atmos.take_buffer_damage(info.ufd_id) {
-            if let Some(image) = app.a_image.as_ref() {
-                dakota.damage_resource(image, damage);
+            if let Some(damage) = atmos.take_buffer_damage(&info.ufd_id) {
+                if let Some(image) = app.a_image.as_ref() {
+                    dakota.damage_resource(image, damage);
+                }
             }
-        }
-        if let Some(damage) = atmos.take_surface_damage(info.ufd_id) {
-            dakota.damage_element(&app.a_surf, damage);
+            if let Some(damage) = atmos.take_surface_damage(&info.ufd_id) {
+                dakota.damage_element(&app.a_surf, damage);
+            }
         }
 
         Ok(())
@@ -535,42 +543,54 @@ impl WindowManager {
         dakota: &mut dak::Dakota,
         info: &UpdateWindowContentsFromMem,
     ) -> Result<()> {
-        log::debug!("Updating window {:?} with {:#?}", info.id, info);
-        // Find the app corresponding to that window id
-        // don't use a helper here because of the borrow checker
-        let mut app = match self.wm_apps[info.id.into()].as_mut() {
-            Some(a) => a,
-            // If the id is not found, then don't update anything
-            None => return Err(anyhow!("Could not find id {:?}", info.id)),
-        };
+        log::debug!(
+            "Updating window {:?} with {:#?}",
+            info.id.get_raw_id(),
+            info
+        );
 
-        let buffer_damage = atmos.take_buffer_damage(info.id);
-        let surface_damage = atmos.take_surface_damage(info.id);
-        // Damage the image
-        if let Some(damage) = buffer_damage {
-            if let Some(image) = app.a_image.as_ref() {
-                dakota.damage_resource(image, damage);
+        // Work around a limitation of lluvia. We are going to hold the wm_app table
+        // open, but assigning a_image will cause a deadlock as lluvia's drop logic
+        // tries to lock wm_apps again
+        let mut _old_val = None;
+        {
+            // Find the app corresponding to that window id
+            // don't use a helper here because of the borrow checker
+            let mut app = match self.wm_apps.get_mut(&info.id) {
+                Some(a) => a,
+                // If the id is not found, then don't update anything
+                None => return Err(anyhow!("Could not find id {:?}", info.id.get_raw_id())),
+            };
+
+            let buffer_damage = atmos.take_buffer_damage(&info.id);
+            let surface_damage = atmos.take_surface_damage(&info.id);
+            // Damage the image
+            if let Some(damage) = buffer_damage {
+                if let Some(image) = app.a_image.as_ref() {
+                    dakota.damage_resource(image, damage);
+                }
             }
-        }
-        if let Some(damage) = surface_damage {
-            dakota.damage_element(&app.a_surf, damage);
-        }
+            if let Some(damage) = surface_damage {
+                dakota.damage_element(&app.a_surf, damage);
+            }
 
-        // Create a new image, the old one will have its refcount dropped
-        // TODO: add update method here
-        let res = dakota.create_resource().unwrap();
-        dakota
-            .define_resource_from_bits(
-                &res,
-                &info.pixels,
-                info.width as u32,
-                info.height as u32,
-                0,
-                dak::dom::Format::ARGB8888,
-            )
-            .unwrap();
-        dakota.resource().set(&app.a_surf, res.clone());
-        app.a_image = Some(res);
+            // Create a new image, the old one will have its refcount dropped
+            // TODO: add update method here
+            let res = dakota.create_resource().unwrap();
+            dakota
+                .define_resource_from_bits(
+                    &res,
+                    &info.pixels,
+                    info.width as u32,
+                    info.height as u32,
+                    0,
+                    dak::dom::Format::ARGB8888,
+                )
+                .unwrap();
+            dakota.resource().set(&app.a_surf, res.clone());
+            _old_val = app.a_image.take();
+            app.a_image = Some(res);
+        }
 
         Ok(())
     }
@@ -612,11 +632,11 @@ impl WindowManager {
         &mut self,
         atmos: &mut Atmosphere,
         dakota: &mut dak::Dakota,
-        id: WindowId,
+        id: &SurfaceId,
     ) -> Result<()> {
         // If this window doesn't exist then we might be closing
         // it before we have ever set it up.
-        if !self.wm_apps.id_exists(id.into()) {
+        if self.wm_apps.get(id).is_none() {
             log::debug!(
                 "WARN: closing window {:?} but we don't have an app entry for it",
                 id
@@ -627,19 +647,22 @@ impl WindowManager {
         log::debug!("Closing window {:?}", id);
 
         {
-            let mut app = self.lookup_app_from_id_mut(id)?;
+            let mut app = self
+                .wm_apps
+                .get_mut(id)
+                .ok_or(anyhow!("Could not ifnd app for surface"))?;
             app.a_marked_for_death = true;
         }
 
-        let app = self.lookup_app_from_id(id)?;
+        let app = self.wm_apps.get(id).unwrap();
         // remove this surface in case it is a toplevel window
         dakota.remove_child_from_element(&self.wm_desktop, &app.a_surf)?;
         // If this is a subsurface, remove it from its parent
-        if let Some(parent) = atmos.get_parent_window(id) {
-            let parent_app = self.lookup_app_from_id(parent)?;
+        if let Some(parent) = atmos.a_parent_window.get_clone(id) {
+            let parent_app = self.wm_apps.get(&parent).unwrap();
             dakota.remove_child_from_element(&parent_app.a_surf, &app.a_surf)?;
         }
-        self.wm_will_die.push(id);
+        self.wm_will_die.push(id.clone());
 
         Ok(())
     }
@@ -650,30 +673,9 @@ impl WindowManager {
     fn reap_dead_windows(&mut self) {
         // Only retain alive windows in the array
         for id in self.wm_will_die.drain(..) {
-            if let Some(app) = self.wm_apps[id.into()].as_ref() {
+            if let Some(app) = self.wm_apps.get(&id) {
                 assert!(app.a_marked_for_death);
-
-                self.wm_apps.deactivate(id.into())
             }
-        }
-    }
-
-    /// A helper that uses a window id to do a static lookup of
-    /// vkcomp's App structure. The index for the App structure matches
-    /// the window id number
-    fn lookup_app_from_id<'a>(&'a self, id: WindowId) -> Result<&'a App> {
-        match self.wm_apps[id.into()].as_ref() {
-            Some(a) => Ok(a),
-            // app must have been closed
-            None => Err(anyhow!("Could not find id {:?} in app list", id)),
-        }
-    }
-
-    fn lookup_app_from_id_mut<'a>(&'a mut self, id: WindowId) -> Result<&'a mut App> {
-        match self.wm_apps[id.into()].as_mut() {
-            Some(a) => Ok(a),
-            // app must have been closed
-            None => Err(anyhow!("Could not find id {:?} in app list", id)),
         }
     }
 
@@ -686,15 +688,15 @@ impl WindowManager {
         &mut self,
         atmos: &mut Atmosphere,
         dakota: &mut dak::Dakota,
-        win: WindowId,
+        win: &SurfaceId,
     ) -> Result<()> {
         // get and use the root window for this subsurface
         // in case it is a subsurface.
-        let root = match atmos.get_root_window(win) {
+        let root = match atmos.a_root_window.get_clone(win) {
             Some(parent) => parent,
-            None => win,
+            None => win.clone(),
         };
-        let surf = &self.lookup_app_from_id(root)?.a_surf;
+        let surf = &self.wm_apps.get(&root).unwrap().a_surf;
 
         // Move this surface to the front child of the window parent
         dakota
@@ -708,9 +710,10 @@ impl WindowManager {
     ///
     /// This maps a new toplevel surface and places it in the desktop. This
     /// is where the dakota element is added to the desktop as a child.
-    fn new_toplevel(&mut self, dakota: &mut dak::Dakota, win: WindowId) -> Result<()> {
+    fn new_toplevel(&mut self, dakota: &mut dak::Dakota, win: &SurfaceId) -> Result<()> {
         let surf = self
-            .lookup_app_from_id(win)
+            .wm_apps
+            .get(win)
             .context("Could not find window")?
             .a_surf
             .clone();
@@ -730,7 +733,7 @@ impl WindowManager {
         &mut self,
         atmos: &mut Atmosphere,
         dakota: &mut dak::Dakota,
-        win: Option<WindowId>,
+        win: Option<SurfaceId>,
         hotspot: (i32, i32),
     ) -> Result<()> {
         if let Some(old) = self.wm_cursor.as_ref() {
@@ -740,12 +743,12 @@ impl WindowManager {
 
         // Clear the cursor if the client unset it. Otherwise get the
         // new surface, add it as a child and set it.
-        self.wm_cursor = match win {
+        self.wm_cursor = match win.as_ref() {
             Some(win) => {
-                let surf = self.lookup_app_from_id(win)?.a_surf.clone();
+                let surf = self.wm_apps.get(win).unwrap().a_surf.clone();
                 dakota.add_child_to_element(&self.wm_dakota_root, surf.clone());
                 // Set the size of the cursor
-                let surface_size = atmos.get_surface_size(win);
+                let surface_size = atmos.a_surface_size.get(win).unwrap();
                 dakota
                     .width()
                     .set(&surf, dom::Value::Constant(surface_size.0 as i32));
@@ -785,11 +788,15 @@ impl WindowManager {
     fn new_subsurface(
         &mut self,
         dakota: &mut dak::Dakota,
-        win: WindowId,
-        parent: WindowId,
+        win: &SurfaceId,
+        parent: &SurfaceId,
     ) -> Result<()> {
-        let surf = &self.lookup_app_from_id(win)?.a_surf;
-        let parent_surf = &self.lookup_app_from_id(parent)?.a_surf;
+        let surf = &self.wm_apps.get(win).unwrap().a_surf;
+        let parent_surf = &self
+            .wm_apps
+            .get(parent)
+            .ok_or(anyhow!("Could not find parent app"))?
+            .a_surf;
 
         dakota.add_child_to_element(parent_surf, surf.clone());
         // Under normal operation Dakota elements are restricted to the size of
@@ -808,8 +815,8 @@ impl WindowManager {
         &mut self,
         atmos: &mut Atmosphere,
         dakota: &mut dak::Dakota,
-        win: WindowId,
-        other: WindowId,
+        win: &SurfaceId,
+        other: &SurfaceId,
     ) -> Result<()> {
         self.subsurf_reorder_common(atmos, dakota, dak::SubsurfaceOrder::Above, win, other)
     }
@@ -819,8 +826,8 @@ impl WindowManager {
         &mut self,
         atmos: &mut Atmosphere,
         dakota: &mut dak::Dakota,
-        win: WindowId,
-        other: WindowId,
+        win: &SurfaceId,
+        other: &SurfaceId,
     ) -> Result<()> {
         self.subsurf_reorder_common(atmos, dakota, dak::SubsurfaceOrder::Below, win, other)
     }
@@ -830,15 +837,16 @@ impl WindowManager {
         atmos: &mut Atmosphere,
         dakota: &mut dak::Dakota,
         order: dak::SubsurfaceOrder,
-        win: WindowId,
-        other: WindowId,
+        win: &SurfaceId,
+        other: &SurfaceId,
     ) -> Result<()> {
-        let surf = &self.lookup_app_from_id(win)?.a_surf;
-        let other_surf = &self.lookup_app_from_id(other)?.a_surf;
+        let surf = &self.wm_apps.get(win).unwrap().a_surf;
+        let other_surf = &self.wm_apps.get(other).unwrap().a_surf;
         let root = atmos
-            .get_root_window(win)
+            .a_root_window
+            .get_clone(win)
             .expect("The window should have a root since it is a subsurface");
-        let root_surf = &self.lookup_app_from_id(root)?.a_surf;
+        let root_surf = &self.wm_apps.get(&root).unwrap().a_surf;
 
         dakota.reorder_children_element(root_surf, order, surf, other_surf)?;
 
@@ -854,26 +862,26 @@ impl WindowManager {
         let err = match task {
             // create new window
             Task::create_window(id) => self
-                .create_window(dakota, *id)
+                .create_window(dakota, id)
                 .context("Task: create_window"),
             Task::move_to_front(id) => self
-                .move_to_front(atmos, dakota, *id)
+                .move_to_front(atmos, dakota, id)
                 .context("Task: Moving window to front"),
             Task::new_subsurface { id, parent } => self
-                .new_subsurface(dakota, *id, *parent)
+                .new_subsurface(dakota, id, parent)
                 .context("Task: new_subsurface"),
             Task::place_subsurface_above { id, other } => self
-                .subsurf_place_above(atmos, dakota, *id, *other)
+                .subsurf_place_above(atmos, dakota, id, other)
                 .context("Task: place_subsurface_above"),
             Task::place_subsurface_below { id, other } => self
-                .subsurf_place_below(atmos, dakota, *id, *other)
+                .subsurf_place_below(atmos, dakota, id, other)
                 .context("Task: place_subsurface_below"),
             Task::close_window(id) => self
-                .close_window(atmos, dakota, *id)
+                .close_window(atmos, dakota, id)
                 .context("Task: close_window"),
-            Task::new_toplevel(id) => self.new_toplevel(dakota, *id).context("Task: new_toplevel"),
+            Task::new_toplevel(id) => self.new_toplevel(dakota, id).context("Task: new_toplevel"),
             Task::set_cursor { id, hotspot } => self
-                .set_cursor(atmos, dakota, *id, *hotspot)
+                .set_cursor(atmos, dakota, id.clone(), *hotspot)
                 .context("Task: set_cursor"),
             Task::reset_cursor => self.reset_cursor(dakota).context("Task: reset_cursor"),
             // update window from gpu buffer
@@ -944,23 +952,26 @@ impl WindowManager {
         // surfaces. They should already have images attached, and damage will
         // be calculated from the result.
         // ----------------------------------------------------------------
-        for r_id in self.wm_atmos_ids.iter() {
-            let id = *r_id;
+        for id in self.wm_atmos_ids.iter() {
             // Now render the windows
-            let a = self.wm_apps[id.into()]
-                .as_mut()
-                .expect(format!("Could not find id {:?} to record for drawing", id).as_str());
+            let a = self.wm_apps.get_mut(id).expect(
+                format!(
+                    "Could not find id {:?} to record for drawing",
+                    id.get_raw_id()
+                )
+                .as_str(),
+            );
 
             // If this window has been closed or if it is not ready for
             // rendering, ignore it
-            if a.a_marked_for_death || !atmos.get_window_in_use(a.a_id) {
+            if a.a_marked_for_death {
                 return;
             }
 
             // get parameters
             // ----------------------------------------------------------------
-            let surface_pos = atmos.get_surface_pos(a.a_id);
-            let surface_size = atmos.get_surface_size(a.a_id);
+            let surface_pos = *atmos.a_surface_pos.get(&a.a_id).unwrap();
+            let surface_size = *atmos.a_surface_size.get(&a.a_id).unwrap();
             log::debug!(
                 "placing dakota element at {:?} with size {:?}",
                 surface_pos,
@@ -984,7 +995,7 @@ impl WindowManager {
             // ----------------------------------------------------------------
 
             // Send any pending frame callbacks
-            atmos.send_frame_callbacks_for_surf(a.a_id);
+            atmos.send_frame_callbacks_for_surf(&a.a_id);
 
             // Only display the bar for toplevel surfaces
             // i.e. don't for popups

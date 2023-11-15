@@ -196,6 +196,7 @@ dependencies = [
  "image",
  "lazy_static",
  "libc",
+ "lluvia",
  "nix 0.26.2",
  "paste",
  "renderdoc",

@@ -14,8 +14,6 @@
 
 // Austin Shafer - 2020
 #![allow(non_camel_case_types)]
-#[macro_use]
-extern crate atmos_gen;
 extern crate bitflags;
 
 extern crate lazy_static;
