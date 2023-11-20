@@ -197,12 +197,12 @@ impl Element {
 
     fn convert_to_dom_value(&self) -> Result<dom::Value> {
         match self {
-            Element::Relative(float) => Ok(dom::Value::Relative(dom::Relative::new(
+            Element::Relative(float) => Ok(dom::Value::Relative(
                 float.ok_or(anyhow!("No data provided to <relative> tag"))?,
-            ))),
-            Element::Constant(int) => Ok(dom::Value::Constant(dom::Constant::new(
+            )),
+            Element::Constant(int) => Ok(dom::Value::Constant(
                 int.ok_or(anyhow!("No data provided to <constant> tag"))?,
-            ))),
+            )),
             e => return Err(anyhow!("Unexpected child element: {:?}", e)),
         }
     }

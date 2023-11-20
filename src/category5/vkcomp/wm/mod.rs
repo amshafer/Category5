@@ -201,15 +201,12 @@ impl WindowManager {
 
     /// Called when the swapchain image resizes
     pub fn handle_ood(&mut self, dakota: &mut dak::Dakota) {
-        dakota.width().set(
-            &self.wm_desktop,
-            dom::Value::Relative(dom::Relative::new(1.0)),
-        );
+        dakota
+            .width()
+            .set(&self.wm_desktop, dom::Value::Relative(1.0));
         dakota.height().set(
             &self.wm_desktop,
-            dom::Value::Constant(dom::Constant::new(
-                dakota.get_resolution().1 as i32 - MENUBAR_SIZE,
-            )),
+            dom::Value::Constant(dakota.get_resolution().1 as i32 - MENUBAR_SIZE),
         );
     }
 
@@ -227,16 +224,12 @@ impl WindowManager {
         dakota.offset().set(
             &surf,
             dom::RelativeOffset {
-                x: dom::Value::Constant(dom::Constant::new(0)),
-                y: dom::Value::Constant(dom::Constant::new(0)),
+                x: dom::Value::Constant(0),
+                y: dom::Value::Constant(0),
             },
         );
-        dakota
-            .width()
-            .set(&surf, dom::Value::Constant(dom::Constant::new(10)));
-        dakota
-            .height()
-            .set(&surf, dom::Value::Constant(dom::Constant::new(15)));
+        dakota.width().set(&surf, dom::Value::Constant(10));
+        dakota.height().set(&surf, dom::Value::Constant(15));
         dakota.resource().set(&surf, image.clone());
 
         surf
@@ -252,13 +245,10 @@ impl WindowManager {
 
         let menubar = dakota.create_element().unwrap();
         // Make our bar 16 px tall but stretch across the screen
+        dakota.width().set(&menubar, dom::Value::Relative(1.0));
         dakota
-            .width()
-            .set(&menubar, dom::Value::Relative(dom::Relative::new(1.0)));
-        dakota.height().set(
-            &menubar,
-            dom::Value::Constant(dom::Constant::new(MENUBAR_SIZE)),
-        );
+            .height()
+            .set(&menubar, dom::Value::Constant(MENUBAR_SIZE));
         dakota.resource().set(&menubar, barcolor);
 
         let name = dakota.create_element().unwrap();
@@ -308,12 +298,8 @@ impl WindowManager {
         let root = dakota.create_element().unwrap();
         // Manually set the size to the parent container so that its size
         // isn't derived from the image we set as the desktop background
-        dakota
-            .width()
-            .set(&root, dom::Value::Relative(dom::Relative::new(1.0)));
-        dakota
-            .height()
-            .set(&root, dom::Value::Relative(dom::Relative::new(1.0)));
+        dakota.width().set(&root, dom::Value::Relative(1.0));
+        dakota.height().set(&root, dom::Value::Relative(1.0));
 
         let dom = dakota.create_dakota_dom().unwrap();
         dakota.dakota_dom().set(
@@ -354,9 +340,7 @@ impl WindowManager {
             },
         );
         let datetime = dakota.create_element().unwrap();
-        dakota
-            .height()
-            .set(&datetime, dom::Value::Relative(dom::Relative::new(1.0)));
+        dakota.height().set(&datetime, dom::Value::Relative(1.0));
         dakota.content().set(
             &menubar,
             dom::Content {
@@ -762,14 +746,12 @@ impl WindowManager {
                 dakota.add_child_to_element(&self.wm_dakota_root, surf.clone());
                 // Set the size of the cursor
                 let surface_size = atmos.get_surface_size(win);
-                dakota.width().set(
-                    &surf,
-                    dom::Value::Constant(dom::Constant::new(surface_size.0 as i32)),
-                );
-                dakota.height().set(
-                    &surf,
-                    dom::Value::Constant(dom::Constant::new(surface_size.1 as i32)),
-                );
+                dakota
+                    .width()
+                    .set(&surf, dom::Value::Constant(surface_size.0 as i32));
+                dakota
+                    .height()
+                    .set(&surf, dom::Value::Constant(surface_size.1 as i32));
                 self.wm_cursor_hotspot = hotspot;
                 Some(surf)
             }
@@ -930,12 +912,12 @@ impl WindowManager {
             dakota.offset().set(
                 &cursor,
                 dom::RelativeOffset {
-                    x: dom::Value::Constant(dom::Constant::new(
+                    x: dom::Value::Constant(
                         (cursor_x as i32).saturating_sub(self.wm_cursor_hotspot.0),
-                    )),
-                    y: dom::Value::Constant(dom::Constant::new(
+                    ),
+                    y: dom::Value::Constant(
                         (cursor_y as i32).saturating_sub(self.wm_cursor_hotspot.1),
-                    )),
+                    ),
                 },
             );
         }
@@ -989,18 +971,16 @@ impl WindowManager {
             dakota.offset().set(
                 &a.a_surf,
                 dom::RelativeOffset {
-                    x: dom::Value::Constant(dom::Constant::new(surface_pos.0 as i32)),
-                    y: dom::Value::Constant(dom::Constant::new(surface_pos.1 as i32)),
+                    x: dom::Value::Constant(surface_pos.0 as i32),
+                    y: dom::Value::Constant(surface_pos.1 as i32),
                 },
             );
-            dakota.width().set(
-                &a.a_surf,
-                dom::Value::Constant(dom::Constant::new(surface_size.0 as i32)),
-            );
-            dakota.height().set(
-                &a.a_surf,
-                dom::Value::Constant(dom::Constant::new(surface_size.1 as i32)),
-            );
+            dakota
+                .width()
+                .set(&a.a_surf, dom::Value::Constant(surface_size.0 as i32));
+            dakota
+                .height()
+                .set(&a.a_surf, dom::Value::Constant(surface_size.1 as i32));
             // ----------------------------------------------------------------
 
             // Send any pending frame callbacks

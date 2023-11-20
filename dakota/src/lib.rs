@@ -1614,14 +1614,10 @@ impl Dakota {
         // that it doesn't default and size itself to its children, causing the viewport
         // scroll region calculation to go wrong.
         let resolution = self.get_resolution();
-        self.d_widths.set(
-            &root_node_id,
-            dom::Value::Constant(dom::Constant::new(resolution.0 as i32)),
-        );
-        self.d_heights.set(
-            &root_node_id,
-            dom::Value::Constant(dom::Constant::new(resolution.1 as i32)),
-        );
+        self.d_widths
+            .set(&root_node_id, dom::Value::Constant(resolution.0 as i32));
+        self.d_heights
+            .set(&root_node_id, dom::Value::Constant(resolution.1 as i32));
 
         // reset our thundr surface list. If the set of resources has
         // changed, then we should have called clear_thundr to do so by now.
