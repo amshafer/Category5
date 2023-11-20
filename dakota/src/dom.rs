@@ -90,54 +90,31 @@ pub struct Content {
     pub el: DakotaId,
 }
 
-/// This is a relative value that modifies an element
-/// by a percentage of the size of the available space.
-#[derive(Debug, PartialEq, PartialOrd, Copy, Clone)]
-pub struct Relative {
-    val: f32,
-}
-
-impl Relative {
-    pub fn new(v: f32) -> Self {
-        assert!(v >= 0.0 && v <= 1.0);
-        Self { val: v }
-    }
-
-    pub fn scale(&self, val: f32) -> Result<u32> {
-        if !(self.val >= 0.0 && self.val <= 1.0) {
-            return Err(anyhow!(
-                "Element.relativeOffset should use values in the range (0.0, 1.0)"
-            ));
-        }
-        Ok((val * self.val) as u32)
-    }
-}
-
-#[derive(Debug, PartialEq, PartialOrd, Copy, Clone)]
-pub struct Constant {
-    val: i32,
-}
-
-impl Constant {
-    pub fn new(val: i32) -> Self {
-        Self { val: val }
-    }
-}
-
 /// Represents a possibly relative value. This will
 /// either be a f32 scaling value or a constant size
 /// u32.
 #[derive(Debug, PartialEq, PartialOrd, Copy, Clone)]
 pub enum Value {
-    Relative(Relative),
-    Constant(Constant),
+    /// This is a relative value that modifies an element
+    /// by a percentage of the size of the available space.
+    Relative(f32),
+    Constant(i32),
 }
 
 impl Value {
+    fn scale(current: f32, val: f32) -> Result<i32> {
+        if !(current >= 0.0 && current <= 1.0) {
+            return Err(anyhow!(
+                "Element.relativeOffset should use values in the range (0.0, 1.0)"
+            ));
+        }
+        Ok((current * val) as i32)
+    }
+
     pub fn get_value(&self, avail_space: f32) -> Result<i32> {
-        Ok(match self {
-            Self::Relative(r) => r.scale(avail_space)? as i32,
-            Self::Constant(c) => c.val,
+        Ok(match *self {
+            Self::Relative(r) => Self::scale(r, avail_space)? as i32,
+            Self::Constant(c) => c,
         })
     }
 }
@@ -319,8 +296,8 @@ impl Dakota {
         } else {
             // If no offset was specified use (0, 0)
             let default_offset = Offset {
-                x: Value::Constant(Constant { val: 0 }),
-                y: Value::Constant(Constant { val: 0 }),
+                x: Value::Constant(0),
+                y: Value::Constant(0),
             };
 
             Ok(Offset::new(
