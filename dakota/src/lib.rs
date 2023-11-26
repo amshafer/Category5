@@ -1582,7 +1582,7 @@ impl Dakota {
 
         // Remove child A and insert it above or below child B
         children.remove(pos);
-        children.insert(0, child.clone());
+        children.push(child.clone());
         // TODO: If thundr surfaces are already created for this element, reorder
 
         Ok(())

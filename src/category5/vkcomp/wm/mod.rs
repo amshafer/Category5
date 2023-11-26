@@ -858,7 +858,7 @@ impl WindowManager {
     /// This is where we handle things like surface/element creation, window creation and
     /// destruction, etc.
     pub fn process_task(&mut self, atmos: &mut Atmosphere, dakota: &mut dak::Dakota, task: &Task) {
-        log::info!("wm: got task {:?}", task);
+        log::debug!("wm: got task {:?}", task);
         let err = match task {
             // create new window
             Task::create_window(id) => self
