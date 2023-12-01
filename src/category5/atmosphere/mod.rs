@@ -44,6 +44,8 @@ pub type SurfaceId = dak::DakotaId;
 /// exclusive to subsystems will be held by said subsystem
 pub struct Atmosphere {
     pub a_cursor_pos: (f64, f64),
+    /// The offset of the cursor image
+    pub a_cursor_hotspot: (i32, i32),
     pub a_resolution: (u32, u32),
     pub a_grabbed: Option<SurfaceId>,
     pub a_resizing: Option<SurfaceId>,
@@ -61,6 +63,8 @@ pub struct Atmosphere {
     /// that this is a subsurface. Therefore `win_focus` will be the "root" application
     /// toplevel window, and `surf_focus` may be a subsurface of that window tree.
     pub a_surf_focus: Option<SurfaceId>,
+    /// Current surface in use for a cursor, if any
+    pub a_cursor_surface: Option<SurfaceId>,
     /// Is recording traces with Renderdoc enabled?
     /// This is used for debugging. input will trigger this, which tells vkcomp
     /// to record frames.
@@ -170,11 +174,13 @@ macro_rules! define_global_getters {
 
 impl Atmosphere {
     define_global_getters!(cursor_pos, (f64, f64));
+    define_global_getters!(cursor_hotspot, (i32, i32));
     define_global_getters!(resolution, (u32, u32));
     define_global_getters!(grabbed, Option<SurfaceId>);
     define_global_getters!(resizing, Option<SurfaceId>);
     define_global_getters!(win_focus, Option<SurfaceId>);
     define_global_getters!(surf_focus, Option<SurfaceId>);
+    define_global_getters!(cursor_surface, Option<SurfaceId>);
     define_global_getters!(renderdoc_recording, bool);
     define_global_getters!(drm_dev, (i64, i64));
 }
@@ -191,11 +197,13 @@ impl Atmosphere {
 
         Atmosphere {
             a_cursor_pos: (0.0, 0.0),
+            a_cursor_hotspot: (0, 0),
             a_resolution: (0, 0),
             a_grabbed: None,
             a_resizing: None,
             a_win_focus: None,
             a_surf_focus: None,
+            a_cursor_surface: None,
             a_renderdoc_recording: false,
             a_changed: false,
             a_drm_dev: (0, 0),
@@ -422,6 +430,12 @@ impl Atmosphere {
     /// copying it
     pub fn take_buffer_damage(&mut self, id: &SurfaceId) -> Option<dak::Damage> {
         self.a_buffer_damage.take(id)
+    }
+
+    /// Update the cursor image
+    pub fn set_cursor(&mut self, id: Option<SurfaceId>) {
+        self.set_cursor_surface(id.clone());
+        self.add_wm_task(wm::task::Task::set_cursor { id: id });
     }
 
     /// Add an offset to the cursor patch

@@ -137,8 +137,6 @@ pub struct WindowManager {
     wm_apps: ll::Component<App>,
     /// Image representing the software cursor
     wm_cursor: Option<DakotaId>,
-    /// The offset of the cursor image
-    wm_cursor_hotspot: (i32, i32),
     /// Category5's cursor, used when the client hasn't set one.
     wm_default_cursor: DakotaId,
     /// Title bar to draw above the windows
@@ -372,7 +370,6 @@ impl WindowManager {
         let mut ret = WindowManager {
             wm_titlebar: WindowManager::get_default_titlebar(dakota),
             wm_cursor: Some(cursor.clone()),
-            wm_cursor_hotspot: (0, 0),
             wm_default_cursor: cursor,
             wm_dakota_root: root,
             wm_dakota_dom: dom,
@@ -734,11 +731,11 @@ impl WindowManager {
         atmos: &mut Atmosphere,
         dakota: &mut dak::Dakota,
         win: Option<SurfaceId>,
-        hotspot: (i32, i32),
     ) -> Result<()> {
         if let Some(old) = self.wm_cursor.as_ref() {
             dakota.remove_child_from_element(&self.wm_dakota_root, old)?;
-            self.wm_cursor_hotspot = (0, 0);
+            // Don't reset the cursor hotspot here. It's already been updated
+            // by the wl_pointer handlers.
         }
 
         // Clear the cursor if the client unset it. Otherwise get the
@@ -755,7 +752,7 @@ impl WindowManager {
                 dakota
                     .height()
                     .set(&surf, dom::Value::Constant(surface_size.1 as i32));
-                self.wm_cursor_hotspot = hotspot;
+                log::debug!("Setting cursor image with size {:?}", *surface_size,);
                 Some(surf)
             }
             None => None,
@@ -768,14 +765,15 @@ impl WindowManager {
     ///
     /// Used when we are no longer listening to the client's suggested
     /// cursor
-    fn reset_cursor(&mut self, dakota: &mut dak::Dakota) -> Result<()> {
+    fn reset_cursor(&mut self, atmos: &mut Atmosphere, dakota: &mut dak::Dakota) -> Result<()> {
         if let Some(old) = self.wm_cursor.as_ref() {
             dakota.remove_child_from_element(&self.wm_dakota_root, old)?;
         }
 
         dakota.add_child_to_element(&self.wm_dakota_root, self.wm_default_cursor.clone());
         self.wm_cursor = Some(self.wm_default_cursor.clone());
-        self.wm_cursor_hotspot = (0, 0);
+        atmos.set_cursor_hotspot((0, 0));
+        atmos.set_cursor_surface(None);
 
         Ok(())
     }
@@ -880,10 +878,12 @@ impl WindowManager {
                 .close_window(atmos, dakota, id)
                 .context("Task: close_window"),
             Task::new_toplevel(id) => self.new_toplevel(dakota, id).context("Task: new_toplevel"),
-            Task::set_cursor { id, hotspot } => self
-                .set_cursor(atmos, dakota, id.clone(), *hotspot)
+            Task::set_cursor { id } => self
+                .set_cursor(atmos, dakota, id.clone())
                 .context("Task: set_cursor"),
-            Task::reset_cursor => self.reset_cursor(dakota).context("Task: reset_cursor"),
+            Task::reset_cursor => self
+                .reset_cursor(atmos, dakota)
+                .context("Task: reset_cursor"),
             // update window from gpu buffer
             Task::uwcfd(uw) => self
                 .update_window_contents_from_dmabuf(atmos, dakota, uw)
@@ -915,17 +915,19 @@ impl WindowManager {
         // get the latest cursor position
         // ----------------------------------------------------------------
         let (cursor_x, cursor_y) = atmos.get_cursor_pos();
-        log::debug!("Drawing cursor at ({}, {})", cursor_x, cursor_y);
+        let hotspot = atmos.get_cursor_hotspot();
+        log::debug!(
+            "Drawing cursor at ({}, {}), with hotspot {:?}",
+            cursor_x,
+            cursor_y,
+            hotspot
+        );
         if let Some(cursor) = self.wm_cursor.as_mut() {
             dakota.offset().set(
                 &cursor,
                 dom::RelativeOffset {
-                    x: dom::Value::Constant(
-                        (cursor_x as i32).saturating_sub(self.wm_cursor_hotspot.0),
-                    ),
-                    y: dom::Value::Constant(
-                        (cursor_y as i32).saturating_sub(self.wm_cursor_hotspot.1),
-                    ),
+                    x: dom::Value::Constant((cursor_x as i32).saturating_sub(hotspot.0)),
+                    y: dom::Value::Constant((cursor_y as i32).saturating_sub(hotspot.1)),
                 },
             );
         }

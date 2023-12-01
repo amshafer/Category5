@@ -1,12 +1,13 @@
 // Implementation of the wl_pointer interface
 //
 // Austin Shafer - 2020
+extern crate utils;
 extern crate wayland_server as ws;
 use super::role::Role;
 use super::surface::Surface;
-use crate::category5::vkcomp::wm;
 use crate::category5::Climate;
 use std::sync::{Arc, Mutex};
+use utils::log;
 use ws::protocol::wl_pointer;
 use ws::{Resource, ResourceData};
 
@@ -45,14 +46,11 @@ impl ws::Dispatch<wl_pointer::WlPointer, ()> for Climate {
                     None
                 };
 
-                state
-                    .c_atmos
-                    .lock()
-                    .unwrap()
-                    .add_wm_task(wm::task::Task::set_cursor {
-                        id: id,
-                        hotspot: (hotspot_x, hotspot_y),
-                    });
+                let mut atmos = state.c_atmos.lock().unwrap();
+
+                atmos.set_cursor(id);
+                log::debug!("Setting cursor hotspot to {:?}", (hotspot_x, hotspot_y));
+                atmos.set_cursor_hotspot((hotspot_x, hotspot_y));
             }
             _ => {}
         }

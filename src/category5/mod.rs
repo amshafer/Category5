@@ -173,7 +173,7 @@ impl EventManager {
         // Register our global interfaces that will be advertised to all clients
         // --------------------------
         // wl_compositor
-        display_handle.create_global::<Climate, wlci::WlCompositor, ()>(4, ());
+        display_handle.create_global::<Climate, wlci::WlCompositor, ()>(5, ());
         display_handle.create_global::<Climate, xdg_wm_base::XdgWmBase, ()>(1, ());
         display_handle.create_global::<Climate, wl_seat::WlSeat, ()>(8, ());
         display_handle.create_global::<Climate, wl_subcompositor::WlSubcompositor, ()>(1, ());

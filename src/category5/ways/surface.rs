@@ -92,6 +92,9 @@ pub struct Surface {
     pub s_damage: dak::Damage,
     /// Validates that we cleaned this surf up correctly
     s_is_destroyed: bool,
+    /// Surface position change from attach
+    /// This is only used for cursor surfaces
+    s_attached_xy: (i32, i32),
 }
 
 impl Surface {
@@ -111,6 +114,7 @@ impl Surface {
             s_surf_damage: dak::Damage::empty(),
             s_damage: dak::Damage::empty(),
             s_is_destroyed: false,
+            s_attached_xy: (0, 0),
         }
     }
 
@@ -186,6 +190,7 @@ impl Surface {
                     panic!("Non-normal Buffer transformation is not implemented");
                 }
             }
+            wlsi::Request::Offset { x, y } => self.s_attached_xy = (x, y),
             _ => unimplemented!(),
         }
     }
@@ -199,10 +204,12 @@ impl Surface {
         &mut self,
         _surf: &wlsi::WlSurface,
         buf: Option<wl_buffer::WlBuffer>,
-        _x: i32,
-        _y: i32,
+        x: i32,
+        y: i32,
     ) {
         self.s_attached_buffer = buf;
+        // stash x/y for the cursor position change
+        self.s_attached_xy = (x, y);
     }
 
     /// Commit the current surface configuration to
@@ -315,6 +322,42 @@ impl Surface {
             std::mem::swap(&mut self.s_damage, &mut nd);
             log::debug!("Setting buffer damage of {:?} to {:?}", self.s_id, nd);
             atmos.a_buffer_damage.set(&self.s_id, nd);
+        }
+
+        // Move our surfaces position if requested
+        //
+        // The surface attach and offset functions allow for changing the top
+        // left corner of the surface.
+        if self.s_attached_xy.0 != 0 || self.s_attached_xy.1 != 0 {
+            log::debug!("Surface requested move of {:?}", self.s_attached_xy);
+            {
+                let mut pos = atmos.a_surface_pos.get_mut(&self.s_id).unwrap();
+                pos.0 += self.s_attached_xy.0 as f32;
+                pos.1 += self.s_attached_xy.1 as f32;
+            }
+            // According to the spec we subtract the change from the cursor
+            // hotspot to adjust the cursor position
+            //
+            // Only update this if we are the surface in focus, otherwise this will
+            // offset the cursor for another surface
+            if atmos.get_cursor_surface().map(|e| e.get_raw_id()) == Some(self.s_id.get_raw_id()) {
+                if let Some(Role::cursor) = &self.s_role {
+                    let hotspot = atmos.get_cursor_hotspot();
+                    log::debug!("original hotspot {:?}", hotspot);
+                    atmos.set_cursor_hotspot((
+                        hotspot.0 - self.s_attached_xy.0,
+                        hotspot.1 - self.s_attached_xy.1,
+                    ));
+                    log::debug!(
+                        "new hotspot {:?}",
+                        (
+                            hotspot.0 - self.s_attached_xy.0,
+                            hotspot.1 - self.s_attached_xy.1
+                        )
+                    );
+                }
+            }
+            self.s_attached_xy = (0, 0);
         }
 
         // Commit any role state before we update window bits
