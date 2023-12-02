@@ -337,7 +337,6 @@ impl Atmosphere {
         self.a_owner.set(&id, client.clone());
         self.a_toplevel.set(&id, false);
         self.a_window_pos.set(&id, (0.0, 0.0));
-        self.a_window_size.set(&id, (0.0, 0.0));
         self.a_surface_pos.set(&id, (0.0, 0.0));
         self.a_surface_size.set(&id, (0.0, 0.0));
 

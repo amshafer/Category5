@@ -318,19 +318,31 @@ impl ShellSurface {
         {
             // TODO: handle min/max/fullscreen/activated
 
-            log::error!("xdg_surface.commit: (ev {}) vvv", tlc.tlc_serial);
+            log::debug!("xdg_surface.commit: (ev {}) vvv", tlc.tlc_serial);
 
-            // The client should have updated the window geometry in reaction
-            // to the last acked configure event. If it doesn't exist then
-            // just set the window size to the surface size as per the spec
-            let ws = *atmos.a_window_size.get(&surf.s_id).unwrap();
-            let size = if let Some((w, h)) = self.ss_xs.xs_size {
-                (w as f32, h as f32)
-            } else {
-                ws
+            let ws = match atmos.a_window_size.get(&surf.s_id).map(|ws| *ws) {
+                Some(ws) => ws,
+                None => {
+                    // If this is the first toplevel commit then we need
+                    // to set our window size for the first time.
+                    //
+                    // The client should have updated the window geometry in reaction
+                    // to the last acked configure event. If it doesn't exist then
+                    // just set the window size to the surface size as per the spec
+                    let ws = match self.ss_xs.xs_size {
+                        Some((w, h)) => (w as f32, h as f32),
+                        None => *atmos.a_surface_size.get(&surf.s_id).unwrap(),
+                    };
+                    atmos.a_window_size.set(&surf.s_id, ws);
+                    ws
+                }
+            };
+
+            let size = match self.ss_xs.xs_size {
+                Some((w, h)) => (w as f32, h as f32),
+                None => ws,
             };
             let size_diff = (size.0 - ws.0, size.1 - ws.1);
-            log::error!("size_diff is {:?}", size_diff);
 
             // If we are resizing the left or top, then we need to offset
             // our window position by the change in size
@@ -342,7 +354,7 @@ impl ShellSurface {
                 // of the surface where content is displayed
                 let mut sp = atmos.a_surface_pos.get_mut(&surf.s_id).unwrap();
                 let mut wp = atmos.a_window_pos.get_mut(&surf.s_id).unwrap();
-                log::error!("Old surface pos is {:?}", *sp);
+                log::debug!("Old surface pos is {:?}", *sp);
                 if self.ss_resize_left {
                     sp.0 -= size_diff.0;
                     wp.0 -= size_diff.0;
@@ -351,7 +363,7 @@ impl ShellSurface {
                     sp.1 -= size_diff.1;
                     wp.1 -= size_diff.1;
                 }
-                log::error!("New surface pos is {:?}", *sp);
+                log::debug!("New surface pos is {:?}", *sp);
             }
 
             atmos.a_window_size.set(&surf.s_id, size);
@@ -359,7 +371,7 @@ impl ShellSurface {
             self.ss_xs.xs_size = None;
             // remove all the previous/outdated configs
             self.ss_tlconfigs.drain(0..i);
-            log::error!("self.ss_tlconfigs now: {:#?}", self.ss_tlconfigs);
+            log::debug!("self.ss_tlconfigs now: {:#?}", self.ss_tlconfigs);
         }
 
         // TODO: handle the other state changes
@@ -476,7 +488,7 @@ impl ShellSurface {
                     size.1 = (size.1 - y).clamp(min.1, max.1);
                 }
 
-                log::error!("Resized to {:?}", size);
+                log::debug!("Resized to {:?}", size);
             }
 
             // build an array of state flags to pass to toplevel.configure
@@ -1047,7 +1059,7 @@ impl Popup {
             // Now we can tell vkcomp to add this surface to the subsurface stack
             // in Thundr
             atmos.add_new_top_subsurf(&shsurf.ss_surface.lock().unwrap().s_id, &surf.s_id);
-            log::error!(
+            log::debug!(
                 "Adding popup subsurf {:?} to parent {:?}",
                 surf.s_id.get_raw_id(),
                 shsurf.ss_surface.lock().unwrap().s_id.get_raw_id(),
@@ -1093,7 +1105,7 @@ impl ShellSurface {
         // send configuration requests to the client
         // width and height 0 means client picks a size
         let popup_loc = pos.get_loc();
-        log::error!("Popup location: {:?}", popup_loc);
+        log::debug!("Popup location: {:?}", popup_loc);
         pop.pu_pop
             .configure(popup_loc.0, popup_loc.1, pos.p_width, pos.p_height);
         surf.configure(self.ss_serial);
@@ -1127,7 +1139,7 @@ impl ShellSurface {
             }
             // TODO: implement grab
             xdg_popup::Request::Grab { seat, serial } => {
-                log::error!("Grabbing a popup is not supported");
+                log::debug!("Grabbing a popup is not supported");
                 self.popup_done(atmos);
             }
             xdg_popup::Request::Reposition { positioner, token } => {

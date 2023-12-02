@@ -377,14 +377,12 @@ impl Surface {
 
         // update the surface size of this id so that vkcomp knows what
         // size of buffer it is compositing
-        let _win_size = *atmos.a_window_size.get(&self.s_id).unwrap();
+        let _win_size = atmos.a_window_size.get(&self.s_id).map(|ws| *ws);
         log::debug!(
-            "surf {:?}: new sizes are winsize={}x{} surfsize={}x{}",
+            "surf {:?}: new sizes are winsize={:?} surfsize={:?}",
             self.s_id,
-            _win_size.0,
-            _win_size.1,
-            surf_size.0,
-            surf_size.1
+            _win_size,
+            surf_size,
         );
 
         // Make sure to unmark this before returning

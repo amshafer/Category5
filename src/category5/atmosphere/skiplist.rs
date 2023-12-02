@@ -484,7 +484,7 @@ impl Atmosphere {
                 _win,
                 *self.a_window_pos.get(&_win).unwrap(),
                 *self.a_surface_pos.get(&_win).unwrap(),
-                *self.a_window_size.get(&_win).unwrap(),
+                self.a_window_size.get(&_win).map(|ws| *ws),
                 *self.a_surface_size.get(&_win).unwrap(),
             );
             // Return true to tell map_on_surfs to continue
