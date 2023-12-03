@@ -346,7 +346,7 @@ impl Input {
     ///
     /// We need to do this on pointer movement to tell the client how
     /// to resize themselves.
-    fn send_resize_configure(&mut self, atmos: &mut Atmosphere, dx: f64, dy: f64) {
+    fn send_resize_configure(&mut self, atmos: &mut Atmosphere) {
         log::error!("Resizing in progress");
         if let Some(id) = atmos.get_resizing() {
             if let Some(cell) = atmos.get_surface_from_id(&id) {
@@ -355,10 +355,7 @@ impl Input {
                     Some(Role::xdg_shell_toplevel(xdg_surf, ss)) => {
                         // send the xdg configure events
                         ss.lock().unwrap().configure(
-                            atmos,
-                            xdg_surf,
-                            &surf,
-                            Some((dx as i32, dy as i32)),
+                            atmos, xdg_surf, &surf, true, // resizing
                         );
                     }
                     _ => (),
@@ -378,7 +375,7 @@ impl Input {
         // If a resize is happening then collect the cursor changes
         // to send at the end of the frame
         if atmos.get_resizing().is_some() {
-            self.send_resize_configure(atmos, dx, dy);
+            self.send_resize_configure(atmos);
             return;
         }
         // Get the cursor position
@@ -470,7 +467,7 @@ impl Input {
                                     let mut ss = ss.lock().unwrap();
                                     ss.ss_cur_tlstate.tl_resizing = false;
                                     // As per spec send final configure here
-                                    ss.configure(atmos, xdg_surf, &surf, None);
+                                    ss.configure(atmos, xdg_surf, &surf, false);
                                 }
                                 // this should never be pressed
                                 _ => (),

@@ -275,6 +275,25 @@ impl ShellSurface {
             self.ss_xs.xs_make_new_toplevel_window = false;
         }
 
+        // Set our window size
+        let ws = match atmos.a_window_size.get(&surf.s_id).map(|ws| *ws) {
+            Some(ws) => ws,
+            None => {
+                // If this is the first toplevel commit then we need
+                // to set our window size for the first time.
+                //
+                // The client should have updated the window geometry in reaction
+                // to the last acked configure event. If it doesn't exist then
+                // just set the window size to the surface size as per the spec
+                let ws = match self.ss_xs.xs_size {
+                    Some((w, h)) => (w as f32, h as f32),
+                    None => *atmos.a_surface_size.get(&surf.s_id).unwrap(),
+                };
+                atmos.a_window_size.set(&surf.s_id, ws);
+                ws
+            }
+        };
+
         if self.ss_xs.xs_moving {
             log::debug!("Moving surface {:?}", surf.s_id.get_raw_id());
             atmos.set_grabbed(Some(surf.s_id.clone()));
@@ -320,24 +339,6 @@ impl ShellSurface {
 
             log::debug!("xdg_surface.commit: (ev {}) vvv", tlc.tlc_serial);
 
-            let ws = match atmos.a_window_size.get(&surf.s_id).map(|ws| *ws) {
-                Some(ws) => ws,
-                None => {
-                    // If this is the first toplevel commit then we need
-                    // to set our window size for the first time.
-                    //
-                    // The client should have updated the window geometry in reaction
-                    // to the last acked configure event. If it doesn't exist then
-                    // just set the window size to the surface size as per the spec
-                    let ws = match self.ss_xs.xs_size {
-                        Some((w, h)) => (w as f32, h as f32),
-                        None => *atmos.a_surface_size.get(&surf.s_id).unwrap(),
-                    };
-                    atmos.a_window_size.set(&surf.s_id, ws);
-                    ws
-                }
-            };
-
             let size = match self.ss_xs.xs_size {
                 Some((w, h)) => (w as f32, h as f32),
                 None => ws,
@@ -347,7 +348,7 @@ impl ShellSurface {
             // If we are resizing the left or top, then we need to offset
             // our window position by the change in size
             if (self.ss_resize_left || self.ss_resize_top) && size_diff != (0.0, 0.0) {
-                // We need to update both the window and surace size.
+                // We need to update the window size.
                 //
                 // The surface pos controlls where this surface actually
                 // is in the desktop. The window pos is a section inside
@@ -421,7 +422,7 @@ impl ShellSurface {
         atmos: &mut Atmosphere,
         xdg_surf: &xdg_surface::XdgSurface,
         surf: &Surface,
-        resize_diff: Option<(i32, i32)>,
+        resizing: bool,
     ) {
         log::debug!("xdg_surface: generating configure event {}", self.ss_serial);
         // send configuration requests to the client
@@ -444,19 +445,27 @@ impl ShellSurface {
                 }
             };
 
-            if let Some((x, y)) = resize_diff {
+            if resizing {
                 // Check that our cursor is not within the min size or exceeds the max
                 // size before we apply this mouse diff. If we start adding mouse movements
                 // to the size but we haven't returned to the edge then the resize doesn't
                 // match the mouse position.
                 let (cx, cy) = atmos.get_cursor_pos();
-                let (cx, cy) = (cx as f32, cy as f32);
-                let sp = atmos.a_surface_pos.get(&surf.s_id).unwrap();
-                let ss = atmos.a_surface_size.get(&surf.s_id).unwrap();
+                // Adjust the cursor position to account for the menubar
+                let (cx, cy) = atmos.get_adjusted_desktop_coord(cx as f32, cy as f32);
+                let (cx, cy) = (cx as i32, cy as i32);
+                log::debug!("cursor pos {:?}", (cx, cy));
+                let wp = atmos.a_window_pos.get(&surf.s_id).unwrap();
+                log::debug!("Window pos {:?}", *wp);
+                let wp = (wp.0 as i32, wp.1 as i32);
+                let ws = atmos.a_window_size.get(&surf.s_id).unwrap();
+                let ws = (ws.0 as i32, ws.1 as i32);
                 // TODO: subtrace size from pos if left or bottom_left?
                 let min = self.ss_min_size;
                 let max = self.ss_max_size;
 
+                // "c" will have to fall somewhere in these ranges to be valid
+                //
                 // For right edge growing:
                 //    |------------|~~~~~~~~~~~~~~~~~~~~~~~~|
                 //   pos          min                      max
@@ -464,28 +473,37 @@ impl ShellSurface {
                 // For left edge growing:
                 //    |~~~~~~~~~~~~~~~~~~~~|~~~~~~~~~~|-----|
                 //   max                  pos        min   edge
-                let grow_mode_right = |c, pos, min, max| c > pos + min && c < pos + max;
-                let grow_mode_left = |c, min, max, edge| c < edge - min && c > edge - max;
+                let grow_mode_right = |c, pos: i32, min, max| {
+                    c > pos + min && c < pos.checked_add(max).unwrap_or(i32::MAX)
+                };
+                let grow_mode_left = |c, min, max, edge: i32| {
+                    c < edge - min && c > edge.checked_sub(max).unwrap_or(0)
+                };
 
                 // For edges that don't require position adjustment it is easy, we just
                 // update the size if it passed the bounds check
-                if self.ss_resize_right && grow_mode_right(cx, sp.0, min.0 as f32, max.0 as f32) {
+                //
+                // For this calculation we try to grow the size to where the cursor position
+                // is, by finding the difference between the cursor and the surface start.
+                if self.ss_resize_right && grow_mode_right(cx, wp.0, min.0, max.0) {
                     // add but don't exceed the min/max bounds requested
-                    size.0 = (size.0 + x).clamp(min.0, max.0);
+                    size.0 = (cx - wp.0).clamp(min.0, max.0);
                 }
-                if self.ss_resize_bottom && grow_mode_right(cy, sp.1, min.1 as f32, max.1 as f32) {
-                    size.1 = (size.1 + y).clamp(min.1, max.1);
+                if self.ss_resize_bottom && grow_mode_right(cy, wp.1, min.1, max.1) {
+                    size.1 = (cy - wp.1).clamp(min.1, max.1);
                 }
+
                 // For edges that do require position adjustment we also have to calculate
                 // a new position offset by our size change
-                if self.ss_resize_left
-                    && grow_mode_left(cx, min.0 as f32, max.0 as f32, sp.0 + ss.0)
-                {
-                    size.0 = (size.0 - x).clamp(min.0, max.0);
+                //
+                // We do this by finding the bottom right edge of the surface by adding
+                // the position and size. We can then subtract this by the cursor position
+                // to find the new size to grow to.
+                if self.ss_resize_left && grow_mode_left(cx, min.0, max.0, wp.0 + ws.0) {
+                    size.0 = ((wp.0 + ws.0) - cx).clamp(min.0, max.0);
                 }
-                if self.ss_resize_top && grow_mode_left(cx, min.1 as f32, max.1 as f32, sp.1 + ss.1)
-                {
-                    size.1 = (size.1 - y).clamp(min.1, max.1);
+                if self.ss_resize_top && grow_mode_left(cy, min.1, max.1, wp.1 + ws.1) {
+                    size.1 = ((wp.1 + ws.1) - cy).clamp(min.1, max.1);
                 }
 
                 log::debug!("Resized to {:?}", size);
