@@ -184,7 +184,7 @@ fn xdg_surface_handle_request(
     match req {
         xdg_surface::Request::GetToplevel { id } => {
             let xdg = data_init.init(id, ss_clone.clone());
-            shsurf.get_toplevel(surf, xdg, ss_clone)
+            shsurf.get_toplevel(atmos, surf, xdg, ss_clone)
         }
         xdg_surface::Request::GetPopup {
             id,
@@ -192,7 +192,7 @@ fn xdg_surface_handle_request(
             positioner,
         } => {
             let xdg = data_init.init(id, ss_clone.clone());
-            shsurf.get_popup(xdg, surf, parent, positioner, ss_clone)
+            shsurf.get_popup(atmos, xdg, surf, parent, positioner, ss_clone)
         }
         xdg_surface::Request::AckConfigure { serial } => {
             log::debug!("xdg_surface: client acked configure event {}", serial);
@@ -263,18 +263,6 @@ impl ShellSurface {
             return;
         }
 
-        // This has just been assigned role of toplevel
-        if self.ss_xs.xs_make_new_toplevel_window {
-            // Tell vkcomp to create a new window
-            log::debug!("Setting surface {:?} to toplevel", surf.s_id.get_raw_id());
-            atmos.a_toplevel.set(&surf.s_id, true);
-            atmos.add_wm_task(wm::task::Task::new_toplevel(surf.s_id.clone()));
-            // This places the surface at the front of the skiplist, aka
-            // makes it in focus
-            atmos.focus_on(Some(surf.s_id.clone()));
-            self.ss_xs.xs_make_new_toplevel_window = false;
-        }
-
         // Set our window size
         let ws = match atmos.a_window_size.get(&surf.s_id).map(|ws| *ws) {
             Some(ws) => ws,
@@ -294,12 +282,6 @@ impl ShellSurface {
             }
         };
 
-        if self.ss_xs.xs_moving {
-            log::debug!("Moving surface {:?}", surf.s_id.get_raw_id());
-            atmos.set_grabbed(Some(surf.s_id.clone()));
-            self.ss_xs.xs_moving = false;
-        }
-
         let check_default = |d, v| match v {
             0 => d,
             _ => v,
@@ -317,10 +299,7 @@ impl ShellSurface {
 
         // Handle popup surface updates
         if let Some(popup) = self.ss_xdg_popup.as_mut() {
-            popup.commit(surf, atmos, self.ss_xs.xs_make_new_popup_window);
-
-            // clear our double buffered state
-            self.ss_xs.xs_make_new_popup_window = false;
+            popup.commit(surf, atmos);
         } else if let Some((i, tlc)) = self
             // find the toplevel state for the last config event acked
             // ack the toplevel configuration
@@ -389,17 +368,36 @@ impl ShellSurface {
     /// toplevel surface and may exclusively grab input for that app.
     fn get_popup(
         &mut self,
+        atmos: &mut Atmosphere,
         popup: xdg_popup::XdgPopup,
-        surf: &xdg_surface::XdgSurface,
+        xdg_surf: &xdg_surface::XdgSurface,
         parent: Option<xdg_surface::XdgSurface>,
         positioner: xdg_positioner::XdgPositioner,
         userdata: Arc<Mutex<ShellSurface>>,
     ) {
-        // assign the popup role
-        self.ss_surface.lock().unwrap().s_role = Some(Role::xdg_shell_popup(userdata.clone()));
+        {
+            // assign the popup role
+            let mut surf = self.ss_surface.lock().unwrap();
+            let parent_surf = parent.as_ref().expect("Bug: popup missing parent");
+            // Now get our ShellSurface object from the XdgSurface protocol object
+            let parent_xdgsurf = parent_surf
+                .data::<Arc<Mutex<ShellSurface>>>()
+                .unwrap()
+                .lock()
+                .unwrap();
+            let parent_surf_id = &parent_xdgsurf.ss_surface.lock().unwrap().s_id;
 
-        // tell vkcomp to generate resources for a new window
-        self.ss_xs.xs_make_new_popup_window = true;
+            // Now we can tell vkcomp to add this surface to the subsurface stack
+            // in Thundr
+            atmos.add_new_top_subsurf(parent_surf_id, &surf.s_id);
+            log::debug!(
+                "Adding popup subsurf {:?} to parent {:?}",
+                surf.s_id.get_raw_id(),
+                parent_surf_id,
+            );
+
+            surf.s_role = Some(Role::xdg_shell_popup(userdata.clone()));
+        }
 
         self.ss_xdg_popup = Some(Popup {
             pu_pop: popup.clone(),
@@ -409,7 +407,7 @@ impl ShellSurface {
             pu_reposition: None,
         });
 
-        self.reposition_popup(surf);
+        self.reposition_popup(xdg_surf);
     }
 
     /// Generate a fresh set of configure events
@@ -605,16 +603,22 @@ impl ShellSurface {
     /// be added to toplevel.
     fn get_toplevel(
         &mut self,
+        atmos: &mut Atmosphere,
         xdg_surf: &xdg_surface::XdgSurface,
         toplevel: xdg_toplevel::XdgToplevel,
         userdata: Arc<Mutex<ShellSurface>>,
     ) {
         // Mark our surface as being a window handled by xdg_shell
-        self.ss_surface.lock().unwrap().s_role =
-            Some(Role::xdg_shell_toplevel(xdg_surf.clone(), userdata.clone()));
+        let mut surf = self.ss_surface.lock().unwrap();
+        surf.s_role = Some(Role::xdg_shell_toplevel(xdg_surf.clone(), userdata.clone()));
 
-        // Record our state
-        self.ss_xs.xs_make_new_toplevel_window = true;
+        // Tell vkcomp to create a new window
+        log::debug!("Setting surface {:?} to toplevel", surf.s_id.get_raw_id());
+        atmos.a_toplevel.set(&surf.s_id, true);
+        atmos.add_wm_task(wm::task::Task::new_toplevel(surf.s_id.clone()));
+        // This places the surface at the front of the skiplist, aka
+        // makes it in focus
+        atmos.focus_on(Some(surf.s_id.clone()));
 
         // send configuration requests to the client
         // width and height 0 means client picks a size
@@ -668,10 +672,6 @@ pub struct XdgState {
     // aka making new role objects, not related to the
     // window itself
     // ------------------
-    /// Should we create a new window
-    xs_make_new_toplevel_window: bool,
-    xs_make_new_popup_window: bool,
-    xs_moving: bool,
     pub xs_acked: bool,
 }
 
@@ -690,9 +690,6 @@ impl XdgState {
             xs_tiled_bottom: false,
             xs_max_size: None,
             xs_min_size: None,
-            xs_make_new_toplevel_window: false,
-            xs_make_new_popup_window: false,
-            xs_moving: false,
         }
     }
 }
@@ -810,7 +807,6 @@ pub struct TLState {
     // self-explanitory I think
     pub tl_maximized: bool,
     pub tl_minimized: bool,
-    // guess what this one means
     pub tl_fullscreen: bool,
     // Is the window currently in focus?
     pub tl_activated: bool,
@@ -1059,31 +1055,7 @@ pub struct Popup {
 }
 
 impl Popup {
-    fn commit(&mut self, surf: &Surface, atmos: &mut Atmosphere, make_new_window: bool) {
-        if make_new_window {
-            log::debug!("Setting surface {:?} to popup", surf.s_id);
-            // first get our parent surface
-            let parent_surf = self
-                .pu_parent
-                .as_ref()
-                .expect("Bug: popup did not have a parent assigned yet");
-            // Now get our ShellSurface object from the XdgSurface protocol object
-            let shsurf = parent_surf
-                .data::<Arc<Mutex<ShellSurface>>>()
-                .unwrap()
-                .lock()
-                .unwrap();
-
-            // Now we can tell vkcomp to add this surface to the subsurface stack
-            // in Thundr
-            atmos.add_new_top_subsurf(&shsurf.ss_surface.lock().unwrap().s_id, &surf.s_id);
-            log::debug!(
-                "Adding popup subsurf {:?} to parent {:?}",
-                surf.s_id.get_raw_id(),
-                shsurf.ss_surface.lock().unwrap().s_id.get_raw_id(),
-            );
-        }
-
+    fn commit(&mut self, surf: &Surface, atmos: &mut Atmosphere) {
         // Update the size and position from the latest reposition
         let pos_cell = self
             .pu_positioner
