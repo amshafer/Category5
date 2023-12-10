@@ -12,8 +12,8 @@ use ws::protocol::{wl_buffer, wl_callback, wl_output, wl_region, wl_surface as w
 use ws::Resource;
 
 use super::role::Role;
-use super::shm::*;
 use super::wl_region::Region;
+use super::{shm::*, wl_subcompositor::SubSurfaceState};
 use crate::category5::atmosphere::{Atmosphere, SurfaceId};
 use crate::category5::vkcomp::wm;
 use crate::category5::Climate;
@@ -88,12 +88,21 @@ pub struct CommitState {
     pub cs_damage: dak::Damage,
     /// Surface position change from attach/offset
     cs_attached_xy: Option<(i32, i32)>,
+
+    /// State programmed by wl_subcompositor
+    pub cs_subsurf_state: SubSurfaceState,
+
+    /// Child CommitStates which are dependent on this before they
+    /// can be committed. These are usually synchronized subsurface
+    /// commits that are pending.
+    pub cs_children: Vec<CommitState>,
 }
 
 impl CommitState {
+    /// Initializes an empty state object for this surface id
     fn new(id: SurfaceId) -> Self {
         Self {
-            cs_id: id,
+            cs_id: id.clone(),
             cs_buffer: None,
             cs_frame_callbacks: Vec::with_capacity(1),
             cs_opaque: None,
@@ -101,6 +110,8 @@ impl CommitState {
             cs_surf_damage: dak::Damage::empty(),
             cs_damage: dak::Damage::empty(),
             cs_attached_xy: None,
+            cs_subsurf_state: SubSurfaceState::new(id),
+            cs_children: Vec::with_capacity(0),
         }
     }
 
@@ -111,6 +122,9 @@ impl CommitState {
     pub fn clone_refresh(&mut self) -> Self {
         let mut frame_callbacks = Vec::with_capacity(1);
         std::mem::swap(&mut frame_callbacks, &mut self.cs_frame_callbacks);
+
+        let mut children = Vec::with_capacity(0);
+        std::mem::swap(&mut children, &mut self.cs_children);
 
         let mut surf_damage = dak::Damage::empty();
         std::mem::swap(&mut surf_damage, &mut self.cs_surf_damage);
@@ -126,6 +140,8 @@ impl CommitState {
             cs_surf_damage: surf_damage,
             cs_damage: damage,
             cs_attached_xy: self.cs_attached_xy.take(),
+            cs_subsurf_state: self.cs_subsurf_state.clone_refresh(),
+            cs_children: children,
         }
     }
 
@@ -135,6 +151,7 @@ impl CommitState {
     /// the system, resetting the state in the process. Any child states
     /// will also be applied at this time.
     pub fn commit(&mut self, atmos: &mut Atmosphere) {
+        // ----- Update our surface size -----
         // We need to update wm if a new buffer was attached. This includes getting
         // the userdata and sending messages to update window contents.
         //
@@ -177,7 +194,7 @@ impl CommitState {
         };
         atmos.a_surface_size.set(&self.cs_id, surf_size);
 
-        // Commit our frame callbacks
+        // ----- Commit our frame callbacks -----
         if self.cs_frame_callbacks.len() > 0 {
             log::debug!(
                 "Surface {:?} New frame callbacks = {:?}",
@@ -221,7 +238,7 @@ impl CommitState {
             atmos.a_input_region.set(&self.cs_id, reg);
         }
 
-        // Move our surfaces position if requested
+        // ----- Move our surfaces position if requested -----
         //
         // The surface attach and offset functions allow for changing the top
         // left corner of the surface.
@@ -245,8 +262,6 @@ impl CommitState {
             }
         }
 
-        // update the surface size of this id so that vkcomp knows what
-        // size of buffer it is compositing
         let _win_size = atmos.a_window_size.get(&self.cs_id).map(|ws| *ws);
         log::debug!(
             "surf {:?}: new sizes are winsize={:?} surfsize={:?}",
@@ -254,6 +269,14 @@ impl CommitState {
             _win_size,
             surf_size,
         );
+
+        // ----- now commit any child protocols state -----
+        self.cs_subsurf_state.commit(atmos);
+
+        // ----- commit all of the pending child commits -----
+        for mut cs in self.cs_children.drain(0..) {
+            cs.commit(atmos);
+        }
     }
 }
 
@@ -307,7 +330,7 @@ impl Surface {
     ) {
         match req {
             wlsi::Request::Attach { buffer, x, y } => self.attach(surf, buffer, x, y),
-            wlsi::Request::Commit => self.commit(atmos, false),
+            wlsi::Request::Commit => self.commit(atmos),
             wlsi::Request::Damage {
                 x,
                 y,
@@ -394,30 +417,25 @@ impl Surface {
     /// Atmosphere is passed in since committing one surface
     /// will recursively call commit on the subsurfaces, and
     /// we need to avoid a refcell panic.
-    fn commit(&mut self, atmos: &mut Atmosphere, parent_commit_in_progress: bool) {
+    fn commit(&mut self, atmos: &mut Atmosphere) {
+        // Check if we are a synchronized subsurface. if this is true, then we need
+        // to move our CommitState into the parent's state as a pending child and then
+        // exit.
         if let Some(Role::subsurface(ss)) = &self.s_role {
-            if !ss
-                .lock()
-                .unwrap()
-                .should_commit(self, atmos, parent_commit_in_progress)
-            {
-                log::debug!(
-                    "Surf {:?} not committing due to subsurface rules",
-                    self.s_id
-                );
-                return;
-            }
-        }
+            let mut subsurf = ss.lock().unwrap();
 
-        // Before we commit ourselves, we need to
-        // commit any subsurfaces available
-        // we need to collect the ids so that atmos won't be borrowed when
-        // we recursively call commit below
-        let subsurfaces: Vec<_> = atmos.visible_subsurfaces(&self.s_id).collect();
-        for id in subsurfaces.iter() {
-            let sid = atmos.get_surface_from_id(id);
-            if let Some(surf) = sid {
-                surf.lock().unwrap().commit(atmos, true);
+            if subsurf.is_synchronized(atmos) {
+                log::debug!("Adding sync subsurf {:?} to pending commit", self.s_id);
+                let state = self.s_state.clone_refresh();
+                subsurf
+                    .ss_parent
+                    .lock()
+                    .unwrap()
+                    .s_state
+                    .cs_children
+                    .push(state);
+
+                return;
             }
         }
 
@@ -429,13 +447,9 @@ impl Surface {
             Some(Role::xdg_shell_toplevel(_, xs)) => xs.lock().unwrap().commit(&self, atmos),
             Some(Role::xdg_shell_popup(xs)) => xs.lock().unwrap().commit(&self, atmos),
             Some(Role::wl_shell_toplevel) => atmos.a_window_size.set(&self.s_id, surf_size),
-            Some(Role::subsurface(ss)) => ss.lock().unwrap().commit(&self, atmos),
+            Some(Role::subsurface(_)) => {}
             Some(Role::cursor) => {}
-            // if we don't have an assigned role, avoid doing
-            // any real work
-            None => {
-                return;
-            }
+            None => {}
         }
     }
 
