@@ -59,7 +59,7 @@ impl ws::Dispatch<wlci::WlCompositor, ()> for Climate {
     fn destroyed(
         _state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wlci::WlCompositor,
         _data: &(),
     ) {
     }

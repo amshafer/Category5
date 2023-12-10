@@ -87,7 +87,7 @@ impl ws::Dispatch<zldv1::ZwpLinuxDmabufV1, ()> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &zldv1::ZwpLinuxDmabufV1,
         data: &(),
     ) {
     }
@@ -112,7 +112,7 @@ impl ws::Dispatch<zlbpv1::ZwpLinuxBufferParamsV1, Arc<Mutex<Params>>> for Climat
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &zlbpv1::ZwpLinuxBufferParamsV1,
         data: &Arc<Mutex<Params>>,
     ) {
     }
@@ -209,7 +209,7 @@ impl ws::Dispatch<wl_buffer::WlBuffer, Arc<Dmabuf>> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wl_buffer::WlBuffer,
         data: &Arc<Dmabuf>,
     ) {
         // Close our dmabuf fd since this object was deleted

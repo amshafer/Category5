@@ -46,7 +46,7 @@ impl ws::Dispatch<wlsi::WlSurface, Arc<Mutex<Surface>>> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        resource: ws::backend::ObjectId,
+        resource: &wlsi::WlSurface,
         surf: &Arc<Mutex<Surface>>,
     ) {
         surf.lock()
@@ -509,7 +509,7 @@ impl ws::Dispatch<wl_callback::WlCallback, ()> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wl_callback::WlCallback,
         data: &(),
     ) {
     }

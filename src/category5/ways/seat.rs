@@ -83,7 +83,7 @@ impl ws::Dispatch<wl_seat::WlSeat, Arc<Mutex<Seat>>> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wl_seat::WlSeat,
         data: &Arc<Mutex<Seat>>,
     ) {
     }
@@ -147,7 +147,7 @@ impl SeatInstance {
         // Broadcast our keymap map
         keyboard.keymap(
             wl_keyboard::KeymapFormat::XkbV1,
-            fd,
+            unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) },
             input.i_xkb_keymap_name.as_bytes().len() as u32,
         );
         // Advertise the server repeat capabilities. This is needed

@@ -46,11 +46,11 @@ impl ws::Dispatch<wl_output::WlOutput, ()> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        resource: ws::backend::ObjectId,
+        resource: &wl_output::WlOutput,
         data: &(),
     ) {
         // keep all of the outputs except this one
-        state.c_outputs.retain(|o| o.id() != resource);
+        state.c_outputs.retain(|o| o.id() != resource.id());
     }
 }
 

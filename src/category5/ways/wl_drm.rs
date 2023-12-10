@@ -127,7 +127,7 @@ impl ws::Dispatch<wl_drm::WlDrm, ()> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wl_drm::WlDrm,
         data: &(),
     ) {
     }

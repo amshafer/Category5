@@ -69,7 +69,7 @@ impl ws::Dispatch<wl_subcompositor::WlSubcompositor, ()> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wl_subcompositor::WlSubcompositor,
         data: &(),
     ) {
     }
@@ -94,7 +94,7 @@ impl ws::Dispatch<wl_subsurface::WlSubsurface, Arc<Mutex<SubSurface>>> for Clima
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wl_subsurface::WlSubsurface,
         data: &Arc<Mutex<SubSurface>>,
     ) {
     }

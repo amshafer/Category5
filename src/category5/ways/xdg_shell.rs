@@ -58,7 +58,7 @@ impl ws::Dispatch<xdg_wm_base::XdgWmBase, ()> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &xdg_wm_base::XdgWmBase,
         data: &(),
     ) {
     }
@@ -151,7 +151,7 @@ impl ws::Dispatch<xdg_surface::XdgSurface, Arc<Mutex<ShellSurface>>> for Climate
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &xdg_surface::XdgSurface,
         data: &Arc<Mutex<ShellSurface>>,
     ) {
     }
@@ -721,7 +721,7 @@ impl ws::Dispatch<xdg_toplevel::XdgToplevel, Arc<Mutex<ShellSurface>>> for Clima
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &xdg_toplevel::XdgToplevel,
         data: &Arc<Mutex<ShellSurface>>,
     ) {
     }
@@ -873,7 +873,7 @@ impl ws::Dispatch<xdg_positioner::XdgPositioner, Arc<Mutex<Positioner>>> for Cli
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &xdg_positioner::XdgPositioner,
         data: &Arc<Mutex<Positioner>>,
     ) {
     }
@@ -1036,7 +1036,7 @@ impl ws::Dispatch<xdg_popup::XdgPopup, Arc<Mutex<ShellSurface>>> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &xdg_popup::XdgPopup,
         data: &Arc<Mutex<ShellSurface>>,
     ) {
     }

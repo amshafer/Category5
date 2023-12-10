@@ -37,7 +37,7 @@ impl ws::Dispatch<wl_region::WlRegion, Arc<Mutex<Region>>> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wl_region::WlRegion,
         data: &Arc<Mutex<Region>>,
     ) {
     }

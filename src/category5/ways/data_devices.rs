@@ -48,7 +48,7 @@ impl ws::Dispatch<wlddm::WlDataDeviceManager, ()> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wlddm::WlDataDeviceManager,
         data: &(),
     ) {
     }
@@ -71,7 +71,7 @@ impl ws::Dispatch<wlddv::WlDataDevice, ()> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wlddv::WlDataDevice,
         data: &(),
     ) {
     }
@@ -94,7 +94,7 @@ impl ws::Dispatch<wlds::WlDataSource, ()> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wlds::WlDataSource,
         data: &(),
     ) {
     }

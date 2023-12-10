@@ -11,11 +11,11 @@ dakota={path="dakota", features=["direct2display"]}
 lluvia={path="lluvia"}
 # As of wayland-rs v0.30 we specify the system library feature
 # for the wayland-backend crate and all others will inherit it
-wayland-backend={version="0.1.1", features=["server_system", "dlopen"]}
-wayland-server="0.30"
-wayland-scanner="0.30"
-wayland-protocols={version="0.30", features=["server", "unstable"]}
-wayland-sys="0.30"
+wayland-backend={version="0.3.2", features=["server_system", "dlopen"]}
+wayland-server="0.31"
+wayland-scanner="0.31"
+wayland-protocols={version="0.31", features=["server", "unstable"]}
+wayland-sys="0.31"
 libc="0.2"
 image="0.23.14"
 nix="0.26"

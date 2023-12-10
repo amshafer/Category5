@@ -59,7 +59,7 @@ impl ws::Dispatch<wl_pointer::WlPointer, ()> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wl_pointer::WlPointer,
         data: &(),
     ) {
     }

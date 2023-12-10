@@ -67,7 +67,7 @@ impl ws::Dispatch<wl_shm::WlShm, ()> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wl_shm::WlShm,
         data: &(),
     ) {
     }
@@ -135,7 +135,7 @@ impl ws::Dispatch<wl_shm_pool::WlShmPool, Arc<Mutex<ShmRegion>>> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wl_shm_pool::WlShmPool,
         data: &Arc<Mutex<ShmRegion>>,
     ) {
     }
@@ -283,7 +283,7 @@ impl ws::Dispatch<wl_buffer::WlBuffer, Arc<ShmBuffer>> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wl_buffer::WlBuffer,
         data: &Arc<ShmBuffer>,
     ) {
         // don't close shm fd here since it is handled in Drop

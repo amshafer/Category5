@@ -25,7 +25,7 @@ impl ws::Dispatch<wl_keyboard::WlKeyboard, ()> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wl_keyboard::WlKeyboard,
         data: &(),
     ) {
     }

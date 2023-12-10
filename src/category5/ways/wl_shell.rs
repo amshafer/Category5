@@ -68,7 +68,7 @@ impl ws::Dispatch<wl_shell::WlShell, ()> for Climate {
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wl_shell::WlShell,
         data: &(),
     ) {
     }
@@ -105,7 +105,7 @@ impl ws::Dispatch<wl_shell_surface::WlShellSurface, Arc<Mutex<ShellSurface>>> fo
     fn destroyed(
         state: &mut Self,
         _client: ws::backend::ClientId,
-        _resource: ws::backend::ObjectId,
+        _resource: &wl_shell_surface::WlShellSurface,
         data: &Arc<Mutex<ShellSurface>>,
     ) {
     }
