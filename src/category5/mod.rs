@@ -27,20 +27,11 @@ use ws::protocol::{
 use std::ops::DerefMut;
 use std::os::unix::io::AsRawFd;
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 // The category5 compositor
-//
-// This is the top layer of the storm
-// Instead of holding subsystem structures, it holds
-// thread handles that the subsystems are running in.
 #[allow(dead_code)]
 pub struct Category5 {
-    // The wayland subsystem
-    //
-    // Category5 - Graphical desktop compositor
-    // ways::Compositor - wayland protocol compositor object
-    c5_wc: Option<thread::JoinHandle<()>>,
+    c5_ev: EventManager,
 }
 
 impl Category5 {
@@ -51,22 +42,14 @@ impl Category5 {
             // Get the wayland compositor
             // Note that the wayland compositor + vulkan renderer
             // is the complete compositor
-            c5_wc: Some(
-                thread::Builder::new()
-                    .name("wayland_compositor".to_string())
-                    .spawn(|| {
-                        let mut ev = EventManager::new();
-                        ev.worker_thread();
-                    })
-                    .unwrap(),
-            ),
+            c5_ev: EventManager::new(),
         }
     }
 
     // This is the main loop of the entire system
     // We just wait for the other threads
     pub fn run_forever(&mut self) {
-        self.c5_wc.take().unwrap().join().ok();
+        self.c5_ev.worker_thread();
     }
 }
 
@@ -151,7 +134,7 @@ impl EventManager {
     ///
     /// This kicks off the global callback chain, starting with
     ///    Compositor::bind_compositor_callback
-    pub fn new() -> Box<EventManager> {
+    pub fn new() -> EventManager {
         let display = ws::Display::new().expect("Could not create wayland display");
         let display_handle = display.handle();
 
@@ -162,13 +145,13 @@ impl EventManager {
             state.c_atmos.lock().unwrap().deref_mut(),
         );
 
-        let evman = Box::new(EventManager {
+        let evman = EventManager {
             em_wm: wm,
             em_climate: state,
             em_display: display,
             em_socket: ws::ListeningSocket::bind_auto("wayland", 0..9)
                 .expect("Could not create wayland socket"),
-        });
+        };
 
         // Register our global interfaces that will be advertised to all clients
         // --------------------------

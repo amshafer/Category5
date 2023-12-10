@@ -151,6 +151,8 @@ impl CommitState {
     /// the system, resetting the state in the process. Any child states
     /// will also be applied at this time.
     pub fn commit(&mut self, atmos: &mut Atmosphere) {
+        log::debug!("Committing state for surface {:?}", self.cs_id.get_raw_id());
+
         // ----- Update our surface size -----
         // We need to update wm if a new buffer was attached. This includes getting
         // the userdata and sending messages to update window contents.
