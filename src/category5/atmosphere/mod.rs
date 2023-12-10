@@ -9,7 +9,7 @@
 
 // Austin Shafer - 2020
 extern crate wayland_server as ws;
-use ws::protocol::wl_surface;
+use ws::protocol::{wl_callback, wl_surface};
 extern crate paste;
 use paste::paste;
 
@@ -19,7 +19,7 @@ extern crate lluvia as ll;
 mod skiplist;
 
 use crate::category5::vkcomp::wm;
-use crate::category5::ways::{seat::Seat, surface::*};
+use crate::category5::ways::{seat::Seat, surface::*, wl_region::Region};
 use utils::log;
 
 use std::collections::VecDeque;
@@ -155,6 +155,17 @@ pub struct Atmosphere {
     pub a_surface_damage: ll::Component<dak::Damage>,
     /// Damage to the buffer from wayland events
     pub a_buffer_damage: ll::Component<dak::Damage>,
+    /// Frame throttling callbacks
+    ///
+    /// These will be signaled on the next draw point so the
+    /// surface can commit new contents
+    pub a_frame_callbacks: ll::Component<Vec<wl_callback::WlCallback>>,
+    /// The opaque region.
+    /// vkcomp can optimize displaying this region
+    pub a_opaque_region: ll::Component<Arc<Mutex<Region>>>,
+    /// The input region.
+    /// Input events will only be delivered if this region is in focus
+    pub a_input_region: ll::Component<Arc<Mutex<Region>>>,
 }
 
 // Implement getters/setters for our global properties
@@ -231,6 +242,9 @@ impl Atmosphere {
             a_wl_surface: surf_ecs.add_component(),
             a_surface_damage: surf_ecs.add_component(),
             a_buffer_damage: surf_ecs.add_component(),
+            a_frame_callbacks: surf_ecs.add_component(),
+            a_opaque_region: surf_ecs.add_component(),
+            a_input_region: surf_ecs.add_component(),
             a_surface_ecs: surf_ecs,
         }
     }
@@ -507,10 +521,8 @@ impl Atmosphere {
         log::debug!("Sending frame callbacks for Surf {:?}", id);
         // get each valid id in the mapping
         // get the refcell for the surface for this id
-        if let Some(cell) = self.a_surface.get(id) {
-            let mut surf = cell.lock().unwrap();
-            let cbs = std::mem::take(&mut surf.s_frame_callbacks);
-            for callback in cbs.iter() {
+        if let Some(mut cbs) = self.a_frame_callbacks.get_mut(id) {
+            for callback in cbs.drain(0..) {
                 // frame callbacks are signaled in the order that they
                 // were submitted in
                 log::debug!("Firing frame callback {:?}", callback);

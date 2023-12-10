@@ -283,40 +283,37 @@ impl Atmosphere {
         self.map_inorder_on_surfs(|win| {
             log::info!("checking window {:?}", win.get_raw_id());
             // We need to get t
-            if let Some(surf_cell) = self.get_surface_from_id(&win) {
-                let surf = surf_cell.lock().unwrap();
-                let (wx, wy) = *self.a_surface_pos.get(&win).unwrap();
+            let (wx, wy) = *self.a_surface_pos.get(&win).unwrap();
 
-                if let Some(input_region) = surf.s_input.as_ref() {
-                    // Adjust for offsetting into the desktop
-                    let (x, y) = self.get_adjusted_desktop_coord(x, y);
-                    log::info!(
-                        "Checking input region {:?} against {:?}",
-                        input_region,
-                        ((x - wx) as i32, (y - wy) as i32)
-                    );
-                    // Get the adjusted position of the input region
-                    // based on the surface's position.
-                    // The wl_region::Region doesn't track this, so
-                    // our (ugly) hack for this is to reduce (x, y)
-                    // by the position of the window, instead of scaling
-                    // every Rect in the Region up by that amount
-                    if input_region
-                        .lock()
-                        .unwrap()
-                        .intersects((x - wx) as i32, (y - wy) as i32)
-                    {
-                        ret = Some(win);
-                        return false;
-                    }
-                } else {
-                    // TODO: VERIFY
-                    // If the window does not have an attached input region,
-                    // then we need to check against the entire surface area.
-                    if self.surface_is_at_point(&win, x, y) {
-                        ret = Some(win);
-                        return false;
-                    }
+            if let Some(input_region) = self.a_input_region.get(&win) {
+                // Adjust for offsetting into the desktop
+                let (x, y) = self.get_adjusted_desktop_coord(x, y);
+                log::info!(
+                    "Checking input region {:?} against {:?}",
+                    *input_region,
+                    ((x - wx) as i32, (y - wy) as i32)
+                );
+                // Get the adjusted position of the input region
+                // based on the surface's position.
+                // The wl_region::Region doesn't track this, so
+                // our (ugly) hack for this is to reduce (x, y)
+                // by the position of the window, instead of scaling
+                // every Rect in the Region up by that amount
+                if input_region
+                    .lock()
+                    .unwrap()
+                    .intersects((x - wx) as i32, (y - wy) as i32)
+                {
+                    ret = Some(win);
+                    return false;
+                }
+            } else {
+                // TODO: VERIFY
+                // If the window does not have an attached input region,
+                // then we need to check against the entire surface area.
+                if self.surface_is_at_point(&win, x, y) {
+                    ret = Some(win);
+                    return false;
                 }
             }
             return true;

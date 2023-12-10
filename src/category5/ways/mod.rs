@@ -63,7 +63,7 @@ mod shm;
 pub mod surface;
 mod wl_drm;
 mod wl_output;
-mod wl_region;
+pub mod wl_region;
 mod wl_shell;
 mod wl_subcompositor;
 pub mod xdg_shell;

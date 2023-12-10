@@ -55,6 +55,208 @@ impl ws::Dispatch<wlsi::WlSurface, Arc<Mutex<Surface>>> for Climate {
     }
 }
 
+/// State of a wl_surface
+///
+/// wl_surface works by receiving a number of requests and setting some
+/// double buffered state as a result of it. This state is then atomically
+/// applied at commit time. There may be some reasons that we want to delay
+/// applying state, such as a synchronized subsurface whose parent has not
+/// yet committed, or when we are waiting for explicit synchronization.
+///
+/// This struct holds all surface state and provides a way to commit
+/// it when requested. The surface protocol handling code will populate
+/// this and commit it at the appropriate time.
+pub struct CommitState {
+    /// ECS id of the surface this represents
+    pub cs_id: SurfaceId,
+    /// The current wl_buffer defining the contents of this surface.
+    pub cs_buffer: Option<wl_buffer::WlBuffer>,
+    /// Frame callback
+    /// This is a power saving feature, we will signal this when the
+    /// client should redraw this surface
+    pub cs_frame_callbacks: Vec<wl_callback::WlCallback>,
+    /// The opaque region.
+    /// vkcomp can optimize displaying this region
+    pub cs_opaque: Option<Arc<Mutex<Region>>>,
+    /// The input region.
+    /// Input events will only be delivered if this region is in focus
+    pub cs_input: Option<Arc<Mutex<Region>>>,
+    /// Arrays of damage for this image. This will eventually
+    /// be propogated to dakota
+    pub cs_surf_damage: dak::Damage,
+    /// Damage in buffer coordinates.
+    pub cs_damage: dak::Damage,
+    /// Surface position change from attach/offset
+    cs_attached_xy: Option<(i32, i32)>,
+}
+
+impl CommitState {
+    fn new(id: SurfaceId) -> Self {
+        Self {
+            cs_id: id,
+            cs_buffer: None,
+            cs_frame_callbacks: Vec::with_capacity(1),
+            cs_opaque: None,
+            cs_input: None,
+            cs_surf_damage: dak::Damage::empty(),
+            cs_damage: dak::Damage::empty(),
+            cs_attached_xy: None,
+        }
+    }
+
+    /// Clone a copy of this state and reset it
+    ///
+    /// This clones a new copy of this state as-is, but clears out
+    /// any fields that don't persist.
+    pub fn clone_refresh(&mut self) -> Self {
+        let mut frame_callbacks = Vec::with_capacity(1);
+        std::mem::swap(&mut frame_callbacks, &mut self.cs_frame_callbacks);
+
+        let mut surf_damage = dak::Damage::empty();
+        std::mem::swap(&mut surf_damage, &mut self.cs_surf_damage);
+        let mut damage = dak::Damage::empty();
+        std::mem::swap(&mut damage, &mut self.cs_damage);
+
+        Self {
+            cs_id: self.cs_id.clone(),
+            cs_buffer: self.cs_buffer.clone(),
+            cs_frame_callbacks: frame_callbacks,
+            cs_opaque: self.cs_opaque.clone(),
+            cs_input: self.cs_input.clone(),
+            cs_surf_damage: surf_damage,
+            cs_damage: damage,
+            cs_attached_xy: self.cs_attached_xy.take(),
+        }
+    }
+
+    /// Commit this state
+    ///
+    /// This actually does all the work to apply the state info to
+    /// the system, resetting the state in the process. Any child states
+    /// will also be applied at this time.
+    pub fn commit(&mut self, atmos: &mut Atmosphere) {
+        // We need to update wm if a new buffer was attached. This includes getting
+        // the userdata and sending messages to update window contents.
+        //
+        // Once the attached buffer is committed, the logic unifies again: the surface
+        // size is obtained (either from the new buf or from atmos) and we can start
+        // calling down the chain to xdg/wl_subcompositor/wl_shell
+        let surf_size = if let Some(buf) = self.cs_buffer.take() {
+            // Add tasks that tell the compositor to import this buffer
+            // so it is usable in vulkan. Also return the size of the buffer
+            // so we can set the surface size
+            if let Some(dmabuf) = buf.data::<Arc<Dmabuf>>() {
+                atmos.add_wm_task(wm::task::Task::update_window_contents_from_dmabuf(
+                    self.cs_id.clone(), // ID of the new window
+                    dmabuf.clone(),     // fd of the gpu buffer
+                    // pass the WlBuffer so it can be released
+                    buf.clone(),
+                ));
+                (dmabuf.db_width as f32, dmabuf.db_height as f32)
+            } else if let Some(shm_buf) = buf.data::<Arc<ShmBuffer>>() {
+                // ShmBuffer holds the base pointer and an offset, so
+                // we need to get the actual pointer, which will be
+                // wrapped in a MemImage
+                let fb = shm_buf.get_mem_image();
+
+                atmos.add_wm_task(wm::task::Task::update_window_contents_from_mem(
+                    self.cs_id.clone(), // ID of the new window
+                    fb,                 // memimage of the contents
+                    // pass the WlBuffer so it can be released
+                    buf.clone(),
+                    // window dimensions
+                    shm_buf.sb_width as usize,
+                    shm_buf.sb_height as usize,
+                ));
+                (shm_buf.sb_width as f32, shm_buf.sb_height as f32)
+            } else {
+                panic!("Could not find dmabuf or shmbuf private data for wl_buffer");
+            }
+        } else {
+            *atmos.a_surface_size.get(&self.cs_id).unwrap()
+        };
+        atmos.a_surface_size.set(&self.cs_id, surf_size);
+
+        // Commit our frame callbacks
+        if self.cs_frame_callbacks.len() > 0 {
+            log::debug!(
+                "Surface {:?} New frame callbacks = {:?}",
+                self.cs_id.get_raw_id(),
+                self.cs_frame_callbacks
+            );
+
+            if atmos.a_frame_callbacks.get_mut(&self.cs_id).is_none() {
+                atmos
+                    .a_frame_callbacks
+                    .set(&self.cs_id, Vec::with_capacity(1));
+            }
+
+            // Extend the existing list of callbacks to signal
+            let mut cbs = atmos.a_frame_callbacks.get_mut(&self.cs_id).unwrap();
+            cbs.extend_from_slice(self.cs_frame_callbacks.as_slice());
+            self.cs_frame_callbacks.clear();
+        }
+
+        // ------ Update damage regions -----
+        if !self.cs_surf_damage.is_empty() {
+            let mut nd = dak::Damage::empty();
+            std::mem::swap(&mut self.cs_surf_damage, &mut nd);
+            log::debug!("Setting surface damage of {:?} to {:?}", self.cs_id, nd);
+            atmos.a_surface_damage.set(&self.cs_id, nd);
+        }
+        if !self.cs_damage.is_empty() {
+            let mut nd = dak::Damage::empty();
+            std::mem::swap(&mut self.cs_damage, &mut nd);
+            log::debug!("Setting buffer damage of {:?} to {:?}", self.cs_id, nd);
+            atmos.a_buffer_damage.set(&self.cs_id, nd);
+        }
+
+        // ------ Update input/opaque regions -----
+        if let Some(reg) = self.cs_opaque.take() {
+            log::debug!("Setting opaque region of {:?} to {:?}", self.cs_id, reg);
+            atmos.a_opaque_region.set(&self.cs_id, reg);
+        }
+        if let Some(reg) = self.cs_input.take() {
+            log::debug!("Setting input region of {:?} to {:?}", self.cs_id, reg);
+            atmos.a_input_region.set(&self.cs_id, reg);
+        }
+
+        // Move our surfaces position if requested
+        //
+        // The surface attach and offset functions allow for changing the top
+        // left corner of the surface.
+        if let Some((x, y)) = self.cs_attached_xy.take() {
+            log::debug!("Surface requested move of {:?}", (x, y));
+            {
+                let mut pos = atmos.a_surface_pos.get_mut(&self.cs_id).unwrap();
+                pos.0 += x as f32;
+                pos.1 += y as f32;
+            }
+            // According to the spec we subtract the change from the cursor
+            // hotspot to adjust the cursor position
+            //
+            // Only update this if we are the surface in focus, otherwise this will
+            // offset the cursor for another surface
+            if atmos.get_cursor_surface().map(|e| e.get_raw_id()) == Some(self.cs_id.get_raw_id()) {
+                let hotspot = atmos.get_cursor_hotspot();
+                log::debug!("original hotspot {:?}", hotspot);
+                atmos.set_cursor_hotspot((hotspot.0 - x, hotspot.1 - y));
+                log::debug!("new hotspot {:?}", (hotspot.0 - x, hotspot.1 - y,));
+            }
+        }
+
+        // update the surface size of this id so that vkcomp knows what
+        // size of buffer it is compositing
+        let _win_size = atmos.a_window_size.get(&self.cs_id).map(|ws| *ws);
+        log::debug!(
+            "surf {:?}: new sizes are winsize={:?} surfsize={:?}",
+            self.cs_id,
+            _win_size,
+            surf_size,
+        );
+    }
+}
+
 /// Private structure for a wayland surface
 ///
 /// A surface represents a visible area on screen. Desktop organization
@@ -64,37 +266,12 @@ impl ws::Dispatch<wlsi::WlSurface, Arc<Mutex<Surface>>> for Climate {
 #[allow(dead_code)]
 pub struct Surface {
     pub s_id: SurfaceId, // The id of the window in the renderer
-    /// The currently attached buffer. Will be displayed on commit
-    /// When the window is created a buffer is not assigned, hence the option
-    s_attached_buffer: Option<wl_buffer::WlBuffer>,
-    /// the s_attached_buffer is moved here to signify that we can draw
-    /// with it.
-    pub s_committed_buffer: Option<wl_buffer::WlBuffer>,
-    /// Frame callback
-    /// This is a power saving feature, we will signal this when the
-    /// client should redraw this surface
-    pub s_attached_frame_callbacks: Vec<wl_callback::WlCallback>,
-    pub s_frame_callbacks: Vec<wl_callback::WlCallback>,
+    /// Our current pending state
+    pub s_state: CommitState,
     /// How this surface is being used
     pub s_role: Option<Role>,
-    /// Are we currently committing this surface?
-    pub s_commit_in_progress: bool,
-    /// The opaque region.
-    /// vkcomp can optimize displaying this region
-    pub s_opaque: Option<Arc<Mutex<Region>>>,
-    /// The input region.
-    /// Input events will only be delivered if this region is in focus
-    pub s_input: Option<Arc<Mutex<Region>>>,
-    /// Arrays of damage for this image. This will eventually
-    /// be propogated to dakota
-    pub s_surf_damage: dak::Damage,
-    /// Buffer damage,
-    pub s_damage: dak::Damage,
     /// Validates that we cleaned this surf up correctly
     s_is_destroyed: bool,
-    /// Surface position change from attach
-    /// This is only used for cursor surfaces
-    s_attached_xy: (i32, i32),
 }
 
 impl Surface {
@@ -102,19 +279,10 @@ impl Surface {
     // from the specified wayland resource
     pub fn new(id: SurfaceId) -> Surface {
         Surface {
-            s_id: id,
-            s_attached_buffer: None,
-            s_committed_buffer: None,
-            s_attached_frame_callbacks: Vec::new(),
-            s_frame_callbacks: Vec::new(),
+            s_id: id.clone(),
             s_role: None,
-            s_opaque: None,
-            s_input: None,
-            s_commit_in_progress: false,
-            s_surf_damage: dak::Damage::empty(),
-            s_damage: dak::Damage::empty(),
             s_is_destroyed: false,
-            s_attached_xy: (0, 0),
+            s_state: CommitState::new(id),
         }
     }
 
@@ -146,7 +314,9 @@ impl Surface {
                 width,
                 height,
             } => {
-                self.s_surf_damage.add(&dak::Rect::new(x, y, width, height));
+                self.s_state
+                    .cs_surf_damage
+                    .add(&dak::Rect::new(x, y, width, height));
             }
             wlsi::Request::DamageBuffer {
                 x,
@@ -154,22 +324,24 @@ impl Surface {
                 width,
                 height,
             } => {
-                self.s_damage.add(&dak::Rect::new(x, y, width, height));
+                self.s_state
+                    .cs_damage
+                    .add(&dak::Rect::new(x, y, width, height));
             }
             wlsi::Request::SetOpaqueRegion { region } => {
-                self.s_opaque = self.get_priv_from_region(region);
+                self.s_state.cs_opaque = self.get_priv_from_region(region);
                 log::debug!(
                     "Surface {:?}: Attaching opaque region {:?}",
                     self.s_id,
-                    self.s_opaque
+                    self.s_state.cs_opaque
                 );
             }
             wlsi::Request::SetInputRegion { region } => {
-                self.s_input = self.get_priv_from_region(region);
+                self.s_state.cs_input = self.get_priv_from_region(region);
                 log::debug!(
                     "Surface {:?}: Attaching input region {:?}",
                     self.s_id,
-                    self.s_input
+                    self.s_state.cs_input
                 );
             }
             wlsi::Request::Frame { callback } => {
@@ -190,7 +362,7 @@ impl Surface {
                     panic!("Non-normal Buffer transformation is not implemented");
                 }
             }
-            wlsi::Request::Offset { x, y } => self.s_attached_xy = (x, y),
+            wlsi::Request::Offset { x, y } => self.s_state.cs_attached_xy = Some((x, y)),
             _ => unimplemented!(),
         }
     }
@@ -207,9 +379,9 @@ impl Surface {
         x: i32,
         y: i32,
     ) {
-        self.s_attached_buffer = buf;
+        self.s_state.cs_buffer = buf;
         // stash x/y for the cursor position change
-        self.s_attached_xy = (x, y);
+        self.s_state.cs_attached_xy = Some((x, y));
     }
 
     /// Commit the current surface configuration to
@@ -239,7 +411,6 @@ impl Surface {
 
         // Before we commit ourselves, we need to
         // commit any subsurfaces available
-        self.s_commit_in_progress = true;
         // we need to collect the ids so that atmos won't be borrowed when
         // we recursively call commit below
         let subsurfaces: Vec<_> = atmos.visible_subsurfaces(&self.s_id).collect();
@@ -250,117 +421,10 @@ impl Surface {
             }
         }
 
-        // We need to update wm if a new buffer was attached. This includes getting
-        // the userdata and sending messages to update window contents.
-        //
-        // Once the attached buffer is committed, the logic unifies again: the surface
-        // size is obtained (either from the new buf or from atmos) and we can start
-        // calling down the chain to xdg/wl_subcompositor/wl_shell
-        let surf_size = if self.s_attached_buffer.is_some() {
-            // now we can commit the attached state
-            self.s_committed_buffer = self.s_attached_buffer.take();
-
-            // We need to do different things depending on the
-            // type of buffer attached. We detect the type by
-            // trying to extract different types of userdat
-            let buf = self.s_committed_buffer.as_ref().unwrap();
-
-            // Add tasks that tell the compositor to import this buffer
-            // so it is usable in vulkan. Also return the size of the buffer
-            // so we can set the surface size
-            if let Some(dmabuf) = buf.data::<Arc<Dmabuf>>() {
-                atmos.add_wm_task(wm::task::Task::update_window_contents_from_dmabuf(
-                    self.s_id.clone(), // ID of the new window
-                    dmabuf.clone(),    // fd of the gpu buffer
-                    // pass the WlBuffer so it can be released
-                    self.s_committed_buffer.as_ref().unwrap().clone(),
-                ));
-                (dmabuf.db_width as f32, dmabuf.db_height as f32)
-            } else if let Some(shm_buf) = buf.data::<Arc<ShmBuffer>>() {
-                // ShmBuffer holds the base pointer and an offset, so
-                // we need to get the actual pointer, which will be
-                // wrapped in a MemImage
-                let fb = shm_buf.get_mem_image();
-
-                atmos.add_wm_task(wm::task::Task::update_window_contents_from_mem(
-                    self.s_id.clone(), // ID of the new window
-                    fb,                // memimage of the contents
-                    // pass the WlBuffer so it can be released
-                    self.s_committed_buffer.as_ref().unwrap().clone(),
-                    // window dimensions
-                    shm_buf.sb_width as usize,
-                    shm_buf.sb_height as usize,
-                ));
-                (shm_buf.sb_width as f32, shm_buf.sb_height as f32)
-            } else {
-                panic!("Could not find dmabuf or shmbuf private data for wl_buffer");
-            }
-        } else {
-            *atmos.a_surface_size.get(&self.s_id).unwrap()
-        };
-
-        // Commit our frame callbacks
-        // move the callback list from attached to the current callback list
-        self.s_frame_callbacks
-            .extend_from_slice(self.s_attached_frame_callbacks.as_slice());
-        self.s_attached_frame_callbacks.clear();
-        log::debug!(
-            "Surface {:?} New frame callbacks = {:?}",
-            self.s_id.get_raw_id(),
-            self.s_frame_callbacks
-        );
-        atmos.a_surface_size.set(&self.s_id, surf_size);
-
-        if !self.s_surf_damage.is_empty() {
-            let mut nd = dak::Damage::empty();
-            std::mem::swap(&mut self.s_surf_damage, &mut nd);
-            log::debug!("Setting surface damage of {:?} to {:?}", self.s_id, nd);
-            atmos.a_surface_damage.set(&self.s_id, nd);
-        }
-        if !self.s_damage.is_empty() {
-            let mut nd = dak::Damage::empty();
-            std::mem::swap(&mut self.s_damage, &mut nd);
-            log::debug!("Setting buffer damage of {:?} to {:?}", self.s_id, nd);
-            atmos.a_buffer_damage.set(&self.s_id, nd);
-        }
-
-        // Move our surfaces position if requested
-        //
-        // The surface attach and offset functions allow for changing the top
-        // left corner of the surface.
-        if self.s_attached_xy.0 != 0 || self.s_attached_xy.1 != 0 {
-            log::debug!("Surface requested move of {:?}", self.s_attached_xy);
-            {
-                let mut pos = atmos.a_surface_pos.get_mut(&self.s_id).unwrap();
-                pos.0 += self.s_attached_xy.0 as f32;
-                pos.1 += self.s_attached_xy.1 as f32;
-            }
-            // According to the spec we subtract the change from the cursor
-            // hotspot to adjust the cursor position
-            //
-            // Only update this if we are the surface in focus, otherwise this will
-            // offset the cursor for another surface
-            if atmos.get_cursor_surface().map(|e| e.get_raw_id()) == Some(self.s_id.get_raw_id()) {
-                if let Some(Role::cursor) = &self.s_role {
-                    let hotspot = atmos.get_cursor_hotspot();
-                    log::debug!("original hotspot {:?}", hotspot);
-                    atmos.set_cursor_hotspot((
-                        hotspot.0 - self.s_attached_xy.0,
-                        hotspot.1 - self.s_attached_xy.1,
-                    ));
-                    log::debug!(
-                        "new hotspot {:?}",
-                        (
-                            hotspot.0 - self.s_attached_xy.0,
-                            hotspot.1 - self.s_attached_xy.1
-                        )
-                    );
-                }
-            }
-            self.s_attached_xy = (0, 0);
-        }
+        self.s_state.commit(atmos);
 
         // Commit any role state before we update window bits
+        let surf_size = *atmos.a_surface_size.get(&self.s_id).unwrap();
         match &self.s_role {
             Some(Role::xdg_shell_toplevel(_, xs)) => xs.lock().unwrap().commit(&self, atmos),
             Some(Role::xdg_shell_popup(xs)) => xs.lock().unwrap().commit(&self, atmos),
@@ -370,23 +434,9 @@ impl Surface {
             // if we don't have an assigned role, avoid doing
             // any real work
             None => {
-                self.s_commit_in_progress = false;
                 return;
             }
         }
-
-        // update the surface size of this id so that vkcomp knows what
-        // size of buffer it is compositing
-        let _win_size = atmos.a_window_size.get(&self.s_id).map(|ws| *ws);
-        log::debug!(
-            "surf {:?}: new sizes are winsize={:?} surfsize={:?}",
-            self.s_id,
-            _win_size,
-            surf_size,
-        );
-
-        // Make sure to unmark this before returning
-        self.s_commit_in_progress = false;
     }
 
     // Register a frame callback
@@ -403,7 +453,7 @@ impl Surface {
             self.s_id,
             callback
         );
-        self.s_attached_frame_callbacks.push(callback);
+        self.s_state.cs_frame_callbacks.push(callback);
     }
 
     // Destroy this surface
