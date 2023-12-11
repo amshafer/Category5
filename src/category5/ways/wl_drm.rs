@@ -106,6 +106,7 @@ impl ws::GlobalDispatch<wl_drm::WlDrm, ()> for Climate {
         log::error!("DRM device returned by wl_drm is {}", drm_name);
 
         wl_drm.device(drm_name);
+        wl_drm.capabilities(wl_drm::Capability::Prime.into())
     }
 }
 
