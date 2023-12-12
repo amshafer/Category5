@@ -80,14 +80,6 @@ struct Titlebar {
 pub struct App {
     /// This id uniquely identifies the App
     a_id: SurfaceId,
-    /// Because the images for imagees are used for both
-    /// buffers in a double buffer system, when an App is
-    /// deleted we need to avoid recording it in the next
-    /// frame's cbuf.
-    ///
-    /// When this flag is set, the we will not be recorded
-    /// and will instead be destroyed
-    a_marked_for_death: bool,
     /// This is the set of geometric objects in the application
     a_surf: DakotaId,
     /// The image attached to `a_surf`
@@ -129,10 +121,6 @@ pub struct WindowManager {
     /// This is a Dakota element that represents the region where all client windows
     /// are laid out.
     wm_desktop: DakotaId,
-    /// These are the surfaces that have been removed, and need their resources
-    /// torn down. We keep this in a separate array so that we don't have to
-    /// rescan the entire surface list every time we check for dead windows.
-    wm_will_die: Vec<SurfaceId>,
     /// This is the set of applications in this scene
     wm_apps: ll::Component<App>,
     /// Image representing the software cursor
@@ -378,7 +366,6 @@ impl WindowManager {
             wm_datetime: datetime,
             wm_desktop: desktop,
             wm_apps: atmos.a_surface_ecs.add_component(),
-            wm_will_die: Vec::new(),
             wm_atmos_ids: Vec::new(),
             #[cfg(feature = "renderdoc")]
             wm_renderdoc: doc,
@@ -460,7 +447,6 @@ impl WindowManager {
             id,
             App {
                 a_id: id.clone(),
-                a_marked_for_death: false,
                 a_surf: surf,
                 a_image: None,
                 a_ssd: None,
@@ -644,36 +630,20 @@ impl WindowManager {
         log::debug!("Closing window {:?}", id);
 
         {
-            let mut app = self
-                .wm_apps
-                .get_mut(id)
-                .ok_or(anyhow!("Could not ifnd app for surface"))?;
-            app.a_marked_for_death = true;
-        }
-
-        let app = self.wm_apps.get(id).unwrap();
-        // remove this surface in case it is a toplevel window
-        dakota.remove_child_from_element(&self.wm_desktop, &app.a_surf)?;
-        // If this is a subsurface, remove it from its parent
-        if let Some(parent) = atmos.a_parent_window.get_clone(id) {
-            let parent_app = self.wm_apps.get(&parent).unwrap();
-            dakota.remove_child_from_element(&parent_app.a_surf, &app.a_surf)?;
-        }
-        self.wm_will_die.push(id.clone());
-
-        Ok(())
-    }
-
-    /// Remove any apps marked for death. Usually we can't remove
-    /// a window immediately because its image(s) are still being
-    /// used by thundr
-    fn reap_dead_windows(&mut self) {
-        // Only retain alive windows in the array
-        for id in self.wm_will_die.drain(..) {
-            if let Some(app) = self.wm_apps.get(&id) {
-                assert!(app.a_marked_for_death);
+            let app = self.wm_apps.get(id).unwrap();
+            // remove this surface in case it is a toplevel window
+            dakota.remove_child_from_element(&self.wm_desktop, &app.a_surf)?;
+            // If this is a subsurface, remove it from its parent
+            if let Some(parent) = atmos.a_parent_window.get_clone(id) {
+                if let Some(parent_app) = self.wm_apps.get(&parent) {
+                    dakota.remove_child_from_element(&parent_app.a_surf, &app.a_surf)?;
+                }
             }
         }
+
+        self.wm_apps.take(id);
+
+        Ok(())
     }
 
     /// Move the window to the front of the scene
@@ -964,12 +934,6 @@ impl WindowManager {
                 .as_str(),
             );
 
-            // If this window has been closed or if it is not ready for
-            // rendering, ignore it
-            if a.a_marked_for_death {
-                return;
-            }
-
             // get parameters
             // ----------------------------------------------------------------
             let surface_pos = *atmos.a_surface_pos.get(&a.a_id).unwrap();
@@ -1076,7 +1040,6 @@ impl WindowManager {
             self.wm_renderdoc
                 .end_frame_capture(std::ptr::null(), std::ptr::null());
         }
-        self.reap_dead_windows();
         atmos.release_consumables();
 
         log::debug!("_____________________________ FRAME END");
