@@ -89,7 +89,6 @@ pub fn xdg_wm_base_handle_request(
                 ss_xdg_toplevel: None,
                 ss_xdg_popup: None,
                 ss_cur_tlstate: TLState::empty(),
-                ss_tlconfigs: Vec::new(),
                 ss_max_size: (i32::MAX, i32::MAX),
                 ss_min_size: (1, 1),
                 ss_resize_right: false,
@@ -243,8 +242,6 @@ pub struct ShellSurface {
     // The current toplevel state
     // This will get snapshotted and recorded for each config serial
     pub ss_cur_tlstate: TLState,
-    // The list of pending configuration events
-    ss_tlconfigs: Vec<TLConfig>,
     /// The max and min sizes set by the client
     ss_max_size: (i32, i32),
     ss_min_size: (i32, i32),
@@ -300,23 +297,10 @@ impl ShellSurface {
         // Handle popup surface updates
         if let Some(popup) = self.ss_xdg_popup.as_mut() {
             popup.commit(surf, atmos);
-        } else if let Some((i, tlc)) = self
-            // find the toplevel state for the last config event acked
-            // ack the toplevel configuration
-            .ss_tlconfigs
-            .iter()
-            .enumerate()
-            // Find the config which matches this serial
-            .find(|&(_, tlc)| {
-                if tlc.tlc_serial == self.ss_last_acked {
-                    return true;
-                }
-                return false;
-            })
-        {
+        } else {
             // TODO: handle min/max/fullscreen/activated
 
-            log::debug!("xdg_surface.commit: (ev {}) vvv", tlc.tlc_serial);
+            log::debug!("xdg_surface.commit");
 
             let size = match self.ss_xs.xs_size {
                 Some((w, h)) => (w as f32, h as f32),
@@ -349,9 +333,6 @@ impl ShellSurface {
             atmos.a_window_size.set(&surf.s_id, size);
 
             self.ss_xs.xs_size = None;
-            // remove all the previous/outdated configs
-            self.ss_tlconfigs.drain(0..i);
-            log::debug!("self.ss_tlconfigs now: {:#?}", self.ss_tlconfigs);
         }
 
         // TODO: handle the other state changes
@@ -432,14 +413,14 @@ impl ShellSurface {
             } else {
                 // If we don't have the size saved then grab the latest
                 // from atmos.
-                // If we have pending configs then we should get the size
+                // If we have configured before then we should get the size
                 // of the last one and update that.
-                match self.ss_tlconfigs.len() {
-                    0 => {
+                match self.ss_cur_tlstate.tl_size {
+                    (0, 0) => {
                         let raw_size = *atmos.a_window_size.get(&surf.s_id).unwrap();
                         (raw_size.0 as i32, raw_size.1 as i32)
                     }
-                    _ => self.ss_tlconfigs[self.ss_tlconfigs.len() - 1].tlc_size,
+                    tlsize => tlsize,
                 }
             };
 
@@ -520,31 +501,7 @@ impl ShellSurface {
             }
             log::debug!("xdg_surface: sending states {:?}", states);
 
-            // insert a tlconfig representing this configure event.
-            // commit will find the latest acked tlconfig we add
-            // to this list and use its info
-            let tlc_size = self.ss_tlconfigs.len();
-            if tlc_size > 0 && *self.ss_tlconfigs[tlc_size - 1].tlc_state == self.ss_cur_tlstate {
-                // If nothing has changed, clone the previous rc
-                // instead of allocating
-                self.ss_tlconfigs.push(TLConfig::new(
-                    self.ss_serial,
-                    size.0,
-                    size.1, // width, height
-                    self.ss_tlconfigs[tlc_size - 1].tlc_state.clone(),
-                ));
-            } else {
-                self.ss_tlconfigs.push(TLConfig::new(
-                    self.ss_serial,
-                    size.0,
-                    size.1, // width, height
-                    Arc::new(self.ss_cur_tlstate),
-                ));
-            }
-            log::info!(
-                "xdg_surface: pushing config {:?}",
-                self.ss_tlconfigs[self.ss_tlconfigs.len() - 1]
-            );
+            self.ss_cur_tlstate.tl_size = (size.0, size.1);
 
             // send them to the client
             toplevel.configure(size.0 as i32, size.1 as i32, states);
@@ -808,9 +765,14 @@ pub struct TLState {
     pub tl_maximized: bool,
     pub tl_minimized: bool,
     pub tl_fullscreen: bool,
-    // Is the window currently in focus?
+    /// Is the window currently in focus?
     pub tl_activated: bool,
     pub tl_resizing: bool,
+    /// The latest size used during configure. This doesn't
+    /// actually control any commit behavior, but it is how we
+    /// figure out the right size to recommend to our client
+    /// every time we call configure.
+    tl_size: (i32, i32),
 }
 
 impl TLState {
@@ -822,32 +784,7 @@ impl TLState {
             tl_minimized: false,
             tl_activated: false,
             tl_resizing: false,
-        }
-    }
-}
-
-/// A complete xdg_toplevel configuration
-/// This pairs the above toplevel state with a serial range
-/// that is holds true for
-#[derive(Debug)]
-struct TLConfig {
-    /// The serial numbers that this state describes
-    tlc_serial: u32,
-    /// The size of the window.
-    /// When the client acks a configure event we will look up
-    /// the TLConfig for that serial, and update the window
-    /// size to this in `commit`.
-    tlc_size: (i32, i32),
-    /// reference count this to avoid extra allocations
-    tlc_state: Arc<TLState>,
-}
-
-impl TLConfig {
-    fn new(serial: u32, width: i32, height: i32, state: Arc<TLState>) -> TLConfig {
-        TLConfig {
-            tlc_serial: serial,
-            tlc_size: (width, height),
-            tlc_state: state,
+            tl_size: (0, 0),
         }
     }
 }
