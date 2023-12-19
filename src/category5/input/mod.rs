@@ -350,16 +350,16 @@ impl Input {
         log::error!("Resizing in progress");
         if let Some(id) = atmos.get_resizing() {
             if let Some(cell) = atmos.get_surface_from_id(&id) {
-                let surf = cell.lock().unwrap();
-                match &surf.s_role {
-                    Some(Role::xdg_shell_toplevel(xdg_surf, ss)) => {
-                        // send the xdg configure events
-                        ss.lock().unwrap().configure(
-                            atmos, xdg_surf, &surf, true, // resizing
-                        );
-                    }
-                    _ => (),
-                }
+                let mut surf = cell.lock().unwrap();
+                let (xdg_surf, ss) = match &surf.s_role {
+                    Some(Role::xdg_shell_toplevel(xs, ss)) => (xs.clone(), ss.clone()),
+                    _ => panic!("Resizing unsupported shell type"), // TODO: other shells
+                };
+
+                // send the xdg configure events
+                ss.lock().unwrap().configure(
+                    atmos, xdg_surf, &mut surf, true, // resizing
+                );
             }
         }
     }
@@ -451,30 +451,30 @@ impl Input {
         // find the window under the cursor
         let resizing = atmos.get_resizing();
         if resizing.is_some() && state == ButtonState::Released {
-            // We are releasing a resize, and we might not be resizing
-            // the same window as find_window_at_point would report
-            if let Some(id) = resizing.as_ref() {
-                // if on one of the edges start a resize
-                if let Some(surf) = atmos.get_surface_from_id(id) {
-                    let surf = surf.lock().unwrap();
-                    match &surf.s_role {
-                        Some(Role::xdg_shell_toplevel(xdg_surf, ss)) => {
-                            match state {
-                                // The release is handled above
-                                ButtonState::Released => {
-                                    log::debug!("Stopping resize of {:?}", id);
-                                    atmos.set_resizing(None);
-                                    let mut ss = ss.lock().unwrap();
-                                    ss.ss_cur_tlstate.tl_resizing = false;
-                                    // As per spec send final configure here
-                                    ss.configure(atmos, xdg_surf, &surf, false);
-                                }
-                                // this should never be pressed
-                                _ => (),
-                            }
-                        }
-                        // TODO: resizing for other shell types
-                        _ => (),
+            if state == ButtonState::Released {
+                // We are releasing a resize, and we might not be resizing
+                // the same window as find_window_at_point would report
+                if let Some(id) = resizing.as_ref() {
+                    // if on one of the edges start a resize
+                    if let Some(surf) = atmos.get_surface_from_id(id) {
+                        let mut surf = surf.lock().unwrap();
+                        surf.s_state
+                            .cs_xdg_state
+                            .xs_tlstate
+                            .as_mut()
+                            .unwrap()
+                            .tl_resizing = false;
+
+                        let (xdg_surf, ss) = match &surf.s_role {
+                            Some(Role::xdg_shell_toplevel(xs, ss)) => (xs.clone(), ss.clone()),
+                            _ => panic!("Resizing unsupported shell type"), // TODO: other shells
+                        };
+
+                        log::debug!("Stopping resize of {:?}", id);
+                        atmos.set_resizing(None);
+                        let mut ss = ss.lock().unwrap();
+                        // As per spec send final configure here
+                        ss.configure(atmos, xdg_surf, &mut surf, false);
                     }
                 }
             }
@@ -512,21 +512,19 @@ impl Input {
             // and released the click
             if edge != ResizeEdge::None {
                 // if on one of the edges start a resize
-                if let Some(surf) = atmos.get_surface_from_id(&id) {
-                    match &surf.lock().unwrap().s_role {
-                        Some(Role::xdg_shell_toplevel(_, ss)) => {
-                            match state {
-                                ButtonState::Pressed => {
-                                    log::debug!("Resizing window {:?}", id);
-                                    atmos.set_resizing(Some(id));
-                                    ss.lock().unwrap().ss_cur_tlstate.tl_resizing = true;
-                                }
-                                // releasing is handled above
-                                _ => (),
-                            }
+                if let Some(surf_cell) = atmos.get_surface_from_id(&id) {
+                    let mut surf = surf_cell.lock().unwrap();
+                    if let Some(Role::xdg_shell_toplevel(_, _)) = &mut surf.s_role {
+                        if state == ButtonState::Pressed {
+                            log::debug!("Resizing window {:?}", id);
+                            atmos.set_resizing(Some(id));
+                            surf.s_state
+                                .cs_xdg_state
+                                .xs_tlstate
+                                .as_mut()
+                                .unwrap()
+                                .tl_resizing = false;
                         }
-                        // TODO: resizing for other shell types
-                        _ => (),
                     }
                 }
             } else if atmos.point_is_on_titlebar(&id, cursor.0 as f32, cursor.1 as f32) {

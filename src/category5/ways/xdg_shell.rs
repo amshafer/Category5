@@ -15,7 +15,7 @@ use crate::category5::vkcomp::wm;
 use crate::category5::Climate;
 
 extern crate utils as cat5_utils;
-use crate::category5::atmosphere::Atmosphere;
+use crate::category5::atmosphere::{Atmosphere, SurfaceId};
 use cat5_utils::{log, region::Rect};
 
 use std::clone::Clone;
@@ -83,18 +83,10 @@ pub fn xdg_wm_base_handle_request(
             let shsurf = Arc::new(Mutex::new(ShellSurface {
                 ss_surface: surf.clone(),
                 ss_surface_proxy: surface,
-                ss_xs: XdgState::empty(),
                 ss_serial: 0,
                 ss_last_acked: 0,
                 ss_xdg_toplevel: None,
                 ss_xdg_popup: None,
-                ss_cur_tlstate: TLState::empty(),
-                ss_max_size: (i32::MAX, i32::MAX),
-                ss_min_size: (1, 1),
-                ss_resize_right: false,
-                ss_resize_left: false,
-                ss_resize_top: false,
-                ss_resize_bottom: false,
             }));
 
             // Pass ourselves as user data
@@ -232,116 +224,14 @@ pub struct ShellSurface {
     ss_surface_proxy: wl_surface::WlSurface,
     ss_xdg_toplevel: Option<xdg_toplevel::XdgToplevel>,
     ss_xdg_popup: Option<Popup>,
-    // Outstanding changes to be applied in commit
-    pub ss_xs: XdgState,
     // A serial for tracking config updates
     // every time we request a configuration this is the
     // serial number used
     pub ss_serial: u32,
     pub ss_last_acked: u32,
-    // The current toplevel state
-    // This will get snapshotted and recorded for each config serial
-    pub ss_cur_tlstate: TLState,
-    /// The max and min sizes set by the client
-    ss_max_size: (i32, i32),
-    ss_min_size: (i32, i32),
-    ss_resize_right: bool,
-    ss_resize_left: bool,
-    ss_resize_top: bool,
-    ss_resize_bottom: bool,
 }
 
 impl ShellSurface {
-    /// Surface is the caller, and it has already called
-    /// borrow_mut, so it will just pass itself to us
-    pub fn commit(&mut self, surf: &Surface, atmos: &mut Atmosphere) {
-        // do nothing if the client has yet to ack these changes
-        if !self.ss_xs.xs_acked {
-            return;
-        }
-
-        // Set our window size
-        let ws = match atmos.a_window_size.get(&surf.s_id).map(|ws| *ws) {
-            Some(ws) => ws,
-            None => {
-                // If this is the first toplevel commit then we need
-                // to set our window size for the first time.
-                //
-                // The client should have updated the window geometry in reaction
-                // to the last acked configure event. If it doesn't exist then
-                // just set the window size to the surface size as per the spec
-                let ws = match self.ss_xs.xs_size {
-                    Some((w, h)) => (w as f32, h as f32),
-                    None => *atmos.a_surface_size.get(&surf.s_id).unwrap(),
-                };
-                atmos.a_window_size.set(&surf.s_id, ws);
-                ws
-            }
-        };
-
-        let check_default = |d, v| match v {
-            0 => d,
-            _ => v,
-        };
-
-        // values of zero implies no min/max
-        if let Some(max) = self.ss_xs.xs_max_size {
-            self.ss_max_size.0 = check_default(i32::MAX, max.0);
-            self.ss_max_size.1 = check_default(i32::MAX, max.1);
-        }
-        if let Some(min) = self.ss_xs.xs_min_size {
-            self.ss_min_size.0 = check_default(1, min.0);
-            self.ss_min_size.1 = check_default(1, min.1);
-        }
-
-        // Handle popup surface updates
-        if let Some(popup) = self.ss_xdg_popup.as_mut() {
-            popup.commit(surf, atmos);
-        } else {
-            // TODO: handle min/max/fullscreen/activated
-
-            log::debug!("xdg_surface.commit");
-
-            let size = match self.ss_xs.xs_size {
-                Some((w, h)) => (w as f32, h as f32),
-                None => ws,
-            };
-            let size_diff = (size.0 - ws.0, size.1 - ws.1);
-
-            // If we are resizing the left or top, then we need to offset
-            // our window position by the change in size
-            if (self.ss_resize_left || self.ss_resize_top) && size_diff != (0.0, 0.0) {
-                // We need to update the window size.
-                //
-                // The surface pos controlls where this surface actually
-                // is in the desktop. The window pos is a section inside
-                // of the surface where content is displayed
-                let mut sp = atmos.a_surface_pos.get_mut(&surf.s_id).unwrap();
-                let mut wp = atmos.a_window_pos.get_mut(&surf.s_id).unwrap();
-                log::debug!("Old surface pos is {:?}", *sp);
-                if self.ss_resize_left {
-                    sp.0 -= size_diff.0;
-                    wp.0 -= size_diff.0;
-                }
-                if self.ss_resize_top {
-                    sp.1 -= size_diff.1;
-                    wp.1 -= size_diff.1;
-                }
-                log::debug!("New surface pos is {:?}", *sp);
-            }
-
-            atmos.a_window_size.set(&surf.s_id, size);
-
-            self.ss_xs.xs_size = None;
-        }
-
-        // TODO: handle the other state changes
-        //       make them options??
-
-        // unset the ack for next time
-        self.ss_xs.xs_acked = false;
-    }
-
     /// Register a new popup surface.
     ///
     /// A popup surface is for dropdowns and alerts, and is the consumer
@@ -356,9 +246,15 @@ impl ShellSurface {
         positioner: xdg_positioner::XdgPositioner,
         userdata: Arc<Mutex<ShellSurface>>,
     ) {
+        self.ss_xdg_popup = Some(Popup {
+            pu_pop: popup.clone(),
+            pu_parent: parent.clone(),
+        });
+
         {
             // assign the popup role
-            let mut surf = self.ss_surface.lock().unwrap();
+            let surf_cell = self.ss_surface.clone();
+            let mut surf = surf_cell.lock().unwrap();
             let parent_surf = parent.as_ref().expect("Bug: popup missing parent");
             // Now get our ShellSurface object from the XdgSurface protocol object
             let parent_xdgsurf = parent_surf
@@ -378,17 +274,12 @@ impl ShellSurface {
             );
 
             surf.s_role = Some(Role::xdg_shell_popup(userdata.clone()));
+
+            surf.s_state.cs_xdg_state.xs_popup_state = Some(PopupState {
+                ps_positioner: positioner,
+            });
+            self.reposition_popup(&mut surf, xdg_surf);
         }
-
-        self.ss_xdg_popup = Some(Popup {
-            pu_pop: popup.clone(),
-            pu_parent: parent,
-            pu_positioner: positioner,
-            pu_next_positioner: None,
-            pu_reposition: None,
-        });
-
-        self.reposition_popup(xdg_surf);
     }
 
     /// Generate a fresh set of configure events
@@ -399,15 +290,19 @@ impl ShellSurface {
     pub fn configure(
         &mut self,
         atmos: &mut Atmosphere,
-        xdg_surf: &xdg_surface::XdgSurface,
-        surf: &Surface,
+        xdg_surf: xdg_surface::XdgSurface,
+        surf: &mut Surface,
         resizing: bool,
     ) {
         log::debug!("xdg_surface: generating configure event {}", self.ss_serial);
+        let state = &mut surf.s_state.cs_xdg_state;
+
         // send configuration requests to the client
         if let Some(toplevel) = &self.ss_xdg_toplevel {
+            let tlstate = state.xs_tlstate.as_mut().unwrap();
+
             // Get the current window size
-            let mut size = if let Some(cur_size) = self.ss_xs.xs_size {
+            let mut size = if let Some(cur_size) = state.xs_size {
                 // if the client manually requested a size, honor that
                 cur_size
             } else {
@@ -415,7 +310,7 @@ impl ShellSurface {
                 // from atmos.
                 // If we have configured before then we should get the size
                 // of the last one and update that.
-                match self.ss_cur_tlstate.tl_size {
+                match tlstate.tl_cached_size {
                     (0, 0) => {
                         let raw_size = *atmos.a_window_size.get(&surf.s_id).unwrap();
                         (raw_size.0 as i32, raw_size.1 as i32)
@@ -440,8 +335,8 @@ impl ShellSurface {
                 let ws = atmos.a_window_size.get(&surf.s_id).unwrap();
                 let ws = (ws.0 as i32, ws.1 as i32);
                 // TODO: subtrace size from pos if left or bottom_left?
-                let min = self.ss_min_size;
-                let max = self.ss_max_size;
+                let min = tlstate.tl_min_size.unwrap_or((1, 1));
+                let max = tlstate.tl_max_size.unwrap_or((i32::MAX, i32::MAX));
 
                 // "c" will have to fall somewhere in these ranges to be valid
                 //
@@ -464,11 +359,11 @@ impl ShellSurface {
                 //
                 // For this calculation we try to grow the size to where the cursor position
                 // is, by finding the difference between the cursor and the surface start.
-                if self.ss_resize_right && grow_mode_right(cx, wp.0, min.0, max.0) {
+                if tlstate.tl_resize_right && grow_mode_right(cx, wp.0, min.0, max.0) {
                     // add but don't exceed the min/max bounds requested
                     size.0 = (cx - wp.0).clamp(min.0, max.0);
                 }
-                if self.ss_resize_bottom && grow_mode_right(cy, wp.1, min.1, max.1) {
+                if tlstate.tl_resize_bottom && grow_mode_right(cy, wp.1, min.1, max.1) {
                     size.1 = (cy - wp.1).clamp(min.1, max.1);
                 }
 
@@ -478,10 +373,10 @@ impl ShellSurface {
                 // We do this by finding the bottom right edge of the surface by adding
                 // the position and size. We can then subtract this by the cursor position
                 // to find the new size to grow to.
-                if self.ss_resize_left && grow_mode_left(cx, min.0, max.0, wp.0 + ws.0) {
+                if tlstate.tl_resize_left && grow_mode_left(cx, min.0, max.0, wp.0 + ws.0) {
                     size.0 = ((wp.0 + ws.0) - cx).clamp(min.0, max.0);
                 }
-                if self.ss_resize_top && grow_mode_left(cy, min.1, max.1, wp.1 + ws.1) {
+                if tlstate.tl_resize_top && grow_mode_left(cy, min.1, max.1, wp.1 + ws.1) {
                     size.1 = ((wp.1 + ws.1) - cy).clamp(min.1, max.1);
                 }
 
@@ -490,18 +385,18 @@ impl ShellSurface {
 
             // build an array of state flags to pass to toplevel.configure
             let mut states: Vec<u8> = Vec::new();
-            if self.ss_cur_tlstate.tl_maximized {
+            if tlstate.tl_maximized {
                 states.push(xdg_toplevel::State::Maximized as u8);
             }
-            if self.ss_cur_tlstate.tl_resizing {
+            if tlstate.tl_resizing {
                 states.push(xdg_toplevel::State::Resizing as u8);
             }
-            if self.ss_cur_tlstate.tl_fullscreen {
+            if tlstate.tl_fullscreen {
                 states.push(xdg_toplevel::State::Fullscreen as u8);
             }
             log::debug!("xdg_surface: sending states {:?}", states);
 
-            self.ss_cur_tlstate.tl_size = (size.0, size.1);
+            tlstate.tl_cached_size = (size.0, size.1);
 
             // send them to the client
             toplevel.configure(size.0 as i32, size.1 as i32, states);
@@ -514,9 +409,6 @@ impl ShellSurface {
     /// Check if this serial is the currently loaned out one,
     /// and if so set the existing state to be applied
     pub fn ack_configure(&mut self, serial: u32) {
-        // ack that we should take action during the next commit
-        self.ss_xs.xs_acked = true;
-
         // increment the serial for next timme
         self.ss_last_acked = serial;
     }
@@ -540,7 +432,7 @@ impl ShellSurface {
         height: i32,
     ) {
         let surf_cell = self.ss_surface.clone();
-        let surf = surf_cell.lock().unwrap();
+        let mut surf = surf_cell.lock().unwrap();
 
         // we need to update the *window* position
         // to be an offset from the base surface position
@@ -549,7 +441,7 @@ impl ShellSurface {
         surf_pos.1 += y as f32;
         atmos.a_window_pos.set(&surf.s_id, surf_pos);
 
-        self.ss_xs.xs_size = Some((width, height));
+        surf.s_state.cs_xdg_state.xs_size = Some((width, height));
     }
 
     /// Get a toplevel surface
@@ -568,6 +460,7 @@ impl ShellSurface {
         // Mark our surface as being a window handled by xdg_shell
         let mut surf = self.ss_surface.lock().unwrap();
         surf.s_role = Some(Role::xdg_shell_toplevel(xdg_surf.clone(), userdata.clone()));
+        surf.s_state.cs_xdg_state.xs_tlstate = Some(ToplevelState::empty());
 
         // Tell vkcomp to create a new window
         log::debug!("Setting surface {:?} to toplevel", surf.s_id.get_raw_id());
@@ -592,6 +485,116 @@ impl ShellSurface {
     }
 }
 
+/// The xdg_toplevel state.
+///
+/// This contains basic information about the sizing of a surface.
+/// It is tracked on a per configuration serial basis.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct ToplevelState {
+    /// window title
+    pub tl_title: Option<String>,
+    pub tl_app_id: Option<String>,
+    // Is this window against a tile boundary?
+    pub tl_resize_left: bool,
+    pub tl_resize_right: bool,
+    pub tl_resize_top: bool,
+    pub tl_resize_bottom: bool,
+    /// bounding dimensions
+    pub tl_max_size: Option<(i32, i32)>,
+    pub tl_min_size: Option<(i32, i32)>,
+    // self-explanitory I think
+    pub tl_maximized: bool,
+    pub tl_minimized: bool,
+    pub tl_fullscreen: bool,
+    /// Is the window currently in focus?
+    pub tl_activated: bool,
+    pub tl_resizing: bool,
+    /// The latest size used during configure. This doesn't
+    /// actually control any commit behavior, but it is how we
+    /// figure out the right size to recommend to our client
+    /// every time we call configure.
+    tl_cached_size: (i32, i32),
+}
+
+impl ToplevelState {
+    /// Return a state with no changes
+    fn empty() -> ToplevelState {
+        ToplevelState {
+            tl_maximized: false,
+            tl_fullscreen: false,
+            tl_minimized: false,
+            tl_activated: false,
+            tl_resizing: false,
+            tl_cached_size: (0, 0),
+            tl_title: None,
+            tl_app_id: None,
+            tl_resize_left: false,
+            tl_resize_right: false,
+            tl_resize_top: false,
+            tl_resize_bottom: false,
+            tl_max_size: None,
+            tl_min_size: None,
+        }
+    }
+
+    fn commit(&mut self, surf_id: &SurfaceId, atmos: &mut Atmosphere, size_diff: (f32, f32)) {
+        // If we are resizing the left or top, then we need to offset
+        // our window position by the change in size
+        if (self.tl_resize_left || self.tl_resize_top) && size_diff != (0.0, 0.0) {
+            // We need to update the window size.
+            //
+            // The surface pos controlls where this surface actually
+            // is in the desktop. The window pos is a section inside
+            // of the surface where content is displayed
+            let mut sp = atmos.a_surface_pos.get_mut(surf_id).unwrap();
+            let mut wp = atmos.a_window_pos.get_mut(surf_id).unwrap();
+            log::debug!("Old surface pos is {:?}", *sp);
+            if self.tl_resize_left {
+                sp.0 -= size_diff.0;
+                wp.0 -= size_diff.0;
+            }
+            if self.tl_resize_top {
+                sp.1 -= size_diff.1;
+                wp.1 -= size_diff.1;
+            }
+            log::debug!("New surface pos is {:?}", *sp);
+        }
+
+        // TODO: handle min/max/fullscreen/activated
+    }
+}
+
+/// Surface state for xdg_popup surfaces
+///
+/// This really just holds a positioner which will be used to
+/// recalculate the surface size/pos during a commit.
+#[derive(Clone)]
+pub struct PopupState {
+    /// Positioner for popup surface
+    ps_positioner: xdg_positioner::XdgPositioner,
+}
+
+impl PopupState {
+    fn commit(&mut self, surf_id: &SurfaceId, atmos: &mut Atmosphere) {
+        // Update the size and position from the latest reposition
+        let pos_cell = self
+            .ps_positioner
+            .data::<Arc<Mutex<Positioner>>>()
+            .expect("Bug: positioner did not have userdata attached")
+            .clone();
+        let positioner = pos_cell.lock().unwrap();
+
+        let pos_loc = positioner.get_loc();
+        atmos
+            .a_surface_pos
+            .set(surf_id, (pos_loc.0 as f32, pos_loc.1 as f32));
+        atmos.a_window_size.set(
+            surf_id,
+            (positioner.p_width as f32, positioner.p_height as f32),
+        );
+    }
+}
+
 /// This is the set of outstanding
 /// configuration changes which have not
 /// been committed to the atmos yet.
@@ -609,44 +612,69 @@ impl ShellSurface {
 ///   all of the attached state
 #[allow(dead_code)]
 pub struct XdgState {
-    pub xs_pos: Option<(i32, i32)>,
+    /// The current toplevel state
+    pub xs_tlstate: Option<ToplevelState>,
+    /// The current xdg_popup state
+    pub xs_popup_state: Option<PopupState>,
+    /// Window position
     pub xs_size: Option<(i32, i32)>,
-    // window title
-    pub xs_title: Option<String>,
-    pub xs_app_id: Option<String>,
-    // Is this window against a tile boundary?
-    pub xs_tiled_left: bool,
-    pub xs_tiled_right: bool,
-    pub xs_tiled_top: bool,
-    pub xs_tiled_bottom: bool,
-    // bounding dimensions
-    // (0, 0) means it has not yet been set
-    pub xs_max_size: Option<(i32, i32)>,
-    pub xs_min_size: Option<(i32, i32)>,
-
-    // ------------------
-    // The following are "meta" configuration changes
-    // aka making new role objects, not related to the
-    // window itself
-    // ------------------
-    pub xs_acked: bool,
 }
 
 impl XdgState {
     /// Return a state with no changes
-    fn empty() -> XdgState {
+    pub fn empty() -> XdgState {
         XdgState {
-            xs_pos: None,
+            xs_tlstate: None,
+            xs_popup_state: None,
             xs_size: None,
-            xs_acked: false,
-            xs_title: None,
-            xs_app_id: None,
-            xs_tiled_left: false,
-            xs_tiled_right: false,
-            xs_tiled_top: false,
-            xs_tiled_bottom: false,
-            xs_max_size: None,
-            xs_min_size: None,
+        }
+    }
+
+    pub fn clone_refresh(&mut self) -> Self {
+        Self {
+            xs_tlstate: self.xs_tlstate.clone(),
+            xs_popup_state: self.xs_popup_state.clone(),
+            xs_size: self.xs_size.take(),
+        }
+    }
+
+    pub fn commit(&mut self, surf_id: &SurfaceId, atmos: &mut Atmosphere) {
+        log::debug!("xdg_surface.commit");
+
+        // Set our window size
+        let ws = match atmos.a_window_size.get(surf_id).map(|ws| *ws) {
+            Some(ws) => ws,
+            None => {
+                // If this is the first toplevel commit then we need
+                // to set our window size for the first time.
+                //
+                // The client should have updated the window geometry in reaction
+                // to the last acked configure event. If it doesn't exist then
+                // just set the window size to the surface size as per the spec
+                let ws = match self.xs_size {
+                    Some((w, h)) => (w as f32, h as f32),
+                    None => *atmos.a_surface_size.get(surf_id).unwrap(),
+                };
+                atmos.a_window_size.set(surf_id, ws);
+                ws
+            }
+        };
+        let size = match self.xs_size {
+            Some((w, h)) => (w as f32, h as f32),
+            None => ws,
+        };
+        let size_diff = (size.0 - ws.0, size.1 - ws.1);
+
+        atmos.a_window_size.set(surf_id, size);
+
+        self.xs_size = None;
+
+        if let Some(tlstate) = self.xs_tlstate.as_mut() {
+            tlstate.commit(surf_id, atmos, size_diff);
+        }
+
+        if let Some(popstate) = self.xs_popup_state.as_mut() {
+            popstate.commit(surf_id, atmos);
         }
     }
 }
@@ -697,18 +725,20 @@ impl ShellSurface {
         _toplevel: &xdg_toplevel::XdgToplevel,
         req: xdg_toplevel::Request,
     ) {
-        let xs = &mut self.ss_xs;
+        let mut surf = self.ss_surface.lock().unwrap();
+        let id = surf.s_id.clone();
+        let tl = surf.s_state.cs_xdg_state.xs_tlstate.as_mut().unwrap();
 
         #[allow(unused_variables)]
         match req {
             xdg_toplevel::Request::Destroy => (),
             xdg_toplevel::Request::SetParent { parent } => (),
-            xdg_toplevel::Request::SetTitle { title } => xs.xs_title = Some(title),
-            xdg_toplevel::Request::SetAppId { app_id } => xs.xs_app_id = Some(app_id),
+            xdg_toplevel::Request::SetTitle { title } => tl.tl_title = Some(title),
+            xdg_toplevel::Request::SetAppId { app_id } => tl.tl_app_id = Some(app_id),
             xdg_toplevel::Request::ShowWindowMenu { seat, serial, x, y } => (),
             xdg_toplevel::Request::Move { seat, serial } => {
                 // Moving is NOT double buffered so just grab it now
-                let id = self.ss_surface.lock().unwrap().s_id.clone();
+                let id = surf.s_id.clone();
                 atmos.set_grabbed(Some(id));
             }
             xdg_toplevel::Request::Resize {
@@ -717,13 +747,12 @@ impl ShellSurface {
                 edges,
             } => {
                 // Moving is NOT double buffered so just grab it now
-                let id = self.ss_surface.lock().unwrap().s_id.clone();
                 atmos.set_resizing(Some(id));
                 (
-                    self.ss_resize_right,
-                    self.ss_resize_left,
-                    self.ss_resize_top,
-                    self.ss_resize_bottom,
+                    tl.tl_resize_right,
+                    tl.tl_resize_left,
+                    tl.tl_resize_top,
+                    tl.tl_resize_bottom,
                 ) = match edges.into_result().expect("Invalid resize edge flag") {
                     xdg_toplevel::ResizeEdge::Right => (true, false, false, false),
                     xdg_toplevel::ResizeEdge::Left => (false, true, false, false),
@@ -735,56 +764,20 @@ impl ShellSurface {
                     xdg_toplevel::ResizeEdge::BottomLeft => (false, true, false, true),
                     _ => (false, false, false, false),
                 };
-                self.ss_cur_tlstate.tl_resizing = true;
+                tl.tl_resizing = true;
             }
             xdg_toplevel::Request::SetMaxSize { width, height } => {
-                xs.xs_max_size = Some((width, height))
+                tl.tl_max_size = Some((width, height))
             }
             xdg_toplevel::Request::SetMinSize { width, height } => {
-                xs.xs_min_size = Some((width, height))
+                tl.tl_min_size = Some((width, height))
             }
-            xdg_toplevel::Request::SetMaximized => self.ss_cur_tlstate.tl_maximized = true,
-            xdg_toplevel::Request::UnsetMaximized => self.ss_cur_tlstate.tl_maximized = false,
-            xdg_toplevel::Request::SetFullscreen { output } => {
-                self.ss_cur_tlstate.tl_fullscreen = true
-            }
-            xdg_toplevel::Request::UnsetFullscreen => self.ss_cur_tlstate.tl_fullscreen = false,
-            xdg_toplevel::Request::SetMinimized => self.ss_cur_tlstate.tl_minimized = true,
+            xdg_toplevel::Request::SetMaximized => tl.tl_maximized = true,
+            xdg_toplevel::Request::UnsetMaximized => tl.tl_maximized = false,
+            xdg_toplevel::Request::SetFullscreen { output } => tl.tl_fullscreen = true,
+            xdg_toplevel::Request::UnsetFullscreen => tl.tl_fullscreen = false,
+            xdg_toplevel::Request::SetMinimized => tl.tl_minimized = true,
             _ => unimplemented!(),
-        }
-    }
-}
-
-/// The xdg_toplevel state.
-///
-/// This contains basic information about the sizing of a surface.
-/// It is tracked on a per configuration serial basis.
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub struct TLState {
-    // self-explanitory I think
-    pub tl_maximized: bool,
-    pub tl_minimized: bool,
-    pub tl_fullscreen: bool,
-    /// Is the window currently in focus?
-    pub tl_activated: bool,
-    pub tl_resizing: bool,
-    /// The latest size used during configure. This doesn't
-    /// actually control any commit behavior, but it is how we
-    /// figure out the right size to recommend to our client
-    /// every time we call configure.
-    tl_size: (i32, i32),
-}
-
-impl TLState {
-    /// Return a state with no changes
-    fn empty() -> TLState {
-        TLState {
-            tl_maximized: false,
-            tl_fullscreen: false,
-            tl_minimized: false,
-            tl_activated: false,
-            tl_resizing: false,
-            tl_size: (0, 0),
         }
     }
 }
@@ -984,46 +977,18 @@ impl ws::Dispatch<xdg_popup::XdgPopup, Arc<Mutex<ShellSurface>>> for Climate {
 pub struct Popup {
     pu_pop: xdg_popup::XdgPopup,
     pu_parent: Option<xdg_surface::XdgSurface>,
-    pu_positioner: xdg_positioner::XdgPositioner,
-    pu_next_positioner: Option<xdg_positioner::XdgPositioner>,
-    /// A list of reposition requests. Spec states that if multiple
-    /// are sent only the last one needs to be used.
-    pu_reposition: Option<xdg_positioner::XdgPositioner>,
-}
-
-impl Popup {
-    fn commit(&mut self, surf: &Surface, atmos: &mut Atmosphere) {
-        // Update the size and position from the latest reposition
-        let pos_cell = self
-            .pu_positioner
-            .data::<Arc<Mutex<Positioner>>>()
-            .expect("Bug: positioner did not have userdata attached")
-            .clone();
-        let positioner = pos_cell.lock().unwrap();
-
-        let pos_loc = positioner.get_loc();
-        atmos
-            .a_surface_pos
-            .set(&surf.s_id, (pos_loc.0 as f32, pos_loc.1 as f32));
-        atmos.a_window_size.set(
-            &surf.s_id,
-            (positioner.p_width as f32, positioner.p_height as f32),
-        );
-    }
 }
 
 impl ShellSurface {
     /// Calculate the position for this popup, and generate configure
     /// events broadcasting it.
     /// This will use the repositioned value if it was set.
-    fn reposition_popup(&mut self, surf: &xdg_surface::XdgSurface) {
+    fn reposition_popup(&mut self, surf: &mut Surface, xdg_surf: &xdg_surface::XdgSurface) {
         let pop = self.ss_xdg_popup.as_mut().unwrap();
-        if let Some(repo) = pop.pu_next_positioner.take() {
-            pop.pu_positioner = repo;
-        }
+        let state = surf.s_state.cs_xdg_state.xs_popup_state.as_mut().unwrap();
 
-        let pos_cell = pop
-            .pu_positioner
+        let pos_cell = state
+            .ps_positioner
             .data::<Arc<Mutex<Positioner>>>()
             .expect("Bug: positioner did not have userdata attached")
             .clone();
@@ -1035,7 +1000,7 @@ impl ShellSurface {
         log::debug!("Popup location: {:?}", popup_loc);
         pop.pu_pop
             .configure(popup_loc.0, popup_loc.1, pos.p_width, pos.p_height);
-        surf.configure(self.ss_serial);
+        xdg_surf.configure(self.ss_serial);
         self.ss_serial += 1;
     }
 
@@ -1070,7 +1035,9 @@ impl ShellSurface {
                 self.popup_done(atmos);
             }
             xdg_popup::Request::Reposition { positioner, token } => {
-                self.ss_xdg_popup.as_mut().unwrap().pu_next_positioner = Some(positioner);
+                let mut surf = self.ss_surface.lock().unwrap();
+                let state = surf.s_state.cs_xdg_state.xs_popup_state.as_mut().unwrap();
+                state.ps_positioner = positioner;
             }
             _ => unimplemented!(),
         }

@@ -13,7 +13,7 @@ use ws::Resource;
 
 use super::role::Role;
 use super::wl_region::Region;
-use super::{shm::*, wl_subcompositor::SubSurfaceState};
+use super::{shm::*, wl_subcompositor::SubSurfaceState, xdg_shell::XdgState};
 use crate::category5::atmosphere::{Atmosphere, SurfaceId};
 use crate::category5::vkcomp::wm;
 use crate::category5::Climate;
@@ -92,6 +92,10 @@ pub struct CommitState {
     /// State programmed by wl_subcompositor
     pub cs_subsurf_state: SubSurfaceState,
 
+    /// State programmed by xdg_shell. This may be either toplevel or
+    /// a popup
+    pub cs_xdg_state: XdgState,
+
     /// Child CommitStates which are dependent on this before they
     /// can be committed. These are usually synchronized subsurface
     /// commits that are pending.
@@ -112,6 +116,7 @@ impl CommitState {
             cs_attached_xy: None,
             cs_subsurf_state: SubSurfaceState::new(id),
             cs_children: Vec::with_capacity(0),
+            cs_xdg_state: XdgState::empty(),
         }
     }
 
@@ -141,6 +146,7 @@ impl CommitState {
             cs_damage: damage,
             cs_attached_xy: self.cs_attached_xy.take(),
             cs_subsurf_state: self.cs_subsurf_state.clone_refresh(),
+            cs_xdg_state: self.cs_xdg_state.clone_refresh(),
             cs_children: children,
         }
     }
@@ -274,6 +280,7 @@ impl CommitState {
 
         // ----- now commit any child protocols state -----
         self.cs_subsurf_state.commit(atmos);
+        self.cs_xdg_state.commit(&self.cs_id, atmos);
 
         // ----- commit all of the pending child commits -----
         for mut cs in self.cs_children.drain(0..) {
@@ -446,12 +453,8 @@ impl Surface {
         // Commit any role state before we update window bits
         let surf_size = *atmos.a_surface_size.get(&self.s_id).unwrap();
         match &self.s_role {
-            Some(Role::xdg_shell_toplevel(_, xs)) => xs.lock().unwrap().commit(&self, atmos),
-            Some(Role::xdg_shell_popup(xs)) => xs.lock().unwrap().commit(&self, atmos),
             Some(Role::wl_shell_toplevel) => atmos.a_window_size.set(&self.s_id, surf_size),
-            Some(Role::subsurface(_)) => {}
-            Some(Role::cursor) => {}
-            None => {}
+            _ => {}
         }
     }
 

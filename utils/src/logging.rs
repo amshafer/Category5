@@ -101,6 +101,7 @@ macro_rules! log_internal{
         // !! NOTE: current log level set here !!
         //
         // Currently set to the debug level (2)
+        let is_err = $loglevel.get_level() <= *DEFAULT_LEVEL;
         let mut should_log = $loglevel.get_level() <= *LOG_LEVEL_RAW;
 
         // If this variable is defined check that our log statements
@@ -109,7 +110,8 @@ macro_rules! log_internal{
             should_log = should_log && file!().contains(m.as_str());
         }
 
-        if should_log {
+        // If it is an error or our conditions are met then log it
+        if is_err || should_log {
             let fmtstr = format!("[{:?}]<{}> {}:{} - {}",
                 log::get_current_millis(),
                 $loglevel.get_name(),

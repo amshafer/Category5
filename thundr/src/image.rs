@@ -370,6 +370,7 @@ impl Renderer {
                 height: dmabuf.db_height as u32,
                 depth: 1,
             })
+            .image_type(vk::ImageType::TYPE_2D)
             .mip_levels(1)
             .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
@@ -377,6 +378,7 @@ impl Renderer {
             .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
             .usage(vk::ImageUsageFlags::SAMPLED)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .flags(vk::ImageCreateFlags::empty())
             .build();
         let mut ext_mem_info = vk::ExternalMemoryImageCreateInfo::builder()
             .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
@@ -430,7 +432,7 @@ impl Renderer {
         // here to tell vulkan that we should import mem
         // instead of allocating it.
         let mut alloc_info = vk::MemoryAllocateInfo::builder()
-            .allocation_size(dmabuf.db_stride as u64 * dmabuf.db_height as u64)
+            .allocation_size(dmabuf_priv.dp_mem_reqs.size)
             .memory_type_index(dmabuf_priv.dp_memtype_index);
 
         // Since we are VERY async/threading friendly here, it is
@@ -545,6 +547,7 @@ impl Renderer {
                 .ty(vk::ImageType::TYPE_2D)
                 .usage(vk::ImageUsageFlags::SAMPLED)
                 .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
+                .flags(vk::ImageCreateFlags::empty())
                 .build();
             let drm_img_props = vk::PhysicalDeviceImageDrmFormatModifierInfoEXT::builder()
                 .drm_format_modifier(dmabuf.db_mods)
