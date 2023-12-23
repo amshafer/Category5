@@ -18,6 +18,7 @@ extern crate lluvia as ll;
 
 mod skiplist;
 
+use crate::category5::input::Input;
 use crate::category5::vkcomp::wm;
 use crate::category5::ways::{seat::Seat, surface::*, wl_region::Region};
 use utils::log;
@@ -63,6 +64,10 @@ pub struct Atmosphere {
     /// that this is a subsurface. Therefore `win_focus` will be the "root" application
     /// toplevel window, and `surf_focus` may be a subsurface of that window tree.
     pub a_surf_focus: Option<SurfaceId>,
+    /// The surface that the pointer is currently over.
+    /// note that this may be different than the application focus, this separate tracking
+    /// is used to scrolling "unfocused" windows.
+    pub a_pointer_focus: Option<SurfaceId>,
     /// Current surface in use for a cursor, if any
     pub a_cursor_surface: Option<SurfaceId>,
     /// Is recording traces with Renderdoc enabled?
@@ -191,6 +196,7 @@ impl Atmosphere {
     define_global_getters!(resizing, Option<SurfaceId>);
     define_global_getters!(win_focus, Option<SurfaceId>);
     define_global_getters!(surf_focus, Option<SurfaceId>);
+    define_global_getters!(pointer_focus, Option<SurfaceId>);
     define_global_getters!(cursor_surface, Option<SurfaceId>);
     define_global_getters!(renderdoc_recording, bool);
     define_global_getters!(drm_dev, (i64, i64));
@@ -214,6 +220,7 @@ impl Atmosphere {
             a_resizing: None,
             a_win_focus: None,
             a_surf_focus: None,
+            a_pointer_focus: None,
             a_cursor_surface: None,
             a_renderdoc_recording: false,
             a_changed: false,
@@ -367,7 +374,31 @@ impl Atmosphere {
         return id;
     }
 
-    /// Mark the id as available
+    /// Recalculate the pointer focus
+    ///
+    /// This will find the input at the current cursor position and update the
+    /// pointer focus to that SurfaceId.
+    pub fn recalculate_pointer_focus(&mut self) {
+        let (cx, cy) = self.get_cursor_pos();
+
+        // Get the window the pointer is over
+        let focus = self.find_window_with_input_at_point(cx as f32, cy as f32);
+        // If the pointer is over top of a different window, change the
+        // pointer focus and send the leave/enter events
+        if focus.clone().map(|e| e.get_raw_id()) != self.get_pointer_focus().map(|e| e.get_raw_id())
+        {
+            if let Some(id) = self.get_pointer_focus() {
+                Input::pointer_leave(self, &id);
+            }
+            if let Some(id) = focus.as_ref() {
+                Input::pointer_enter(self, id);
+            }
+            self.set_pointer_focus(focus.clone());
+        }
+    }
+
+    /// Mark the id as available and clean up any resources which reference
+    /// this id (such as surface lists and current focus
     pub fn free_window_id(&mut self, client: &ClientId, id: &SurfaceId) {
         log::debug!("Ways before removing id {:?}", id);
         self.print_surface_tree();
@@ -383,7 +414,15 @@ impl Atmosphere {
         // TODO: This is a bit too expensive atm
         {
             let mut windows = self.a_windows_for_client.get_mut(client).unwrap();
-            windows.retain(|wid| !Arc::ptr_eq(&wid, id));
+            windows.retain(|wid| wid == id);
+        }
+
+        // If this window was in focus recalculate focus now
+        if let Some(pointer_focus) = self.get_pointer_focus() {
+            if id == &pointer_focus {
+                self.set_pointer_focus(None);
+                self.recalculate_pointer_focus();
+            }
         }
 
         log::debug!("Ways after removing id {:?}", id);

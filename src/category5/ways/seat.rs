@@ -186,7 +186,7 @@ impl SeatInstance {
     fn get_pointer(
         &mut self,
         atmos: &mut Atmosphere,
-        input: &mut Input,
+        _input: &mut Input,
         pointer: wl_pointer::WlPointer,
     ) {
         self.si_pointers.push(pointer.clone());
@@ -194,9 +194,9 @@ impl SeatInstance {
         // If we are in focus, then we should go ahead and generate
         // the enter event
         if let Some(sid) = atmos.get_win_focus() {
-            if let Some(pointer_focus) = input.i_pointer_focus.as_ref() {
+            if let Some(pointer_focus) = atmos.get_pointer_focus() {
                 // check if the surface is the input sys's focus
-                if &sid == pointer_focus {
+                if &sid == &pointer_focus {
                     Input::pointer_enter(atmos, &sid);
                 }
             }

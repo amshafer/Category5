@@ -1004,9 +1004,9 @@ impl ShellSurface {
         self.ss_serial += 1;
     }
 
-    fn popup_done(&mut self, atmos: &mut Atmosphere) {
-        self.ss_surface.lock().unwrap().destroy(atmos);
-        self.ss_xdg_popup.as_ref().unwrap().pu_pop.popup_done();
+    fn popup_done(&mut self, _atmos: &mut Atmosphere) {
+        self.ss_surface.lock().unwrap().s_role = None;
+        self.ss_xdg_popup.take().unwrap().pu_pop.popup_done();
     }
 
     /// handle xdg_popup requests

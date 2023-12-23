@@ -38,7 +38,18 @@ impl ws::Dispatch<wl_pointer::WlPointer, ()> for Climate {
                             .downcast::<ResourceData<ws::protocol::wl_surface::WlSurface, Arc<Mutex<Surface>>>>()
                             .unwrap();
                     let mut surf = data.udata.lock().unwrap();
-                    // TODO protocol error
+
+                    // It is a protocol error to have another role assigned at this time
+                    if match surf.s_role {
+                        None | Some(Role::cursor) => false,
+                        _ => true,
+                    } {
+                        resource.post_error(
+                            wl_pointer::Error::Role,
+                            "Surface is already assigned a non-cursor role",
+                        );
+                    }
+
                     surf.s_role = Some(Role::cursor);
 
                     Some(surf.s_id.clone())

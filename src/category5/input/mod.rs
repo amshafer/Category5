@@ -78,10 +78,6 @@ pub struct Input {
     pub i_mod_caps: bool,
     pub i_mod_meta: bool,
     pub i_mod_num: bool,
-
-    /// The surface that the pointer is currently over
-    /// note that this may be different than the application focus
-    pub i_pointer_focus: Option<SurfaceId>,
 }
 
 #[derive(Copy, Eq, PartialEq, Clone)]
@@ -139,7 +135,6 @@ impl Input {
             i_mod_caps: false,
             i_mod_meta: false,
             i_mod_num: false,
-            i_pointer_focus: None,
         }
     }
 
@@ -192,7 +187,7 @@ impl Input {
         source: dak::AxisSource,
     ) {
         // Find the active window
-        if let Some(id) = self.i_pointer_focus.as_ref() {
+        if let Some(id) = atmos.get_pointer_focus() {
             // get the seat for this client
             if let Some(cell) = atmos.get_seat_from_surface_id(&id) {
                 let seat = cell.lock().unwrap();
@@ -378,27 +373,12 @@ impl Input {
             self.send_resize_configure(atmos);
             return;
         }
-        // Get the cursor position
-        let (cx, cy) = atmos.get_cursor_pos();
 
-        // Get the window the pointer is over
-        let focus = atmos.find_window_with_input_at_point(cx as f32, cy as f32);
-        // If the pointer is over top of a different window, change the
-        // pointer focus and send the leave/enter events
-        if focus.clone().map(|e| e.get_raw_id())
-            != self.i_pointer_focus.clone().map(|e| e.get_raw_id())
-        {
-            if let Some(id) = self.i_pointer_focus.as_ref() {
-                Input::pointer_leave(atmos, id);
-            }
-            if let Some(id) = focus.as_ref() {
-                Input::pointer_enter(atmos, id);
-            }
-            self.i_pointer_focus = focus.clone();
-        }
+        let (cx, cy) = atmos.get_cursor_pos();
+        atmos.recalculate_pointer_focus();
 
         // deliver the motion event
-        if let Some(id) = focus.as_ref() {
+        if let Some(id) = atmos.get_pointer_focus() {
             if let Some(cell) = atmos.get_seat_from_surface_id(&id) {
                 // get the seat for this client
                 let seat = cell.lock().unwrap();
@@ -406,7 +386,7 @@ impl Input {
                 for si in seat.s_proxies.iter() {
                     for pointer in si.si_pointers.iter() {
                         // If the pointer is over this surface
-                        if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
+                        if let Some((sx, sy)) = atmos.global_coords_to_surf(&id, cx, cy) {
                             // deliver the motion event
                             pointer.motion(get_current_millis(), sx, sy);
                             Self::send_pointer_frame(pointer);
@@ -714,7 +694,7 @@ impl Input {
                 },
                 ButtonState::Pressed,
             ),
-            _ => {}
+            _ => (),
         };
     }
 }
