@@ -205,3 +205,19 @@ fn get_set_opt() {
     c.set_opt(&e1, None);
     assert_eq!(c.get_clone(&e1), None);
 }
+
+#[test]
+fn set_drops_existing_without_deadlock() {
+    // Create the ECS holder
+    let mut inst = ll::Instance::new();
+    // Make a new entity
+    let e1 = inst.add_entity();
+    let e2 = inst.add_entity();
+    let e3 = inst.add_entity();
+
+    let mut c = inst.add_component();
+
+    c.set(&e1, e2);
+    // Check that no deadlock occurs here
+    c.set(&e1, e3);
+}

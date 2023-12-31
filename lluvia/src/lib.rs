@@ -738,11 +738,11 @@ impl Instance {
     }
 
     /// Invalidate an Entity and free all of its component values
+    ///
+    /// If this is getting called then this id is no longer in use anywhere in the app, we
+    /// can count on its component values not being updated since there are no outstanding
+    /// references to modify them with, so we clear them and then invalidate the id.
     fn invalidate_id(&mut self, id: usize) {
-        // First remove this id from the valid list
-        self.i_internal.write().unwrap().i_ids.release_id(id);
-
-        // Now that we have dropped our ref for the id tracking we can
         // tell each table to free the entity
         {
             let cl = self.i_component_set.read().unwrap();
@@ -750,6 +750,9 @@ impl Instance {
                 table.clear_entity(id);
             }
         }
+
+        // Now remove this id from the valid list
+        self.i_internal.write().unwrap().i_ids.release_id(id);
     }
 
     fn id_is_valid(&self, id: &Entity) -> bool {
@@ -886,6 +889,11 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     /// with `get_mut`
     pub fn set(&mut self, entity: &Entity, val: T) {
         assert!(self.c_inst.id_is_valid(entity));
+
+        // First clear the existing value. We do this first to avoid having the
+        // existing value get dropped while we own the table lock. Handling its
+        // drop will try to reacquire and deadlock
+        self.take(entity);
 
         self.c_modified
             .store(true, std::sync::atomic::Ordering::Release);
