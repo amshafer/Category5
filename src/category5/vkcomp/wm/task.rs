@@ -87,7 +87,6 @@ impl Drop for UpdateWindowContentsFromMem {
 // be performed
 #[derive(Debug)]
 pub enum Task {
-    create_window(SurfaceId),
     close_window(SurfaceId),
     move_to_front(SurfaceId),
     new_toplevel(SurfaceId),

@@ -98,9 +98,8 @@ pub struct Atmosphere {
     /// Surface id tracking
     ///
     /// This is an ECS tying a bunch of data to a surface.
-    /// "Surfaces" here in Cat5 also "contains" multiple other ideas of a surface:
-    /// * A wl_surface in ways
-    /// * A Dakota Element in vkcomp
+    /// SurfaceIds are really just DakotaIds, we use these tables to tack on our own
+    /// information about each surface.
     pub a_surface_ecs: ll::Instance,
     // Indexed by SurfaceId -------------------------------------------------------
     // is this id in use?
@@ -327,14 +326,6 @@ impl Atmosphere {
     // to the hemisphere
     // ------------------------------
 
-    /// Create a new window for the id
-    ///
-    /// This wraps a couple actions into one helper
-    /// since there are multiple
-    pub fn create_new_window(&mut self, id: SurfaceId) {
-        self.add_wm_task(wm::task::Task::create_window(id));
-    }
-
     /// Reserve a new client id
     ///
     /// Should be done the first time we interact with
@@ -351,8 +342,8 @@ impl Atmosphere {
     /// Ids are used as indexes for most of the vecs
     /// in the hemisphere, and we need to mark this as
     /// no longer available
-    pub fn mint_window_id(&mut self, client: &ClientId) -> SurfaceId {
-        let id = self.a_surface_ecs.add_entity();
+    pub fn mint_window_id(&mut self, dakota: &mut dak::Dakota, client: &ClientId) -> SurfaceId {
+        let id = dakota.create_element().unwrap();
 
         // first initialize all our properties
         self.a_owner.set(&id, client.clone());
@@ -360,11 +351,6 @@ impl Atmosphere {
         self.a_window_pos.set(&id, (0.0, 0.0));
         self.a_surface_pos.set(&id, (0.0, 0.0));
         self.a_surface_size.set(&id, (0.0, 0.0));
-
-        // We also need to notify the wm proc that we are creating
-        // a window. There might be surface updates before we make it
-        // visibile, and wm needs to track it.
-        self.create_new_window(id.clone());
 
         // TODO: optimize me
         // This is a bit too expensive atm
@@ -557,14 +543,14 @@ impl Atmosphere {
     /// redraw themselves. If they aren't on screen we don't send
     /// the callback so it doesn't use the power.
     pub fn send_frame_callbacks_for_surf(&mut self, id: &SurfaceId) {
-        log::error!("Sending frame callbacks for Surf {:?}", id);
+        log::debug!("Sending frame callbacks for Surf {:?}", id);
         // get each valid id in the mapping
         // get the refcell for the surface for this id
         if let Some(mut cbs) = self.a_frame_callbacks.get_mut(id) {
             for callback in cbs.drain(0..) {
                 // frame callbacks are signaled in the order that they
                 // were submitted in
-                log::error!("Firing frame callback {:?}", callback);
+                log::debug!("Firing frame callback {:?}", callback);
                 // frame callbacks return the current time
                 // in milliseconds.
                 callback.done(
