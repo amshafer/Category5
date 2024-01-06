@@ -11,12 +11,13 @@ use std::sync::Arc;
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Format {
     ARGB8888,
+    XRGB8888,
 }
 
 impl Format {
     pub fn get_size(&self) -> usize {
         match self {
-            Format::ARGB8888 => 4,
+            Format::XRGB8888 | Format::ARGB8888 => 4,
         }
     }
 }

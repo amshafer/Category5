@@ -109,20 +109,22 @@ impl ws::Dispatch<wl_shm_pool::WlShmPool, Arc<Mutex<ShmRegion>>> for Climate {
                         wl_shm::Error::InvalidFormat as u32,
                         format!("SHM format {:?} is not supported.", format),
                     );
+                    return;
                 }
 
-                let buf = ShmBuffer {
-                    sb_reg: data.clone(),
-                    sb_offset: offset,
-                    sb_width: width,
-                    sb_height: height,
-                    sb_stride: stride,
-                    sb_format: format,
-                };
-                log::debug!("Created new shm buf with size {}x{}", width, height);
-
                 // Add our buffer priv data to the userdata
-                data_init.init(id, Arc::new(buf));
+                data_init.init(
+                    id,
+                    ShmBuffer {
+                        sb_reg: data.clone(),
+                        sb_offset: offset,
+                        sb_width: width,
+                        sb_height: height,
+                        sb_stride: stride,
+                        sb_format: format,
+                    },
+                );
+                log::debug!("Created new shm buf with size {}x{}", width, height);
             }
             wl_shm_pool::Request::Resize { size } => {
                 data.lock().unwrap().resize(size as usize);
@@ -226,16 +228,15 @@ impl Drop for ShmRegion {
 // This represents a region of memory which
 // was carved from a ShmRegion. This struct
 // did not allocate the shared memory.
-#[allow(dead_code)]
 pub struct ShmBuffer {
-    // The region this buffer is a part of
+    /// The region this buffer is a part of
     sb_reg: Arc<Mutex<ShmRegion>>,
-    // The offset into sb_reg where this is located
-    sb_offset: i32,
+    /// The offset into sb_reg where this is located
+    pub sb_offset: i32,
     pub sb_width: i32,
     pub sb_height: i32,
-    sb_stride: i32,
-    sb_format: wl_shm::Format,
+    pub sb_stride: i32,
+    pub sb_format: wl_shm::Format,
 }
 
 impl ShmBuffer {
@@ -268,13 +269,13 @@ impl ShmBuffer {
 
 // Handle buffers with shm attached
 #[allow(unused_variables)]
-impl ws::Dispatch<wl_buffer::WlBuffer, Arc<ShmBuffer>> for Climate {
+impl ws::Dispatch<wl_buffer::WlBuffer, ShmBuffer> for Climate {
     fn request(
         state: &mut Self,
         client: &ws::Client,
         resource: &wl_buffer::WlBuffer,
         request: wl_buffer::Request,
-        data: &Arc<ShmBuffer>,
+        data: &ShmBuffer,
         dhandle: &ws::DisplayHandle,
         data_init: &mut ws::DataInit<'_, Self>,
     ) {
@@ -284,7 +285,7 @@ impl ws::Dispatch<wl_buffer::WlBuffer, Arc<ShmBuffer>> for Climate {
         state: &mut Self,
         _client: ws::backend::ClientId,
         _resource: &wl_buffer::WlBuffer,
-        data: &Arc<ShmBuffer>,
+        data: &ShmBuffer,
     ) {
         // don't close shm fd here since it is handled in Drop
     }

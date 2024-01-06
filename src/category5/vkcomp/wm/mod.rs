@@ -50,7 +50,6 @@ pub use crate::utils::{anyhow, Result};
 use utils::{log, timing::*, *};
 
 pub mod task;
-use super::release_info::DmabufReleaseInfo;
 use task::*;
 
 #[cfg(feature = "renderdoc")]
@@ -381,98 +380,6 @@ impl WindowManager {
         dakota.resource().set(elem, image);
     }
 
-    /// Handles an update from dmabuf task
-    ///
-    /// Translates the task update structure into lower
-    /// level calls to import a dmabuf and update a image.
-    /// Creates a new image if one doesn't exist yet.
-    fn update_window_contents_from_dmabuf(
-        &mut self,
-        atmos: &mut Atmosphere,
-        dakota: &mut dak::Dakota,
-        info: &UpdateWindowContentsFromDmabuf,
-    ) -> Result<()> {
-        log::debug!(
-            "Updating window {:?} with {:#?}",
-            info.ufd_id.get_raw_id(),
-            info
-        );
-        // Create a new resource from this dmabuf
-        let res = dakota.create_resource().unwrap();
-        dakota
-            .define_resource_from_dmabuf(
-                &res,
-                info.ufd_dmabuf.db_fd.try_clone().unwrap(),
-                info.ufd_dmabuf.db_plane_idx,
-                info.ufd_dmabuf.db_offset,
-                info.ufd_dmabuf.db_width,
-                info.ufd_dmabuf.db_height,
-                info.ufd_dmabuf.db_stride,
-                info.ufd_dmabuf.db_mods,
-                Some(Box::new(DmabufReleaseInfo {
-                    dr_fd: info.ufd_dmabuf.db_fd.try_clone()?,
-                    dr_wl_buffer: info.ufd_wl_buffer.clone(),
-                })),
-            )
-            .unwrap();
-        dakota.resource().set(&info.ufd_id, res.clone());
-
-        if let Some(damage) = atmos.take_buffer_damage(&info.ufd_id) {
-            dakota.damage_resource(&res, damage);
-        }
-        if let Some(damage) = atmos.take_surface_damage(&info.ufd_id) {
-            dakota.damage_element(&info.ufd_id, damage);
-        }
-
-        Ok(())
-    }
-
-    /// Handle update from memimage task
-    ///
-    /// Copies the shm buffer into the app's image.
-    /// Creates a new image if one doesn't exist yet.
-    fn update_window_contents_from_mem(
-        &mut self,
-        atmos: &mut Atmosphere,
-        dakota: &mut dak::Dakota,
-        info: &UpdateWindowContentsFromMem,
-    ) -> Result<()> {
-        log::debug!(
-            "Updating window {:?} with {:#?}",
-            info.id.get_raw_id(),
-            info
-        );
-
-        let buffer_damage = atmos.take_buffer_damage(&info.id);
-        let surface_damage = atmos.take_surface_damage(&info.id);
-        // Damage the image
-        if let Some(damage) = buffer_damage {
-            if let Some(image) = dakota.resource().get_clone(&info.id) {
-                dakota.damage_resource(&image, damage);
-            }
-        }
-        if let Some(damage) = surface_damage {
-            dakota.damage_element(&info.id, damage);
-        }
-
-        // Create a new image, the old one will have its refcount dropped
-        // TODO: add update method here
-        let res = dakota.create_resource().unwrap();
-        dakota
-            .define_resource_from_bits(
-                &res,
-                &info.pixels,
-                info.width as u32,
-                info.height as u32,
-                0,
-                dak::dom::Format::ARGB8888,
-            )
-            .unwrap();
-        dakota.resource().set(&info.id, res.clone());
-
-        Ok(())
-    }
-
     /// We have to pass in the barsize to get around some annoying borrow checker stuff
     fn get_bar_dims(barsize: f32, surface_size: &(f32, f32)) -> (f32, f32, f32, f32) {
         (
@@ -708,17 +615,6 @@ impl WindowManager {
             Task::reset_cursor => self
                 .reset_cursor(atmos, dakota)
                 .context("Task: reset_cursor"),
-            // update window from gpu buffer
-            Task::uwcfd(uw) => self
-                .update_window_contents_from_dmabuf(atmos, dakota, uw)
-                .context(format!("Task: Updating window {:?} from dmabuf", uw.ufd_id)),
-            // update window from shm
-            Task::uwcfm(uw) => self
-                .update_window_contents_from_mem(atmos, dakota, uw)
-                .context(format!(
-                    "Task: Updating window {:?} from shared memory",
-                    uw.id
-                )),
         };
 
         match err {

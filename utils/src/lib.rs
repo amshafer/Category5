@@ -9,21 +9,10 @@ pub mod log;
 pub mod region;
 
 use std::ops::Deref;
-use std::os::unix::io::OwnedFd;
 use std::slice;
 
 extern crate anyhow;
 pub use anyhow::{anyhow, Context, Error, Result};
-
-// Window Contents
-//
-// This allows for easy abstraction of the type
-// of data being used to update a mesh.
-#[allow(non_camel_case_types)]
-pub enum WindowContents<'a> {
-    dmabuf(&'a Dmabuf),
-    mem_image(&'a MemImage),
-}
 
 // Represents a raw pointer to a region of memory
 // containing an image buffer
@@ -104,52 +93,6 @@ impl Deref for MemImage {
             return self.as_slice();
         } else {
             panic!("Trying to dereference null pointer");
-        }
-    }
-}
-
-// dmabuf from linux_dmabuf
-// Represents one dma buffer the client has added.
-// Will be referenced by Params during wl_buffer
-// creation.
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct Dmabuf {
-    pub db_fd: OwnedFd,
-    pub db_plane_idx: u32,
-    pub db_offset: u32,
-    pub db_stride: u32,
-    // These will be added later during creation
-    pub db_width: i32,
-    pub db_height: i32,
-    pub db_mods: u64,
-}
-
-impl Clone for Dmabuf {
-    fn clone(&self) -> Self {
-        Self {
-            db_fd: self.db_fd.try_clone().expect("Could not DUP fd"),
-            db_plane_idx: self.db_plane_idx,
-            db_offset: self.db_offset,
-            db_stride: self.db_stride,
-            db_width: self.db_width,
-            db_height: self.db_height,
-            db_mods: self.db_mods,
-        }
-    }
-}
-
-impl Dmabuf {
-    pub fn new(fd: OwnedFd, plane: u32, offset: u32, stride: u32, mods: u64) -> Dmabuf {
-        Dmabuf {
-            db_fd: fd,
-            db_plane_idx: plane,
-            db_offset: offset,
-            db_stride: stride,
-            // these will be added later during creation
-            db_width: -1,
-            db_height: -1,
-            db_mods: mods,
         }
     }
 }

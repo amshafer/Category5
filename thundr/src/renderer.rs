@@ -1107,68 +1107,18 @@ impl Renderer {
             })
             .build()];
 
-        self.update_image_contents_from_buf_common(buffer, image, || region);
-    }
-
-    /// Copies a list of regions from a buffer into an image.
-    ///
-    /// Instead of copying the entire buffer, use a thundr::Damage to
-    /// populate only certain parts of the image. `damage` takes place
-    /// in the image's coordinate system.
-    pub(crate) unsafe fn update_image_contents_from_damaged_buf(
-        &mut self,
-        buffer: vk::Buffer,
-        image: vk::Image,
-        damage: &Damage,
-    ) {
-        log::debug!("Updating image with damage: {:?}", damage);
-        assert!(damage.d_regions.len() > 0);
-
-        let mut regions = Vec::new();
-
-        for d in damage.d_regions.iter() {
-            regions.push(
-                vk::BufferImageCopy::builder()
-                    // 0 specifies that the pixels are tightly packed
-                    .buffer_offset(0)
-                    .buffer_row_length(0)
-                    .buffer_image_height(0)
-                    .image_subresource(
-                        vk::ImageSubresourceLayers::builder()
-                            .aspect_mask(vk::ImageAspectFlags::COLOR)
-                            .mip_level(0)
-                            .base_array_layer(0)
-                            .layer_count(1)
-                            .build(),
-                    )
-                    .image_offset(vk::Offset3D {
-                        x: d.r_pos.0,
-                        y: d.r_pos.1,
-                        z: 0,
-                    })
-                    .image_extent(vk::Extent3D {
-                        width: d.r_size.0 as u32,
-                        height: d.r_size.1 as u32,
-                        depth: 1,
-                    })
-                    .build(),
-            );
-        }
-
-        self.update_image_contents_from_buf_common(buffer, image, || regions.as_slice());
+        self.update_image_contents_from_buf_common(buffer, image, region);
     }
 
     /// This function performs common setup, completion for update functions.
     ///
     /// It handles fence waiting and cbuf recording.
-    pub(crate) unsafe fn update_image_contents_from_buf_common<'a, F>(
+    pub(crate) unsafe fn update_image_contents_from_buf_common(
         &mut self,
         buffer: vk::Buffer,
         image: vk::Image,
-        get_regions: F,
-    ) where
-        F: FnOnce() -> &'a [vk::BufferImageCopy],
-    {
+        regions: &[vk::BufferImageCopy],
+    ) {
         self.wait_for_prev_submit();
         self.wait_for_copy();
         // unsignal it, may be extraneous
@@ -1185,7 +1135,6 @@ impl Renderer {
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         );
 
-        let regions = get_regions();
         log::debug!("Copy image with regions: {:?}", regions);
         self.dev.cmd_copy_buffer_to_image(
             self.copy_cbuf,
@@ -1229,9 +1178,87 @@ impl Renderer {
         height: u32,
         stride: u32,
     ) {
+        self.update_image_contents_from_damaged_data(image, data, width, height, stride, None);
+    }
+
+    /// Copies a list of regions from a buffer into an image.
+    ///
+    /// Instead of copying the entire buffer, use a thundr::Damage to
+    /// populate only certain parts of the image. `damage` takes place
+    /// in the image's coordinate system.
+    pub(crate) unsafe fn update_image_contents_from_damaged_data(
+        &mut self,
+        image: vk::Image,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32,
+        damage: Option<Damage>,
+    ) {
+        log::debug!("Updating image with damage: {:?}", damage);
+
+        let mut regions = Vec::new();
+
+        // If we have damage to use, then generate our copy regions. If not,
+        // then just create
+        if let Some(damage) = damage {
+            for d in damage.d_regions.iter() {
+                regions.push(
+                    vk::BufferImageCopy::builder()
+                        // 0 specifies that the pixels are tightly packed
+                        .buffer_offset(0)
+                        .buffer_row_length(0)
+                        .buffer_image_height(0)
+                        .image_subresource(
+                            vk::ImageSubresourceLayers::builder()
+                                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                                .mip_level(0)
+                                .base_array_layer(0)
+                                .layer_count(1)
+                                .build(),
+                        )
+                        .image_offset(vk::Offset3D {
+                            x: d.r_pos.0,
+                            y: d.r_pos.1,
+                            z: 0,
+                        })
+                        .image_extent(vk::Extent3D {
+                            width: d.r_size.0 as u32,
+                            height: d.r_size.1 as u32,
+                            depth: 1,
+                        })
+                        .build(),
+                );
+            }
+        } else {
+            regions.push(
+                vk::BufferImageCopy::builder()
+                    .buffer_offset(0)
+                    // 0 means tightly packed.
+                    .buffer_row_length(stride)
+                    .buffer_image_height(0)
+                    .image_subresource(
+                        vk::ImageSubresourceLayers::builder()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .mip_level(0)
+                            .base_array_layer(0)
+                            .layer_count(1)
+                            .build(),
+                    )
+                    .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+                    .image_extent(vk::Extent3D {
+                        width: width,
+                        height: height,
+                        depth: 1,
+                    })
+                    .build(),
+            );
+        }
+
         self.wait_for_prev_submit();
 
         // Now copy the bits into the image
+        // TODO: only upload damaged regions
         self.upload_memimage_to_transfer(data);
 
         // Reset the fences for our cbuf submission below
@@ -1274,28 +1301,7 @@ impl Renderer {
             // this is the layout the image is currently using
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             // Region to copy
-            &[vk::BufferImageCopy::builder()
-                // 0 specifies that the pixels are tightly packed
-                .buffer_offset(0)
-                // add stride
-                // 0 means tightly packed.
-                .buffer_row_length(stride)
-                .buffer_image_height(0)
-                .image_subresource(
-                    vk::ImageSubresourceLayers::builder()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .mip_level(0)
-                        .base_array_layer(0)
-                        .layer_count(1)
-                        .build(),
-                )
-                .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
-                .image_extent(vk::Extent3D {
-                    width: width,
-                    height: height,
-                    depth: 1,
-                })
-                .build()],
+            regions.as_slice(),
         );
 
         // Now we need to turn this image's format back into the optimal
@@ -1938,7 +1944,9 @@ impl Renderer {
                 let (buffer, buf_mem) = self.create_buffer(
                     vk::BufferUsageFlags::TRANSFER_SRC,
                     vk::SharingMode::EXCLUSIVE,
-                    vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+                    vk::MemoryPropertyFlags::HOST_VISIBLE
+                        | vk::MemoryPropertyFlags::HOST_COHERENT
+                        | vk::MemoryPropertyFlags::HOST_CACHED,
                     data,
                 );
                 self.transfer_buf = buffer;

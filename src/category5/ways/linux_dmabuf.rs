@@ -6,11 +6,13 @@
 extern crate wayland_protocols;
 extern crate wayland_server as ws;
 
+use crate::category5::Atmosphere;
 use crate::category5::Climate;
 use utils::log;
 use ws::protocol::wl_buffer;
 
-use utils::Dmabuf;
+use dakota as dak;
+use dakota::{Dmabuf, DmabufPlane};
 use wayland_protocols::wp::linux_dmabuf::zv1::server::{
     zwp_linux_buffer_params_v1 as zlbpv1, zwp_linux_dmabuf_v1 as zldv1,
 };
@@ -104,9 +106,13 @@ impl ws::Dispatch<zlbpv1::ZwpLinuxBufferParamsV1, Arc<Mutex<Params>>> for Climat
         dhandle: &ws::DisplayHandle,
         data_init: &mut ws::DataInit<'_, Self>,
     ) {
-        data.lock()
-            .unwrap()
-            .handle_request(request, resource, data_init);
+        data.lock().unwrap().handle_request(
+            &mut state.c_dakota,
+            state.c_atmos.lock().as_mut().unwrap(),
+            request,
+            resource,
+            data_init,
+        );
     }
 
     fn destroyed(
@@ -120,13 +126,15 @@ impl ws::Dispatch<zlbpv1::ZwpLinuxBufferParamsV1, Arc<Mutex<Params>>> for Climat
 
 struct Params {
     // The list of added dma buffers
-    p_bufs: Vec<Dmabuf>,
+    p_bufs: Vec<DmabufPlane>,
 }
 
 impl Params {
     #[allow(unused_variables)]
     fn handle_request(
         &mut self,
+        dakota: &mut dak::Dakota,
+        atmos: &mut Atmosphere,
         req: zlbpv1::Request,
         params: &zlbpv1::ZwpLinuxBufferParamsV1,
         data_init: &mut ws::DataInit<'_, Climate>,
@@ -145,15 +153,22 @@ impl Params {
                     height
                 );
 
-                // TODO
-                // for now just only assign the first dmabuf
-                let mut dmabuf = self.p_bufs[0].clone();
-                dmabuf.db_width = width;
-                dmabuf.db_height = height;
+                // First create our userdata and initialize our wl_buffer. We need this
+                // so we can have a valid buffer object to use as the release data in
+                // the dmabuf import
+                let dmabuf = self.create(width, height, format);
+                let tmp = atmos.mint_buffer_id(dakota);
+                // Test that we can import this dmabuf
+                match dakota.define_resource_from_dmabuf(&tmp, &dmabuf, None) {
+                    Ok(res) => res,
+                    Err(e) => {
+                        log::error!("Failed to import dmabuf: {:?}", e);
+                        params.failed();
+                        return;
+                    }
+                };
 
-                // Add our dmabuf to the userdata so Surface
-                // can later hand it to vkcomp
-                let buffer = data_init.init(buffer_id, Arc::new(dmabuf));
+                let buffer = data_init.init(buffer_id, dmabuf);
 
                 params.created(&buffer);
             }
@@ -170,6 +185,17 @@ impl Params {
         };
     }
 
+    /// Constructs a Dmabuf object from these parameters
+    fn create(&mut self, width: i32, height: i32, _format: u32) -> Dmabuf {
+        let mut dmabuf = dak::Dmabuf::new(width, height);
+
+        for plane in self.p_bufs.drain(0..) {
+            dmabuf.db_planes.push(plane);
+        }
+
+        return dmabuf;
+    }
+
     fn add(
         &mut self,
         fd: OwnedFd,
@@ -179,7 +205,7 @@ impl Params {
         mod_hi: u32,
         mod_low: u32,
     ) {
-        let d = Dmabuf::new(
+        let d = DmabufPlane::new(
             fd,
             plane_idx,
             offset,
@@ -194,13 +220,13 @@ impl Params {
 // Handle wl_buffer with a dmabuf attached
 // This will clean up the fd when released
 #[allow(unused_variables)]
-impl ws::Dispatch<wl_buffer::WlBuffer, Arc<Dmabuf>> for Climate {
+impl ws::Dispatch<wl_buffer::WlBuffer, dak::Dmabuf> for Climate {
     fn request(
         state: &mut Self,
         client: &ws::Client,
         resource: &wl_buffer::WlBuffer,
         request: wl_buffer::Request,
-        data: &Arc<Dmabuf>,
+        data: &dak::Dmabuf,
         dhandle: &ws::DisplayHandle,
         data_init: &mut ws::DataInit<'_, Self>,
     ) {
@@ -210,12 +236,12 @@ impl ws::Dispatch<wl_buffer::WlBuffer, Arc<Dmabuf>> for Climate {
         state: &mut Self,
         _client: ws::backend::ClientId,
         _resource: &wl_buffer::WlBuffer,
-        data: &Arc<Dmabuf>,
+        data: &dak::Dmabuf,
     ) {
         // Close our dmabuf fd since this object was deleted
         log::debug!(
             "Destroying wl_buffer: closing dmabuf with fd {}",
-            data.db_fd.as_raw_fd()
+            data.db_planes[0].db_fd.as_raw_fd()
         );
     }
 }

@@ -11,6 +11,7 @@ extern crate lluvia as ll;
 extern crate thundr as th;
 pub use th::Damage;
 pub use th::ThundrError as DakotaError;
+pub use th::{Dmabuf, DmabufPlane};
 pub use th::{Droppable, SubsurfaceOrder};
 
 extern crate bitflags;
@@ -18,10 +19,10 @@ extern crate bitflags;
 extern crate lazy_static;
 extern crate utils;
 use utils::log;
+pub use utils::MemImage;
 pub use utils::{
     anyhow, fdwatch::FdWatch, region::Rect, timing::StopWatch, Context, Error, Result,
 };
-pub use utils::{Dmabuf, MemImage};
 
 pub mod dom;
 pub mod input;
@@ -44,7 +45,6 @@ pub use generated::*;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::os::fd::RawFd;
-use std::os::unix::io::OwnedFd;
 extern crate regex;
 use regex::Regex;
 
@@ -551,6 +551,10 @@ impl Dakota {
         file_path: &std::path::Path,
         format: dom::Format,
     ) -> Result<()> {
+        if self.is_resource_defined(res) {
+            return Err(anyhow!("Cannot redefine Resource contents"));
+        }
+
         // Create an in-memory representation of the image contents
         let resolution = image::image_dimensions(file_path)
             .context("Format of image could not be guessed correctly. Could not get resolution")?;
@@ -567,6 +571,14 @@ impl Dakota {
             0,
             format,
         )
+    }
+
+    /// Has this Resource been defined
+    ///
+    /// If a resource has been defined then it contains surface contents. This
+    /// means an internal GPU resource has been allocated for it.
+    pub fn is_resource_defined(&self, res: &DakotaId) -> bool {
+        self.d_resource_thundr_image.get(res).is_some() || self.d_resource_color.get(res).is_some()
     }
 
     /// Define a resource's contents from an array
@@ -590,9 +602,7 @@ impl Dakota {
             return Err(anyhow!("Invalid image format"));
         }
 
-        if self.d_resource_thundr_image.get(res).is_some()
-            || self.d_resource_color.get(res).is_some()
-        {
+        if self.is_resource_defined(res) {
             return Err(anyhow!("Cannot redefine Resource contents"));
         }
 
@@ -606,6 +616,36 @@ impl Dakota {
         Ok(())
     }
 
+    /// Update the resource contents from a damaged CPU buffer
+    ///
+    /// This allows for updating the contents of a resource according to
+    /// the data provided, within the damage regions specified. This is
+    /// useful for compositor users to update a local copy of a shm texture.
+    /// This should *NOT* be used with dmabuf-backed textures.
+    pub fn update_resource_from_bits(
+        &mut self,
+        res: &DakotaId,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32, // TODO: Handle stride properly
+        format: dom::Format,
+        damage: Option<Damage>,
+    ) -> Result<()> {
+        if !(format == dom::Format::ARGB8888 || format == dom::Format::XRGB8888) {
+            return Err(anyhow!("Invalid image format"));
+        }
+
+        let image = self.d_resource_thundr_image.get_mut(res).ok_or(anyhow!(
+            "Resource does not have a internal GPU resource defined"
+        ))?;
+
+        self.d_thund
+            .update_image_from_bits(&image, data, width, height, stride, damage, None);
+
+        Ok(())
+    }
+
     /// Populate a resource by importing a dmabuf
     ///
     /// This allows for loading the `fd` specified into Dakota's internal
@@ -614,28 +654,16 @@ impl Dakota {
     pub fn define_resource_from_dmabuf(
         &mut self,
         res: &DakotaId,
-        fd: OwnedFd,
-        plane: u32,
-        offset: u32,
-        width: i32,
-        height: i32,
-        stride: u32,
-        modifier: u64,
+        dmabuf: &Dmabuf,
         release_info: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Result<()> {
-        let mut dmabuf = Dmabuf::new(fd, plane, offset, stride, modifier);
-        dmabuf.db_width = width;
-        dmabuf.db_height = height;
-
-        if self.d_resource_thundr_image.get(res).is_some()
-            || self.d_resource_color.get(res).is_some()
-        {
+        if self.is_resource_defined(res) {
             return Err(anyhow!("Cannot redefine Resource contents"));
         }
 
         let image = self
             .d_thund
-            .create_image_from_dmabuf(&dmabuf, release_info)
+            .create_image_from_dmabuf(dmabuf, release_info)
             .ok_or(anyhow!("Could not create Thundr image from dmabuf"))?;
 
         self.d_resource_thundr_image.set(res, image);

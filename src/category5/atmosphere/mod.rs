@@ -9,7 +9,8 @@
 
 // Austin Shafer - 2020
 extern crate wayland_server as ws;
-use ws::protocol::{wl_callback, wl_surface};
+use crate::category5::ws::Resource;
+use ws::protocol::{wl_buffer, wl_callback, wl_shm, wl_surface};
 extern crate paste;
 use paste::paste;
 
@@ -19,8 +20,8 @@ extern crate lluvia as ll;
 mod skiplist;
 
 use crate::category5::input::Input;
-use crate::category5::vkcomp::wm;
-use crate::category5::ways::{seat::Seat, surface::*, wl_region::Region};
+use crate::category5::vkcomp::{release_info::GenericReleaseInfo, wm};
+use crate::category5::ways::{seat::Seat, shm::ShmBuffer, surface::*, wl_region::Region};
 use utils::log;
 
 use std::collections::VecDeque;
@@ -35,6 +36,20 @@ pub type ClientId = ll::Entity;
 /// This is actually a DakotaId, meaning that all properties for this
 /// are tracked by dakota elements.
 pub type SurfaceId = dak::DakotaId;
+/// ECS refcounted buffer id
+///
+/// This id will represent each wl_buffer created, and allows us a way
+/// to attach arbitrary state to them. This id is stored in the wl_buffer
+/// object.
+pub type BufferId = dak::DakotaId;
+
+/// Shadow buffer state
+///
+/// A shadow buffer is an internally owned Dakota Resource which contains
+/// a copy of the surface contents. This is used primarily for shm buffers,
+/// where we have a local copy that we update based on buffer damage and
+/// release the attached buffer immediately.
+struct ShadowBuffer {}
 
 /// Global state tracking
 ///
@@ -170,6 +185,17 @@ pub struct Atmosphere {
     /// The input region.
     /// Input events will only be delivered if this region is in focus
     pub a_input_region: ll::Component<Arc<Mutex<Region>>>,
+    /// Dakota resources per surface. This is the same as dakota.resource(), and
+    /// is the resource currently bound to this surface (i.e. dakota element)
+    pub a_surf_resource: ll::Component<BufferId>,
+
+    // -------------------------------------------------------
+    // Resource id tracking
+    //
+    // These are indexed by BufferIds which represent Dakota resource objects.
+    // These will be attached to SurfaceIds to assign window content.
+    /// Shadow Resource (local copy of buffer)
+    a_shadow_buffer: ll::Component<ShadowBuffer>,
 }
 
 // Implement getters/setters for our global properties
@@ -208,7 +234,8 @@ impl Atmosphere {
     /// also be passed to the other subsystem.
     /// One subsystem must be setup as index 0 and the other
     /// as index 1
-    pub fn new(mut surf_ecs: ll::Instance) -> Atmosphere {
+    pub fn new(dakota: &dak::Dakota) -> Atmosphere {
+        let mut surf_ecs = dakota.get_ecs_instance();
         let mut client_ecs = ll::Instance::new();
 
         Atmosphere {
@@ -251,6 +278,9 @@ impl Atmosphere {
             a_frame_callbacks: surf_ecs.add_component(),
             a_opaque_region: surf_ecs.add_component(),
             a_input_region: surf_ecs.add_component(),
+            a_surf_resource: dakota.resource(),
+            // ---------------------
+            a_shadow_buffer: surf_ecs.add_component(),
             a_surface_ecs: surf_ecs,
         }
     }
@@ -287,6 +317,8 @@ impl Atmosphere {
             || self.a_wl_surface.is_modified()
             || self.a_surface_damage.is_modified()
             || self.a_buffer_damage.is_modified()
+            || self.a_surf_resource.is_modified()
+            || self.a_shadow_buffer.is_modified()
     }
     pub fn clear_changed(&mut self) {
         self.a_changed = false;
@@ -310,6 +342,8 @@ impl Atmosphere {
         self.a_wl_surface.clear_modified();
         self.a_surface_damage.clear_modified();
         self.a_buffer_damage.clear_modified();
+        self.a_surf_resource.clear_modified();
+        self.a_shadow_buffer.clear_modified();
     }
     pub fn mark_changed(&mut self) {
         self.a_changed = true;
@@ -358,6 +392,13 @@ impl Atmosphere {
         windows.push(id.clone());
 
         return id;
+    }
+
+    /// Create a new BufferId
+    ///
+    /// This is really a Dakota Resource id type.
+    pub fn mint_buffer_id(&mut self, dakota: &mut dak::Dakota) -> BufferId {
+        dakota.create_resource().unwrap()
     }
 
     /// Recalculate the pointer focus
@@ -445,6 +486,98 @@ impl Atmosphere {
     pub fn get_next_wm_task(&mut self) -> Option<wm::task::Task> {
         self.mark_changed();
         self.a_wm_tasks.pop_front()
+    }
+
+    /// Handles an update from dmabuf task
+    ///
+    /// Translates the task update structure into lower
+    /// level calls to import a dmabuf and update a image.
+    /// Creates a new image if one doesn't exist yet.
+    pub fn create_dmabuf_resource(
+        &mut self,
+        dakota: &mut dak::Dakota,
+        resource: &dak::DakotaId,
+        buffer: wl_buffer::WlBuffer,
+        dmabuf: &dak::Dmabuf,
+    ) -> dak::Result<()> {
+        // Create a new resource from this dmabuf
+        dakota.define_resource_from_dmabuf(
+            resource,
+            dmabuf,
+            Some(Box::new(GenericReleaseInfo {
+                wl_buffer: buffer.clone(),
+            })),
+        )?;
+
+        Ok(())
+    }
+
+    /// Get or create a shadow buffer for this surface
+    fn get_shadow_resource(&mut self, dakota: &mut dak::Dakota, surf: &SurfaceId) -> BufferId {
+        if let Some(id) = self.a_surf_resource.get_clone(surf) {
+            if self.a_shadow_buffer.get(&id).is_some() {
+                return id;
+            }
+        }
+
+        let id = self.mint_buffer_id(dakota);
+        self.a_shadow_buffer.set(&id, ShadowBuffer {});
+        return id;
+    }
+
+    /// Handle update from memimage task
+    ///
+    /// Copies the shm buffer into the app's image.
+    /// Creates a new image if one doesn't exist yet.
+    pub fn update_shm_resource(
+        &mut self,
+        dakota: &mut dak::Dakota,
+        surf: &SurfaceId,
+        shm_buffer: &ShmBuffer,
+        buffer: &wl_buffer::WlBuffer,
+    ) -> dak::Result<()> {
+        // Get the shadow resource if it exists. If not, create it.
+        // We do this by checking if the surface is currently assigned a resource
+        // which has had its shadow state set.
+        let shadow = self.get_shadow_resource(dakota, surf);
+
+        let pixels = shm_buffer.get_mem_image();
+        if let Err(e) = match dakota.is_resource_defined(&shadow) {
+            // If the shadow resource is defined, then copy the damaged regions
+            // of this new buffer into the shadow copy.
+            true => dakota.update_resource_from_bits(
+                &shadow,
+                &pixels,
+                shm_buffer.sb_width as u32,
+                shm_buffer.sb_height as u32,
+                0,
+                dak::dom::Format::ARGB8888,
+                self.a_buffer_damage.take(&surf),
+            ),
+            // If the shadow resource is not defined, define it now using the
+            // buffers contents
+            false => dakota.define_resource_from_bits(
+                &shadow,
+                &pixels,
+                shm_buffer.sb_width as u32,
+                shm_buffer.sb_height as u32,
+                0,
+                dak::dom::Format::ARGB8888,
+            ),
+        } {
+            buffer.post_error(
+                wl_shm::Error::InvalidFd as u32,
+                format!("Error Importing Shm Buffer: {:?}", e),
+            );
+            return Err(e.context("Failed to import Shm Buffer"));
+        }
+
+        // Release the new buffer immediately so the app can reuse it
+        buffer.release();
+        // Now we can (re)bind it to this surface
+        self.a_surf_resource.set(&surf, shadow);
+
+        Ok(())
     }
 
     /// Set the damage for this surface

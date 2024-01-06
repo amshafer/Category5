@@ -59,7 +59,7 @@ pub mod linux_dmabuf;
 mod pointer;
 pub mod protocol;
 pub mod seat;
-mod shm;
+pub mod shm;
 pub mod surface;
 mod wl_drm;
 mod wl_output;

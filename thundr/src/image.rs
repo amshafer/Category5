@@ -10,11 +10,11 @@ extern crate nix;
 use super::renderer::Renderer;
 use utils::log;
 use utils::region::Rect;
-use utils::Dmabuf;
 
 use std::fmt;
 use std::ops::Drop;
 use std::os::unix::io::AsRawFd;
+use std::os::unix::io::OwnedFd;
 use std::sync::{Arc, Mutex, RwLock};
 
 use ash::vk;
@@ -26,6 +26,68 @@ use crate::{Damage, Droppable};
 // For now we only support one format.
 // According to the mesa source, this supports all modifiers.
 const TARGET_FORMAT: vk::Format = vk::Format::B8G8R8A8_UNORM;
+
+/// dmabuf plane parameters from linux_dmabuf
+///
+/// Represents one dma buffer the client has added.
+/// Will be referenced by Params during wl_buffer
+/// creation.
+#[derive(Debug)]
+pub struct DmabufPlane {
+    pub db_fd: OwnedFd,
+    pub db_plane_idx: u32,
+    pub db_offset: u32,
+    pub db_stride: u32,
+    pub db_mods: u64,
+}
+
+impl Clone for DmabufPlane {
+    fn clone(&self) -> Self {
+        Self {
+            db_fd: self.db_fd.try_clone().expect("Could not DUP fd"),
+            db_plane_idx: self.db_plane_idx,
+            db_offset: self.db_offset,
+            db_stride: self.db_stride,
+            db_mods: self.db_mods,
+        }
+    }
+}
+
+impl DmabufPlane {
+    pub fn new(fd: OwnedFd, plane: u32, offset: u32, stride: u32, mods: u64) -> Self {
+        Self {
+            db_fd: fd,
+            db_plane_idx: plane,
+            db_offset: offset,
+            db_stride: stride,
+            db_mods: mods,
+        }
+    }
+}
+
+/// The overall dmabuf tracking struct
+///
+/// This contains a set of planes which were specified during params.add.
+/// It also has a list of the Dakota resources created from importing these
+/// planes.
+#[derive(Clone, Debug)]
+pub struct Dmabuf {
+    pub db_width: i32,
+    pub db_height: i32,
+
+    /// The individual plane specifications
+    pub db_planes: Vec<DmabufPlane>,
+}
+
+impl Dmabuf {
+    pub fn new(width: i32, height: i32) -> Self {
+        Self {
+            db_width: width,
+            db_height: height,
+            db_planes: Vec::with_capacity(1),
+        }
+    }
+}
 
 /// These are the fields private to the vulkan system, mainly
 /// the VkImage and other resources that we need to drop once they
@@ -42,10 +104,37 @@ pub struct ImageVk {
     iv_release_info: Option<Box<dyn Droppable + Send + Sync>>,
 }
 
+impl ImageVk {
+    pub fn cleanup(&mut self, rend: &mut Renderer) {
+        unsafe {
+            rend.dev.destroy_image(self.iv_image, None);
+            rend.dev.destroy_image_view(self.iv_image_view, None);
+            rend.free_memory(self.iv_image_mem);
+        }
+
+        *self = Self {
+            iv_rend: self.iv_rend.clone(),
+            iv_image: vk::Image::null(),
+            iv_image_view: vk::ImageView::null(),
+            iv_image_mem: vk::DeviceMemory::null(),
+            iv_image_resolution: vk::Extent2D {
+                width: 0,
+                height: 0,
+            },
+            iv_release_info: None,
+        };
+    }
+}
+
 impl Drop for ImageVk {
     /// A simple teardown function. The renderer is needed since
     /// it allocated all these objects.
     fn drop(&mut self) {
+        // Don't free this image if it is already freed
+        if self.iv_image == vk::Image::null() {
+            return;
+        }
+
         let rend = self.iv_rend.lock().unwrap();
         rend.wait_for_prev_submit();
         log::debug!("Deleting image view {:?}", self.iv_image_view);
@@ -229,6 +318,69 @@ impl Renderer {
         )
     }
 
+    /// Update an existing image from a shm buffer
+    pub fn update_image_from_bits(
+        &mut self,
+        image: &Image,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32,
+        damage: Option<Damage>,
+        release: Option<Box<dyn Droppable + Send + Sync>>,
+    ) {
+        self.wait_for_copy();
+        self.wait_for_prev_submit();
+
+        {
+            let imgvk_id = image.get_id();
+            let resolution = self.r_image_vk.get(&imgvk_id).unwrap().iv_image_resolution;
+
+            // If the sizes match then we can update according to the damage provided
+            if width == resolution.width && height == resolution.height {
+                // Get our vk image here, we can copy it since we know we are in
+                // the Renderer Mutex, so nobody else should be updating this entry
+                let vkimage = self.r_image_vk.get_mut(&imgvk_id).unwrap().iv_image;
+
+                unsafe {
+                    self.update_image_contents_from_damaged_data(
+                        vkimage, data, width, height, stride, damage,
+                    );
+                }
+                return;
+            }
+
+            // If the new contents have a change in size, then we need to realloc our
+            // internal image. In this case we can ignore damage
+            let new_size = vk::Extent2D {
+                width: width,
+                height: height,
+            };
+
+            let (image, view, img_mem) = unsafe { self.alloc_bgra8_image(&new_size) };
+            let _old_release = {
+                let mut image_vk = self.r_image_vk.get_mut(&imgvk_id).unwrap();
+                unsafe {
+                    self.dev.destroy_image(image_vk.iv_image, None);
+                    self.dev.destroy_image_view(image_vk.iv_image_view, None);
+                    self.dev.free_memory(image_vk.iv_image_mem, None);
+                }
+
+                image_vk.iv_image = image;
+                image_vk.iv_image_view = view;
+                image_vk.iv_image_mem = img_mem;
+                image_vk.iv_image_resolution = new_size;
+                let ret = image_vk.iv_release_info.take();
+                image_vk.iv_release_info = release;
+                ret
+            };
+
+            unsafe { self.update_image_from_data(image, data, width, height, stride) };
+        }
+
+        self.update_image_vk_info(image.i_internal.read().as_ref().unwrap());
+    }
+
     /// Create a new image from a shm buffer
     pub fn create_image_from_bits(
         &mut self,
@@ -237,7 +389,7 @@ impl Renderer {
         width: u32,
         height: u32,
         stride: u32,
-        _release: Option<Box<dyn Droppable + Send + Sync>>,
+        release: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
         unsafe {
             let tex_res = vk::Extent2D {
@@ -254,11 +406,7 @@ impl Renderer {
             //    img.checksum()
             //);
 
-            // At this point we can drop release. We have already copied from the
-            // memimage so we are good to signal wayland
-
-            // This image will back the contents of the on-screen
-            // client window.
+            // This image will back the contents of the on-screen client window.
             let (image, view, img_mem) = self.alloc_bgra8_image(&tex_res);
 
             self.update_image_from_data(image, data, width, height, stride);
@@ -270,7 +418,7 @@ impl Renderer {
                 image,
                 img_mem,
                 view,
-                None,
+                release,
             );
         }
     }
@@ -357,6 +505,9 @@ impl Renderer {
         dmabuf: &Dmabuf,
         dmabuf_priv: &mut DmabufPrivate,
     ) -> Result<(vk::Image, vk::ImageView, vk::DeviceMemory), Error> {
+        // TODO: multiplanar support
+        let plane = &dmabuf.db_planes[0];
+
         // Allocate an external image
         // -------------------------------------------------------
         // we create the image now, but will have to bind
@@ -385,10 +536,10 @@ impl Renderer {
             .build();
 
         let drm_create_info = vk::ImageDrmFormatModifierExplicitCreateInfoEXT::builder()
-            .drm_format_modifier(dmabuf.db_mods)
+            .drm_format_modifier(plane.db_mods)
             .plane_layouts(&[vk::SubresourceLayout::builder()
-                .offset(dmabuf.db_offset as u64)
-                .row_pitch(dmabuf.db_stride as u64)
+                .offset(plane.db_offset as u64)
+                .row_pitch(plane.db_stride as u64)
                 .size(0)
                 .build()])
             .build();
@@ -403,7 +554,7 @@ impl Renderer {
             .external_mem_fd_loader
             .get_memory_fd_properties(
                 vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT,
-                dmabuf.db_fd.as_raw_fd(),
+                plane.db_fd.as_raw_fd(),
             )
             .expect("Could not get memory fd properties")
             // bitmask set for each supported memory type
@@ -439,7 +590,7 @@ impl Renderer {
         // possible that the fd may be bad since the program that
         // owns it was killed. If that is the case just return and
         // don't update the texture.
-        let fd = match fcntl(dmabuf.db_fd.as_raw_fd(), FcntlArg::F_DUPFD_CLOEXEC(0)) {
+        let fd = match fcntl(plane.db_fd.as_raw_fd(), FcntlArg::F_DUPFD_CLOEXEC(0)) {
             Ok(f) => f,
             Err(e) => {
                 log::debug!("could not dup fd {:?}", e);
@@ -485,7 +636,7 @@ impl Renderer {
         log::debug!(
             "Created Vulkan image {:?} from dmabuf {}",
             image,
-            dmabuf.db_fd.as_raw_fd(),
+            plane.db_fd.as_raw_fd(),
         );
         Ok((image, view, image_memory))
     }
@@ -509,6 +660,8 @@ impl Renderer {
         unsafe {
             // Check validity of dmabuf format and print info
             // -------------------------------------------------------
+            // TODO: multiplanar support
+            let plane = &dmabuf.db_planes[0];
 
             #[cfg(debug_assertions)]
             {
@@ -537,7 +690,7 @@ impl Renderer {
                 );
 
                 for m in mods.iter() {
-                    log::debug!("dmabuf {} found mod {:#?}", dmabuf.db_fd.as_raw_fd(), m);
+                    log::debug!("dmabuf {} found mod {:#?}", plane.db_fd.as_raw_fd(), m);
                 }
             }
 
@@ -550,7 +703,7 @@ impl Renderer {
                 .flags(vk::ImageCreateFlags::empty())
                 .build();
             let drm_img_props = vk::PhysicalDeviceImageDrmFormatModifierInfoEXT::builder()
-                .drm_format_modifier(dmabuf.db_mods)
+                .drm_format_modifier(plane.db_mods)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE)
                 .queue_family_indices(&[self.graphics_family_index])
                 .build();
@@ -568,7 +721,7 @@ impl Renderer {
             // -------------------------------------------------------
             log::debug!(
                 "dmabuf {} image format properties {:#?} {:#?}",
-                dmabuf.db_fd.as_raw_fd(),
+                plane.db_fd.as_raw_fd(),
                 img_fmt_props,
                 drm_img_props
             );

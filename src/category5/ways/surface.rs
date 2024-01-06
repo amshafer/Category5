@@ -13,11 +13,11 @@ use ws::Resource;
 
 use super::role::Role;
 use super::wl_region::Region;
-use super::{shm::*, wl_subcompositor::SubSurfaceState, xdg_shell::XdgState};
+use super::{shm::ShmBuffer, wl_subcompositor::SubSurfaceState, xdg_shell::XdgState};
 use crate::category5::atmosphere::{Atmosphere, SurfaceId};
 use crate::category5::vkcomp::wm;
 use crate::category5::Climate;
-use utils::{log, Dmabuf};
+use utils::log;
 
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
@@ -36,6 +36,7 @@ impl ws::Dispatch<wlsi::WlSurface, Arc<Mutex<Surface>>> for Climate {
     ) {
         let surf = resource.data::<Arc<Mutex<Surface>>>().unwrap();
         surf.lock().unwrap().handle_request(
+            &mut state.c_dakota,
             state.c_atmos.lock().unwrap().deref_mut(),
             resource,
             data_init,
@@ -156,7 +157,7 @@ impl CommitState {
     /// This actually does all the work to apply the state info to
     /// the system, resetting the state in the process. Any child states
     /// will also be applied at this time.
-    pub fn commit(&mut self, atmos: &mut Atmosphere) {
+    pub fn commit(&mut self, dakota: &mut dak::Dakota, atmos: &mut Atmosphere) {
         log::debug!("Committing state for surface {:?}", self.cs_id.get_raw_id());
 
         // ----- Update our surface size -----
@@ -166,40 +167,37 @@ impl CommitState {
         // Once the attached buffer is committed, the logic unifies again: the surface
         // size is obtained (either from the new buf or from atmos) and we can start
         // calling down the chain to xdg/wl_subcompositor/wl_shell
-        let surf_size = if let Some(buf) = self.cs_buffer.take() {
-            // Add tasks that tell the compositor to import this buffer
-            // so it is usable in vulkan. Also return the size of the buffer
-            // so we can set the surface size
-            if let Some(dmabuf) = buf.data::<Arc<Dmabuf>>() {
-                atmos.add_wm_task(wm::task::Task::update_window_contents_from_dmabuf(
-                    self.cs_id.clone(), // ID of the new window
-                    dmabuf.clone(),     // fd of the gpu buffer
-                    // pass the WlBuffer so it can be released
-                    buf.clone(),
-                ));
-                (dmabuf.db_width as f32, dmabuf.db_height as f32)
-            } else if let Some(shm_buf) = buf.data::<Arc<ShmBuffer>>() {
-                // ShmBuffer holds the base pointer and an offset, so
-                // we need to get the actual pointer, which will be
-                // wrapped in a MemImage
-                let fb = shm_buf.get_mem_image();
+        let mut surf_size = *atmos.a_surface_size.get(&self.cs_id).unwrap();
 
-                atmos.add_wm_task(wm::task::Task::update_window_contents_from_mem(
-                    self.cs_id.clone(), // ID of the new window
-                    fb,                 // memimage of the contents
-                    // pass the WlBuffer so it can be released
-                    buf.clone(),
-                    // window dimensions
-                    shm_buf.sb_width as usize,
-                    shm_buf.sb_height as usize,
-                ));
-                (shm_buf.sb_width as f32, shm_buf.sb_height as f32)
+        // ----- Commit our buffer -----
+        // update our size while we are at it
+        if let Some(buf) = self.cs_buffer.take() {
+            let buffer_id = atmos.mint_buffer_id(dakota);
+
+            if let Some(dmabuf) = buf.data::<dak::Dmabuf>() {
+                if let Err(e) =
+                    atmos.create_dmabuf_resource(dakota, &buffer_id, buf.clone(), dmabuf)
+                {
+                    log::error!("Error during commit: {:?}", e);
+                    return;
+                }
+                // Bind this buffer's resource to our Dakota element
+                atmos.a_surf_resource.set(&self.cs_id, buffer_id.clone());
+
+                surf_size = (dmabuf.db_width as f32, dmabuf.db_height as f32)
+            } else if let Some(shm_buffer) = buf.data::<ShmBuffer>() {
+                // Create a dakota resource for this buffer
+                if let Err(e) = atmos.update_shm_resource(dakota, &self.cs_id, shm_buffer, &buf) {
+                    log::error!("Error during commit: {:?}", e);
+                    return;
+                }
+
+                surf_size = (shm_buffer.sb_width as f32, shm_buffer.sb_height as f32)
             } else {
                 panic!("Could not find dmabuf or shmbuf private data for wl_buffer");
             }
-        } else {
-            *atmos.a_surface_size.get(&self.cs_id).unwrap()
-        };
+        }
+
         atmos.a_surface_size.set(&self.cs_id, surf_size);
 
         // ----- Commit our frame callbacks -----
@@ -284,7 +282,7 @@ impl CommitState {
 
         // ----- commit all of the pending child commits -----
         for mut cs in self.cs_children.drain(0..) {
-            cs.commit(atmos);
+            cs.commit(dakota, atmos);
         }
     }
 }
@@ -332,6 +330,7 @@ impl Surface {
     #[allow(unused_variables)]
     pub fn handle_request(
         &mut self,
+        dakota: &mut dak::Dakota,
         atmos: &mut Atmosphere,
         surf: &wlsi::WlSurface,
         data_init: &mut ws::DataInit<'_, Climate>,
@@ -339,7 +338,7 @@ impl Surface {
     ) {
         match req {
             wlsi::Request::Attach { buffer, x, y } => self.attach(surf, buffer, x, y),
-            wlsi::Request::Commit => self.commit(atmos),
+            wlsi::Request::Commit => self.commit(dakota, atmos),
             wlsi::Request::Damage {
                 x,
                 y,
@@ -426,7 +425,7 @@ impl Surface {
     /// Atmosphere is passed in since committing one surface
     /// will recursively call commit on the subsurfaces, and
     /// we need to avoid a refcell panic.
-    fn commit(&mut self, atmos: &mut Atmosphere) {
+    fn commit(&mut self, dakota: &mut dak::Dakota, atmos: &mut Atmosphere) {
         // Check if we are a synchronized subsurface. if this is true, then we need
         // to move our CommitState into the parent's state as a pending child and then
         // exit.
@@ -448,7 +447,7 @@ impl Surface {
             }
         }
 
-        self.s_state.commit(atmos);
+        self.s_state.commit(dakota, atmos);
 
         // Commit any role state before we update window bits
         let surf_size = *atmos.a_surface_size.get(&self.s_id).unwrap();

@@ -41,5 +41,5 @@
 // upper layers to create/move/modify windows. It
 // takes care of driving the Renderer
 // Does not contain any vulkan or unsafe code.
-mod release_info;
+pub mod release_info;
 pub mod wm;

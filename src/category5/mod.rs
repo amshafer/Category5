@@ -80,7 +80,7 @@ impl Climate {
         let dakota = dak::Dakota::new().unwrap();
 
         Self {
-            c_atmos: Arc::new(Mutex::new(Atmosphere::new(dakota.get_ecs_instance()))),
+            c_atmos: Arc::new(Mutex::new(Atmosphere::new(&dakota))),
             c_dakota: dakota,
             c_outputs: Vec::new(),
             c_input: Input::new(),

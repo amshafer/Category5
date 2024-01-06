@@ -82,6 +82,7 @@ mod renderer;
 mod surface;
 
 pub use self::image::Image;
+pub use self::image::{Dmabuf, DmabufPlane};
 pub use damage::Damage;
 use display::Display;
 pub use list::SurfaceList;
@@ -94,7 +95,7 @@ use renderer::RecordParams;
 // can use them
 extern crate utils;
 pub use crate::utils::region::Rect;
-pub use crate::utils::{anyhow, Context, Dmabuf, MemImage};
+pub use crate::utils::{anyhow, Context, MemImage};
 use utils::log;
 
 pub type Result<T> = std::result::Result<T, ThundrError>;
@@ -390,6 +391,22 @@ impl Thundr {
         let mut rend = self.th_rend.lock().unwrap();
 
         rend.create_image_from_bits(rend_mtx, data, width, height, stride, release_info)
+    }
+
+    /// Update an existing image from a shm buffer
+    pub fn update_image_from_bits(
+        &mut self,
+        image: &Image,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32,
+        damage: Option<Damage>,
+        release: Option<Box<dyn Droppable + Send + Sync>>,
+    ) {
+        let mut rend = self.th_rend.lock().unwrap();
+
+        rend.update_image_from_bits(image, data, width, height, stride, damage, release)
     }
 
     /// create_image_from_dmabuf
