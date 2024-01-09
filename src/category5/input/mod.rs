@@ -413,8 +413,6 @@ impl Input {
         state: ButtonState,
     ) {
         let cursor = atmos.get_cursor_pos();
-        // did our click bring a window into focus?
-        let mut set_focus = false;
 
         // first check if we are releasing a grab
         if let Some(_id) = atmos.get_grabbed() {
@@ -461,7 +459,8 @@ impl Input {
         } else if let Some(id) =
             atmos.find_window_with_input_at_point(cursor.0 as f32, cursor.1 as f32)
         {
-            // If the surface's root window is not in focus, make it in focus
+            // will our click bring a window into focus?
+            let mut set_focus = false;
             if let Some(focus) = atmos.get_root_win_in_focus() {
                 // If this is a surface that is part of a subsurface stack,
                 // get the root id. Otherwise this is a root.
@@ -469,21 +468,13 @@ impl Input {
                     Some(root) => root,
                     None => id.clone(),
                 };
-                // If we just pressed on a window that does not match the focus, we need
-                // to refocus
                 if root != focus && state == ButtonState::Pressed {
                     set_focus = true;
                 }
-            } else {
-                // If no window is in focus, then we have just clicked on
-                // one and should focus on it
-                set_focus = true;
             }
 
-            if set_focus {
-                // Tell atmos that this is the one in focus
-                atmos.focus_on(Some(id.clone()));
-            }
+            // Tell atmos that this is the one in focus
+            atmos.focus_on(Some(id.clone()));
 
             // do this first here so we don't do it more than once
             let edge = atmos.point_is_on_window_edge(&id, cursor.0 as f32, cursor.1 as f32);

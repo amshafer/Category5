@@ -1077,7 +1077,7 @@ impl Dakota {
     fn calculate_needs_viewport(
         &mut self,
         el: &DakotaId,
-        grandparent: Option<&DakotaId>,
+        _grandparent: Option<&DakotaId>,
     ) -> Result<()> {
         // Now check if child elements overflow our final size to determine if this
         // needs to be a new viewport boundary
@@ -1101,19 +1101,13 @@ impl Dakota {
                 };
                 // The parent we are bounding inside of doesn't necessarily have to be the
                 // element this child is attached to. Elements marked as unbounded subsurfaces
-                // will actually be "layered" ontop of their parent, which means being bound
-                // within the grandparent.
-                let bounding_id = {
-                    let mut ret = el;
-                    if self.d_unbounded_subsurf.get(&child_id).is_some() {
-                        if let Some(gp) = grandparent {
-                            ret = gp;
-                        }
-                    }
-                    ret
-                };
+                // will actually be "layered" ontop of their parent, which means not being
+                // bound by anything.
+                if self.d_unbounded_subsurf.get(&child_id).is_some() {
+                    continue;
+                }
 
-                let mut bounding_parent = self.d_layout_nodes.get_mut(bounding_id).unwrap();
+                let mut bounding_parent = self.d_layout_nodes.get_mut(el).unwrap();
                 if child_offset.x < 0.0
                     || child_offset.y < 0.0
                     || child_offset.x + child_size.width > bounding_parent.l_size.width

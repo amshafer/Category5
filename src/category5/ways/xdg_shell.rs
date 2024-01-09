@@ -969,6 +969,9 @@ impl ws::Dispatch<xdg_popup::XdgPopup, Arc<Mutex<ShellSurface>>> for Climate {
         _resource: &xdg_popup::XdgPopup,
         data: &Arc<Mutex<ShellSurface>>,
     ) {
+        data.lock()
+            .unwrap()
+            .popup_done(state.c_atmos.lock().as_mut().unwrap())
     }
 }
 
@@ -1004,9 +1007,15 @@ impl ShellSurface {
         self.ss_serial += 1;
     }
 
-    fn popup_done(&mut self, _atmos: &mut Atmosphere) {
-        self.ss_surface.lock().unwrap().s_role = None;
-        self.ss_xdg_popup.take().unwrap().pu_pop.popup_done();
+    fn popup_done(&mut self, atmos: &mut Atmosphere) {
+        let mut surf = self.ss_surface.lock().unwrap();
+        surf.s_role = None;
+        atmos.skiplist_remove_window(&surf.s_id);
+        atmos.add_wm_task(wm::task::Task::close_window(surf.s_id.clone()));
+
+        if let Some(popup) = self.ss_xdg_popup.take() {
+            popup.pu_pop.popup_done();
+        }
     }
 
     /// handle xdg_popup requests
