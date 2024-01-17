@@ -462,8 +462,20 @@ impl Atmosphere {
         let (x, y) = self.get_adjusted_desktop_coord(x as f32, y as f32);
         let (x, y) = (x as f64, y as f64);
         // get the surface-local position
-        let (wx, wy) = *self.a_surface_pos.get(id).unwrap();
+        let (mut wx, mut wy) = *self.a_surface_pos.get(id).unwrap();
         let (ww, wh) = *self.a_surface_size.get(id).unwrap();
+
+        // Add any parent surface's positions to our surface offset to account
+        // for this surface being a subsurf
+        let mut parent = self.a_parent_window.get_clone(id);
+        while parent.is_some() {
+            let p = parent.take().unwrap();
+            let (px, py) = *self.a_surface_pos.get(&p).unwrap();
+            wx += px;
+            wy += py;
+
+            parent = self.a_parent_window.get_clone(&p);
+        }
 
         // offset into the surface
         let (sx, sy) = (x - wx as f64, y - wy as f64);

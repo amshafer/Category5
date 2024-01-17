@@ -145,6 +145,12 @@ impl ws::Dispatch<xdg_surface::XdgSurface, Arc<Mutex<ShellSurface>>> for Climate
         _resource: &xdg_surface::XdgSurface,
         data: &Arc<Mutex<ShellSurface>>,
     ) {
+        let shell_surf = data.lock().unwrap();
+        let mut surf = shell_surf.ss_surface.lock().unwrap();
+        surf.s_role = None;
+        let mut atmos = state.c_atmos.lock().unwrap();
+        atmos.skiplist_remove_window(&surf.s_id);
+        atmos.add_wm_task(wm::task::Task::close_window(surf.s_id.clone()));
     }
 }
 

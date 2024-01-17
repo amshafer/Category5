@@ -289,6 +289,7 @@ impl Input {
         if let Some(cell) = atmos.get_seat_from_surface_id(id) {
             if let Some(surf) = atmos.get_wl_surface_from_id(id) {
                 let (cx, cy) = atmos.get_cursor_pos();
+                // Get our surface coordinates
                 if let Some((sx, sy)) = atmos.global_coords_to_surf(id, cx, cy) {
                     let seat = cell.lock().unwrap();
                     // TODO: verify
@@ -296,12 +297,7 @@ impl Input {
                     // deliver events to all of them
                     for si in seat.s_proxies.iter() {
                         for pointer in si.si_pointers.iter() {
-                            pointer.enter(
-                                seat.s_serial,
-                                &surf,
-                                sx as f64,
-                                sy, // surface local coordinates
-                            );
+                            pointer.enter(seat.s_serial, &surf, sx, sy);
                             Self::send_pointer_frame(pointer);
                         }
                     }

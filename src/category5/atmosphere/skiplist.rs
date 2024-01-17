@@ -229,7 +229,7 @@ impl Atmosphere {
         // Add the immediate parent
         self.a_parent_window.set(win, parent.clone());
 
-        // add the root window for this subsurface tree
+        // set the root window for this subsurface tree
         // If the parent's root is None, then the parent is the root
         match self.a_root_window.get_clone(parent) {
             Some(root) => self.a_root_window.set(win, root),
@@ -256,62 +256,52 @@ impl Atmosphere {
         (x, y - wm::DESKTOP_OFFSET as f32)
     }
 
-    /// Checks if the point (x, y) overlaps with the window surface.
-    ///
-    /// This does not accound for any regions, just the surface size.
-    pub fn surface_is_at_point(&self, win: &SurfaceId, x: f32, y: f32) -> bool {
-        log::info!("surface_is_at_point(win={:?}, x={}, y={})", win, x, y);
-        let (x, y) = self.get_adjusted_desktop_coord(x, y);
-        let (wx, wy) = *self.a_surface_pos.get(win).unwrap();
-        let (ww, wh) = *self.a_surface_size.get(win).unwrap();
-        log::info!("surface {:?} pos x={}, y={}", win, wx, wy);
-        log::info!("surface {:?} size x={}, y={}", win, ww, wh);
-
-        // If this window contains (x, y) then return it
-        x > wx && y > wy && x < (wx + ww) && y < (wy + wh)
-    }
-
     /// Find the window id of the top window whose input region contains (x, y).
     ///
     /// In the case of delivering input enter/leave events, we don't just check
     /// which window contains the point, we need to check if windows with an
     /// input region contain the point.
     pub fn find_window_with_input_at_point(&self, x: f32, y: f32) -> Option<SurfaceId> {
-        log::info!("find_window_with_input_at_point {},{}", x, y);
+        log::debug!("find_window_with_input_at_point {},{}", x, y);
         let mut ret = None;
+        // Adjust for offsetting into the desktop
+        let adjusted = self.get_adjusted_desktop_coord(x, y);
+        log::debug!("Adjusted pos {:?}", adjusted);
 
-        self.map_inorder_on_surfs(|win| {
-            log::info!("checking window {:?}", win.get_raw_id());
-            // We need to get t
+        self.map_ooo_on_surfs(|win, offset| {
+            log::debug!("checking window {:?}", win.get_raw_id());
             let (wx, wy) = *self.a_surface_pos.get(&win).unwrap();
+            log::debug!("Base offset {:?}", offset);
+            log::debug!("Surface pos {:?}", (wx, wy));
+
+            // reduce our x,y position by all offsets. This includes the
+            // offset of this (sub)surface along with the base offset
+            // of the parent surface
+            let (x, y) = (adjusted.0 - wx - offset.0, adjusted.1 - wy - offset.1);
+            log::debug!("Final pos {:?}", (x, y));
 
             if let Some(input_region) = self.a_input_region.get(&win) {
-                // Adjust for offsetting into the desktop
-                let (x, y) = self.get_adjusted_desktop_coord(x, y);
-                log::info!(
+                log::debug!(
                     "Checking input region {:?} against {:?}",
                     *input_region,
-                    ((x - wx) as i32, (y - wy) as i32)
+                    (x as i32, y as i32)
                 );
+
                 // Get the adjusted position of the input region
                 // based on the surface's position.
                 // The wl_region::Region doesn't track this, so
                 // our (ugly) hack for this is to reduce (x, y)
                 // by the position of the window, instead of scaling
                 // every Rect in the Region up by that amount
-                if input_region
-                    .lock()
-                    .unwrap()
-                    .intersects((x - wx) as i32, (y - wy) as i32)
-                {
+                if input_region.lock().unwrap().intersects(x as i32, y as i32) {
                     ret = Some(win);
                     return false;
                 }
             } else {
-                // TODO: VERIFY
                 // If the window does not have an attached input region,
                 // then we need to check against the entire surface area.
-                if self.surface_is_at_point(&win, x, y) {
+                let (ww, wh) = *self.a_surface_size.get(&win).unwrap();
+                if x > 0.0 && y > 0.0 && x < ww && y < wh {
                     ret = Some(win);
                     return false;
                 }
@@ -319,26 +309,7 @@ impl Atmosphere {
             return true;
         });
 
-        log::info!("Found window {:?}", ret);
-        return ret;
-    }
-
-    /// Find if there is a toplevel window under (x,y)
-    ///
-    /// This is used first to find if the cursor intersects
-    /// with a window. If it does, point_is_on_titlebar is
-    /// used to check for a grab or relay input event.
-    pub fn find_window_at_point(&self, x: f32, y: f32) -> Option<SurfaceId> {
-        let mut ret = None;
-        self.map_inorder_on_surfs(|win| {
-            if self.surface_is_at_point(&win, x, y) {
-                ret = Some(win.clone());
-                return false;
-            }
-            // returning true tells the map function to keep executing
-            return true;
-        });
-
+        log::debug!("Found window {:?}", ret.as_ref().map(|id| id.get_raw_id()));
         return ret;
     }
 
@@ -400,24 +371,35 @@ impl Atmosphere {
     }
 
     /// The recursive portion of `map_on_surfs`
-    fn map_on_surf_tree_recurse<F>(&self, inorder: bool, win: SurfaceId, func: &mut F) -> bool
+    fn map_on_surf_tree_recurse<F>(
+        &self,
+        inorder: bool,
+        win: SurfaceId,
+        func: &mut F,
+        mut offset: (f32, f32),
+    ) -> bool
     where
-        F: FnMut(SurfaceId) -> bool,
+        F: FnMut(SurfaceId, (f32, f32)) -> bool,
     {
+        // recalculate our offset to start at this surface's offset.
+        let pos = self.a_surface_pos.get(&win).unwrap();
+        offset.0 += pos.0;
+        offset.1 += pos.1;
+
         // First recursively check all subsurfaces
         for sub in self.visible_subsurfaces(&win) {
             // If we are going out of order, the only difference is we call
             // func beforehand
             if !inorder {
-                if !func(sub.clone()) {
+                if !func(sub.clone(), offset) {
                     return false;
                 }
             }
-            if !self.map_on_surf_tree_recurse(inorder, sub.clone(), func) {
+            if !self.map_on_surf_tree_recurse(inorder, sub.clone(), func, offset) {
                 return false;
             }
             if inorder {
-                if !func(sub.clone()) {
+                if !func(sub.clone(), offset) {
                     return false;
                 }
             }
@@ -429,13 +411,13 @@ impl Atmosphere {
     /// surface evaluation.
     fn map_on_surfs<F>(&self, inorder: bool, mut func: F)
     where
-        F: FnMut(SurfaceId) -> bool,
+        F: FnMut(SurfaceId, (f32, f32)) -> bool,
     {
         for win in self.visible_windows() {
-            if !self.map_on_surf_tree_recurse(inorder, win.clone(), &mut func) {
+            if !self.map_on_surf_tree_recurse(inorder, win.clone(), &mut func, (0.0, 0.0)) {
                 return;
             }
-            if !func(win.clone()) {
+            if !func(win.clone(), (0.0, 0.0)) {
                 return;
             }
         }
@@ -449,7 +431,7 @@ impl Atmosphere {
     /// continue or exit.
     pub fn map_inorder_on_surfs<F>(&self, func: F)
     where
-        F: FnMut(SurfaceId) -> bool,
+        F: FnMut(SurfaceId, (f32, f32)) -> bool,
     {
         self.map_on_surfs(true, func)
     }
@@ -468,14 +450,14 @@ impl Atmosphere {
     /// continue or exit.
     pub fn map_ooo_on_surfs<F>(&self, func: F)
     where
-        F: FnMut(SurfaceId) -> bool,
+        F: FnMut(SurfaceId, (f32, f32)) -> bool,
     {
         self.map_on_surfs(false, func)
     }
 
     pub fn print_surface_tree(&self) {
         log::debug!("Dumping surface tree (front to back):");
-        self.map_inorder_on_surfs(|_win| {
+        self.map_inorder_on_surfs(|_win, _offset| {
             log::debug!(
                 " - {:?}   windims at {:?} size {:?} surfdims at {:?} size {:?}",
                 _win,

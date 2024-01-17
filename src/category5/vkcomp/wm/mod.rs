@@ -662,7 +662,7 @@ impl WindowManager {
         // This helps us avoid nasty borrow checker stuff by avoiding recursion
         // ----------------------------------------------------------------
         let aids = &mut self.wm_atmos_ids;
-        atmos.map_inorder_on_surfs(|id| {
+        atmos.map_inorder_on_surfs(|id, _| {
             aids.push(id);
             return true;
         });
