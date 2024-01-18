@@ -1195,19 +1195,26 @@ impl Renderer {
         stride: u32,
         damage: Option<Damage>,
     ) {
-        log::debug!("Updating image with damage: {:?}", damage);
+        log::error!("Updating image with damage: {:?}", damage);
+        log::error!("Using {}x{} buffer with stride {}", width, height, stride);
 
-        let mut regions = Vec::new();
+        // Adjust our stride. If the special value zero is specified then we
+        // should default to tighly packed, aka the width
+        let stride = match stride {
+            0 => width,
+            s => s,
+        };
 
         // If we have damage to use, then generate our copy regions. If not,
         // then just create
+        let mut regions = Vec::new();
         if let Some(damage) = damage {
             for d in damage.d_regions.iter() {
                 regions.push(
                     vk::BufferImageCopy::builder()
+                        .buffer_offset((stride as i32 * d.r_pos.1 + d.r_pos.0) as u64 * 4)
+                        .buffer_row_length(stride)
                         // 0 specifies that the pixels are tightly packed
-                        .buffer_offset(0)
-                        .buffer_row_length(0)
                         .buffer_image_height(0)
                         .image_subresource(
                             vk::ImageSubresourceLayers::builder()
