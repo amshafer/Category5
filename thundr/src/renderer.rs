@@ -1195,8 +1195,8 @@ impl Renderer {
         stride: u32,
         damage: Option<Damage>,
     ) {
-        log::error!("Updating image with damage: {:?}", damage);
-        log::error!("Using {}x{} buffer with stride {}", width, height, stride);
+        log::debug!("Updating image with damage: {:?}", damage);
+        log::debug!("Using {}x{} buffer with stride {}", width, height, stride);
 
         // Adjust our stride. If the special value zero is specified then we
         // should default to tighly packed, aka the width

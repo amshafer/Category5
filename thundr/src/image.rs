@@ -163,6 +163,7 @@ pub(crate) struct ImageInternal {
     /// specific to the type of image
     i_priv: ImagePrivate,
     pub i_opaque: Option<Rect<i32>>,
+    i_resolution: vk::Extent2D,
 }
 
 impl ImageInternal {
@@ -188,14 +189,8 @@ impl Image {
     }
 
     pub fn get_size(&self) -> (u32, u32) {
-        let internal = self.i_internal.write().unwrap();
-        let rend = internal.i_rend.lock().unwrap();
-
-        let image_vk = rend.r_image_vk.get(&internal.i_id).unwrap();
-        (
-            image_vk.iv_image_resolution.width,
-            image_vk.iv_image_resolution.height,
-        )
+        let internal = self.i_internal.read().unwrap();
+        (internal.i_resolution.width, internal.i_resolution.height)
     }
 
     /// Sets an opaque region for the image to help the internal compositor
@@ -333,8 +328,9 @@ impl Renderer {
         self.wait_for_prev_submit();
 
         {
-            let imgvk_id = image.get_id();
-            let resolution = self.r_image_vk.get(&imgvk_id).unwrap().iv_image_resolution;
+            let mut image_internal = image.i_internal.write().unwrap();
+            let imgvk_id = &image_internal.i_id;
+            let resolution = image_internal.i_resolution;
 
             // If the sizes match then we can update according to the damage provided
             if width == resolution.width && height == resolution.height {
@@ -370,6 +366,7 @@ impl Renderer {
                 image_vk.iv_image_view = view;
                 image_vk.iv_image_mem = img_mem;
                 image_vk.iv_image_resolution = new_size;
+                image_internal.i_resolution = new_size;
                 let ret = image_vk.iv_release_info.take();
                 image_vk.iv_release_info = release;
                 ret
@@ -816,6 +813,7 @@ impl Renderer {
             i_general_layout: false,
             i_priv: private,
             i_opaque: None,
+            i_resolution: *res,
         };
 
         // Add our vulkan resources to the ECS
