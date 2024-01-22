@@ -287,6 +287,10 @@ impl Atmosphere {
                     (x as i32, y as i32)
                 );
 
+                // TODO: according to the spec the input region only restricts
+                // pointer and touch input. We should calculate the keyboard focus
+                // separately here?
+
                 // Get the adjusted position of the input region
                 // based on the surface's position.
                 // The wl_region::Region doesn't track this, so
@@ -388,8 +392,8 @@ impl Atmosphere {
 
         // First recursively check all subsurfaces
         for sub in self.visible_subsurfaces(&win) {
-            // If we are going out of order, the only difference is we call
-            // func beforehand
+            // "inorder" is poorly named, but basically it means in order from
+            // back to front. Out of order is top to bottom subsurfs
             if !inorder {
                 if !func(sub.clone(), offset) {
                     return false;

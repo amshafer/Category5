@@ -104,39 +104,45 @@ macro_rules! log_internal{
         let is_err = $loglevel.get_level() <= *DEFAULT_LEVEL;
         let mut should_log = $loglevel.get_level() <= *LOG_LEVEL_RAW;
 
-        // If this variable is defined check that our log statements
-        // come from files that contain this string
-        if let Ok(m) = std::env::var("CATEGORY5_LOG_MATCH") {
-            should_log = should_log && file!().contains(m.as_str());
-        }
+        // Restrict the following more expensive operations to the case where we
+        // are logging this message.
+        if should_log {
+            let format_string = format!($($format_args)+);
 
-        // If it is an error or our conditions are met then log it
-        if is_err || should_log {
-            let fmtstr = format!("[{:?}]<{}> {}:{} - {}",
-                log::get_current_millis(),
-                $loglevel.get_name(),
-                file!(),
-                line!(),
-                format!($($format_args)+)
-            );
+            // If this variable is defined check that our log statements
+            // come from files that contain this string
+            if let Ok(m) = std::env::var("CATEGORY5_LOG_MATCH") {
+                should_log = file!().contains(m.as_str()) || format_string.contains(m.as_str());
+            }
 
-            println!("{}", fmtstr);
+            // If it is an error or our conditions are met then log it
+            if is_err || should_log {
+                let fmtstr = format!("[{:?}]<{}> {}:{} - {}",
+                    log::get_current_millis(),
+                    $loglevel.get_name(),
+                    file!(),
+                    line!(),
+                    format_string,
+                );
 
-            #[cfg(debug_assertions)]
-            {
-                // Append to a log file
-                use std::fs::OpenOptions;
-                use std::io::prelude::*;
+                println!("{}", fmtstr);
 
-                let mut file = OpenOptions::new()
-                    .write(true)
-                    .append(true)
-                    .create(true)
-                    .open("/tmp/cat5_debug_log.txt")
-                    .unwrap();
+                #[cfg(debug_assertions)]
+                {
+                    // Append to a log file
+                    use std::fs::OpenOptions;
+                    use std::io::prelude::*;
 
-                if let Err(e) = writeln!(file, "{}", fmtstr) {
-                    eprintln!("Couldn't write to debug file: {}", e);
+                    let mut file = OpenOptions::new()
+                        .write(true)
+                        .append(true)
+                        .create(true)
+                        .open("/tmp/cat5_debug_log.txt")
+                        .unwrap();
+
+                    if let Err(e) = writeln!(file, "{}", fmtstr) {
+                        eprintln!("Couldn't write to debug file: {}", e);
+                    }
                 }
             }
         }

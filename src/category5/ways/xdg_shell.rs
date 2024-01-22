@@ -342,7 +342,10 @@ impl ShellSurface {
                 let ws = (ws.0 as i32, ws.1 as i32);
                 // TODO: subtrace size from pos if left or bottom_left?
                 let min = tlstate.tl_min_size.unwrap_or((1, 1));
-                let max = tlstate.tl_max_size.unwrap_or((i32::MAX, i32::MAX));
+                let mut max = tlstate.tl_max_size.unwrap_or((i32::MAX, i32::MAX));
+                // A value of zero means no max
+                max.0 = if max.0 == 0 { i32::MAX } else { max.0 };
+                max.1 = if max.1 == 0 { i32::MAX } else { max.1 };
 
                 // "c" will have to fall somewhere in these ranges to be valid
                 //
@@ -505,7 +508,7 @@ pub struct ToplevelState {
     pub tl_resize_right: bool,
     pub tl_resize_top: bool,
     pub tl_resize_bottom: bool,
-    /// bounding dimensions
+    /// bounding dimensions. Zero means no bound in that dimension.
     pub tl_max_size: Option<(i32, i32)>,
     pub tl_min_size: Option<(i32, i32)>,
     // self-explanitory I think
