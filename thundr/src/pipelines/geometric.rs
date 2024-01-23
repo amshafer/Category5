@@ -14,6 +14,7 @@ use std::mem;
 use ash::{util, vk};
 
 use super::Pipeline;
+use crate::display::Display;
 use crate::renderer::{PushConstants, RecordParams, Renderer};
 use crate::{SurfaceList, Viewport};
 
@@ -352,9 +353,9 @@ impl GeomPipeline {
     /// shaders, geometry, and the like.
     ///
     /// This fills in the GeomPipeline struct in the Renderer
-    pub fn new(rend: &mut Renderer) -> GeomPipeline {
+    pub fn new(display: &mut Display, rend: &mut Renderer) -> GeomPipeline {
         unsafe {
-            let pass = GeomPipeline::create_pass(rend);
+            let pass = GeomPipeline::create_pass(display, rend);
 
             // This is a really annoying issue with CString ptrs
             let program_entrypoint_name = CString::new("main").unwrap();
@@ -553,13 +554,13 @@ impl GeomPipeline {
     ///
     /// Render passses signify what attachments are used in which
     /// stages. They are composed of one or more subpasses.
-    unsafe fn create_pass(rend: &Renderer) -> vk::RenderPass {
+    unsafe fn create_pass(display: &mut Display, rend: &Renderer) -> vk::RenderPass {
         let attachments = [
             // the color dest. Its the surface we slected in Renderer::new.
             // see Renderer::create_swapchain for why we aren't using
             // the native surface formate
             vk::AttachmentDescription {
-                format: rend.surface_format.format,
+                format: display.d_surface_format.format,
                 samples: vk::SampleCountFlags::TYPE_1,
                 load_op: vk::AttachmentLoadOp::CLEAR,
                 store_op: vk::AttachmentStoreOp::STORE,

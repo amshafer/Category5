@@ -112,8 +112,6 @@ pub struct Renderer {
     /// queue for copy operations
     pub(crate) transfer_queue: vk::Queue,
 
-    pub(crate) surface_format: vk::SurfaceFormatKHR,
-    pub(crate) surface_caps: vk::SurfaceCapabilitiesKHR,
     /// resolution to create the swapchain with
     pub(crate) resolution: vk::Extent2D,
 
@@ -598,16 +596,11 @@ impl Renderer {
         self.resolution = new_res;
 
         let new_swapchain = Renderer::create_swapchain(
-            &self.inst,
+            display,
             &self.swapchain_loader,
-            display.d_surface,
-            &self.surface_caps,
-            self.surface_format,
-            &self.resolution,
             &self.dev_features,
             self.r_pipe_type,
             Some(self.swapchain), // oldSwapChain
-            display.d_present_mode,
         );
 
         // Now that we recreated the swapchain destroy the old one
@@ -615,12 +608,12 @@ impl Renderer {
         self.swapchain = new_swapchain;
 
         let (images, views) = Renderer::select_images_and_views(
+            display,
             &self.inst,
             self.pdev,
             &self.swapchain_loader,
             self.swapchain,
             &self.dev,
-            self.surface_format,
         );
         self.images = images;
         self.views = views;
@@ -638,30 +631,28 @@ impl Renderer {
     /// it is created for.
     /// The application resolution is set by this method.
     unsafe fn create_swapchain(
-        _inst: &Instance,
+        display: &mut Display,
         swapchain_loader: &khr::Swapchain,
-        surface: vk::SurfaceKHR,
-        surface_caps: &vk::SurfaceCapabilitiesKHR,
-        surface_format: vk::SurfaceFormatKHR,
-        resolution: &vk::Extent2D,
         dev_features: &VKDeviceFeatures,
         _pipe_type: PipelineType,
         old_swapchain: Option<vk::SwapchainKHR>,
-        present_mode: vk::PresentModeKHR,
     ) -> vk::SwapchainKHR {
         // how many images we want the swapchain to contain
-        let mut desired_image_count = surface_caps.min_image_count + 1;
-        if surface_caps.max_image_count > 0 && desired_image_count > surface_caps.max_image_count {
-            desired_image_count = surface_caps.max_image_count;
+        let mut desired_image_count = display.d_surface_caps.min_image_count + 1;
+        if display.d_surface_caps.max_image_count > 0
+            && desired_image_count > display.d_surface_caps.max_image_count
+        {
+            desired_image_count = display.d_surface_caps.max_image_count;
         }
 
-        let transform = if surface_caps
+        let transform = if display
+            .d_surface_caps
             .supported_transforms
             .contains(vk::SurfaceTransformFlagsKHR::IDENTITY)
         {
             vk::SurfaceTransformFlagsKHR::IDENTITY
         } else {
-            surface_caps.current_transform
+            display.d_surface_caps.current_transform
         };
 
         // we need to check if the surface format supports the
@@ -672,17 +663,21 @@ impl Renderer {
         // We should use a mutable swapchain to allow for rendering to
         // RGBA8888 if the swapchain doesn't suppport it and if the mutable
         // swapchain extensions are present. This is for intel
-        if surface_caps
+        if display
+            .d_surface_caps
             .supported_usage_flags
             .contains(vk::ImageUsageFlags::STORAGE)
         {
             extra_usage |= vk::ImageUsageFlags::STORAGE;
-            log::info!("Format {:?} supports Storage usage", surface_format.format);
+            log::info!(
+                "Format {:?} supports Storage usage",
+                display.d_surface_format.format
+            );
         } else {
             assert!(dev_features.vkc_supports_mut_swapchain);
             log::info!(
                 "Format {:?} does not support Storage usage, using mutable swapchain",
-                surface_format.format
+                display.d_surface_format.format
             );
             use_mut_swapchain = true;
 
@@ -695,11 +690,11 @@ impl Renderer {
 
         let mut create_info = vk::SwapchainCreateInfoKHR::builder()
             .flags(swap_flags)
-            .surface(surface)
+            .surface(display.d_surface)
             .min_image_count(desired_image_count)
-            .image_color_space(surface_format.color_space)
-            .image_format(surface_format.format)
-            .image_extent(*resolution)
+            .image_color_space(display.d_surface_format.color_space)
+            .image_format(display.d_surface_format.format)
+            .image_extent(display.d_resolution)
             // the color attachment is guaranteed to be available
             //
             // WEIRD: validation layers throw an issue with this on intel since it doesn't
@@ -712,7 +707,7 @@ impl Renderer {
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-            .present_mode(present_mode)
+            .present_mode(display.d_present_mode)
             .clipped(true)
             .image_array_layers(1)
             .old_swapchain(match old_swapchain {
@@ -728,7 +723,7 @@ impl Renderer {
             // the supported format + any new formats we select.
             let add_formats = vk::ImageFormatListCreateInfoKHR::builder()
                 // just add rgba32 because it's the most common.
-                .view_formats(&[surface_format.format])
+                .view_formats(&[display.d_surface_format.format])
                 .build();
             create_info.p_next = &add_formats as *const _ as *mut std::ffi::c_void;
         }
@@ -781,20 +776,20 @@ impl Renderer {
     /// specify the image views, which specify how we want
     /// to access our images
     unsafe fn select_images_and_views(
+        display: &mut Display,
         inst: &Instance,
         pdev: vk::PhysicalDevice,
         swapchain_loader: &khr::Swapchain,
         swapchain: vk::SwapchainKHR,
         dev: &Device,
-        surface_format: vk::SurfaceFormatKHR,
     ) -> (Vec<vk::Image>, Vec<vk::ImageView>) {
         let images = swapchain_loader.get_swapchain_images(swapchain).unwrap();
 
         let image_views = images
             .iter()
             .map(|&image| {
-                let format_props =
-                    inst.get_physical_device_format_properties(pdev, surface_format.format);
+                let format_props = inst
+                    .get_physical_device_format_properties(pdev, display.d_surface_format.format);
                 log::info!("format props: {:#?}", format_props);
 
                 // we want to interact with this image as a 2D
@@ -802,7 +797,7 @@ impl Renderer {
                 let mut create_info = vk::ImageViewCreateInfo::builder()
                     .view_type(vk::ImageViewType::TYPE_2D)
                     // see `create_swapchain` for why we don't use surface_format
-                    .format(surface_format.format)
+                    .format(display.d_surface_format.format)
                     // select the normal RGBA type
                     // swap the R and B channels because we are mapping this
                     // to B8G8R8_SRGB using a mutable swapchain
@@ -1517,7 +1512,7 @@ impl Renderer {
 
             // Our display is in charge of choosing a medium to draw on,
             // and will create a surface on that medium
-            let display = Display::new(info, &entry, &inst, pdev);
+            let mut display = Display::new(info, &entry, &inst, pdev);
 
             let graphics_queue_family = Renderer::select_queue_family(
                 &inst,
@@ -1545,14 +1540,7 @@ impl Renderer {
             };
             let enabled_pipelines = vec![pipe_type];
 
-            // do this after we have gotten a valid physical device
-            let surface_format = display.select_surface_format(pdev, pipe_type)?;
-
-            let surface_caps = display
-                .d_surface_loader
-                .get_physical_device_surface_capabilities(pdev, display.d_surface)
-                .unwrap();
-            let surface_resolution = display.select_resolution(&surface_caps);
+            let surface_resolution = display.select_resolution();
             log::profiling!("Rendering with resolution {:?}", surface_resolution);
 
             // create the graphics,transfer, and pipeline specific queues
@@ -1588,25 +1576,20 @@ impl Renderer {
 
             let swapchain_loader = khr::Swapchain::new(&inst, &dev);
             let swapchain = Renderer::create_swapchain(
-                &inst,
+                &mut display,
                 &swapchain_loader,
-                display.d_surface,
-                &surface_caps,
-                surface_format,
-                &surface_resolution,
                 &dev_features,
                 pipe_type,
                 None,
-                display.d_present_mode,
             );
 
             let (images, image_views) = Renderer::select_images_and_views(
+                &mut display,
                 &inst,
                 pdev,
                 &swapchain_loader,
                 swapchain,
                 &dev,
-                surface_format,
             );
 
             let pool = Renderer::create_command_pool(&dev, graphics_queue_family);
@@ -1661,7 +1644,7 @@ impl Renderer {
                     width: 2,
                     height: 2,
                 },
-                surface_format.format,
+                display.d_surface_format.format,
                 vk::ImageUsageFlags::SAMPLED,
                 vk::ImageAspectFlags::COLOR,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
@@ -1737,8 +1720,6 @@ impl Renderer {
                 transfer_family_index: transfer_queue_family,
                 present_queue: present_queue,
                 transfer_queue: transfer_queue,
-                surface_format: surface_format,
-                surface_caps: surface_caps,
                 resolution: surface_resolution,
                 swapchain_loader: swapchain_loader,
                 swapchain: swapchain,

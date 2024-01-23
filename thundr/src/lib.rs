@@ -335,7 +335,7 @@ impl Thundr {
         // on window resizing
         let (pipe, ty): (Box<dyn Pipeline>, PipelineType) = if info.enable_traditional_composition {
             (
-                Box::new(GeomPipeline::new(&mut rend)),
+                Box::new(GeomPipeline::new(&mut display, &mut rend)),
                 PipelineType::GEOMETRIC,
             )
         } else if info.enable_compute_composition {

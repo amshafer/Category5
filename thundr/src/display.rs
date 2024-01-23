@@ -15,7 +15,6 @@ use ash::extensions::khr;
 use ash::vk;
 use ash::{Entry, Instance};
 
-use crate::pipelines::PipelineType;
 use crate::{CreateInfo, Result as ThundrResult, SurfaceType};
 use utils::log;
 
@@ -35,6 +34,9 @@ pub struct Display {
     pub d_surface: vk::SurfaceKHR,
     // function pointer loaders
     pub d_surface_loader: khr::Surface,
+    // Vulkan surface capabilities
+    pub d_surface_caps: vk::SurfaceCapabilitiesKHR,
+    pub d_surface_format: vk::SurfaceFormatKHR,
     pub d_resolution: vk::Extent2D,
     d_back: Box<dyn Backend>,
     /// Cache the present mode here so we don't re-request it
@@ -120,11 +122,17 @@ impl Display {
             .find(|&mode| mode == vk::PresentModeKHR::FIFO)
             // fallback to FIFO if the mailbox mode is not available
             .unwrap_or(vk::PresentModeKHR::FIFO);
+        let surface_caps = s_loader
+            .get_physical_device_surface_capabilities(pdev, surf)
+            .unwrap();
+        let surface_format = Self::select_surface_format(&s_loader, surf, pdev).unwrap();
 
         Self {
             d_surface_loader: s_loader,
             d_back: back,
             d_surface: surf,
+            d_surface_caps: surface_caps,
+            d_surface_format: surface_format,
             d_resolution: res,
             d_present_mode: mode,
         }
@@ -151,24 +159,20 @@ impl Display {
     /// We saved the resolution of the display surface when we created
     /// it. If the surface capabilities doe not specify a requested
     /// extent, then we will return the screen's resolution.
-    pub unsafe fn select_resolution(
-        &self,
-        surface_caps: &vk::SurfaceCapabilitiesKHR,
-    ) -> vk::Extent2D {
-        match surface_caps.current_extent.width {
+    pub unsafe fn select_resolution(&self) -> vk::Extent2D {
+        match self.d_surface_caps.current_extent.width {
             std::u32::MAX => self.d_resolution,
-            _ => surface_caps.current_extent,
+            _ => self.d_surface_caps.current_extent,
         }
     }
 
     pub unsafe fn select_surface_format(
-        &self,
+        surface_loader: &khr::Surface,
+        surface: vk::SurfaceKHR,
         pdev: vk::PhysicalDevice,
-        _pipe_type: PipelineType,
     ) -> crate::Result<vk::SurfaceFormatKHR> {
-        let formats = self
-            .d_surface_loader
-            .get_physical_device_surface_formats(pdev, self.d_surface)
+        let formats = surface_loader
+            .get_physical_device_surface_formats(pdev, surface)
             .unwrap();
         log::error!("Formats for this vulkan surface: {:#?}", formats);
 
