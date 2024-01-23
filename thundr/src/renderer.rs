@@ -1310,10 +1310,6 @@ impl Renderer {
         // shader layout
         let dst_stage = match self.r_pipe_type {
             PipelineType::GEOMETRIC => vk::PipelineStageFlags::FRAGMENT_SHADER,
-            PipelineType::COMPUTE => vk::PipelineStageFlags::COMPUTE_SHADER,
-            PipelineType::ALL => {
-                vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::COMPUTE_SHADER
-            }
         };
         let layout_barrier = vk::ImageMemoryBarrier::builder()
             .image(image)
@@ -1535,8 +1531,7 @@ impl Renderer {
                 log::debug!("Using render pipeline");
                 PipelineType::GEOMETRIC
             } else {
-                log::debug!("Using async compute pipeline");
-                PipelineType::COMPUTE
+                panic!("Unsupported pipeline type");
             };
             let enabled_pipelines = vec![pipe_type];
 

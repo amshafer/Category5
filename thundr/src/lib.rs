@@ -6,13 +6,8 @@
 //! a list of surfaces to thundr for rendering.
 //!
 //! Thundr also supports multiple methods of drawing:
-//! * `compute` - Uses compute shaders to perform compositing.
 //! * `geometric` - This is a more "traditional" manner of drawing ui elements:
 //! surfaces are drawn as textured quads in 3D space.
-//!
-//! The compute pipeline is more optimized, and is the default. The
-//! geometric pipeline serves as a backup for situations in which the
-//! compute pipeline does not perform well or is not supported.
 //!
 //! ## Drawing API
 //!
@@ -262,9 +257,6 @@ pub enum SurfaceType<'a> {
 /// be enabled. See `Pipeline` for methods that drive the data
 /// contained here.
 pub struct CreateInfo<'a> {
-    /// Enable the compute pipeline. This is only suitable for small scenes
-    /// and is not recommended for normal use.
-    pub enable_compute_composition: bool,
     /// Enable the traditional quad rendering method. This is a bindless
     /// engine that draws on a set of quads to composite images. This
     /// is the default and recommended option
@@ -276,7 +268,6 @@ impl<'a> CreateInfo<'a> {
     pub fn builder() -> CreateInfoBuilder<'a> {
         CreateInfoBuilder {
             ci: CreateInfo {
-                enable_compute_composition: false,
                 // This should always be used
                 enable_traditional_composition: true,
                 surface_type: SurfaceType::Display(PhantomData),
@@ -290,11 +281,6 @@ pub struct CreateInfoBuilder<'a> {
     ci: CreateInfo<'a>,
 }
 impl<'a> CreateInfoBuilder<'a> {
-    pub fn enable_compute_composition(mut self) -> Self {
-        self.ci.enable_compute_composition = true;
-        self
-    }
-
     pub fn enable_traditional_composition(mut self) -> Self {
         self.ci.enable_traditional_composition = true;
         self
@@ -337,11 +323,6 @@ impl Thundr {
             (
                 Box::new(GeomPipeline::new(&mut display, &mut rend)),
                 PipelineType::GEOMETRIC,
-            )
-        } else if info.enable_compute_composition {
-            (
-                Box::new(CompPipeline::new(&mut rend, &mut display)),
-                PipelineType::COMPUTE,
             )
         } else {
             return Err(ThundrError::COMPOSITION_TYPE_NOT_SPECIFIED);
