@@ -88,9 +88,6 @@ pub struct Renderer {
     /// queue for copy operations
     pub(crate) transfer_queue: vk::Queue,
 
-    /// resolution to create the swapchain with
-    pub(crate) resolution: vk::Extent2D,
-
     /// loads swapchain extension
     pub(crate) swapchain_loader: khr::Swapchain,
     /// the actual swapchain
@@ -488,7 +485,6 @@ impl Renderer {
         let new_res = display.get_vulkan_drawable_size(self.pdev);
         // TODO: clamp resolution here
         display.d_resolution = new_res;
-        self.resolution = new_res;
 
         let new_swapchain = Renderer::create_swapchain(
             display,
@@ -1605,7 +1601,6 @@ impl Renderer {
                 transfer_family_index: transfer_queue_family,
                 present_queue: present_queue,
                 transfer_queue: transfer_queue,
-                resolution: surface_resolution,
                 swapchain_loader: swapchain_loader,
                 swapchain: swapchain,
                 current_image: 0,
@@ -2056,17 +2051,7 @@ impl Renderer {
 
     /// Adds damage to `regions` without modifying the damage
     fn aggregate_damage(&mut self, damage: &Damage) {
-        let swapchain_extent = Rect::new(
-            0,
-            0,
-            self.resolution.width as i32,
-            self.resolution.height as i32,
-        );
-
-        for d in damage.regions() {
-            // Limit the damage to the screen dimensions
-            let region = d.clip(&swapchain_extent);
-
+        for region in damage.regions() {
             let rect = vk::RectLayerKHR::builder()
                 .offset(
                     vk::Offset2D::builder()

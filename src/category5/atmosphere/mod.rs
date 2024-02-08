@@ -126,7 +126,7 @@ pub struct Atmosphere {
     pub a_toplevel: ll::Component<bool>,
     /// the position of the visible portion of the window
     pub a_window_pos: ll::Component<(f32, f32)>,
-    /// size of the visible portion : ll::Component<non-CSD> of the window
+    /// size of the visible portion : `ll::Component<non-CSD>` of the window
     /// window manager uses this
     pub a_window_size: ll::Component<(f32, f32)>,
     /// If this window is a subsurface, then x and y will

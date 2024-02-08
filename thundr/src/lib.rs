@@ -299,7 +299,7 @@ impl<'a> CreateInfoBuilder<'a> {
 
 /// Droppable trait that matches anything.
 ///
-/// From https://doc.rust-lang.org/rustc/lints/listing/warn-by-default.html#dyn-drop
+/// From <https://doc.rust-lang.org/rustc/lints/listing/warn-by-default.html#dyn-drop>
 ///
 /// To work around passing dyn Drop we specify a trait that can accept anything. That
 /// way this boxed object can be dropped when the last rendering resource references
@@ -358,8 +358,10 @@ impl Thundr {
     }
 
     pub fn get_resolution(&self) -> (u32, u32) {
-        let rend = self.th_rend.lock().unwrap();
-        (rend.resolution.width, rend.resolution.height)
+        (
+            self.th_display.d_resolution.width,
+            self.th_display.d_resolution.height,
+        )
     }
 
     /// create_image_from_bits
@@ -483,7 +485,8 @@ impl Thundr {
         unsafe {
             rend.recreate_swapchain(&mut self.th_display);
         }
-        self.th_pipe.handle_ood(rend.deref_mut());
+        self.th_pipe
+            .handle_ood(&mut self.th_display, rend.deref_mut());
     }
 
     pub fn get_drm_dev(&self) -> (i64, i64) {
@@ -535,7 +538,8 @@ impl Thundr {
         };
 
         let mut rend = self.th_rend.lock().unwrap();
-        self.th_pipe.begin_record(rend.deref_mut(), &params);
+        self.th_pipe
+            .begin_record(&mut self.th_display, rend.deref_mut(), &params);
         self.th_params = Some(params);
 
         Ok(())

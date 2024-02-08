@@ -116,8 +116,69 @@ impl Pipeline for GeomPipeline {
         true
     }
 
-    fn begin_record(&mut self, rend: &mut Renderer, params: &RecordParams) {
-        self.begin_recording(rend, params);
+    /// Start recording a cbuf for one frame
+    ///
+    /// Each framebuffer has a set of resources, including command
+    /// buffers. This records the cbufs for the framebuffer
+    /// specified by `img`.
+    fn begin_record(&mut self, display: &Display, rend: &Renderer, params: &RecordParams) {
+        unsafe {
+            // we need to clear any existing data when we start a pass
+            let clear_vals = [
+                vk::ClearValue {
+                    color: vk::ClearColorValue {
+                        float32: [0.0, 0.0, 0.0, 0.0],
+                    },
+                },
+                vk::ClearValue {
+                    depth_stencil: vk::ClearDepthStencilValue {
+                        depth: 0.0,
+                        stencil: 0,
+                    },
+                },
+            ];
+
+            // We want to start a render pass to hold all of
+            // our drawing. The actual pass is started in the cbuf
+            let pass_begin_info = vk::RenderPassBeginInfo::builder()
+                .render_pass(self.pass)
+                .framebuffer(self.framebuffers[params.image_num])
+                .render_area(vk::Rect2D {
+                    offset: vk::Offset2D { x: 0, y: 0 },
+                    extent: display.d_resolution,
+                })
+                .clear_values(&clear_vals);
+
+            // start the cbuf
+            rend.cbuf_begin_recording(params.cbuf, vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
+
+            // -- Setup static drawing resources
+            // All of our drawing operations need
+            // to be recorded inside a render pass.
+            rend.dev.cmd_begin_render_pass(
+                params.cbuf,
+                &pass_begin_info,
+                vk::SubpassContents::INLINE,
+            );
+
+            rend.dev
+                .cmd_bind_pipeline(params.cbuf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+
+            // bind the vertex and index buffers from
+            // the first image
+            rend.dev.cmd_bind_vertex_buffers(
+                params.cbuf,         // cbuf to draw in
+                0,                   // first vertex binding updated by the command
+                &[self.vert_buffer], // set of buffers to bind
+                &[0],                // offsets for the above buffers
+            );
+            rend.dev.cmd_bind_index_buffer(
+                params.cbuf,
+                self.index_buffer,
+                0, // offset
+                vk::IndexType::UINT32,
+            );
+        }
     }
 
     /// Our implementation of drawing one frame using geometry
@@ -252,7 +313,7 @@ impl Pipeline for GeomPipeline {
         log::debug!("---------------------------------");
     }
 
-    fn handle_ood(&mut self, rend: &mut Renderer) {
+    fn handle_ood(&mut self, display: &mut Display, rend: &mut Renderer) {
         unsafe {
             rend.free_memory(self.depth_image_mem);
             rend.dev.destroy_image_view(self.depth_image_view, None);
@@ -261,14 +322,14 @@ impl Pipeline for GeomPipeline {
                 rend.dev.destroy_framebuffer(*f, None);
             }
 
-            let consts = GeomPipeline::get_shader_constants(rend.resolution);
+            let consts = GeomPipeline::get_shader_constants(display.d_resolution);
             rend.update_memory(self.uniform_buffers_memory, 0, &[consts]);
 
             // the depth attachment needs to have its own resources
             let (depth_image, depth_image_view, depth_image_mem) = Renderer::create_image(
                 &rend.dev,
                 &rend.mem_props,
-                &rend.resolution,
+                &display.d_resolution,
                 vk::Format::D16_UNORM,
                 vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
                 vk::ImageAspectFlags::DEPTH,
@@ -283,7 +344,7 @@ impl Pipeline for GeomPipeline {
             self.framebuffers = GeomPipeline::create_framebuffers(
                 rend,
                 self.pass,
-                rend.resolution,
+                display.d_resolution,
                 self.depth_image_view,
             );
         }
@@ -397,13 +458,14 @@ impl GeomPipeline {
                 .build();
             let layout = rend.dev.create_pipeline_layout(&layout_info, None).unwrap();
 
-            let pipeline = GeomPipeline::create_pipeline(rend, layout, pass, &*shader_stages);
+            let pipeline =
+                GeomPipeline::create_pipeline(display, rend, layout, pass, &*shader_stages);
 
             // the depth attachment needs to have its own resources
             let (depth_image, depth_image_view, depth_image_mem) = Renderer::create_image(
                 &rend.dev,
                 &rend.mem_props,
-                &rend.resolution,
+                &display.d_resolution,
                 vk::Format::D16_UNORM,
                 vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
                 vk::ImageAspectFlags::DEPTH,
@@ -411,14 +473,18 @@ impl GeomPipeline {
                 vk::ImageTiling::OPTIMAL,
             );
 
-            let framebuffers =
-                GeomPipeline::create_framebuffers(rend, pass, rend.resolution, depth_image_view);
+            let framebuffers = GeomPipeline::create_framebuffers(
+                rend,
+                pass,
+                display.d_resolution,
+                depth_image_view,
+            );
 
             // Allocate a pool only for the ubo descriptors
             let g_desc_pool = Self::create_descriptor_pool(rend);
             let ubo = rend.allocate_descriptor_sets(g_desc_pool, &[ubo_layout])[0];
 
-            let consts = GeomPipeline::get_shader_constants(rend.resolution);
+            let consts = GeomPipeline::get_shader_constants(display.d_resolution);
 
             // create a uniform buffer
             let (buf, mem) = rend.create_buffer(
@@ -464,71 +530,6 @@ impl GeomPipeline {
             ctx.setup_depth_image(rend);
 
             return ctx;
-        }
-    }
-
-    /// Start recording a cbuf for one frame
-    ///
-    /// Each framebuffer has a set of resources, including command
-    /// buffers. This records the cbufs for the framebuffer
-    /// specified by `img`.
-    fn begin_recording(&mut self, rend: &Renderer, params: &RecordParams) {
-        unsafe {
-            // we need to clear any existing data when we start a pass
-            let clear_vals = [
-                vk::ClearValue {
-                    color: vk::ClearColorValue {
-                        float32: [0.0, 0.0, 0.0, 0.0],
-                    },
-                },
-                vk::ClearValue {
-                    depth_stencil: vk::ClearDepthStencilValue {
-                        depth: 0.0,
-                        stencil: 0,
-                    },
-                },
-            ];
-
-            // We want to start a render pass to hold all of
-            // our drawing. The actual pass is started in the cbuf
-            let pass_begin_info = vk::RenderPassBeginInfo::builder()
-                .render_pass(self.pass)
-                .framebuffer(self.framebuffers[params.image_num])
-                .render_area(vk::Rect2D {
-                    offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: rend.resolution,
-                })
-                .clear_values(&clear_vals);
-
-            // start the cbuf
-            rend.cbuf_begin_recording(params.cbuf, vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
-
-            // -- Setup static drawing resources
-            // All of our drawing operations need
-            // to be recorded inside a render pass.
-            rend.dev.cmd_begin_render_pass(
-                params.cbuf,
-                &pass_begin_info,
-                vk::SubpassContents::INLINE,
-            );
-
-            rend.dev
-                .cmd_bind_pipeline(params.cbuf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
-
-            // bind the vertex and index buffers from
-            // the first image
-            rend.dev.cmd_bind_vertex_buffers(
-                params.cbuf,         // cbuf to draw in
-                0,                   // first vertex binding updated by the command
-                &[self.vert_buffer], // set of buffers to bind
-                &[0],                // offsets for the above buffers
-            );
-            rend.dev.cmd_bind_index_buffer(
-                params.cbuf,
-                self.index_buffer,
-                0, // offset
-                vk::IndexType::UINT32,
-            );
         }
     }
 
@@ -687,6 +688,7 @@ impl GeomPipeline {
     /// This method roughly follows the "fixed function" part of the
     /// vulkan tutorial.
     unsafe fn create_pipeline(
+        display: &mut Display,
         rend: &Renderer,
         layout: vk::PipelineLayout,
         pass: vk::RenderPass,
@@ -741,15 +743,15 @@ impl GeomPipeline {
         let viewport = [vk::Viewport {
             x: 0.0,
             y: 0.0,
-            width: rend.resolution.width as f32,
-            height: rend.resolution.height as f32,
+            width: display.d_resolution.width as f32,
+            height: display.d_resolution.height as f32,
             min_depth: 0.0,
             max_depth: 1.0,
         }];
         // no scissor test
         let scissor = [vk::Rect2D {
             offset: vk::Offset2D { x: 0, y: 0 },
-            extent: rend.resolution,
+            extent: display.d_resolution,
         }];
 
         let viewport_info = vk::PipelineViewportStateCreateInfo::builder()
@@ -970,8 +972,13 @@ impl GeomPipeline {
     ///
     /// This updates the model matrix of the shader constants
     /// used for all models
-    pub fn transform_images(&mut self, rend: &Renderer, transform: &Matrix4<f32>) {
-        let mut consts = GeomPipeline::get_shader_constants(rend.resolution);
+    pub fn transform_images(
+        &mut self,
+        display: &mut Display,
+        rend: &Renderer,
+        transform: &Matrix4<f32>,
+    ) {
+        let mut consts = GeomPipeline::get_shader_constants(display.d_resolution);
         consts.model = consts.model * transform;
 
         unsafe {
