@@ -7,17 +7,17 @@
 #![allow(dead_code, non_camel_case_types)]
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::ffi::{CStr, CString};
 use std::marker::Copy;
 use std::os::raw::c_void;
+use std::sync::Arc;
 
-use ash::extensions::ext;
 use ash::extensions::khr;
-use ash::{vk, Device, Entry, Instance};
+use ash::{vk, Device};
 
 use crate::descpool::DescPool;
 use crate::display::Display;
 use crate::image::ImageVk;
+use crate::instance::Instance;
 use crate::list::SurfaceList;
 use crate::pipelines::PipelineType;
 use crate::platform::VKDeviceFeatures;
@@ -40,24 +40,6 @@ use lluvia as ll;
 /// window array in the actual ssbo. This needs to match the `offset`
 /// field in the `layout` qualifier in the shaders
 pub const WINDOW_LIST_GLSL_OFFSET: isize = 16;
-
-// this happy little debug callback is from the ash examples
-// all it does is print any errors/warnings thrown.
-unsafe extern "system" fn vulkan_debug_callback(
-    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
-    message_types: vk::DebugUtilsMessageTypeFlagsEXT,
-    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
-    _p_user_data: *mut c_void,
-) -> u32 {
-    log::error!(
-        "[VK][{:?}][{:?}] {:?}",
-        message_severity,
-        message_types,
-        CStr::from_ptr(p_callback_data.as_ref().unwrap().p_message)
-    );
-    println!();
-    vk::FALSE
-}
 
 pub struct VkBarriers {
     /// Dmabuf import usage barrier list. Will be regenerated
@@ -87,15 +69,9 @@ unsafe impl Sync for VkBarriers {}
 /// Application specific fields should be at the bottom of the
 /// struct, with the commonly required fields at the top.
 pub struct Renderer {
-    /// debug callback sugar mentioned earlier
-    debug_loader: ext::DebugUtils,
-    debug_callback: vk::DebugUtilsMessengerEXT,
+    /// The instance this rendering context was created from
+    pub(crate) inst: Arc<Instance>,
 
-    /// the entry just loads function pointers from the dynamic library
-    /// I am calling it a loader, because that's what it does
-    pub(crate) loader: Entry,
-    /// the big vulkan instance.
-    pub(crate) inst: Instance,
     /// the logical device we are using
     /// maybe I'll test around with multi-gpu
     pub(crate) dev: Device,
@@ -297,88 +273,6 @@ pub struct PushConstants {
 // should be used by the applications. The unsafe functions are mostly for
 // internal use.
 impl Renderer {
-    /// Creates a new debug reporter and registers our function
-    /// for debug callbacks so we get nice error messages
-    unsafe fn setup_debug(
-        entry: &Entry,
-        instance: &Instance,
-    ) -> (ext::DebugUtils, vk::DebugUtilsMessengerEXT) {
-        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
-            .message_severity(
-                vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::INFO
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING,
-            )
-            .message_type(
-                vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
-                    | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
-                    | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION,
-            )
-            .pfn_user_callback(Some(vulkan_debug_callback));
-
-        let dr_loader = ext::DebugUtils::new(entry, instance);
-        let callback = dr_loader
-            .create_debug_utils_messenger(&debug_info, None)
-            .unwrap();
-        return (dr_loader, callback);
-    }
-
-    /// Create a vkInstance
-    ///
-    /// Most of the create info entries are straightforward, with
-    /// some basic extensions being enabled. All of the work is
-    /// done in subfunctions.
-    unsafe fn create_instance(info: &CreateInfo) -> (Entry, Instance) {
-        let entry = Entry::linked();
-        let app_name = CString::new("Thundr").unwrap();
-
-        // For some reason old versions of the validation layers segfault in renderpass on the
-        // geometric one, so only use validation on compute
-        let layer_names = vec![
-            #[cfg(debug_assertions)]
-            CString::new("VK_LAYER_KHRONOS_validation").unwrap(),
-            #[cfg(target_os = "macos")]
-            CString::new("VK_LAYER_KHRONOS_synchronization2").unwrap(),
-        ];
-
-        let layer_names_raw: Vec<*const i8> = layer_names
-            .iter()
-            .map(|raw_name: &CString| raw_name.as_ptr())
-            .collect();
-
-        let mut extension_names_raw = Display::extension_names(info);
-        extension_names_raw.push(ext::DebugUtils::name().as_ptr());
-
-        let appinfo = vk::ApplicationInfo::builder()
-            .application_name(&app_name)
-            .application_version(0)
-            .engine_name(&app_name)
-            .engine_version(0)
-            .api_version(vk::API_VERSION_1_2)
-            .build();
-
-        let mut create_info = vk::InstanceCreateInfo::builder()
-            .application_info(&appinfo)
-            .enabled_layer_names(&layer_names_raw)
-            .enabled_extension_names(&extension_names_raw)
-            .build();
-
-        let printf_info = vk::ValidationFeaturesEXT::builder()
-            //.enabled_validation_features(&[vk::ValidationFeatureEnableEXT::DEBUG_PRINTF])
-            .enabled_validation_features(&[
-                vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION,
-            ])
-            .build();
-        create_info.p_next = &printf_info as *const _ as *const std::os::raw::c_void;
-
-        let instance: Instance = entry
-            .create_instance(&create_info, None)
-            .expect("Instance creation error");
-
-        return (entry, instance);
-    }
-
     /// Check if a queue family is suited for our needs.
     /// Queue families need to support graphical presentation and
     /// presentation on the given surface.
@@ -413,6 +307,7 @@ impl Renderer {
         info.p_next = &mut drm_info as *mut _ as *mut std::ffi::c_void;
 
         self.inst
+            .inst
             .get_physical_device_properties2(self.pdev, &mut info);
         assert!(drm_info.has_render != 0);
 
@@ -425,7 +320,7 @@ impl Renderer {
     /// provide the surface PFN loader and the surface so
     /// that we can ensure the pdev/queue combination can
     /// present the surface.
-    unsafe fn select_pdev(inst: &Instance) -> vk::PhysicalDevice {
+    unsafe fn select_pdev(inst: &ash::Instance) -> vk::PhysicalDevice {
         let pdevices = inst
             .enumerate_physical_devices()
             .expect("Physical device error");
@@ -447,7 +342,7 @@ impl Renderer {
     /// that we can ensure the pdev/queue combination can
     /// present the surface
     pub unsafe fn select_queue_family(
-        inst: &Instance,
+        inst: &ash::Instance,
         pdev: vk::PhysicalDevice,
         surface_loader: &khr::Surface,
         surface: vk::SurfaceKHR,
@@ -480,7 +375,7 @@ impl Renderer {
 
     /// get the vkPhysicalDeviceMemoryProperties structure for a vkPhysicalDevice
     pub(crate) unsafe fn get_pdev_mem_properties(
-        inst: &Instance,
+        inst: &ash::Instance,
         pdev: vk::PhysicalDevice,
     ) -> vk::PhysicalDeviceMemoryProperties {
         inst.get_physical_device_memory_properties(pdev)
@@ -496,7 +391,7 @@ impl Renderer {
     /// present_queue argument.
     unsafe fn create_device(
         dev_features: &VKDeviceFeatures,
-        inst: &Instance,
+        inst: &ash::Instance,
         pdev: vk::PhysicalDevice,
         queues: &[u32],
     ) -> Device {
@@ -609,7 +504,7 @@ impl Renderer {
 
         let (images, views) = Renderer::select_images_and_views(
             display,
-            &self.inst,
+            &self.inst.inst,
             self.pdev,
             &self.swapchain_loader,
             self.swapchain,
@@ -777,7 +672,7 @@ impl Renderer {
     /// to access our images
     unsafe fn select_images_and_views(
         display: &mut Display,
-        inst: &Instance,
+        inst: &ash::Instance,
         pdev: vk::PhysicalDevice,
         swapchain_loader: &khr::Swapchain,
         swapchain: vk::SwapchainKHR,
@@ -1495,36 +1390,33 @@ impl Renderer {
     /// self, avoiding any nasty argument lists like the functions above.
     /// The goal is to have this make dealing with the api less wordy.
     pub fn new(
+        instance: Arc<Instance>,
         info: &CreateInfo,
         ecs: &mut ll::Instance,
         pass_comp: ll::Component<usize>,
     ) -> Result<(Renderer, Display)> {
         unsafe {
-            let (entry, inst) = Renderer::create_instance(info);
-
-            let (dr_loader, d_callback) = Renderer::setup_debug(&entry, &inst);
-
-            let pdev = Renderer::select_pdev(&inst);
+            let pdev = Renderer::select_pdev(&instance.inst);
 
             // Our display is in charge of choosing a medium to draw on,
             // and will create a surface on that medium
-            let mut display = Display::new(info, &entry, &inst, pdev);
+            let mut display = Display::new(info, &instance.loader, &instance.inst, pdev);
 
             let graphics_queue_family = Renderer::select_queue_family(
-                &inst,
+                &instance.inst,
                 pdev,
                 &display.d_surface_loader,
                 display.d_surface,
                 vk::QueueFlags::GRAPHICS,
             );
             let transfer_queue_family = Renderer::select_queue_family(
-                &inst,
+                &instance.inst,
                 pdev,
                 &display.d_surface_loader,
                 display.d_surface,
                 vk::QueueFlags::TRANSFER,
             );
-            let mem_props = Renderer::get_pdev_mem_properties(&inst, pdev);
+            let mem_props = Renderer::get_pdev_mem_properties(&instance.inst, pdev);
 
             // TODO: allow for multiple pipes in use at once
             let pipe_type = if info.enable_traditional_composition {
@@ -1542,7 +1434,7 @@ impl Renderer {
             let mut families = vec![graphics_queue_family, transfer_queue_family];
 
             for t in enabled_pipelines.iter() {
-                if let Some(family) = t.get_queue_family(&inst, &display, pdev) {
+                if let Some(family) = t.get_queue_family(&instance.inst, &display, pdev) {
                     families.push(family);
                 }
             }
@@ -1553,11 +1445,12 @@ impl Renderer {
             #[cfg(feature = "aftermath")]
             let aftermath = Aftermath::initialize().expect("Could not enable Nvidia Aftermath SDK");
 
-            let dev_features = VKDeviceFeatures::new(&info, &inst, pdev);
+            let dev_features = VKDeviceFeatures::new(&info, &instance.inst, pdev);
             if !dev_features.vkc_supports_desc_indexing {
                 return Err(ThundrError::VK_NOT_ALL_EXTENSIONS_AVAILABLE);
             }
-            let dev = Renderer::create_device(&dev_features, &inst, pdev, families.as_slice());
+            let dev =
+                Renderer::create_device(&dev_features, &instance.inst, pdev, families.as_slice());
 
             // Each window is going to have a sampler descriptor for every
             // framebuffer image. Unfortunately this means the descriptor
@@ -1569,7 +1462,7 @@ impl Renderer {
             let present_queue = dev.get_device_queue(graphics_queue_family, 0);
             let transfer_queue = dev.get_device_queue(transfer_queue_family, 0);
 
-            let swapchain_loader = khr::Swapchain::new(&inst, &dev);
+            let swapchain_loader = khr::Swapchain::new(&instance.inst, &dev);
             let swapchain = Renderer::create_swapchain(
                 &mut display,
                 &swapchain_loader,
@@ -1580,7 +1473,7 @@ impl Renderer {
 
             let (images, image_views) = Renderer::select_images_and_views(
                 &mut display,
-                &inst,
+                &instance.inst,
                 pdev,
                 &swapchain_loader,
                 swapchain,
@@ -1602,7 +1495,7 @@ impl Renderer {
                 )
                 .expect("Could not create fence");
 
-            let ext_mem_loader = khr::ExternalMemoryFd::new(&inst, &dev);
+            let ext_mem_loader = khr::ExternalMemoryFd::new(&instance.inst, &dev);
 
             // Create a cbuf for copying data to shm images
             let copy_cbuf = Renderer::create_command_buffers(&dev, pool, 1)[0];
@@ -1703,10 +1596,7 @@ impl Renderer {
             // rendering context
             // p.s. you still need a Pipeline
             let mut rend = Renderer {
-                debug_loader: dr_loader,
-                debug_callback: d_callback,
-                loader: entry,
-                inst: inst,
+                inst: instance,
                 dev: dev,
                 dev_features: dev_features,
                 pdev: pdev,
@@ -2819,10 +2709,6 @@ impl Drop for Renderer {
             self.dev.destroy_fence(self.submit_fence, None);
             self.dev.destroy_fence(self.copy_cbuf_fence, None);
             self.dev.destroy_device(None);
-
-            self.debug_loader
-                .destroy_debug_utils_messenger(self.debug_callback, None);
-            self.inst.destroy_instance(None);
         }
     }
 }

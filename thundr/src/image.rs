@@ -559,7 +559,7 @@ impl Renderer {
         // we need to find a memory type that matches the type our
         // new image needs
         dmabuf_priv.dp_mem_reqs = self.dev.get_image_memory_requirements(image);
-        let mem_props = Renderer::get_pdev_mem_properties(&self.inst, self.pdev);
+        let mem_props = Renderer::get_pdev_mem_properties(&self.inst.inst, self.pdev);
 
         dmabuf_priv.dp_memtype_index = Renderer::find_memtype_for_dmabuf(
             dmabuf_type_bits,
@@ -670,7 +670,7 @@ impl Renderer {
                 format_props.p_next = &drm_fmt_props as *const _ as *mut std::ffi::c_void;
 
                 // get the number of drm format mods props
-                self.inst.get_physical_device_format_properties2(
+                self.inst.inst.get_physical_device_format_properties2(
                     self.pdev,
                     TARGET_FORMAT,
                     &mut format_props,
@@ -680,7 +680,7 @@ impl Renderer {
                     .collect();
 
                 drm_fmt_props.p_drm_format_modifier_properties = mods.as_mut_ptr();
-                self.inst.get_physical_device_format_properties2(
+                self.inst.inst.get_physical_device_format_properties2(
                     self.pdev,
                     TARGET_FORMAT,
                     &mut format_props,
@@ -709,6 +709,7 @@ impl Renderer {
             // the dimensions of the image will be returned here
             let mut img_fmt_props = vk::ImageFormatProperties2::builder().build();
             self.inst
+                .inst
                 .get_physical_device_image_format_properties2(
                     self.pdev,
                     &img_fmt_info,

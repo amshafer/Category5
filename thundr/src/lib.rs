@@ -70,6 +70,7 @@ mod damage;
 mod descpool;
 mod display;
 mod image;
+mod instance;
 mod list;
 mod pipelines;
 mod platform;
@@ -80,6 +81,7 @@ pub use self::image::Image;
 pub use self::image::{Dmabuf, DmabufPlane};
 pub use damage::Damage;
 use display::Display;
+use instance::Instance;
 pub use list::SurfaceList;
 pub use renderer::Renderer;
 pub use surface::{SubsurfaceOrder, Surface};
@@ -312,9 +314,12 @@ impl Thundr {
         let mut ecs = ll::Instance::new();
         let pass_comp = ecs.add_component();
 
+        let inst = Arc::new(Instance::new(&info));
+
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
-        let (mut rend, mut display) = Renderer::new(&info, &mut ecs, pass_comp.clone())?;
+        let (mut rend, mut display) =
+            Renderer::new(inst.clone(), &info, &mut ecs, pass_comp.clone())?;
 
         // Create the pipeline(s) requested
         // Record the type we are using so that we know which type to regenerate
