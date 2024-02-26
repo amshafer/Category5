@@ -68,6 +68,7 @@ use std::sync::{Arc, Mutex};
 
 mod damage;
 mod descpool;
+mod device;
 mod display;
 mod image;
 mod instance;
@@ -80,6 +81,7 @@ mod surface;
 pub use self::image::Image;
 pub use self::image::{Dmabuf, DmabufPlane};
 pub use damage::Damage;
+pub use device::Device;
 use display::Display;
 use instance::Instance;
 pub use list::SurfaceList;
@@ -352,11 +354,6 @@ impl Thundr {
         self.th_display.get_dpi()
     }
 
-    pub fn get_raw_vkdev_handle(&self) -> *const std::ffi::c_void {
-        use ash::vk::Handle;
-        self.th_rend.lock().unwrap().dev.handle().as_raw() as *const std::ffi::c_void
-    }
-
     pub fn get_resolution(&self) -> (u32, u32) {
         (
             self.th_display.d_resolution.width,
@@ -480,8 +477,6 @@ impl Thundr {
     /// it depends on the swapchain.
     pub fn handle_ood(&mut self) {
         let mut rend = self.th_rend.lock().unwrap();
-        rend.wait_for_prev_submit();
-        rend.wait_for_copy();
         unsafe {
             rend.recreate_swapchain(&mut self.th_display);
         }
@@ -490,7 +485,7 @@ impl Thundr {
     }
 
     pub fn get_drm_dev(&self) -> (i64, i64) {
-        unsafe { self.th_rend.lock().unwrap().get_drm_dev() }
+        self.th_rend.lock().unwrap().dev.get_drm_dev()
     }
 
     /// Flushes all surface updates to the GPU
@@ -650,7 +645,7 @@ impl Thundr {
             }
             let rend = self.th_rend.lock().unwrap();
 
-            if rend.dev_features.vkc_supports_incremental_present {
+            if rend.dev.dev_features.vkc_supports_incremental_present {
                 log::debug!("Damaged vkPresentRegions:");
                 log::debug!("--------------------------------");
                 for (i, pr) in rend.current_damage.iter().enumerate() {
@@ -684,7 +679,6 @@ impl Drop for Thundr {
         // first destroy the pipeline specific resources
         let mut rend = self.th_rend.lock().unwrap();
         rend.wait_for_prev_submit();
-        rend.wait_for_copy();
         self.th_pipe.destroy(rend.deref_mut());
     }
 }

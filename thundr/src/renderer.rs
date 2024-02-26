@@ -12,7 +12,7 @@ use std::os::raw::c_void;
 use std::sync::Arc;
 
 use ash::extensions::khr;
-use ash::{vk, Device};
+use ash::vk;
 
 use crate::descpool::DescPool;
 use crate::display::Display;
@@ -21,7 +21,7 @@ use crate::instance::Instance;
 use crate::list::SurfaceList;
 use crate::pipelines::PipelineType;
 use crate::platform::VKDeviceFeatures;
-use crate::{Droppable, Surface, Viewport};
+use crate::{Device, Droppable, Surface, Viewport};
 
 extern crate utils as cat5_utils;
 use crate::{CreateInfo, Damage};
@@ -71,22 +71,8 @@ unsafe impl Sync for VkBarriers {}
 pub struct Renderer {
     /// The instance this rendering context was created from
     pub(crate) inst: Arc<Instance>,
-
-    /// the logical device we are using
-    /// maybe I'll test around with multi-gpu
-    pub(crate) dev: Device,
-    pub(crate) dev_features: VKDeviceFeatures,
-    /// the physical device selected to display to
-    pub(crate) pdev: vk::PhysicalDevice,
-    pub(crate) mem_props: vk::PhysicalDeviceMemoryProperties,
-
-    /// index into the array of queue families
-    pub(crate) graphics_family_index: u32,
-    pub(crate) transfer_family_index: u32,
-    /// processes things to be physically displayed
-    pub(crate) present_queue: vk::Queue,
-    /// queue for copy operations
-    pub(crate) transfer_queue: vk::Queue,
+    /// The GPU this Renderer is resident on
+    pub(crate) dev: Arc<Device>,
 
     /// loads swapchain extension
     pub(crate) swapchain_loader: khr::Swapchain,
@@ -117,7 +103,10 @@ pub struct Renderer {
     /// This is the final compiled set of damages for this frame.
     pub(crate) current_damage: Vec<vk::RectLayerKHR>,
 
-    // TODO: move cbuf management from Renderer to the pipelines
+    /// Graphics queue family to use. This comes from the Display
+    pub(crate) graphics_queue_family: u32,
+    /// processes things to be physically displayed
+    pub(crate) r_present_queue: vk::Queue,
     /// pools provide the memory allocated to command buffers
     pub(crate) pool: vk::CommandPool,
     /// the command buffers allocated from pool
@@ -140,16 +129,8 @@ pub struct Renderer {
     /// for rendering that should now be released
     /// See WindowManger's worker_thread for more
     pub(crate) r_release: Vec<Box<dyn Droppable + Send + Sync>>,
-    /// command buffer for copying shm images
-    pub(crate) copy_cbuf: vk::CommandBuffer,
-    pub(crate) copy_cbuf_fence: vk::Fence,
     /// This is an allocator for the dynamic sets (samplers)
     pub(crate) desc_pool: DescPool,
-
-    /// These are for loading textures into images
-    pub(crate) transfer_buf_len: usize,
-    pub(crate) transfer_buf: vk::Buffer,
-    pub(crate) transfer_mem: vk::DeviceMemory,
 
     /// Has vkQueueSubmit been called.
     pub(crate) draw_call_submitted: bool,
@@ -270,185 +251,6 @@ pub struct PushConstants {
 // should be used by the applications. The unsafe functions are mostly for
 // internal use.
 impl Renderer {
-    /// Check if a queue family is suited for our needs.
-    /// Queue families need to support graphical presentation and
-    /// presentation on the given surface.
-    unsafe fn is_valid_queue_family(
-        pdevice: vk::PhysicalDevice,
-        info: vk::QueueFamilyProperties,
-        index: u32,
-        surface_loader: &khr::Surface,
-        surface: vk::SurfaceKHR,
-        flags: vk::QueueFlags,
-    ) -> bool {
-        info.queue_flags.contains(flags)
-            && surface_loader
-                // ensure compatibility with the surface
-                .get_physical_device_surface_support(pdevice, index, surface)
-                .unwrap()
-    }
-
-    /// Get the major/minor of the DRM node in use
-    ///
-    /// This uses VK_EXT_physical_device_drm, and will fail an assert
-    /// if it is not in use.
-    ///
-    /// return is drm (renderMajor, renderMinor).
-    pub unsafe fn get_drm_dev(&self) -> (i64, i64) {
-        if !self.dev_features.vkc_supports_phys_dev_drm {
-            log::error!("Using drm Vulkan extensions but the underlying vulkan library doesn't support them. This will cause problems");
-        }
-        let mut drm_info = vk::PhysicalDeviceDrmPropertiesEXT::builder().build();
-
-        let mut info = vk::PhysicalDeviceProperties2::builder().build();
-        info.p_next = &mut drm_info as *mut _ as *mut std::ffi::c_void;
-
-        self.inst
-            .inst
-            .get_physical_device_properties2(self.pdev, &mut info);
-        assert!(drm_info.has_render != 0);
-
-        (drm_info.render_major, drm_info.render_minor)
-    }
-
-    /// Choose a vkPhysicalDevice and queue family index.
-    ///
-    /// selects a physical device and a queue family
-    /// provide the surface PFN loader and the surface so
-    /// that we can ensure the pdev/queue combination can
-    /// present the surface.
-    unsafe fn select_pdev(inst: &ash::Instance) -> vk::PhysicalDevice {
-        let pdevices = inst
-            .enumerate_physical_devices()
-            .expect("Physical device error");
-
-        // for each physical device
-        *pdevices
-            .iter()
-            // eventually there needs to be a way of grabbing
-            // the configured pdev from the user
-            .nth(0)
-            // for now we are just going to get the first one
-            .expect("Couldn't find suitable device.")
-    }
-
-    /// Choose a queue family
-    ///
-    /// returns an index into the array of queue types.
-    /// provide the surface PFN loader and the surface so
-    /// that we can ensure the pdev/queue combination can
-    /// present the surface
-    pub unsafe fn select_queue_family(
-        inst: &ash::Instance,
-        pdev: vk::PhysicalDevice,
-        surface_loader: &khr::Surface,
-        surface: vk::SurfaceKHR,
-        flags: vk::QueueFlags,
-    ) -> u32 {
-        // get the properties per queue family
-        inst.get_physical_device_queue_family_properties(pdev)
-            // for each property info
-            .iter()
-            .enumerate()
-            .filter_map(|(index, info)| {
-                // add the device and the family to a list of
-                // candidates for use later
-                match Renderer::is_valid_queue_family(
-                    pdev,
-                    *info,
-                    index as u32,
-                    surface_loader,
-                    surface,
-                    flags,
-                ) {
-                    // return the pdevice/family pair
-                    true => Some(index as u32),
-                    false => None,
-                }
-            })
-            .nth(0)
-            .expect("Could not find a suitable queue family")
-    }
-
-    /// get the vkPhysicalDeviceMemoryProperties structure for a vkPhysicalDevice
-    pub(crate) unsafe fn get_pdev_mem_properties(
-        inst: &ash::Instance,
-        pdev: vk::PhysicalDevice,
-    ) -> vk::PhysicalDeviceMemoryProperties {
-        inst.get_physical_device_memory_properties(pdev)
-    }
-
-    /// Create a vkDevice from a vkPhysicalDevice
-    ///
-    /// Create a logical device for interfacing with the physical device.
-    /// once again we specify any device extensions we need, the swapchain
-    /// being the most important one.
-    ///
-    /// A queue is created in the specified queue family in the
-    /// present_queue argument.
-    unsafe fn create_device(
-        dev_features: &VKDeviceFeatures,
-        inst: &ash::Instance,
-        pdev: vk::PhysicalDevice,
-        queues: &[u32],
-    ) -> Device {
-        let dev_extension_names = dev_features.get_device_extensions();
-
-        let features = vk::PhysicalDeviceFeatures::builder()
-            .shader_clip_distance(true)
-            .vertex_pipeline_stores_and_atomics(true)
-            .fragment_stores_and_atomics(true)
-            .build();
-
-        // for now we only have one graphics queue, so one priority
-        let priorities = [1.0];
-        let mut queue_infos = Vec::new();
-        for i in queues {
-            queue_infos.push(
-                vk::DeviceQueueCreateInfo::builder()
-                    .queue_family_index(*i)
-                    .queue_priorities(&priorities)
-                    .build(),
-            );
-        }
-
-        let mut dev_create_info = vk::DeviceCreateInfo::builder()
-            .queue_create_infos(queue_infos.as_ref())
-            .enabled_extension_names(dev_extension_names.as_slice())
-            .enabled_features(&features)
-            .build();
-
-        if dev_features.vkc_supports_desc_indexing {
-            let indexing_info = vk::PhysicalDeviceDescriptorIndexingFeaturesEXT::builder()
-                .shader_sampled_image_array_non_uniform_indexing(true)
-                .runtime_descriptor_array(true)
-                .descriptor_binding_variable_descriptor_count(true)
-                .descriptor_binding_partially_bound(true)
-                .descriptor_binding_update_unused_while_pending(true)
-                .build();
-
-            dev_create_info.p_next = &indexing_info as *const _ as *mut std::ffi::c_void;
-        }
-
-        #[cfg(feature = "aftermath")]
-        {
-            let mut aftermath_info = vk::DeviceDiagnosticsConfigCreateInfoNV::builder()
-                .flags(
-                    vk::DeviceDiagnosticsConfigFlagsNV::ENABLE_SHADER_DEBUG_INFO
-                        | vk::DeviceDiagnosticsConfigFlagsNV::ENABLE_RESOURCE_TRACKING,
-                )
-                .build();
-            aftermath_info.p_next = dev_create_info.p_next;
-
-            dev_create_info.p_next = &aftermath_info as *const _ as *mut std::ffi::c_void;
-            // do our call here so aftermath_info is still in scope
-            return inst.create_device(pdev, &dev_create_info, None).unwrap();
-        }
-
-        // return a newly created device
-        inst.create_device(pdev, &dev_create_info, None).unwrap()
-    }
-
     /// Tear down all the swapchain-dependent vulkan objects we have created.
     /// This will be used when dropping everything and when we need to handle
     /// OOD events.
@@ -456,11 +258,12 @@ impl Renderer {
         // Don't destroy the images here, the destroy swapchain call
         // will take care of them
         for view in self.views.iter() {
-            self.dev.destroy_image_view(*view, None);
+            self.dev.dev.destroy_image_view(*view, None);
         }
         self.views.clear();
 
         self.dev
+            .dev
             .free_command_buffers(self.pool, self.cbufs.as_slice());
         self.cbufs.clear();
 
@@ -477,19 +280,19 @@ impl Renderer {
     /// separately.
     pub unsafe fn recreate_swapchain(&mut self, display: &mut Display) {
         // first wait for the device to finish working
-        self.dev.device_wait_idle().unwrap();
+        self.dev.dev.device_wait_idle().unwrap();
 
         // We need to get the updated size of our swapchain. This
         // will be the current size of the surface in use. We should
         // also update Display.d_resolution while we are at it.
-        let new_res = display.get_vulkan_drawable_size(self.pdev);
+        let new_res = display.get_vulkan_drawable_size(self.dev.pdev);
         // TODO: clamp resolution here
         display.d_resolution = new_res;
 
         let new_swapchain = Renderer::create_swapchain(
             display,
             &self.swapchain_loader,
-            &self.dev_features,
+            &self.dev.dev_features,
             self.r_pipe_type,
             Some(self.swapchain), // oldSwapChain
         );
@@ -501,7 +304,6 @@ impl Renderer {
         let (images, views) = Renderer::select_images_and_views(
             display,
             &self.inst.inst,
-            self.pdev,
             &self.swapchain_loader,
             self.swapchain,
             &self.dev,
@@ -509,8 +311,9 @@ impl Renderer {
         self.images = images;
         self.views = views;
 
-        self.cbufs =
-            Renderer::create_command_buffers(&self.dev, self.pool, self.images.len() as u32);
+        self.cbufs = self
+            .dev
+            .create_command_buffers(self.pool, self.images.len() as u32);
     }
 
     /// create a new vkSwapchain
@@ -626,41 +429,6 @@ impl Renderer {
             .unwrap()
     }
 
-    /// returns a new vkCommandPool
-    ///
-    /// Command buffers are allocated from command pools. That's about
-    /// all they do. They just manage memory. Command buffers will be allocated
-    /// as part of the queue_family specified.
-    pub(crate) unsafe fn create_command_pool(dev: &Device, queue_family: u32) -> vk::CommandPool {
-        let pool_create_info = vk::CommandPoolCreateInfo::builder()
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-            .queue_family_index(queue_family);
-
-        dev.create_command_pool(&pool_create_info, None).unwrap()
-    }
-
-    /// Allocate a vec of vkCommandBuffers
-    ///
-    /// Command buffers are constructed once, and can be executed
-    /// many times. They also have the added bonus of being added to
-    /// by multiple threads. Command buffer is shortened to `cbuf` in
-    /// many areas of the code.
-    ///
-    /// For now we are only allocating two: one to set up the resources
-    /// and one to do all the work.
-    pub(crate) unsafe fn create_command_buffers(
-        dev: &Device,
-        pool: vk::CommandPool,
-        count: u32,
-    ) -> Vec<vk::CommandBuffer> {
-        let cbuf_allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_buffer_count(count)
-            .command_pool(pool)
-            .level(vk::CommandBufferLevel::PRIMARY);
-
-        dev.allocate_command_buffers(&cbuf_allocate_info).unwrap()
-    }
-
     /// Get the vkImage's for the swapchain, and create vkImageViews for them
     ///
     /// get all the presentation images for the swapchain
@@ -669,7 +437,6 @@ impl Renderer {
     unsafe fn select_images_and_views(
         display: &mut Display,
         inst: &ash::Instance,
-        pdev: vk::PhysicalDevice,
         swapchain_loader: &khr::Swapchain,
         swapchain: vk::SwapchainKHR,
         dev: &Device,
@@ -679,8 +446,10 @@ impl Renderer {
         let image_views = images
             .iter()
             .map(|&image| {
-                let format_props = inst
-                    .get_physical_device_format_properties(pdev, display.d_surface_format.format);
+                let format_props = inst.get_physical_device_format_properties(
+                    dev.pdev,
+                    display.d_surface_format.format,
+                );
                 log::info!("format props: {:#?}", format_props);
 
                 // we want to interact with this image as a 2D
@@ -725,213 +494,11 @@ impl Renderer {
                     create_info.p_next = &ext_info as *const _ as *mut std::ffi::c_void;
                 }
 
-                dev.create_image_view(&create_info, None).unwrap()
+                dev.dev.create_image_view(&create_info, None).unwrap()
             })
             .collect();
 
         return (images, image_views);
-    }
-
-    /// Returns an index into the array of memory types for the memory
-    /// properties
-    ///
-    /// Memory types specify the location and accessability of memory. Device
-    /// local memory is resident on the GPU, while host visible memory can be
-    /// read from the system side. Both of these are part of the
-    /// vk::MemoryPropertyFlags type.
-    fn find_memory_type_index(
-        props: &vk::PhysicalDeviceMemoryProperties,
-        reqs: &vk::MemoryRequirements,
-        flags: vk::MemoryPropertyFlags,
-    ) -> Option<u32> {
-        // for each memory type
-        for (i, ref mem_type) in props.memory_types.iter().enumerate() {
-            // Bit i of memoryBitTypes will be set if the resource supports
-            // the ith memory type in props.
-            //
-            // ash autogenerates common operations for bitfield style structs
-            // they can be found in `vk_bitflags_wrapped`
-            if (reqs.memory_type_bits >> i) & 1 == 1 && mem_type.property_flags.contains(flags) {
-                // log!(LogLevel::profiling, "Selected type with flags {:?}",
-                //          mem_type.property_flags);
-                // return the index into the memory type array
-                return Some(i as u32);
-            }
-        }
-        None
-    }
-
-    /// Create a vkImage and the resources needed to use it
-    ///   (vkImageView and vkDeviceMemory)
-    ///
-    /// Images are generic buffers which can be used as sources or
-    /// destinations of data. Images are accessed through image views,
-    /// which specify how the image will be modified or read. In vulkan
-    /// memory management is more hands on, so we will allocate some device
-    /// memory to back the image.
-    ///
-    /// This method may require some adjustment as it makes some assumptions
-    /// about the type of image to be created.
-    ///
-    /// Resolution should probably be the same size as the swapchain's images
-    /// usage defines the role the image will serve (transfer, depth data, etc)
-    /// flags defines the memory type (probably DEVICE_LOCAL + others)
-    pub(crate) unsafe fn create_image(
-        dev: &Device,
-        mem_props: &vk::PhysicalDeviceMemoryProperties,
-        resolution: &vk::Extent2D,
-        format: vk::Format,
-        usage: vk::ImageUsageFlags,
-        aspect: vk::ImageAspectFlags,
-        flags: vk::MemoryPropertyFlags,
-        tiling: vk::ImageTiling,
-    ) -> (vk::Image, vk::ImageView, vk::DeviceMemory) {
-        // we create the image now, but will have to bind
-        // some memory to it later.
-        let create_info = vk::ImageCreateInfo::builder()
-            .image_type(vk::ImageType::TYPE_2D)
-            .format(format)
-            .extent(vk::Extent3D {
-                width: resolution.width,
-                height: resolution.height,
-                depth: 1,
-            })
-            .mip_levels(1)
-            .array_layers(1)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .tiling(tiling)
-            .usage(usage)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        let image = dev.create_image(&create_info, None).unwrap();
-
-        // we need to find a memory type that matches the type our
-        // new image needs
-        let mem_reqs = dev.get_image_memory_requirements(image);
-        let memtype_index = Renderer::find_memory_type_index(mem_props, &mem_reqs, flags).unwrap();
-
-        let alloc_info = vk::MemoryAllocateInfo::builder()
-            .allocation_size(mem_reqs.size)
-            .memory_type_index(memtype_index);
-
-        let image_memory = dev.allocate_memory(&alloc_info, None).unwrap();
-        dev.bind_image_memory(image, image_memory, 0)
-            .expect("Unable to bind device memory to image");
-
-        let view_info = vk::ImageViewCreateInfo::builder()
-            .subresource_range(
-                vk::ImageSubresourceRange::builder()
-                    .aspect_mask(aspect)
-                    .level_count(1)
-                    .layer_count(1)
-                    .build(),
-            )
-            .image(image)
-            .format(create_info.format)
-            .view_type(vk::ImageViewType::TYPE_2D);
-
-        let view = dev.create_image_view(&view_info, None).unwrap();
-
-        return (image, view, image_memory);
-    }
-
-    /// Create an image sampler for the swapchain fbs
-    ///
-    /// Samplers are used to filter data from an image when
-    /// it is referenced from a fragment shader. It allows
-    /// for additional processing effects on the input.
-    pub(crate) unsafe fn create_sampler(dev: &Device) -> vk::Sampler {
-        let info = vk::SamplerCreateInfo::builder()
-            // filter for magnified (oversampled) pixels
-            .mag_filter(vk::Filter::LINEAR)
-            // filter for minified (undersampled) pixels
-            .min_filter(vk::Filter::LINEAR)
-            // don't repeat the texture on wraparound
-            // There is some weird thing where one/two pixels on each border
-            // will repeat, which makes text rendering borked. Idk why this
-            // is the case, but given that it only affects the very edges just
-            // turn off repeat since we will never be doing it anyway)
-            .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_BORDER)
-            .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_BORDER)
-            .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_BORDER)
-            // disable this for performance
-            .anisotropy_enable(false)
-            .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
-            // texture coords are [0,1)
-            .unnormalized_coordinates(false)
-            .compare_enable(false)
-            .compare_op(vk::CompareOp::ALWAYS)
-            .mipmap_mode(vk::SamplerMipmapMode::LINEAR);
-
-        dev.create_sampler(&info, None).unwrap()
-    }
-
-    /// Transitions `image` to the `new` layout using `cbuf`
-    ///
-    /// Images need to be manually transitioned from two layouts. A
-    /// normal use case is transitioning an image from an undefined
-    /// layout to the optimal shader access layout. This is also
-    /// used  by depth images.
-    ///
-    /// It is assumed this is for textures referenced from the fragment
-    /// shader, and so it is a bit specific.
-    pub unsafe fn transition_image_layout(
-        &self,
-        image: vk::Image,
-        cbuf: vk::CommandBuffer,
-        old: vk::ImageLayout,
-        new: vk::ImageLayout,
-    ) {
-        // use defaults here, and set them in the next section
-        let mut layout_barrier = vk::ImageMemoryBarrier::builder()
-            .image(image)
-            .src_access_mask(vk::AccessFlags::TRANSFER_READ)
-            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-            // go from an undefined old layout to whatever the
-            // driver decides is the optimal depth layout
-            .old_layout(old)
-            .new_layout(new)
-            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .subresource_range(
-                vk::ImageSubresourceRange::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .layer_count(1)
-                    .level_count(1)
-                    .build(),
-            )
-            .build();
-        #[allow(unused_assignments)]
-        let mut src_stage = vk::PipelineStageFlags::TOP_OF_PIPE;
-        #[allow(unused_assignments)]
-        let mut dst_stage = vk::PipelineStageFlags::TOP_OF_PIPE;
-
-        // automatically detect the pipeline src/dest stages to use.
-        // straight from `transitionImageLayout` in the tutorial.
-        if old == vk::ImageLayout::UNDEFINED {
-            layout_barrier.src_access_mask = vk::AccessFlags::default();
-            layout_barrier.dst_access_mask = vk::AccessFlags::TRANSFER_WRITE;
-
-            src_stage = vk::PipelineStageFlags::TOP_OF_PIPE;
-            dst_stage = vk::PipelineStageFlags::TRANSFER;
-        } else {
-            layout_barrier.src_access_mask = vk::AccessFlags::TRANSFER_WRITE;
-            layout_barrier.dst_access_mask = vk::AccessFlags::SHADER_READ;
-
-            src_stage = vk::PipelineStageFlags::TRANSFER;
-            dst_stage = vk::PipelineStageFlags::FRAGMENT_SHADER;
-        }
-
-        // process the barrier we created, which will perform
-        // the actual transition.
-        self.dev.cmd_pipeline_barrier(
-            cbuf,
-            src_stage,
-            dst_stage,
-            vk::DependencyFlags::empty(),
-            &[],
-            &[],
-            &[layout_barrier],
-        );
     }
 
     /// Returns true if there are any resources in
@@ -960,315 +527,6 @@ impl Renderer {
         self.r_release.push(release);
     }
 
-    /// Update an image from a VkBuffer
-    ///
-    /// It is common to copy host data into an image
-    /// to initialize it. This function initializes
-    /// image by copying buffer to it.
-    pub(crate) unsafe fn update_image_contents_from_buf(
-        &mut self,
-        buffer: vk::Buffer,
-        image: vk::Image,
-        width: u32,
-        height: u32,
-    ) {
-        let region = &[vk::BufferImageCopy::builder()
-            // 0 specifies that the pixels are tightly packed
-            .buffer_offset(0)
-            .buffer_row_length(0)
-            .buffer_image_height(0)
-            .image_subresource(
-                vk::ImageSubresourceLayers::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .mip_level(0)
-                    .base_array_layer(0)
-                    .layer_count(1)
-                    .build(),
-            )
-            .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
-            .image_extent(vk::Extent3D {
-                width: width,
-                height: height,
-                depth: 1,
-            })
-            .build()];
-
-        self.update_image_contents_from_buf_common(buffer, image, region);
-    }
-
-    /// This function performs common setup, completion for update functions.
-    ///
-    /// It handles fence waiting and cbuf recording.
-    pub(crate) unsafe fn update_image_contents_from_buf_common(
-        &mut self,
-        buffer: vk::Buffer,
-        image: vk::Image,
-        regions: &[vk::BufferImageCopy],
-    ) {
-        self.wait_for_prev_submit();
-        self.wait_for_copy();
-        // unsignal it, may be extraneous
-        self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
-
-        // now perform the copy
-        self.cbuf_begin_recording(self.copy_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-
-        // transition our image to be a transfer destination
-        self.transition_image_layout(
-            image,
-            self.copy_cbuf,
-            vk::ImageLayout::UNDEFINED,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        );
-
-        log::debug!("Copy image with regions: {:?}", regions);
-        self.dev.cmd_copy_buffer_to_image(
-            self.copy_cbuf,
-            buffer,
-            image,
-            // this is the layout the image is currently using
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            regions,
-        );
-
-        // transition back to the optimal color layout
-        self.transition_image_layout(
-            image,
-            self.copy_cbuf,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-        );
-
-        self.cbuf_end_recording(self.copy_cbuf);
-        self.cbuf_submit_async(
-            self.copy_cbuf,
-            self.present_queue,
-            &[], // wait_stages
-            &[], // wait_semas
-            &[], // signal_semas
-            self.copy_cbuf_fence,
-        );
-    }
-
-    /// Update a Vulkan image from a raw memory region
-    ///
-    /// This will upload the MemImage to the tansfer buffer, copy it to the image,
-    /// and perform any needed layout conversions along the way.
-    ///
-    /// A stride of zero implies the data is tightly packed.
-    pub unsafe fn update_image_from_data(
-        &mut self,
-        image: vk::Image,
-        data: &[u8],
-        width: u32,
-        height: u32,
-        stride: u32,
-    ) {
-        self.update_image_contents_from_damaged_data(image, data, width, height, stride, None);
-    }
-
-    /// Copies a list of regions from a buffer into an image.
-    ///
-    /// Instead of copying the entire buffer, use a thundr::Damage to
-    /// populate only certain parts of the image. `damage` takes place
-    /// in the image's coordinate system.
-    pub(crate) unsafe fn update_image_contents_from_damaged_data(
-        &mut self,
-        image: vk::Image,
-        data: &[u8],
-        width: u32,
-        height: u32,
-        stride: u32,
-        damage: Option<Damage>,
-    ) {
-        log::debug!("Updating image with damage: {:?}", damage);
-        log::debug!("Using {}x{} buffer with stride {}", width, height, stride);
-
-        // Adjust our stride. If the special value zero is specified then we
-        // should default to tighly packed, aka the width
-        let stride = match stride {
-            0 => width,
-            s => s,
-        };
-
-        // If we have damage to use, then generate our copy regions. If not,
-        // then just create
-        let mut regions = Vec::new();
-        if let Some(damage) = damage {
-            for d in damage.d_regions.iter() {
-                regions.push(
-                    vk::BufferImageCopy::builder()
-                        .buffer_offset((stride as i32 * d.r_pos.1 + d.r_pos.0) as u64 * 4)
-                        .buffer_row_length(stride)
-                        // 0 specifies that the pixels are tightly packed
-                        .buffer_image_height(0)
-                        .image_subresource(
-                            vk::ImageSubresourceLayers::builder()
-                                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                                .mip_level(0)
-                                .base_array_layer(0)
-                                .layer_count(1)
-                                .build(),
-                        )
-                        .image_offset(vk::Offset3D {
-                            x: d.r_pos.0,
-                            y: d.r_pos.1,
-                            z: 0,
-                        })
-                        .image_extent(vk::Extent3D {
-                            width: d.r_size.0 as u32,
-                            height: d.r_size.1 as u32,
-                            depth: 1,
-                        })
-                        .build(),
-                );
-            }
-        } else {
-            regions.push(
-                vk::BufferImageCopy::builder()
-                    .buffer_offset(0)
-                    // 0 means tightly packed.
-                    .buffer_row_length(stride)
-                    .buffer_image_height(0)
-                    .image_subresource(
-                        vk::ImageSubresourceLayers::builder()
-                            .aspect_mask(vk::ImageAspectFlags::COLOR)
-                            .mip_level(0)
-                            .base_array_layer(0)
-                            .layer_count(1)
-                            .build(),
-                    )
-                    .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
-                    .image_extent(vk::Extent3D {
-                        width: width,
-                        height: height,
-                        depth: 1,
-                    })
-                    .build(),
-            );
-        }
-
-        self.wait_for_prev_submit();
-
-        // Now copy the bits into the image
-        // TODO: only upload damaged regions
-        self.upload_memimage_to_transfer(data);
-
-        // Reset the fences for our cbuf submission below
-        self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
-
-        // transition us into the appropriate memory layout for shaders
-        self.cbuf_begin_recording(self.copy_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-
-        // First thing to do here is to copy the transfer memory into the image
-        let layout_barrier = vk::ImageMemoryBarrier::builder()
-            .image(image)
-            .src_access_mask(vk::AccessFlags::default())
-            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-            .old_layout(vk::ImageLayout::UNDEFINED)
-            .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .subresource_range(
-                vk::ImageSubresourceRange::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .layer_count(1)
-                    .level_count(1)
-                    .build(),
-            )
-            .build();
-        self.dev.cmd_pipeline_barrier(
-            self.copy_cbuf,
-            vk::PipelineStageFlags::TOP_OF_PIPE,
-            vk::PipelineStageFlags::TRANSFER,
-            vk::DependencyFlags::empty(),
-            &[],
-            &[],
-            &[layout_barrier],
-        );
-
-        self.dev.cmd_copy_buffer_to_image(
-            self.copy_cbuf,
-            self.transfer_buf,
-            image,
-            // this is the layout the image is currently using
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            // Region to copy
-            regions.as_slice(),
-        );
-
-        // Now we need to turn this image's format back into the optimal
-        // shader layout
-        let dst_stage = match self.r_pipe_type {
-            PipelineType::GEOMETRIC => vk::PipelineStageFlags::FRAGMENT_SHADER,
-        };
-        let layout_barrier = vk::ImageMemoryBarrier::builder()
-            .image(image)
-            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-            .dst_access_mask(vk::AccessFlags::SHADER_READ)
-            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .subresource_range(
-                vk::ImageSubresourceRange::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .layer_count(1)
-                    .level_count(1)
-                    .build(),
-            )
-            .build();
-        self.dev.cmd_pipeline_barrier(
-            self.copy_cbuf,
-            vk::PipelineStageFlags::TRANSFER,
-            dst_stage,
-            vk::DependencyFlags::empty(),
-            &[],
-            &[],
-            &[layout_barrier],
-        );
-        self.cbuf_end_recording(self.copy_cbuf);
-
-        self.cbuf_submit_async(
-            self.copy_cbuf,
-            self.present_queue,
-            &[], // wait_stages
-            &[], // wait_semas
-            &[], // signal_semas
-            self.copy_cbuf_fence,
-        );
-    }
-
-    /// Create a new image, and fill it with `data`
-    ///
-    /// This is meant for loading a texture into an image.
-    /// It essentially just wraps `create_image` and
-    /// `update_memory`.
-    ///
-    /// The resulting image will be in the shader read layout
-    pub(crate) unsafe fn create_image_with_contents(
-        &mut self,
-        resolution: &vk::Extent2D,
-        format: vk::Format,
-        usage: vk::ImageUsageFlags,
-        aspect_flags: vk::ImageAspectFlags,
-        mem_flags: vk::MemoryPropertyFlags,
-        src_buf: vk::Buffer,
-    ) -> (vk::Image, vk::ImageView, vk::DeviceMemory) {
-        let (image, view, img_mem) = Renderer::create_image(
-            &self.dev,
-            &self.mem_props,
-            resolution,
-            format,
-            usage,
-            aspect_flags,
-            mem_flags,
-            vk::ImageTiling::OPTIMAL,
-        );
-
-        self.update_image_contents_from_buf(src_buf, image, resolution.width, resolution.height);
-
-        (image, view, img_mem)
-    }
-
     unsafe fn allocate_bindless_resources(
         dev: &Device,
         max_image_count: u32,
@@ -1289,7 +547,7 @@ impl Renderer {
         let info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&size)
             .max_sets(1);
-        let bindless_pool = dev.create_descriptor_pool(&info, None).unwrap();
+        let bindless_pool = dev.dev.create_descriptor_pool(&info, None).unwrap();
 
         let bindings = [
             // the window list
@@ -1330,7 +588,7 @@ impl Renderer {
             .build();
         info.p_next = &usage_info as *const _ as *mut std::ffi::c_void;
 
-        let bindless_layout = dev.create_descriptor_set_layout(&info, None).unwrap();
+        let bindless_layout = dev.dev.create_descriptor_set_layout(&info, None).unwrap();
 
         (bindless_pool, bindless_layout)
     }
@@ -1355,11 +613,11 @@ impl Renderer {
     unsafe fn reallocate_windows_buf_with_cap(&mut self, capacity: usize) {
         self.wait_for_prev_submit();
 
-        self.dev.destroy_buffer(self.r_windows_buf, None);
-        self.free_memory(self.r_windows_mem);
+        self.dev.dev.destroy_buffer(self.r_windows_buf, None);
+        self.dev.free_memory(self.r_windows_mem);
 
         // create our data and a storage buffer for the window list
-        let (wl_storage, wl_storage_mem) = self.create_buffer_with_size(
+        let (wl_storage, wl_storage_mem) = self.dev.create_buffer_with_size(
             vk::BufferUsageFlags::STORAGE_BUFFER,
             vk::SharingMode::EXCLUSIVE,
             vk::MemoryPropertyFlags::DEVICE_LOCAL
@@ -1368,6 +626,7 @@ impl Renderer {
             (std::mem::size_of::<Window>() * capacity) as u64 + WINDOW_LIST_GLSL_OFFSET as u64,
         );
         self.dev
+            .dev
             .bind_buffer_memory(wl_storage, wl_storage_mem, 0)
             .unwrap();
         self.r_windows_buf = wl_storage;
@@ -1392,27 +651,15 @@ impl Renderer {
         pass_comp: ll::Component<usize>,
     ) -> Result<(Renderer, Display)> {
         unsafe {
-            let pdev = Renderer::select_pdev(&instance.inst);
+            // This *must* be done before we create our device
+            #[cfg(feature = "aftermath")]
+            let aftermath = Aftermath::initialize().expect("Could not enable Nvidia Aftermath SDK");
+
+            let dev = Arc::new(Device::new(instance.clone(), info)?);
 
             // Our display is in charge of choosing a medium to draw on,
             // and will create a surface on that medium
-            let mut display = Display::new(info, &instance.loader, &instance.inst, pdev);
-
-            let graphics_queue_family = Renderer::select_queue_family(
-                &instance.inst,
-                pdev,
-                &display.d_surface_loader,
-                display.d_surface,
-                vk::QueueFlags::GRAPHICS,
-            );
-            let transfer_queue_family = Renderer::select_queue_family(
-                &instance.inst,
-                pdev,
-                &display.d_surface_loader,
-                display.d_surface,
-                vk::QueueFlags::TRANSFER,
-            );
-            let mem_props = Renderer::get_pdev_mem_properties(&instance.inst, pdev);
+            let mut display = Display::new(info, dev.clone());
 
             // TODO: allow for multiple pipes in use at once
             let pipe_type = if info.enable_traditional_composition {
@@ -1421,48 +668,19 @@ impl Renderer {
             } else {
                 panic!("Unsupported pipeline type");
             };
-            let enabled_pipelines = vec![pipe_type];
-
-            let surface_resolution = display.select_resolution();
-            log::profiling!("Rendering with resolution {:?}", surface_resolution);
-
-            // create the graphics,transfer, and pipeline specific queues
-            let mut families = vec![graphics_queue_family, transfer_queue_family];
-
-            for t in enabled_pipelines.iter() {
-                if let Some(family) = t.get_queue_family(&instance.inst, &display, pdev) {
-                    families.push(family);
-                }
-            }
-            // Remove duplicate entries to keep validation from complaining
-            families.dedup();
-
-            // This *must* be done before we create our device
-            #[cfg(feature = "aftermath")]
-            let aftermath = Aftermath::initialize().expect("Could not enable Nvidia Aftermath SDK");
-
-            let dev_features = VKDeviceFeatures::new(&info, &instance.inst, pdev);
-            if !dev_features.vkc_supports_desc_indexing {
-                return Err(ThundrError::VK_NOT_ALL_EXTENSIONS_AVAILABLE);
-            }
-            let dev =
-                Renderer::create_device(&dev_features, &instance.inst, pdev, families.as_slice());
 
             // Each window is going to have a sampler descriptor for every
             // framebuffer image. Unfortunately this means the descriptor
             // count will be runtime dependent.
             // This is an allocator for those descriptors
-            let descpool = DescPool::create(&dev);
-            let sampler = Renderer::create_sampler(&dev);
+            let descpool = DescPool::create(dev.clone());
+            let sampler = dev.create_sampler();
 
-            let present_queue = dev.get_device_queue(graphics_queue_family, 0);
-            let transfer_queue = dev.get_device_queue(transfer_queue_family, 0);
-
-            let swapchain_loader = khr::Swapchain::new(&instance.inst, &dev);
+            let swapchain_loader = khr::Swapchain::new(&instance.inst, &dev.dev);
             let swapchain = Renderer::create_swapchain(
                 &mut display,
                 &swapchain_loader,
-                &dev_features,
+                &dev.dev_features,
                 pipe_type,
                 None,
             );
@@ -1470,40 +688,37 @@ impl Renderer {
             let (images, image_views) = Renderer::select_images_and_views(
                 &mut display,
                 &instance.inst,
-                pdev,
                 &swapchain_loader,
                 swapchain,
                 &dev,
             );
 
-            let pool = Renderer::create_command_pool(&dev, graphics_queue_family);
-            let buffers = Renderer::create_command_buffers(&dev, pool, images.len() as u32);
+            let graphics_queue_family = Display::select_queue_family(
+                &instance.inst,
+                dev.pdev,
+                &display.d_surface_loader,
+                display.d_surface,
+                vk::QueueFlags::GRAPHICS,
+            );
+            let present_queue = dev.dev.get_device_queue(graphics_queue_family, 0);
+
+            let pool = dev.create_command_pool(graphics_queue_family);
+            let buffers = dev.create_command_buffers(pool, images.len() as u32);
 
             let sema_create_info = vk::SemaphoreCreateInfo::default();
 
-            let present_sema = dev.create_semaphore(&sema_create_info, None).unwrap();
-            let render_sema = dev.create_semaphore(&sema_create_info, None).unwrap();
+            let present_sema = dev.dev.create_semaphore(&sema_create_info, None).unwrap();
+            let render_sema = dev.dev.create_semaphore(&sema_create_info, None).unwrap();
 
             let fence = dev
+                .dev
                 .create_fence(
                     &vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED),
                     None,
                 )
                 .expect("Could not create fence");
 
-            let ext_mem_loader = khr::ExternalMemoryFd::new(&instance.inst, &dev);
-
-            // Create a cbuf for copying data to shm images
-            let copy_cbuf = Renderer::create_command_buffers(&dev, pool, 1)[0];
-
-            // Make a fence which will be signalled after
-            // copies are completed
-            let copy_fence = dev
-                .create_fence(
-                    &vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED),
-                    None,
-                )
-                .expect("Could not create fence");
+            let ext_mem_loader = khr::ExternalMemoryFd::new(&instance.inst, &dev.dev);
 
             let damage_regs = std::iter::repeat(Vec::new()).take(images.len()).collect();
 
@@ -1517,13 +732,11 @@ impl Renderer {
                 // Subtract three resources from the theoretical max that the driver reported.
                 // This is to account for our null image and other resources we create in
                 // addition to our bindless count.
-                Self::allocate_bindless_resources(&dev, dev_features.max_sampler_count - 3);
+                Self::allocate_bindless_resources(&dev, dev.dev_features.max_sampler_count - 3);
             let bindless_desc =
                 Self::allocate_bindless_desc(&dev, bindless_pool, &[bindless_layout], 1);
 
-            let (tmp, tmp_view, tmp_mem) = Self::create_image(
-                &dev,
-                &mem_props,
+            let (tmp, tmp_view, tmp_mem) = dev.create_image(
                 &vk::Extent2D {
                     width: 2,
                     height: 2,
@@ -1550,7 +763,7 @@ impl Renderer {
                     .build(),
             ];
             let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
-            let order_layout = dev.create_descriptor_set_layout(&info, None).unwrap();
+            let order_layout = dev.dev.create_descriptor_set_layout(&info, None).unwrap();
 
             // Create the window list component
             let win_comp = ecs.add_component();
@@ -1594,13 +807,6 @@ impl Renderer {
             let mut rend = Renderer {
                 inst: instance,
                 dev: dev,
-                dev_features: dev_features,
-                pdev: pdev,
-                mem_props: mem_props,
-                graphics_family_index: graphics_queue_family,
-                transfer_family_index: transfer_queue_family,
-                present_queue: present_queue,
-                transfer_queue: transfer_queue,
                 swapchain_loader: swapchain_loader,
                 swapchain: swapchain,
                 current_image: 0,
@@ -1612,6 +818,8 @@ impl Renderer {
                 images: images,
                 image_sampler: sampler,
                 views: image_views,
+                graphics_queue_family: graphics_queue_family,
+                r_present_queue: present_queue,
                 pool: pool,
                 cbufs: buffers,
                 present_sema: present_sema,
@@ -1619,12 +827,7 @@ impl Renderer {
                 submit_fence: fence,
                 external_mem_fd_loader: ext_mem_loader,
                 r_release: Vec::new(),
-                copy_cbuf: copy_cbuf,
-                copy_cbuf_fence: copy_fence,
                 desc_pool: descpool,
-                transfer_buf: vk::Buffer::null(), // Initialize in its own method
-                transfer_mem: vk::DeviceMemory::null(),
-                transfer_buf_len: 0,
                 draw_call_submitted: false,
                 r_pipe_type: pipe_type,
                 r_ecs: ecs.clone(),
@@ -1767,22 +970,6 @@ impl Renderer {
         );
     }
 
-    fn initialize_transfer_mem(&mut self) {
-        let transfer_buf_len = 64;
-        let (buffer, buf_mem) = unsafe {
-            self.create_buffer_with_size(
-                vk::BufferUsageFlags::TRANSFER_SRC,
-                vk::SharingMode::EXCLUSIVE,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-                transfer_buf_len,
-            )
-        };
-
-        self.transfer_buf_len = transfer_buf_len as usize;
-        self.transfer_buf = buffer;
-        self.transfer_mem = buf_mem;
-    }
-
     /// Helper for getting the push constants
     ///
     /// This will be where we calculate the viewport scroll amount
@@ -1801,37 +988,13 @@ impl Renderer {
         }
     }
 
-    pub fn upload_memimage_to_transfer(&mut self, data: &[u8]) {
-        unsafe {
-            // We might be in the middle of copying the transfer buf to an image
-            // wait for that if its the case
-            self.wait_for_copy();
-            if data.len() > self.transfer_buf_len {
-                self.free_memory(self.transfer_mem);
-                self.dev.destroy_buffer(self.transfer_buf, None);
-                let (buffer, buf_mem) = self.create_buffer(
-                    vk::BufferUsageFlags::TRANSFER_SRC,
-                    vk::SharingMode::EXCLUSIVE,
-                    vk::MemoryPropertyFlags::HOST_VISIBLE
-                        | vk::MemoryPropertyFlags::HOST_COHERENT
-                        | vk::MemoryPropertyFlags::HOST_CACHED,
-                    data,
-                );
-                self.transfer_buf = buffer;
-                self.transfer_mem = buf_mem;
-                self.transfer_buf_len = data.len();
-            } else {
-                // copy the data into the staging buffer
-                self.update_memory(self.transfer_mem, 0, data);
-            }
-        }
-    }
-
     /// Wait for the submit_fence
     pub fn wait_for_prev_submit(&self) {
+        self.dev.wait_for_copy();
+
         unsafe {
-            match self.dev.wait_for_fences(
-                &[self.submit_fence, self.copy_cbuf_fence],
+            match self.dev.dev.wait_for_fences(
+                &[self.submit_fence],
                 true,          // wait for all
                 std::u64::MAX, //timeout
             ) {
@@ -1848,195 +1011,6 @@ impl Renderer {
                     _ => panic!("Could not wait for vulkan fences"),
                 },
             };
-        }
-    }
-
-    pub fn wait_for_copy(&self) {
-        unsafe {
-            self.dev
-                .wait_for_fences(
-                    &[self.copy_cbuf_fence],
-                    true,          // wait for all
-                    std::u64::MAX, //timeout
-                )
-                .expect("Could not wait for the copy fence");
-        }
-    }
-
-    /// Records and submits a one-time command buffer.
-    ///
-    /// cbuf - the command buffer to use
-    /// queue - the queue to submit cbuf to
-    /// wait_stages - a list of pipeline stages to wait on
-    /// wait_semas - semaphores we consume
-    /// signal_semas - semaphores we notify
-    ///
-    /// All operations in the `record_fn` argument will be
-    /// submitted in the command buffer `cbuf`. This aims to make
-    /// constructing buffers more ergonomic.
-    pub(crate) fn cbuf_submit_and_wait(
-        &self,
-        cbuf: vk::CommandBuffer,
-        queue: vk::Queue,
-        wait_stages: &[vk::PipelineStageFlags],
-        wait_semas: &[vk::Semaphore],
-        signal_semas: &[vk::Semaphore],
-    ) {
-        self.cbuf_end_recording(cbuf);
-
-        unsafe {
-            // once the one-time buffer has been recorded we can submit
-            // it for execution.
-            // Interesting: putting the cbuf into a list in the builder
-            // struct makes it segfault in release mode... Deep dive
-            // needed...
-            let cbufs = [cbuf];
-            let submit_info = vk::SubmitInfo::builder()
-                .wait_semaphores(wait_semas)
-                .wait_dst_stage_mask(wait_stages)
-                .command_buffers(&cbufs)
-                .signal_semaphores(signal_semas)
-                .build();
-
-            let fence = self
-                .dev
-                .create_fence(&vk::FenceCreateInfo::default(), None)
-                .expect("Could not create fence");
-
-            // create a fence to be notified when the commands have finished
-            // executing. Wait immediately for the fence.
-            self.dev
-                .queue_submit(queue, &[submit_info], fence)
-                .expect("Could not submit buffer to queue");
-
-            self.dev
-                .wait_for_fences(
-                    &[fence],
-                    true,          // wait for all
-                    std::u64::MAX, //timeout
-                )
-                .expect("Could not wait for the submit fence");
-            // the commands are now executed
-            self.dev.destroy_fence(fence, None);
-        }
-    }
-
-    /// Submits a command buffer.
-    ///
-    /// This is used for synchronized submits for graphical
-    /// display operations. It waits for submit_fence before
-    /// submitting to queue, and will signal it when the
-    /// cbuf is executed. (see cbuf_sumbmit_async)
-    ///
-    /// The buffer MUST have been recorded before this
-    ///
-    /// cbuf - the command buffer to use
-    /// queue - the queue to submit cbuf to
-    /// wait_stages - a list of pipeline stages to wait on
-    /// wait_semas - semaphores we consume
-    /// signal_semas - semaphores we notify
-    pub(crate) fn cbuf_submit(
-        &self,
-        cbuf: vk::CommandBuffer,
-        queue: vk::Queue,
-        wait_stages: &[vk::PipelineStageFlags],
-        wait_semas: &[vk::Semaphore],
-        signal_semas: &[vk::Semaphore],
-    ) {
-        unsafe {
-            self.wait_for_prev_submit();
-            self.dev.reset_fences(&[self.submit_fence]).unwrap();
-
-            self.cbuf_submit_async(
-                cbuf,
-                queue,
-                // wait_stages
-                wait_stages,
-                wait_semas,
-                signal_semas,
-                self.submit_fence,
-            );
-        }
-    }
-
-    /// Submits a command buffer asynchronously.
-    ///
-    /// Simple wrapper for queue submission. Does not
-    /// wait for anything.
-    ///
-    /// The buffer MUST have been recorded before this
-    ///
-    /// cbuf - the command buffer to use
-    /// queue - the queue to submit cbuf to
-    /// wait_stages - a list of pipeline stages to wait on
-    /// wait_semas - semaphores we consume
-    /// signal_semas - semaphores we notify
-    pub(crate) fn cbuf_submit_async(
-        &self,
-        cbuf: vk::CommandBuffer,
-        queue: vk::Queue,
-        wait_stages: &[vk::PipelineStageFlags],
-        wait_semas: &[vk::Semaphore],
-        signal_semas: &[vk::Semaphore],
-        signal_fence: vk::Fence,
-    ) {
-        unsafe {
-            // The buffer must have been recorded before we can submit
-            // it for execution.
-            let submits = [vk::SubmitInfo::builder()
-                .wait_semaphores(wait_semas)
-                .wait_dst_stage_mask(wait_stages)
-                .command_buffers(&[cbuf])
-                .signal_semaphores(signal_semas)
-                .build()];
-
-            // create a fence to be notified when the commands have finished
-            // executing.
-            self.dev
-                .queue_submit(queue, &submits, signal_fence)
-                .unwrap();
-        }
-    }
-
-    /// Records but does not submit a command buffer.
-    ///
-    /// cbuf - the command buffer to use
-    /// flags - the usage flags for the buffer
-    ///
-    /// All operations in the `record_fn` argument will be
-    /// recorded in the command buffer `cbuf`.
-    pub fn cbuf_begin_recording(
-        &self,
-        cbuf: vk::CommandBuffer,
-        flags: vk::CommandBufferUsageFlags,
-    ) {
-        unsafe {
-            // first reset the queue so we know it is empty
-            self.dev
-                .reset_command_buffer(cbuf, vk::CommandBufferResetFlags::RELEASE_RESOURCES)
-                .expect("Could not reset command buffer");
-
-            // this cbuf will only be used once, so tell vulkan that
-            // so it can optimize accordingly
-            let record_info = vk::CommandBufferBeginInfo::builder().flags(flags);
-
-            // start recording the command buffer, call the function
-            // passed to load it with operations, and then end the
-            // command buffer
-            self.dev
-                .begin_command_buffer(cbuf, &record_info)
-                .expect("Could not start command buffer");
-        }
-    }
-
-    /// Records but does not submit a command buffer.
-    ///
-    /// cbuf - the command buffer to use
-    pub fn cbuf_end_recording(&self, cbuf: vk::CommandBuffer) {
-        unsafe {
-            self.dev
-                .end_command_buffer(cbuf)
-                .expect("Could not end command buffer");
         }
     }
 
@@ -2085,7 +1059,7 @@ impl Renderer {
     /// and mapping.
     pub fn begin_recording_one_frame(&mut self) -> Result<RecordParams> {
         // At least wait for any image copies to complete
-        self.wait_for_copy();
+        self.dev.wait_for_copy();
         // get the next frame to draw into
         self.get_next_swapchain_image()?;
 
@@ -2094,7 +1068,7 @@ impl Renderer {
         // We need to do this first since popping an entry off damage_regions
         // would remove one of the regions we need to process.
         // Using in lets us never go past the end of the array
-        if self.dev_features.vkc_supports_incremental_present {
+        if self.dev.dev_features.vkc_supports_incremental_present {
             assert!(self.swap_ages[self.current_image as usize] <= self.damage_regions.len());
             for i in 0..(self.swap_ages[self.current_image as usize]) {
                 self.current_damage.extend(&self.damage_regions[i as usize]);
@@ -2194,7 +1168,7 @@ impl Renderer {
             .set_layouts(layouts)
             .build();
 
-        self.dev.allocate_descriptor_sets(&info).unwrap()
+        self.dev.dev.allocate_descriptor_sets(&info).unwrap()
     }
 
     /// Update an image sampler descriptor set
@@ -2225,7 +1199,7 @@ impl Renderer {
             .image_info(&[info])
             .build()];
 
-        self.dev.update_descriptor_sets(
+        self.dev.dev.update_descriptor_sets(
             &write_info, // descriptor writes
             &[],         // descriptor copies
         );
@@ -2243,7 +1217,7 @@ impl Renderer {
         image_count: u32,
     ) -> (vk::Sampler, Vec<vk::DescriptorSet>) {
         // One image sampler is going to be used for everything
-        let sampler = Renderer::create_sampler(&self.dev);
+        let sampler = self.dev.create_sampler();
         // A descriptor needs to be created for every swapchaing image
         // so we can prepare the next frame while the current one is
         // processing.
@@ -2256,135 +1230,6 @@ impl Renderer {
         }
 
         return (sampler, descriptors);
-    }
-
-    /// Allocates a buffer/memory pair of size `size`.
-    ///
-    /// This is just a helper for `create_buffer`. It does not fill
-    /// the buffer with anything.
-    pub unsafe fn create_buffer_with_size(
-        &self,
-        usage: vk::BufferUsageFlags,
-        mode: vk::SharingMode,
-        flags: vk::MemoryPropertyFlags,
-        size: u64,
-    ) -> (vk::Buffer, vk::DeviceMemory) {
-        let create_info = vk::BufferCreateInfo::builder()
-            .size(size)
-            .usage(usage)
-            .sharing_mode(mode);
-
-        let buffer = self.dev.create_buffer(&create_info, None).unwrap();
-        let req = self.dev.get_buffer_memory_requirements(buffer);
-        // find the memory type that best suits our requirements
-        let index = Renderer::find_memory_type_index(&self.mem_props, &req, flags).unwrap();
-
-        // now we need to allocate memory to back the buffer
-        let alloc_info = vk::MemoryAllocateInfo {
-            allocation_size: req.size,
-            memory_type_index: index,
-            ..Default::default()
-        };
-
-        let memory = self.dev.allocate_memory(&alloc_info, None).unwrap();
-
-        return (buffer, memory);
-    }
-
-    /// Wrapper for freeing device memory
-    ///
-    /// Having this in one place lets us quickly handle any additional
-    /// allocation tracking
-    pub(crate) unsafe fn free_memory(&self, mem: vk::DeviceMemory) {
-        self.dev.free_memory(mem, None);
-    }
-
-    /// Writes `data` to `memory`
-    ///
-    /// This is a helper method for mapping and updating the value stored
-    /// in device memory Memory needs to be host visible and coherent.
-    /// This does not flush after writing.
-    pub(crate) unsafe fn update_memory<T: Copy>(
-        &self,
-        memory: vk::DeviceMemory,
-        offset: isize,
-        data: &[T],
-    ) {
-        if data.len() == 0 {
-            return;
-        }
-
-        // Now we copy our data into the buffer
-        let data_size = std::mem::size_of_val(data) as u64;
-        let ptr = self
-            .dev
-            .map_memory(
-                memory,
-                offset as u64, // offset
-                data_size,
-                vk::MemoryMapFlags::empty(),
-            )
-            .unwrap();
-
-        // rust doesn't have a raw memcpy, so we need to transform the void
-        // ptr to a slice. This is unsafe as the length needs to be correct
-        let dst = std::slice::from_raw_parts_mut(ptr as *mut T, data.len());
-        dst.copy_from_slice(data);
-
-        self.dev.unmap_memory(memory);
-    }
-
-    pub(crate) unsafe fn update_memory_from_callback<T: Copy, F: FnOnce(&mut [T])>(
-        &self,
-        memory: vk::DeviceMemory,
-        offset: isize,
-        len: usize,
-        callback: F,
-    ) {
-        // Now we copy our data into the buffer
-        let data_size = std::mem::size_of::<T>();
-        let ptr = self
-            .dev
-            .map_memory(
-                memory,
-                offset as u64, // offset
-                (data_size * len) as u64,
-                vk::MemoryMapFlags::empty(),
-            )
-            .unwrap();
-
-        // rust doesn't have a raw memcpy, so we need to transform the void
-        // ptr to a slice. This is unsafe as the length needs to be correct
-        let dst = std::slice::from_raw_parts_mut(ptr as *mut T, len);
-
-        callback(dst);
-
-        self.dev.unmap_memory(memory);
-    }
-
-    /// allocates a buffer/memory pair and fills it with `data`
-    ///
-    /// There are two components to a memory backed resource in vulkan:
-    /// vkBuffer which is the actual buffer itself, and vkDeviceMemory which
-    /// represents a region of allocated memory to hold the buffer contents.
-    ///
-    /// Both are returned, as both need to be destroyed when they are done.
-    pub(crate) unsafe fn create_buffer<T: Copy>(
-        &self,
-        usage: vk::BufferUsageFlags,
-        mode: vk::SharingMode,
-        flags: vk::MemoryPropertyFlags,
-        data: &[T],
-    ) -> (vk::Buffer, vk::DeviceMemory) {
-        let size = std::mem::size_of_val(data) as u64;
-        let (buffer, memory) = self.create_buffer_with_size(usage, mode, flags, size);
-
-        self.update_memory(memory, 0, data);
-
-        // Until now the buffer has not had any memory assigned
-        self.dev.bind_buffer_memory(buffer, memory, 0).unwrap();
-
-        (buffer, memory)
     }
 
     /// Descriptor flags for the unbounded array of images
@@ -2415,7 +1260,7 @@ impl Renderer {
 
         info.p_next = &variable_info as *const _ as *mut std::ffi::c_void;
 
-        unsafe { dev.allocate_descriptor_sets(&info).unwrap()[0] }
+        unsafe { dev.dev.allocate_descriptor_sets(&info).unwrap()[0] }
     }
 
     pub fn refresh_window_resources(&mut self, surfaces: &mut SurfaceList) {
@@ -2428,6 +1273,7 @@ impl Renderer {
             // free the previous descriptor sets
             unsafe {
                 self.dev
+                    .dev
                     .reset_descriptor_pool(
                         self.r_images_desc_pool,
                         vk::DescriptorPoolResetFlags::empty(),
@@ -2475,7 +1321,7 @@ impl Renderer {
         );
 
         unsafe {
-            self.dev.update_descriptor_sets(
+            self.dev.dev.update_descriptor_sets(
                 write_infos, // descriptor writes
                 &[],         // descriptor copies
             );
@@ -2503,32 +1349,31 @@ impl Renderer {
         // TODO: don't even use CPU copies of the datastructs and perform
         // the tile/window updates in the mapped GPU memory
         // (requires benchmark)
-        unsafe {
-            // Don't update vulkan memory unless we have more than one valid id.
-            if self.r_ecs.num_entities() > 0 && num_entities > 0 {
-                // Shader expects struct WindowList { int count; Window windows[] }
-                self.update_memory(self.r_windows_mem, 0, &[num_entities]);
-                self.update_memory_from_callback(
-                    self.r_windows_mem,
-                    WINDOW_LIST_GLSL_OFFSET,
-                    num_entities,
-                    |dst| {
-                        // For each valid window entry, extract the Window
-                        // type from the option so that we can write it to
-                        // the Vulkan memory
-                        for p in surfaces.l_pass.iter() {
-                            if let Some(pass) = p {
-                                for id in pass.p_window_order.iter() {
-                                    let i = id.get_raw_id();
-                                    let win = self.r_windows.get(&id).unwrap();
-                                    log::debug!("Winlist index {}: writing window {:?}", i, *win);
-                                    dst[i] = *win;
-                                }
+        // Don't update vulkan memory unless we have more than one valid id.
+        if self.r_ecs.num_entities() > 0 && num_entities > 0 {
+            // Shader expects struct WindowList { int count; Window windows[] }
+            self.dev
+                .update_memory(self.r_windows_mem, 0, &[num_entities]);
+            self.dev.update_memory_from_callback(
+                self.r_windows_mem,
+                WINDOW_LIST_GLSL_OFFSET,
+                num_entities,
+                |dst| {
+                    // For each valid window entry, extract the Window
+                    // type from the option so that we can write it to
+                    // the Vulkan memory
+                    for p in surfaces.l_pass.iter() {
+                        if let Some(pass) = p {
+                            for id in pass.p_window_order.iter() {
+                                let i = id.get_raw_id();
+                                let win = self.r_windows.get(&id).unwrap();
+                                log::debug!("Winlist index {}: writing window {:?}", i, *win);
+                                dst[i] = *win;
                             }
                         }
-                    },
-                );
-            }
+                    }
+                },
+            );
         }
     }
 
@@ -2593,7 +1438,7 @@ impl Renderer {
 
     /// Returns true if we are ready to call present
     pub fn frame_submission_complete(&mut self) -> bool {
-        match unsafe { self.dev.get_fence_status(self.submit_fence) } {
+        match unsafe { self.dev.dev.get_fence_status(self.submit_fence) } {
             // true means vk::Result::SUCCESS
             // false means vk::Result::NOT_READY
             Ok(complete) => return complete,
@@ -2623,7 +1468,7 @@ impl Renderer {
             .swapchains(&swapchains)
             .image_indices(&indices);
 
-        if self.dev_features.vkc_supports_incremental_present {
+        if self.dev.dev_features.vkc_supports_incremental_present {
             if self.current_damage.len() > 0 {
                 let pres_info = vk::PresentRegionsKHR::builder()
                     .regions(&[vk::PresentRegionKHR::builder()
@@ -2640,7 +1485,7 @@ impl Renderer {
         unsafe {
             match self
                 .swapchain_loader
-                .queue_present(self.present_queue, &info)
+                .queue_present(self.r_present_queue, &info)
             {
                 Ok(_) => Ok(()),
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(ThundrError::OUT_OF_DATE),
@@ -2665,35 +1510,32 @@ impl Drop for Renderer {
             log::profiling!("Stoping the renderer");
 
             // first wait for the device to finish working
-            self.dev.device_wait_idle().unwrap();
+            self.dev.dev.device_wait_idle().unwrap();
 
-            self.dev.destroy_buffer(self.transfer_buf, None);
-            self.dev.free_memory(self.transfer_mem, None);
+            self.dev.dev.destroy_image(self.tmp_image, None);
+            self.dev.dev.destroy_image_view(self.tmp_image_view, None);
+            self.dev.free_memory(self.tmp_image_mem);
 
-            self.dev.destroy_image(self.tmp_image, None);
-            self.dev.destroy_image_view(self.tmp_image_view, None);
-            self.free_memory(self.tmp_image_mem);
-
-            self.dev.destroy_semaphore(self.present_sema, None);
-            self.dev.destroy_semaphore(self.render_sema, None);
-            self.desc_pool.destroy(&self.dev);
-            self.dev.destroy_sampler(self.image_sampler, None);
+            self.dev.dev.destroy_semaphore(self.present_sema, None);
+            self.dev.dev.destroy_semaphore(self.render_sema, None);
+            self.dev.dev.destroy_sampler(self.image_sampler, None);
             self.dev
+                .dev
                 .destroy_descriptor_set_layout(self.r_images_desc_layout, None);
 
             self.dev
+                .dev
                 .destroy_descriptor_set_layout(self.r_order_desc_layout, None);
             self.dev
+                .dev
                 .destroy_descriptor_pool(self.r_images_desc_pool, None);
-            self.dev.destroy_buffer(self.r_windows_buf, None);
-            self.free_memory(self.r_windows_mem);
+            self.dev.dev.destroy_buffer(self.r_windows_buf, None);
+            self.dev.free_memory(self.r_windows_mem);
 
             self.destroy_swapchain();
 
-            self.dev.destroy_command_pool(self.pool, None);
-            self.dev.destroy_fence(self.submit_fence, None);
-            self.dev.destroy_fence(self.copy_cbuf_fence, None);
-            self.dev.destroy_device(None);
+            self.dev.dev.destroy_command_pool(self.pool, None);
+            self.dev.dev.destroy_fence(self.submit_fence, None);
         }
     }
 }

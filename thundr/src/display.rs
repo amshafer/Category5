@@ -13,12 +13,14 @@ extern crate wayland_client as wc;
 
 use ash::extensions::khr;
 use ash::vk;
-use ash::{Entry, Instance};
+use ash::Entry;
 
+use crate::device::Device;
 use crate::{CreateInfo, Result as ThundrResult, SurfaceType};
 use utils::log;
 
 use std::str::FromStr;
+use std::sync::Arc;
 
 /// A display represents a physical screen
 ///
@@ -30,6 +32,7 @@ use std::str::FromStr;
 ///
 /// The swapchain is generated (and regenerated) from this stuff.
 pub struct Display {
+    d_dev: Arc<Device>,
     // the actual surface (KHR extension)
     pub d_surface: vk::SurfaceKHR,
     // function pointer loaders
@@ -47,8 +50,8 @@ trait Backend {
     /// Get an x11 display surface.
     unsafe fn create_surface(
         &self,
-        entry: &Entry,   // entry and inst aren't used but still need
-        inst: &Instance, // to be passed for compatibility
+        entry: &Entry,        // entry and inst aren't used but still need
+        inst: &ash::Instance, // to be passed for compatibility
         pdev: vk::PhysicalDevice,
         surface_loader: &khr::Surface,
         surf_type: &SurfaceType,
@@ -88,24 +91,80 @@ impl Display {
         }
     }
 
-    pub unsafe fn new(
-        info: &CreateInfo,
-        entry: &Entry,
-        inst: &Instance,
+    /// Check if a queue family is suited for our needs.
+    /// Queue families need to support graphical presentation and
+    /// presentation on the given surface.
+    fn is_valid_queue_family(
+        pdevice: vk::PhysicalDevice,
+        info: vk::QueueFamilyProperties,
+        index: u32,
+        surface_loader: &khr::Surface,
+        surface: vk::SurfaceKHR,
+        flags: vk::QueueFlags,
+    ) -> bool {
+        info.queue_flags.contains(flags)
+            && unsafe {
+                surface_loader
+                    // ensure compatibility with the surface
+                    .get_physical_device_surface_support(pdevice, index, surface)
+                    .unwrap()
+            }
+    }
+
+    /// Choose a queue family
+    ///
+    /// returns an index into the array of queue types.
+    /// provide the surface PFN loader and the surface so
+    /// that we can ensure the pdev/queue combination can
+    /// present the surface
+    pub(crate) fn select_queue_family(
+        inst: &ash::Instance,
         pdev: vk::PhysicalDevice,
-    ) -> Display {
+        surface_loader: &khr::Surface,
+        surface: vk::SurfaceKHR,
+        flags: vk::QueueFlags,
+    ) -> u32 {
+        // get the properties per queue family
+        unsafe { inst.get_physical_device_queue_family_properties(pdev) }
+            // for each property info
+            .iter()
+            .enumerate()
+            .filter_map(|(index, info)| {
+                // add the device and the family to a list of
+                // candidates for use later
+                match Self::is_valid_queue_family(
+                    pdev,
+                    *info,
+                    index as u32,
+                    surface_loader,
+                    surface,
+                    flags,
+                ) {
+                    // return the pdevice/family pair
+                    true => Some(index as u32),
+                    false => None,
+                }
+            })
+            .nth(0)
+            .expect("Could not find a suitable queue family")
+    }
+
+    pub unsafe fn new(info: &CreateInfo, dev: Arc<Device>) -> Display {
+        let entry = &dev.inst.loader;
+        let inst = &dev.inst.inst;
+
         let s_loader = khr::Surface::new(entry, inst);
         let (back, surf, res) = match &info.surface_type {
             SurfaceType::Display(_) => {
-                PhysicalDisplay::new(entry, inst, pdev, &s_loader, &info.surface_type)
+                PhysicalDisplay::new(entry, inst, dev.pdev, &s_loader, &info.surface_type)
             }
             #[cfg(feature = "sdl")]
             SurfaceType::SDL2(_, _) => {
-                SDL2DisplayBackend::new(entry, inst, pdev, &s_loader, &info.surface_type)
+                SDL2DisplayBackend::new(entry, inst, dev.pdev, &s_loader, &info.surface_type)
             }
             #[cfg(feature = "wayland")]
             SurfaceType::Wayland(_, _) => {
-                WlDisplay::new(entry, inst, pdev, &s_loader, &info.surface_type)
+                WlDisplay::new(entry, inst, dev.pdev, &s_loader, &info.surface_type)
             }
         }
         .unwrap();
@@ -114,7 +173,7 @@ impl Display {
         // as this is recommended by the samsung developer page, which
         // I am *assuming* is a good reference for low power apps
         let present_modes = s_loader
-            .get_physical_device_surface_present_modes(pdev, surf)
+            .get_physical_device_surface_present_modes(dev.pdev, surf)
             .unwrap();
         let mode = present_modes
             .iter()
@@ -123,11 +182,12 @@ impl Display {
             // fallback to FIFO if the mailbox mode is not available
             .unwrap_or(vk::PresentModeKHR::FIFO);
         let surface_caps = s_loader
-            .get_physical_device_surface_capabilities(pdev, surf)
+            .get_physical_device_surface_capabilities(dev.pdev, surf)
             .unwrap();
-        let surface_format = Self::select_surface_format(&s_loader, surf, pdev).unwrap();
+        let surface_format = Self::select_surface_format(&s_loader, surf, dev.pdev).unwrap();
 
         Self {
+            d_dev: dev,
             d_surface_loader: s_loader,
             d_back: back,
             d_surface: surf,
@@ -261,7 +321,7 @@ impl PhysicalDisplay {
     /// surface to be rendered to.
     unsafe fn new(
         entry: &Entry,
-        inst: &Instance,
+        inst: &ash::Instance,
         pdev: vk::PhysicalDevice,
         surface_loader: &khr::Surface,
         surf_type: &SurfaceType,
@@ -339,8 +399,8 @@ impl Backend for PhysicalDisplay {
     #[cfg(unix)]
     unsafe fn create_surface(
         &self,
-        _entry: &Entry,   // entry and inst aren't used but still need
-        _inst: &Instance, // to be passed for compatibility
+        _entry: &Entry,        // entry and inst aren't used but still need
+        _inst: &ash::Instance, // to be passed for compatibility
         pdev: vk::PhysicalDevice,
         _surface_loader: &khr::Surface,
         _surf_type: &SurfaceType,
@@ -455,7 +515,7 @@ impl SDL2DisplayBackend {
     /// surface to be rendered to.
     unsafe fn new(
         entry: &Entry,
-        inst: &Instance,
+        inst: &ash::Instance,
         pdev: vk::PhysicalDevice,
         surface_loader: &khr::Surface,
         surf_type: &SurfaceType,
@@ -504,8 +564,8 @@ impl Backend for SDL2DisplayBackend {
     /// Get an x11 display surface.
     unsafe fn create_surface(
         &self,
-        _entry: &Entry,  // entry and inst aren't used but still need
-        inst: &Instance, // to be passed for compatibility
+        _entry: &Entry,       // entry and inst aren't used but still need
+        inst: &ash::Instance, // to be passed for compatibility
         _pdev: vk::PhysicalDevice,
         _surface_loader: &khr::Surface,
         surf_type: &SurfaceType,
@@ -556,114 +616,5 @@ impl Backend for SDL2DisplayBackend {
         //    height: res.1,
         //})
         None
-    }
-}
-
-// TODO: totally broken
-#[cfg(feature = "wayland")]
-struct WlDisplay {
-    pub wl_loader: khr::WaylandSurface,
-    wl_display: wc::Display,
-    wl_surface: wc::protocol::wl_surface::WlSurface,
-}
-
-#[cfg(feature = "wayland")]
-impl WlDisplay {
-    /// Create an on-screen surface.
-    ///
-    /// This will grab the function pointer loaders for the
-    /// surface and display extensions and then create a
-    /// surface to be rendered to.
-    unsafe fn new(
-        entry: &Entry,
-        inst: &Instance,
-        pdev: vk::PhysicalDevice,
-        wl_display: wc::Display,
-        wl_surface: wc::protocol::wl_surface::WlSurface,
-    ) -> (Self, vk::SurfaceKHR) {
-        let wl_loader = khr::WaylandSurface::new(entry, inst);
-
-        let surface =
-            Self::create_surface(entry, inst, &wl_loader, pdev, &wl_display, &wl_surface).unwrap();
-
-        let ret = Self {
-            wl_loader: wl_loader,
-            wl_display: wl_display,
-            wl_surface: wl_surface,
-        };
-
-        (ret, surface)
-    }
-
-    /// choose a vkSurfaceFormatKHR for the vkSurfaceKHR
-    unsafe fn select_surface_format(
-        &self,
-        surface_loader: &khr::Surface,
-        surface: vk::SurfaceKHR,
-        pdev: vk::PhysicalDevice,
-    ) -> vk::SurfaceFormatKHR {
-        let formats = surface_loader
-            .get_physical_device_surface_formats(pdev, surface)
-            .unwrap();
-
-        formats
-            .iter()
-            .map(|fmt| match fmt.format {
-                // if the surface does not specify a desired format
-                // then we can choose our own
-                vk::Format::UNDEFINED => vk::SurfaceFormatKHR {
-                    format: vk::Format::B8G8R8A8_UNORM,
-                    color_space: fmt.color_space,
-                },
-                // if the surface has a desired format we will just
-                // use that
-                _ => *fmt,
-            })
-            .nth(0)
-            .expect("Could not find a surface format")
-    }
-
-    /// Get an x11 display surface.
-    unsafe fn create_surface(
-        entry: &Entry,   // entry and inst aren't used but still need
-        inst: &Instance, // to be passed for compatibility
-        loader: &khr::WaylandSurface,
-        pdev: vk::PhysicalDevice,
-        wl_display: &wc::Display,
-        wl_surface: &wc::protocol::wl_surface::WlSurface,
-    ) -> Result<vk::SurfaceKHR, vk::Result> {
-        use std::ops::Deref;
-        // TODO: check that the queue we are using supports wayland
-        //if !loader.get_physical_device_wayland_presentation_support(pdev, ) {
-        //    return Err();
-        //}
-
-        // First we need to get our raw C pointers to the wayland objects
-        // for &wc::Display, we deref twice to proc the Deref trait to get
-        // to a WlDisplay
-        let display_ptr = (**wl_display).c_ptr() as *mut _;
-        let surface_ptr = wl_surface.as_ref().c_ptr() as *mut _;
-
-        // Now we can collect our info about the wayland surface
-        let info = vk::WaylandSurfaceCreateInfoKHR::builder()
-            .display(display_ptr)
-            .surface(surface_ptr)
-            .build();
-
-        // create it
-        Ok(loader.create_wayland_surface(&info, None)?)
-    }
-
-    /// The two most important extensions are Surface and Wl.
-    fn extension_names(_surf_type: &SurfaceType) -> Vec<*const i8> {
-        vec![
-            khr::Surface::name().as_ptr(),
-            khr::WaylandSurface::name().as_ptr(),
-            DebugReport::name().as_ptr(),
-        ]
-    }
-
-    fn get_dpi(&self) -> f32 {
-        (0.0, 0.0)
     }
 }

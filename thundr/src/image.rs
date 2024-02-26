@@ -7,6 +7,7 @@ extern crate ash;
 extern crate lluvia as ll;
 extern crate nix;
 
+use super::device::Device;
 use super::renderer::Renderer;
 use utils::log;
 use utils::region::Rect;
@@ -107,9 +108,9 @@ pub struct ImageVk {
 impl ImageVk {
     pub fn cleanup(&mut self, rend: &mut Renderer) {
         unsafe {
-            rend.dev.destroy_image(self.iv_image, None);
-            rend.dev.destroy_image_view(self.iv_image_view, None);
-            rend.free_memory(self.iv_image_mem);
+            rend.dev.dev.destroy_image(self.iv_image, None);
+            rend.dev.dev.destroy_image_view(self.iv_image_view, None);
+            rend.dev.free_memory(self.iv_image_mem);
         }
 
         *self = Self {
@@ -140,9 +141,9 @@ impl Drop for ImageVk {
         log::debug!("Deleting image view {:?}", self.iv_image_view);
 
         unsafe {
-            rend.dev.destroy_image(self.iv_image, None);
-            rend.dev.destroy_image_view(self.iv_image_view, None);
-            rend.free_memory(self.iv_image_mem);
+            rend.dev.dev.destroy_image(self.iv_image, None);
+            rend.dev.dev.destroy_image_view(self.iv_image_view, None);
+            rend.dev.free_memory(self.iv_image_mem);
         }
     }
 }
@@ -299,9 +300,7 @@ impl Renderer {
         &self,
         resolution: &vk::Extent2D,
     ) -> (vk::Image, vk::ImageView, vk::DeviceMemory) {
-        Renderer::create_image(
-            &self.dev,
-            &self.mem_props,
+        self.dev.create_image(
             resolution,
             TARGET_FORMAT,
             vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
@@ -324,7 +323,6 @@ impl Renderer {
         damage: Option<Damage>,
         release: Option<Box<dyn Droppable + Send + Sync>>,
     ) {
-        self.wait_for_copy();
         self.wait_for_prev_submit();
 
         {
@@ -338,11 +336,9 @@ impl Renderer {
                 // the Renderer Mutex, so nobody else should be updating this entry
                 let vkimage = self.r_image_vk.get_mut(&imgvk_id).unwrap().iv_image;
 
-                unsafe {
-                    self.update_image_contents_from_damaged_data(
-                        vkimage, data, width, height, stride, damage,
-                    );
-                }
+                self.dev.update_image_contents_from_damaged_data(
+                    vkimage, data, width, height, stride, damage,
+                );
                 return;
             }
 
@@ -357,9 +353,11 @@ impl Renderer {
             let _old_release = {
                 let mut image_vk = self.r_image_vk.get_mut(&imgvk_id).unwrap();
                 unsafe {
-                    self.dev.destroy_image(image_vk.iv_image, None);
-                    self.dev.destroy_image_view(image_vk.iv_image_view, None);
-                    self.dev.free_memory(image_vk.iv_image_mem, None);
+                    self.dev.dev.destroy_image(image_vk.iv_image, None);
+                    self.dev
+                        .dev
+                        .destroy_image_view(image_vk.iv_image_view, None);
+                    self.dev.dev.free_memory(image_vk.iv_image_mem, None);
                 }
 
                 image_vk.iv_image = image;
@@ -372,7 +370,8 @@ impl Renderer {
                 ret
             };
 
-            unsafe { self.update_image_from_data(image, data, width, height, stride) };
+            self.dev
+                .update_image_from_data(image, data, width, height, stride);
         }
 
         self.update_image_vk_info(image.i_internal.read().as_ref().unwrap());
@@ -406,7 +405,8 @@ impl Renderer {
             // This image will back the contents of the on-screen client window.
             let (image, view, img_mem) = self.alloc_bgra8_image(&tex_res);
 
-            self.update_image_from_data(image, data, width, height, stride);
+            self.dev
+                .update_image_from_data(image, data, width, height, stride);
 
             return self.create_image_common(
                 rend_mtx,
@@ -445,56 +445,6 @@ impl Renderer {
         }
 
         return None;
-    }
-
-    unsafe fn acquire_dmabuf_image_from_external_queue(&mut self, image: vk::Image) {
-        self.wait_for_prev_submit();
-        self.wait_for_copy();
-
-        self.dev.reset_fences(&[self.submit_fence]).unwrap();
-
-        // now perform the copy
-        self.cbuf_begin_recording(self.copy_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-
-        let acquire_barrier = vk::ImageMemoryBarrier::builder()
-            .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
-            .dst_queue_family_index(self.graphics_family_index)
-            .image(image)
-            .old_layout(vk::ImageLayout::UNDEFINED)
-            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .src_access_mask(vk::AccessFlags::empty())
-            .dst_access_mask(vk::AccessFlags::SHADER_READ)
-            .subresource_range(
-                vk::ImageSubresourceRange::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .layer_count(1)
-                    .level_count(1)
-                    .build(),
-            )
-            .build();
-
-        self.dev.cmd_pipeline_barrier(
-            self.copy_cbuf,
-            vk::PipelineStageFlags::TOP_OF_PIPE, // src
-            vk::PipelineStageFlags::FRAGMENT_SHADER
-                | vk::PipelineStageFlags::VERTEX_SHADER
-                | vk::PipelineStageFlags::COMPUTE_SHADER, // dst
-            vk::DependencyFlags::empty(),
-            &[],
-            &[],
-            &[acquire_barrier],
-        );
-
-        self.cbuf_end_recording(self.copy_cbuf);
-        self.cbuf_submit_async(
-            self.copy_cbuf,
-            self.present_queue,
-            &[], // wait_stages
-            &[], // wait_semas
-            &[], // signal_semas
-            self.submit_fence,
-        );
-        self.wait_for_prev_submit();
     }
 
     unsafe fn create_dmabuf_image(
@@ -542,7 +492,7 @@ impl Renderer {
             .build();
         ext_mem_info.p_next = &drm_create_info as *const _ as *mut std::ffi::c_void;
         image_info.p_next = &ext_mem_info as *const _ as *mut std::ffi::c_void;
-        let image = self.dev.create_image(&image_info, None).unwrap();
+        let image = self.dev.dev.create_image(&image_info, None).unwrap();
 
         // Update the private tracker with memory info
         // -------------------------------------------------------
@@ -558,8 +508,8 @@ impl Renderer {
             .memory_type_bits;
         // we need to find a memory type that matches the type our
         // new image needs
-        dmabuf_priv.dp_mem_reqs = self.dev.get_image_memory_requirements(image);
-        let mem_props = Renderer::get_pdev_mem_properties(&self.inst.inst, self.pdev);
+        dmabuf_priv.dp_mem_reqs = self.dev.dev.get_image_memory_requirements(image);
+        let mem_props = Device::get_pdev_mem_properties(&self.dev.inst.inst, self.dev.pdev);
 
         dmabuf_priv.dp_memtype_index = Renderer::find_memtype_for_dmabuf(
             dmabuf_type_bits,
@@ -608,8 +558,9 @@ impl Renderer {
         alloc_info.p_next = &import_fd_info as *const _ as *const std::ffi::c_void;
 
         // perform the import
-        let image_memory = self.dev.allocate_memory(&alloc_info, None).unwrap();
+        let image_memory = self.dev.dev.allocate_memory(&alloc_info, None).unwrap();
         self.dev
+            .dev
             .bind_image_memory(image, image_memory, 0)
             .expect("Unable to bind device memory to image");
 
@@ -626,9 +577,10 @@ impl Renderer {
             .format(image_info.format)
             .view_type(vk::ImageViewType::TYPE_2D);
 
-        let view = self.dev.create_image_view(&view_info, None).unwrap();
+        let view = self.dev.dev.create_image_view(&view_info, None).unwrap();
 
-        self.acquire_dmabuf_image_from_external_queue(image);
+        self.dev
+            .acquire_dmabuf_image_from_external_queue(image, self.graphics_queue_family);
 
         log::debug!(
             "Created Vulkan image {:?} from dmabuf {}",
@@ -650,7 +602,6 @@ impl Renderer {
         release: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
         self.wait_for_prev_submit();
-        self.wait_for_copy();
 
         log::debug!("Updating new image with dmabuf {:?}", dmabuf);
         // A lot of this is duplicated from Renderer::create_image
@@ -671,7 +622,7 @@ impl Renderer {
 
                 // get the number of drm format mods props
                 self.inst.inst.get_physical_device_format_properties2(
-                    self.pdev,
+                    self.dev.pdev,
                     TARGET_FORMAT,
                     &mut format_props,
                 );
@@ -681,7 +632,7 @@ impl Renderer {
 
                 drm_fmt_props.p_drm_format_modifier_properties = mods.as_mut_ptr();
                 self.inst.inst.get_physical_device_format_properties2(
-                    self.pdev,
+                    self.dev.pdev,
                     TARGET_FORMAT,
                     &mut format_props,
                 );
@@ -702,7 +653,7 @@ impl Renderer {
             let drm_img_props = vk::PhysicalDeviceImageDrmFormatModifierInfoEXT::builder()
                 .drm_format_modifier(plane.db_mods)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                .queue_family_indices(&[self.graphics_family_index])
+                .queue_family_indices(&[self.graphics_queue_family])
                 .build();
             img_fmt_info.p_next = &drm_img_props as *const _ as *mut std::ffi::c_void;
             // the returned properties
@@ -711,7 +662,7 @@ impl Renderer {
             self.inst
                 .inst
                 .get_physical_device_image_format_properties2(
-                    self.pdev,
+                    self.dev.pdev,
                     &img_fmt_info,
                     &mut img_fmt_props,
                 )
@@ -851,7 +802,7 @@ impl Renderer {
             self.r_barriers.r_acquire_barriers.push(
                 vk::ImageMemoryBarrier::builder()
                     .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
-                    .dst_queue_family_index(self.graphics_family_index)
+                    .dst_queue_family_index(self.graphics_queue_family)
                     .image(image_vk.iv_image)
                     .old_layout(src_layout)
                     .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
@@ -866,7 +817,7 @@ impl Renderer {
                     )
                     .build(),
             );
-            self.dev.cmd_pipeline_barrier(
+            self.dev.dev.cmd_pipeline_barrier(
                 cbuf,
                 vk::PipelineStageFlags::TOP_OF_PIPE, // src
                 vk::PipelineStageFlags::FRAGMENT_SHADER
@@ -880,7 +831,7 @@ impl Renderer {
 
             self.r_barriers.r_release_barriers.push(
                 vk::ImageMemoryBarrier::builder()
-                    .src_queue_family_index(self.graphics_family_index)
+                    .src_queue_family_index(self.graphics_queue_family)
                     .dst_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
                     .image(image_vk.iv_image)
                     .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
@@ -896,7 +847,7 @@ impl Renderer {
                     )
                     .build(),
             );
-            self.dev.cmd_pipeline_barrier(
+            self.dev.dev.cmd_pipeline_barrier(
                 cbuf,
                 vk::PipelineStageFlags::ALL_GRAPHICS | vk::PipelineStageFlags::COMPUTE_SHADER, // src
                 vk::PipelineStageFlags::BOTTOM_OF_PIPE, // dst

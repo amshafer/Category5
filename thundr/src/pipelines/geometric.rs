@@ -150,29 +150,33 @@ impl Pipeline for GeomPipeline {
                 .clear_values(&clear_vals);
 
             // start the cbuf
-            rend.cbuf_begin_recording(params.cbuf, vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
+            rend.dev
+                .cbuf_begin_recording(params.cbuf, vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
 
             // -- Setup static drawing resources
             // All of our drawing operations need
             // to be recorded inside a render pass.
-            rend.dev.cmd_begin_render_pass(
+            rend.dev.dev.cmd_begin_render_pass(
                 params.cbuf,
                 &pass_begin_info,
                 vk::SubpassContents::INLINE,
             );
 
-            rend.dev
-                .cmd_bind_pipeline(params.cbuf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+            rend.dev.dev.cmd_bind_pipeline(
+                params.cbuf,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.pipeline,
+            );
 
             // bind the vertex and index buffers from
             // the first image
-            rend.dev.cmd_bind_vertex_buffers(
+            rend.dev.dev.cmd_bind_vertex_buffers(
                 params.cbuf,         // cbuf to draw in
                 0,                   // first vertex binding updated by the command
                 &[self.vert_buffer], // set of buffers to bind
                 &[0],                // offsets for the above buffers
             );
-            rend.dev.cmd_bind_index_buffer(
+            rend.dev.dev.cmd_bind_index_buffer(
                 params.cbuf,
                 self.index_buffer,
                 0, // offset
@@ -198,7 +202,7 @@ impl Pipeline for GeomPipeline {
             //
             // We need to bind both the uniform set, and the per-Image
             // set for the image sampler
-            rend.dev.cmd_bind_descriptor_sets(
+            rend.dev.dev.cmd_bind_descriptor_sets(
                 params.cbuf,
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline_layout,
@@ -210,7 +214,7 @@ impl Pipeline for GeomPipeline {
             // Now update our cbuf constants. This is how we pass in
             // the viewport information
             let consts = rend.get_push_constants(params, viewport);
-            rend.dev.cmd_push_constants(
+            rend.dev.dev.cmd_push_constants(
                 params.cbuf,
                 self.pipeline_layout,
                 vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
@@ -226,7 +230,7 @@ impl Pipeline for GeomPipeline {
             log::info!("Viewport is : {:?}", viewport);
 
             // Set our current viewport
-            rend.dev.cmd_set_viewport(
+            rend.dev.dev.cmd_set_viewport(
                 params.cbuf,
                 0,
                 &[vk::Viewport {
@@ -238,7 +242,7 @@ impl Pipeline for GeomPipeline {
                     max_depth: 1.0,
                 }],
             );
-            rend.dev.cmd_set_scissor(
+            rend.dev.dev.cmd_set_scissor(
                 params.cbuf,
                 0,
                 &[vk::Rect2D {
@@ -265,11 +269,11 @@ impl Pipeline for GeomPipeline {
             // texture. So on AMD we do not do the instancing, but instead have a draw call for
             // every object (gross)
             if pass.p_window_order.len() > 0 {
-                if rend.dev_features.vkc_war_disable_instanced_drawing {
+                if rend.dev.dev_features.vkc_war_disable_instanced_drawing {
                     for i in 0..pass.p_window_order.len() as u32 {
                         // [WAR] Launch each instance manually :(
                         // TODO: skip if incorrect pass
-                        rend.dev.cmd_draw_indexed(
+                        rend.dev.dev.cmd_draw_indexed(
                             params.cbuf,     // drawing command buffer
                             self.vert_count, // number of verts
                             1,               // number of instances
@@ -279,7 +283,7 @@ impl Pipeline for GeomPipeline {
                         );
                     }
                 } else {
-                    rend.dev.cmd_draw_indexed(
+                    rend.dev.dev.cmd_draw_indexed(
                         params.cbuf,                      // drawing command buffer
                         self.vert_count,                  // number of verts
                         pass.p_window_order.len() as u32, // number of instances
@@ -298,10 +302,10 @@ impl Pipeline for GeomPipeline {
     fn end_record(&mut self, rend: &mut Renderer, params: &RecordParams) {
         unsafe {
             // make sure to end recording
-            rend.dev.cmd_end_render_pass(params.cbuf);
+            rend.dev.dev.cmd_end_render_pass(params.cbuf);
             // Sync our dmabuf images
             //rend.add_image_barriers_for_dmabuf_images(params.cbuf, images);
-            rend.cbuf_end_recording(params.cbuf);
+            rend.dev.cbuf_end_recording(params.cbuf);
         }
         // now submit the cbuf
         self.submit_frame(rend);
@@ -315,20 +319,19 @@ impl Pipeline for GeomPipeline {
 
     fn handle_ood(&mut self, display: &mut Display, rend: &mut Renderer) {
         unsafe {
-            rend.free_memory(self.depth_image_mem);
-            rend.dev.destroy_image_view(self.depth_image_view, None);
-            rend.dev.destroy_image(self.depth_image, None);
+            rend.dev.free_memory(self.depth_image_mem);
+            rend.dev.dev.destroy_image_view(self.depth_image_view, None);
+            rend.dev.dev.destroy_image(self.depth_image, None);
             for f in self.framebuffers.iter() {
-                rend.dev.destroy_framebuffer(*f, None);
+                rend.dev.dev.destroy_framebuffer(*f, None);
             }
 
             let consts = GeomPipeline::get_shader_constants(display.d_resolution);
-            rend.update_memory(self.uniform_buffers_memory, 0, &[consts]);
+            rend.dev
+                .update_memory(self.uniform_buffers_memory, 0, &[consts]);
 
             // the depth attachment needs to have its own resources
-            let (depth_image, depth_image_view, depth_image_mem) = Renderer::create_image(
-                &rend.dev,
-                &rend.mem_props,
+            let (depth_image, depth_image_view, depth_image_mem) = rend.dev.create_image(
                 &display.d_resolution,
                 vk::Format::D16_UNORM,
                 vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
@@ -352,36 +355,39 @@ impl Pipeline for GeomPipeline {
 
     fn destroy(&mut self, rend: &mut Renderer) {
         unsafe {
-            rend.free_memory(self.vert_buffer_memory);
-            rend.free_memory(self.index_buffer_memory);
-            rend.dev.destroy_buffer(self.vert_buffer, None);
-            rend.dev.destroy_buffer(self.index_buffer, None);
+            rend.dev.free_memory(self.vert_buffer_memory);
+            rend.dev.free_memory(self.index_buffer_memory);
+            rend.dev.dev.destroy_buffer(self.vert_buffer, None);
+            rend.dev.dev.destroy_buffer(self.index_buffer, None);
 
-            rend.free_memory(self.depth_image_mem);
-            rend.dev.destroy_image_view(self.depth_image_view, None);
-            rend.dev.destroy_image(self.depth_image, None);
+            rend.dev.free_memory(self.depth_image_mem);
+            rend.dev.dev.destroy_image_view(self.depth_image_view, None);
+            rend.dev.dev.destroy_image(self.depth_image, None);
 
-            rend.dev.destroy_buffer(self.uniform_buffer, None);
-            rend.free_memory(self.uniform_buffers_memory);
+            rend.dev.dev.destroy_buffer(self.uniform_buffer, None);
+            rend.dev.free_memory(self.uniform_buffers_memory);
 
-            rend.dev.destroy_render_pass(self.pass, None);
+            rend.dev.dev.destroy_render_pass(self.pass, None);
 
             rend.dev
+                .dev
                 .destroy_descriptor_set_layout(self.g_desc_layout, None);
 
-            rend.dev.destroy_descriptor_pool(self.g_desc_pool, None);
+            rend.dev.dev.destroy_descriptor_pool(self.g_desc_pool, None);
 
-            rend.dev.destroy_pipeline_layout(self.pipeline_layout, None);
+            rend.dev
+                .dev
+                .destroy_pipeline_layout(self.pipeline_layout, None);
 
             for m in self.shader_modules.iter() {
-                rend.dev.destroy_shader_module(*m, None);
+                rend.dev.dev.destroy_shader_module(*m, None);
             }
 
             for f in self.framebuffers.iter() {
-                rend.dev.destroy_framebuffer(*f, None);
+                rend.dev.dev.destroy_framebuffer(*f, None);
             }
 
-            rend.dev.destroy_pipeline(self.pipeline, None);
+            rend.dev.dev.destroy_pipeline(self.pipeline, None);
         }
     }
 }
@@ -403,7 +409,7 @@ impl GeomPipeline {
             .pool_sizes(&size)
             .max_sets(1);
 
-        rend.dev.create_descriptor_pool(&info, None).unwrap()
+        rend.dev.dev.create_descriptor_pool(&info, None).unwrap()
     }
 
     /// Set up the application. This should *always* be called
@@ -456,15 +462,17 @@ impl GeomPipeline {
                 .push_constant_ranges(constants)
                 .set_layouts(descriptor_layouts)
                 .build();
-            let layout = rend.dev.create_pipeline_layout(&layout_info, None).unwrap();
+            let layout = rend
+                .dev
+                .dev
+                .create_pipeline_layout(&layout_info, None)
+                .unwrap();
 
             let pipeline =
                 GeomPipeline::create_pipeline(display, rend, layout, pass, &*shader_stages);
 
             // the depth attachment needs to have its own resources
-            let (depth_image, depth_image_view, depth_image_mem) = Renderer::create_image(
-                &rend.dev,
-                &rend.mem_props,
+            let (depth_image, depth_image_view, depth_image_mem) = rend.dev.create_image(
                 &display.d_resolution,
                 vk::Format::D16_UNORM,
                 vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
@@ -487,7 +495,7 @@ impl GeomPipeline {
             let consts = GeomPipeline::get_shader_constants(display.d_resolution);
 
             // create a uniform buffer
-            let (buf, mem) = rend.create_buffer(
+            let (buf, mem) = rend.dev.create_buffer(
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
                 vk::SharingMode::EXCLUSIVE,
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
@@ -539,15 +547,19 @@ impl GeomPipeline {
     /// all geometry to the current framebuffer. Presentation is
     /// done later, in case operations need to occur inbetween.
     fn submit_frame(&mut self, rend: &Renderer) {
+        rend.wait_for_prev_submit();
+        unsafe { rend.dev.dev.reset_fences(&[rend.submit_fence]).unwrap() };
+
         // Submit the recorded cbuf to perform the draw calls
-        rend.cbuf_submit(
+        rend.dev.cbuf_submit_async(
             // submit the cbuf for the current image
             rend.cbufs[rend.current_image as usize],
-            rend.present_queue, // the graphics queue
+            rend.r_present_queue, // the graphics queue
             // wait_stages
             &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT],
             &[rend.present_sema], // wait_semas
             &[rend.render_sema],  // signal_semas
+            rend.submit_fence,    // signal fence
         );
     }
 
@@ -612,7 +624,7 @@ impl GeomPipeline {
             .subpasses(&subpasses)
             .dependencies(&dependencies);
 
-        rend.dev.create_render_pass(&create_info, None).unwrap()
+        rend.dev.dev.create_render_pass(&create_info, None).unwrap()
     }
 
     /// Create a vkShaderModule for one of the dynamic pipeline stages
@@ -631,6 +643,7 @@ impl GeomPipeline {
         let info = vk::ShaderModuleCreateInfo::builder().code(&code);
 
         rend.dev
+            .dev
             .create_shader_module(&info, None)
             .expect("Could not create new shader module")
     }
@@ -832,6 +845,7 @@ impl GeomPipeline {
 
         // Allocate one pipeline and return it
         rend.dev
+            .dev
             .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
             .expect("Could not create graphics pipeline")[0]
     }
@@ -866,7 +880,7 @@ impl GeomPipeline {
                     .height(res.height)
                     .layers(1);
 
-                rend.dev.create_framebuffer(&info, None).unwrap()
+                rend.dev.dev.create_framebuffer(&info, None).unwrap()
             })
             .collect()
     }
@@ -907,7 +921,10 @@ impl GeomPipeline {
 
         let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
 
-        rend.dev.create_descriptor_set_layout(&info, None).unwrap()
+        rend.dev
+            .dev
+            .create_descriptor_set_layout(&info, None)
+            .unwrap()
     }
 
     /// Create vertex/index buffers for the default quad
@@ -918,13 +935,13 @@ impl GeomPipeline {
     unsafe fn create_default_geom_bufs(
         rend: &Renderer,
     ) -> (vk::Buffer, vk::DeviceMemory, vk::Buffer, vk::DeviceMemory) {
-        let (vbuf, vmem) = rend.create_buffer(
+        let (vbuf, vmem) = rend.dev.create_buffer(
             vk::BufferUsageFlags::VERTEX_BUFFER,
             vk::SharingMode::EXCLUSIVE,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             &QUAD_DATA,
         );
-        let (ibuf, imem) = rend.create_buffer(
+        let (ibuf, imem) = rend.dev.create_buffer(
             vk::BufferUsageFlags::INDEX_BUFFER,
             vk::SharingMode::EXCLUSIVE,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
@@ -962,7 +979,7 @@ impl GeomPipeline {
             .buffer_info(&[info])
             .build()];
 
-        rend.dev.update_descriptor_sets(
+        rend.dev.dev.update_descriptor_sets(
             &write_info, // descriptor writes
             &[],         // descriptor copies
         );
@@ -981,9 +998,8 @@ impl GeomPipeline {
         let mut consts = GeomPipeline::get_shader_constants(display.d_resolution);
         consts.model = consts.model * transform;
 
-        unsafe {
-            rend.update_memory(self.uniform_buffers_memory, 0, &[consts]);
-        }
+        rend.dev
+            .update_memory(self.uniform_buffers_memory, 0, &[consts]);
     }
 
     /// set up the depth image in self.
@@ -993,9 +1009,10 @@ impl GeomPipeline {
     /// stencil attachment to be used later.
     pub unsafe fn setup_depth_image(&mut self, rend: &Renderer) {
         // allocate a new cbuf for us to work with
-        let new_cbuf = Renderer::create_command_buffers(&rend.dev, rend.pool, 1)[0]; // only get one
+        let new_cbuf = rend.dev.create_command_buffers(rend.pool, 1)[0]; // only get one
 
-        rend.cbuf_begin_recording(new_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        rend.dev
+            .cbuf_begin_recording(new_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
         // the depth image and view have already been created by new
         // we need to execute a cbuf to set up the memory we are
@@ -1028,7 +1045,7 @@ impl GeomPipeline {
 
         // process the barrier we created, which will perform
         // the actual transition.
-        rend.dev.cmd_pipeline_barrier(
+        rend.dev.dev.cmd_pipeline_barrier(
             new_cbuf,
             vk::PipelineStageFlags::BOTTOM_OF_PIPE,
             vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
@@ -1038,9 +1055,9 @@ impl GeomPipeline {
             &[layout_barrier],
         );
 
-        rend.cbuf_submit_and_wait(
+        rend.dev.cbuf_submit_and_wait(
             new_cbuf,
-            rend.present_queue,
+            rend.r_present_queue,
             &[], // wait_stages
             &[], // wait_semas
             &[], // signal_semas

@@ -53,9 +53,10 @@ impl Pass {
     fn destroy(&mut self, rend: &mut Renderer) {
         unsafe {
             rend.wait_for_prev_submit();
-            rend.dev.destroy_buffer(self.p_order_buf, None);
-            rend.free_memory(self.p_order_mem);
+            rend.dev.dev.destroy_buffer(self.p_order_buf, None);
+            rend.dev.free_memory(self.p_order_mem);
             rend.dev
+                .dev
                 .destroy_descriptor_pool(self.p_order_desc_pool, None);
         }
     }
@@ -71,8 +72,9 @@ impl Pass {
 
             self.reallocate_order_buf_with_cap(rend, self.p_window_order.len());
             if window_order.len() > 0 {
-                rend.update_memory(self.p_order_mem, 0, &[self.p_window_order.len()]);
-                rend.update_memory(
+                rend.dev
+                    .update_memory(self.p_order_mem, 0, &[self.p_window_order.len()]);
+                rend.dev.update_memory(
                     self.p_order_mem,
                     WINDOW_LIST_GLSL_OFFSET,
                     window_order.as_slice(),
@@ -85,11 +87,11 @@ impl Pass {
     unsafe fn reallocate_order_buf_with_cap(&mut self, rend: &Renderer, capacity: usize) {
         rend.wait_for_prev_submit();
 
-        rend.dev.destroy_buffer(self.p_order_buf, None);
-        rend.free_memory(self.p_order_mem);
+        rend.dev.dev.destroy_buffer(self.p_order_buf, None);
+        rend.dev.free_memory(self.p_order_mem);
 
         // create our data and a storage buffer for the window list
-        let (wp_storage, wp_storage_mem) = rend.create_buffer_with_size(
+        let (wp_storage, wp_storage_mem) = rend.dev.create_buffer_with_size(
             vk::BufferUsageFlags::STORAGE_BUFFER,
             vk::SharingMode::EXCLUSIVE,
             vk::MemoryPropertyFlags::DEVICE_LOCAL
@@ -99,6 +101,7 @@ impl Pass {
                 + WINDOW_LIST_GLSL_OFFSET as u64,
         );
         rend.dev
+            .dev
             .bind_buffer_memory(wp_storage, wp_storage_mem, 0)
             .unwrap();
         self.p_order_buf = wp_storage;
@@ -119,7 +122,7 @@ impl Pass {
         let info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&size)
             .max_sets(1);
-        let order_pool = rend.dev.create_descriptor_pool(&info, None).unwrap();
+        let order_pool = rend.dev.dev.create_descriptor_pool(&info, None).unwrap();
 
         self.p_order_desc_pool = order_pool;
         self.allocate_order_desc(rend);
@@ -132,6 +135,7 @@ impl Pass {
     /// contains their details.
     pub unsafe fn allocate_order_desc(&mut self, rend: &Renderer) {
         rend.dev
+            .dev
             .reset_descriptor_pool(
                 self.p_order_desc_pool,
                 vk::DescriptorPoolResetFlags::empty(),
@@ -143,7 +147,7 @@ impl Pass {
             .descriptor_pool(self.p_order_desc_pool)
             .set_layouts(&[rend.r_order_desc_layout])
             .build();
-        self.p_order_desc = rend.dev.allocate_descriptor_sets(&info).unwrap()[0];
+        self.p_order_desc = rend.dev.dev.allocate_descriptor_sets(&info).unwrap()[0];
 
         let write_info = &[vk::WriteDescriptorSet::builder()
             .dst_set(self.p_order_desc)
@@ -156,7 +160,7 @@ impl Pass {
                 .range(vk::WHOLE_SIZE)
                 .build()])
             .build()];
-        rend.dev.update_descriptor_sets(
+        rend.dev.dev.update_descriptor_sets(
             write_info, // descriptor writes
             &[],        // descriptor copies
         );

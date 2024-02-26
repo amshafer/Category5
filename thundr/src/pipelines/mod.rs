@@ -12,8 +12,6 @@
 //!
 
 // Austin Shafer - 2020
-use ash::{vk, Instance};
-
 pub mod geometric;
 
 pub use geometric::GeomPipeline;
@@ -74,17 +72,4 @@ pub trait Pipeline {
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum PipelineType {
     GEOMETRIC,
-}
-
-impl PipelineType {
-    pub fn get_queue_family(
-        &self,
-        _inst: &Instance,
-        _display: &Display,
-        _pdev: vk::PhysicalDevice,
-    ) -> Option<u32> {
-        match self {
-            Self::GEOMETRIC => None,
-        }
-    }
 }

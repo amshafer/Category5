@@ -5,10 +5,12 @@
  * Austin Shafer - 2020
  */
 
-#![allow(dead_code, non_camel_case_types)]
+#![allow(non_camel_case_types)]
 extern crate ash;
 
-use ash::{vk, Device};
+use crate::device::Device;
+use ash::vk;
+use std::sync::Arc;
 
 /// The default size of each pool in DescPool
 static POOL_SIZE: u32 = 4;
@@ -16,6 +18,7 @@ static POOL_SIZE: u32 = 4;
 /// A pool of descriptor pools
 /// All resources allocated by the Renderer which holds this
 pub struct DescPool {
+    dev: Arc<Device>,
     /// these are the layouts for mesh specific (texture) descriptors
     /// Window-speccific descriptors (texture sampler)
     /// one for each framebuffer image
@@ -45,11 +48,11 @@ impl DescPool {
             .build()];
         let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
 
-        unsafe { dev.create_descriptor_set_layout(&info, None).unwrap() }
+        unsafe { dev.dev.create_descriptor_set_layout(&info, None).unwrap() }
     }
 
     /// Returns the index of the new pool
-    pub fn add_pool(&mut self, dev: &Device) -> usize {
+    pub fn add_pool(&mut self) -> usize {
         let sizes = [vk::DescriptorPoolSize::builder()
             .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .descriptor_count(POOL_SIZE)
@@ -62,7 +65,7 @@ impl DescPool {
             .max_sets(POOL_SIZE);
 
         self.pools
-            .push(unsafe { dev.create_descriptor_pool(&info, None).unwrap() });
+            .push(unsafe { self.dev.dev.create_descriptor_pool(&info, None).unwrap() });
         // Add an entry to record that there have not been
         // any allocations with this pool
         self.capacities.push(0);
@@ -71,93 +74,30 @@ impl DescPool {
     }
 
     /// rend should own this struct
-    pub fn create(dev: &Device) -> DescPool {
+    pub fn create(dev: Arc<Device>) -> DescPool {
         let mut ret = DescPool {
-            layout: DescPool::create_layout(dev),
+            layout: DescPool::create_layout(&dev),
+            dev: dev,
             pools: Vec::new(),
             capacities: Vec::new(),
         };
 
         // Add one default pool to begin with
-        ret.add_pool(dev);
+        ret.add_pool();
 
         return ret;
     }
+}
 
-    fn get_ideal_pool(&mut self, dev: &Device, size: usize) -> usize {
-        for (i, cap) in self.capacities.iter().enumerate() {
-            // Check if this pool has room for the sets
-            if cap + size < POOL_SIZE as usize {
-                // A pool with space was found
-                return i;
-            }
-        }
-
-        // No existing pool was found, so create a new one
-        return self.add_pool(&dev);
-    }
-
-    /// Allocate an image sampler descriptor set
-    ///
-    /// A descriptor set specifies a group of attachments that can
-    /// be referenced by the graphics pipeline. Think of a descriptor
-    /// as the hardware's handle to a resource. The set of descriptors
-    /// allocated in each set is specified in the layout.
-    pub fn allocate_samplers(
-        &mut self,
-        dev: &Device,
-        count: usize,
-    ) -> (usize, Vec<vk::DescriptorSet>) {
-        // Find a pool to allocate from
-        let pool_handle = self.get_ideal_pool(dev, count);
-
-        // We should repeat the layout n times, so that only one
-        // call to the allocation function needs to be made
-        let mut layouts = Vec::new();
-        for _ in 0..count {
-            layouts.push(self.layout);
-        }
-
-        let info = vk::DescriptorSetAllocateInfo::builder()
-            .descriptor_pool(self.pools[pool_handle])
-            .set_layouts(layouts.as_slice())
-            .build();
-
-        // record that n allocations were made from this pool
-        self.capacities[pool_handle] += 1;
-
-        unsafe {
-            return (
-                pool_handle,
-                // Allocates a set for each layout specified
-                dev.allocate_descriptor_sets(&info).unwrap(),
-            );
-        }
-    }
-
-    pub fn destroy_samplers(
-        &mut self,
-        dev: &Device,
-        pool_handle: usize,
-        samplers: &[vk::DescriptorSet],
-    ) {
-        assert!(pool_handle < self.pools.len());
-
-        unsafe {
-            for s in samplers {
-                dev.free_descriptor_sets(self.pools[pool_handle], &[*s])
-                    .unwrap();
-            }
-        }
-    }
-
-    /// Explicit destructor
-    pub fn destroy(&mut self, dev: &Device) {
+impl Drop for DescPool {
+    fn drop(&mut self) {
         unsafe {
             for p in self.pools.iter() {
-                dev.destroy_descriptor_pool(*p, None);
+                self.dev.dev.destroy_descriptor_pool(*p, None);
             }
-            dev.destroy_descriptor_set_layout(self.layout, None);
+            self.dev
+                .dev
+                .destroy_descriptor_set_layout(self.layout, None);
         }
     }
 }
