@@ -11,7 +11,6 @@ use input::{Libinput, LibinputInterface};
 
 extern crate xkbcommon;
 use xkbcommon::xkb;
-pub use xkbcommon::xkb::{keysyms, Keysym};
 
 use super::Platform;
 use crate::event::*;

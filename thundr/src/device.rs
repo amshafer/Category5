@@ -13,7 +13,7 @@ use crate::platform::VKDeviceFeatures;
 use crate::{CreateInfo, Damage, Result, ThundrError};
 use cat5_utils::log;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 /// Thundr Device
 ///
@@ -27,9 +27,8 @@ pub struct Device {
     /// the physical device selected to display to
     pub(crate) pdev: vk::PhysicalDevice,
     pub(crate) mem_props: vk::PhysicalDeviceMemoryProperties,
-    pub(crate) copy_cbuf_fence: vk::Fence,
 
-    d_internal: Arc<Mutex<DeviceInternal>>,
+    d_internal: Arc<RwLock<DeviceInternal>>,
 }
 
 /// This is the set of per-device data that needs to be "externally synchronized"
@@ -41,6 +40,7 @@ pub struct DeviceInternal {
     pub(crate) copy_cmd_pool: vk::CommandPool,
     /// command buffer for copying shm images
     pub(crate) copy_cbuf: vk::CommandBuffer,
+    pub(crate) copy_cbuf_fence: vk::Fence,
 
     /// These are for loading textures into images
     pub(crate) transfer_buf_len: usize,
@@ -244,10 +244,10 @@ impl Device {
             dev_features: dev_features,
             pdev: pdev,
             mem_props: mem_props,
-            copy_cbuf_fence: copy_fence,
-            d_internal: Arc::new(Mutex::new(DeviceInternal {
+            d_internal: Arc::new(RwLock::new(DeviceInternal {
                 copy_cmd_pool: vk::CommandPool::null(),
                 copy_cbuf: vk::CommandBuffer::null(),
+                copy_cbuf_fence: copy_fence,
                 transfer_queue: transfer_queue,
                 transfer_buf: vk::Buffer::null(), // Initialize in its own method
                 transfer_mem: vk::DeviceMemory::null(),
@@ -259,7 +259,7 @@ impl Device {
             let copy_cmd_pool = ret.create_command_pool(transfer_queue_family);
             let copy_cbuf = ret.create_command_buffers(copy_cmd_pool, 1)[0];
 
-            let mut internal = ret.d_internal.lock().unwrap();
+            let mut internal = ret.d_internal.write().unwrap();
             internal.copy_cmd_pool = copy_cmd_pool;
             internal.copy_cbuf = copy_cbuf;
         }
@@ -345,10 +345,11 @@ impl Device {
     ///
     /// If no copy operation is in flight this returns immediately.
     pub fn wait_for_copy(&self) {
+        let internal = self.d_internal.write().unwrap();
         unsafe {
             self.dev
                 .wait_for_fences(
-                    &[self.copy_cbuf_fence],
+                    &[internal.copy_cbuf_fence],
                     true,          // wait for all
                     std::u64::MAX, //timeout
                 )
@@ -362,7 +363,7 @@ impl Device {
             // We might be in the middle of copying the transfer buf to an image
             // wait for that if its the case
             self.wait_for_copy();
-            let mut internal = self.d_internal.lock().unwrap();
+            let mut internal = self.d_internal.write().unwrap();
             if data.len() > internal.transfer_buf_len {
                 let (buffer, buf_mem) = self.create_buffer(
                     vk::BufferUsageFlags::TRANSFER_SRC,
@@ -831,10 +832,10 @@ impl Device {
         self.upload_memimage_to_transfer(data);
 
         let int_lock = self.d_internal.clone();
-        let internal = int_lock.lock().unwrap();
+        let internal = int_lock.write().unwrap();
         unsafe {
             // Reset the fences for our cbuf submission below
-            self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap();
+            self.dev.reset_fences(&[internal.copy_cbuf_fence]).unwrap();
 
             // transition us into the appropriate memory layout for shaders
             self.cbuf_begin_recording(
@@ -910,7 +911,7 @@ impl Device {
                 &[], // wait_stages
                 &[], // wait_semas
                 &[], // signal_semas
-                self.copy_cbuf_fence,
+                internal.copy_cbuf_fence,
             );
         }
     }
@@ -955,10 +956,11 @@ impl Device {
         queue_family: u32,
     ) {
         self.wait_for_copy();
-        unsafe { self.dev.reset_fences(&[self.copy_cbuf_fence]).unwrap() };
 
         let int_lock = self.d_internal.clone();
-        let internal = int_lock.lock().unwrap();
+        let internal = int_lock.write().unwrap();
+
+        unsafe { self.dev.reset_fences(&[internal.copy_cbuf_fence]).unwrap() };
 
         // now perform the copy
         self.cbuf_begin_recording(
@@ -1004,7 +1006,7 @@ impl Device {
             &[], // wait_stages
             &[], // wait_semas
             &[], // signal_semas
-            self.copy_cbuf_fence,
+            internal.copy_cbuf_fence,
         );
     }
 
@@ -1088,7 +1090,7 @@ impl Device {
 impl Drop for Device {
     fn drop(&mut self) {
         let int_lock = self.d_internal.clone();
-        let internal = int_lock.lock().unwrap();
+        let internal = int_lock.write().unwrap();
 
         unsafe {
             // first wait for the device to finish working
@@ -1098,7 +1100,7 @@ impl Drop for Device {
             self.free_memory(internal.transfer_mem);
 
             self.dev.destroy_command_pool(internal.copy_cmd_pool, None);
-            self.dev.destroy_fence(self.copy_cbuf_fence, None);
+            self.dev.destroy_fence(internal.copy_cbuf_fence, None);
             self.dev.destroy_device(None);
         }
     }

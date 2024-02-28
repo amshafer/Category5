@@ -46,7 +46,7 @@ use dak::DakotaId;
 
 use crate::category5::atmosphere::*;
 
-pub use crate::utils::{anyhow, Result};
+pub use crate::utils::Result;
 use utils::{log, timing::*, *};
 
 pub mod task;

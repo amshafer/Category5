@@ -18,7 +18,6 @@ use sdl2::event::{Event, WindowEvent};
 extern crate xkbcommon;
 use std::os::fd::RawFd;
 use xkbcommon::xkb;
-pub use xkbcommon::xkb::{keysyms, Keysym};
 
 const SCROLL_SENSITIVITY: f64 = 32.0;
 

@@ -40,7 +40,6 @@ use font::*;
 
 // Re-exmport our getters/setters
 mod generated;
-pub use generated::*;
 
 use std::ops::Deref;
 use std::ops::DerefMut;

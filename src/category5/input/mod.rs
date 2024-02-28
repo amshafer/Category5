@@ -48,7 +48,6 @@ use crate::category5::ways::role::Role;
 use utils::{log, timing::*};
 
 use xkbcommon::xkb;
-pub use xkbcommon::xkb::{keysyms, Keysym};
 
 use core::convert::TryFrom;
 
