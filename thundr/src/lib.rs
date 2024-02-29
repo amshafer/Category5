@@ -164,6 +164,11 @@ pub struct Thundr {
 
     /// The current draw calls parameters
     th_params: Option<RecordParams>,
+
+    /// We keep a list of all the images allocated by this context
+    /// so that Pipeline::draw doesn't have to dedup the surfacelist's images
+    pub th_image_ecs: ll::Instance,
+    pub th_image_damage: ll::Component<Damage>,
 }
 
 /// A region to display to
@@ -318,10 +323,18 @@ impl Thundr {
 
         let inst = Arc::new(Instance::new(&info));
 
+        // Create our own ECS for the image resources
+        let mut img_ecs = ll::Instance::new();
+
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
-        let (mut rend, mut display) =
-            Renderer::new(inst.clone(), &info, &mut ecs, pass_comp.clone())?;
+        let (mut rend, mut display) = Renderer::new(
+            inst.clone(),
+            &info,
+            &mut ecs,
+            img_ecs.clone(),
+            pass_comp.clone(),
+        )?;
 
         // Create the pipeline(s) requested
         // Record the type we are using so that we know which type to regenerate
@@ -335,6 +348,8 @@ impl Thundr {
             return Err(ThundrError::COMPOSITION_TYPE_NOT_SPECIFIED);
         };
 
+        let img_damage_comp = img_ecs.add_component();
+
         Ok(Thundr {
             th_rend: Arc::new(Mutex::new(rend)),
             th_display: display,
@@ -343,6 +358,8 @@ impl Thundr {
             _th_pipe_type: ty,
             th_pipe: pipe,
             th_params: None,
+            th_image_ecs: img_ecs,
+            th_image_damage: img_damage_comp,
         })
     }
 
@@ -375,7 +392,15 @@ impl Thundr {
         let rend_mtx = self.th_rend.clone();
         let mut rend = self.th_rend.lock().unwrap();
 
-        rend.create_image_from_bits(rend_mtx, data, width, height, stride, release_info)
+        rend.create_image_from_bits(
+            rend_mtx,
+            self.th_image_damage.clone(),
+            data,
+            width,
+            height,
+            stride,
+            release_info,
+        )
     }
 
     /// Update an existing image from a shm buffer
@@ -403,7 +428,7 @@ impl Thundr {
         let rend_mtx = self.th_rend.clone();
         let mut rend = self.th_rend.lock().unwrap();
 
-        rend.create_image_from_dmabuf(rend_mtx, dmabuf, release_info)
+        rend.create_image_from_dmabuf(rend_mtx, self.th_image_damage.clone(), dmabuf, release_info)
     }
 
     /// This gets damage in image-coords.
@@ -466,7 +491,7 @@ impl Thundr {
     /// This will totally flush thundr, and reset it back to when it was
     /// created.
     pub fn clear_all(&mut self) {
-        self.th_rend.lock().unwrap().clear_damage_on_all_images();
+        self.th_image_damage.clear();
     }
 
     /// This is a candidate for an out of date error. We should
@@ -593,7 +618,8 @@ impl Thundr {
 
         self.th_pipe
             .end_record(self.th_rend.lock().unwrap().deref_mut(), params);
-        self.th_rend.lock().unwrap().clear_damage_on_all_images();
+        // Clear damage from all Images
+        self.th_image_damage.clear();
         self.th_params = None;
 
         Ok(())

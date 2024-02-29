@@ -28,12 +28,6 @@ use crate::{CreateInfo, Damage};
 use crate::{Result, ThundrError};
 use cat5_utils::{log, region::Rect};
 
-// Nvidia aftermath SDK GPU crashdump support
-#[cfg(feature = "aftermath")]
-extern crate nvidia_aftermath_rs as aftermath;
-#[cfg(feature = "aftermath")]
-use aftermath::Aftermath;
-
 use lluvia as ll;
 
 /// This is the offset from the base of the winlist buffer to the
@@ -168,18 +162,10 @@ pub struct Renderer {
     /// Memory barriers.
     pub r_barriers: VkBarriers,
 
-    /// Nvidia Aftermath SDK instance. Inclusion of this enables
-    /// GPU crashdumps.
-    #[cfg(feature = "aftermath")]
-    r_aftermath: Aftermath,
-
-    /// We keep a list of all the images allocated by this context
-    /// so that Pipeline::draw doesn't have to dedup the surfacelist's images
-    pub r_image_ecs: ll::Instance,
     // We keep this around to ensure the image array isn't empty
     r_null_image: ll::Entity,
+    pub r_image_ecs: ll::Instance,
     pub r_image_vk: ll::Component<ImageVk>,
-    pub r_image_damage: ll::Component<Damage>,
     pub r_image_infos: ll::NonSparseComponent<vk::DescriptorImageInfo>,
 
     /// Identical to the parent Thundr struct's session
@@ -648,13 +634,10 @@ impl Renderer {
         instance: Arc<Instance>,
         info: &CreateInfo,
         ecs: &mut ll::Instance,
+        mut img_ecs: ll::Instance,
         pass_comp: ll::Component<usize>,
     ) -> Result<(Renderer, Display)> {
         unsafe {
-            // This *must* be done before we create our device
-            #[cfg(feature = "aftermath")]
-            let aftermath = Aftermath::initialize().expect("Could not enable Nvidia Aftermath SDK");
-
             let dev = Arc::new(Device::new(instance.clone(), info)?);
 
             // Our display is in charge of choosing a medium to draw on,
@@ -768,11 +751,6 @@ impl Renderer {
             // Create the window list component
             let win_comp = ecs.add_component();
 
-            // Create our own ECS for the image resources
-            let mut img_ecs = ll::Instance::new();
-
-            let img_damage_comp = img_ecs.add_component();
-
             // Add our vulkan resource ECS entry
             let img_vk_comp = img_ecs.add_component();
 
@@ -847,12 +825,9 @@ impl Renderer {
                     r_acquire_barriers: Vec::new(),
                     r_release_barriers: Vec::new(),
                 },
-                #[cfg(feature = "aftermath")]
-                r_aftermath: aftermath,
-                r_image_ecs: img_ecs,
                 r_null_image: null_image,
+                r_image_ecs: img_ecs,
                 r_image_vk: img_vk_comp,
-                r_image_damage: img_damage_comp,
                 r_image_infos: img_info_comp,
                 r_surface_pass: pass_comp,
             };
@@ -1005,7 +980,7 @@ impl Renderer {
                         // to dump the GPU state
                         #[cfg(feature = "aftermath")]
                         {
-                            self.r_aftermath.wait_for_dump();
+                            self.inst.aftermath.wait_for_dump();
                         }
                     }
                     _ => panic!("Could not wait for vulkan fences"),
@@ -1133,15 +1108,9 @@ impl Renderer {
         Ok(())
     }
 
-    /// Remove all attached damage.
+    /// End a total frame recording
     ///
-    /// Damage is consumed by Thundr to ease the burden of developing
-    /// apps with it. This internal func clears all the damage after
-    /// a frame is drawn.
-    pub fn clear_damage_on_all_images(&mut self) {
-        self.r_image_damage.clear();
-    }
-
+    /// This finalizes any damage and updates the buffer ages
     pub fn end_recording_one_frame(&mut self) {
         self.current_damage.extend(&self.surfacelist_regions);
         let mut regions = Vec::new();

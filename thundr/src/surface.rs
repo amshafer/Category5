@@ -267,7 +267,7 @@ impl Surface {
         // First add up the damage from the buffer
         if let Some(image_rc) = surf.s_image.as_ref() {
             let image = image_rc.i_internal.read().unwrap();
-            if let Some(damage) = rend.r_image_damage.get(&image.i_id) {
+            if let Some(damage) = image_rc.i_image_damage.get(&image.i_id) {
                 let image_vk = rend.r_image_vk.get(&image.i_id).unwrap();
                 // We need to scale the damage from the image size to the
                 // size of this particular surface
@@ -356,7 +356,7 @@ impl Surface {
                 surf.s_rect.r_size.1 / image_vk.iv_image_resolution.height as f32,
             );
 
-            if let Some(damage) = rend.r_image_damage.get(&image.i_id) {
+            if let Some(damage) = image_rc.i_image_damage.get(&image.i_id) {
                 ret.union(&damage);
             }
 
