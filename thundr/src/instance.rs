@@ -13,6 +13,12 @@ use cat5_utils::log;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 
+// Nvidia aftermath SDK GPU crashdump support
+#[cfg(feature = "aftermath")]
+extern crate nvidia_aftermath_rs as aftermath;
+#[cfg(feature = "aftermath")]
+use aftermath::Aftermath;
+
 // this happy little debug callback is from the ash examples
 // all it does is print any errors/warnings thrown.
 unsafe extern "system" fn vulkan_debug_callback(
@@ -45,6 +51,11 @@ pub struct Instance {
     pub(crate) loader: Entry,
     /// the big vulkan instance.
     pub(crate) inst: ash::Instance,
+
+    /// Nvidia Aftermath SDK instance. Inclusion of this enables
+    /// GPU crashdumps.
+    #[cfg(feature = "aftermath")]
+    aftermath: Aftermath,
 }
 
 impl Instance {
@@ -133,11 +144,17 @@ impl Instance {
 
         let (dr_loader, d_callback) = Self::setup_debug(&entry, &instance);
 
+        // This *must* be done before we create our device
+        #[cfg(feature = "aftermath")]
+        let aftermath = Aftermath::initialize().expect("Could not enable Nvidia Aftermath SDK");
+
         Self {
             loader: entry,
             inst: instance,
             debug_loader: dr_loader,
             debug_callback: d_callback,
+            #[cfg(feature = "aftermath")]
+            aftermath: aftermath,
         }
     }
 }

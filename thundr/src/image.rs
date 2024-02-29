@@ -2,7 +2,6 @@
 // graphics.
 //
 // Austin Shafer - 2020
-#![allow(dead_code)]
 extern crate ash;
 extern crate lluvia as ll;
 extern crate nix;
@@ -157,7 +156,6 @@ impl Drop for ImageVk {
 /// Images must be created from the global thundr instance. All
 /// images must be destroyed before the instance can be.
 pub(crate) struct ImageInternal {
-    i_rend: Arc<Mutex<Renderer>>,
     /// This id is the index of this image in Thundr's image list (th_image_list).
     pub i_id: ll::Entity,
     i_general_layout: bool,
@@ -167,28 +165,7 @@ pub(crate) struct ImageInternal {
     i_resolution: vk::Extent2D,
 }
 
-impl ImageInternal {
-    /// Gets a copy of the image's damage, if it has one.
-    ///
-    /// Note: potentially expensive copy
-    pub fn get_damage(&self) -> Option<Damage> {
-        if let Some(d) = self.i_rend.lock().unwrap().r_image_damage.get(&self.i_id) {
-            Some((*d).clone())
-        } else {
-            None
-        }
-    }
-}
-
 impl Image {
-    pub(crate) fn get_view(&self) -> vk::ImageView {
-        let internal = self.i_internal.write().unwrap();
-        let rend = internal.i_rend.lock().unwrap();
-
-        let image_vk = rend.r_image_vk.get(&internal.i_id).unwrap();
-        return image_vk.iv_image_view;
-    }
-
     pub fn get_size(&self) -> (u32, u32) {
         let internal = self.i_internal.read().unwrap();
         (internal.i_resolution.width, internal.i_resolution.height)
@@ -203,24 +180,22 @@ impl Image {
     /// Attach damage to this surface. Damage is specified in surface-coordinates.
     pub fn set_damage(&mut self, x: i32, y: i32, width: i32, height: i32) {
         let internal = self.i_internal.write().unwrap();
-        let mut rend = internal.i_rend.lock().unwrap();
         // Check if damage is initialized. If it isn't create a new one.
         // If it is, add the damage to the existing list
         let new_rect = Rect::new(x, y, width, height);
-        if let Some(mut d) = rend.r_image_damage.get_mut(&internal.i_id) {
+        if let Some(mut d) = self.i_image_damage.get_mut(&internal.i_id) {
             d.add(&new_rect);
             return;
         }
 
-        rend.r_image_damage
+        self.i_image_damage
             .set(&internal.i_id, Damage::new(vec![new_rect]));
     }
 
     pub fn reset_damage(&mut self, damage: Damage) {
         let internal = self.i_internal.write().unwrap();
-        let mut rend = internal.i_rend.lock().unwrap();
 
-        rend.r_image_damage.set(&internal.i_id, damage);
+        self.i_image_damage.set(&internal.i_id, damage);
         // TODO: clip to image size
     }
 
@@ -231,17 +206,19 @@ impl Image {
     }
 
     /// Removes any damage from this image.
-    pub fn clear_damage(&self) {
+    pub fn clear_damage(&mut self) {
         let internal = self.i_internal.write().unwrap();
-        let mut rend = internal.i_rend.lock().unwrap();
 
-        rend.r_image_damage.take(&internal.i_id);
+        self.i_image_damage.take(&internal.i_id);
     }
 }
 
 #[derive(Clone)]
 pub struct Image {
     pub(crate) i_internal: Arc<RwLock<ImageInternal>>,
+
+    /// From Thundr.th_image_ecs
+    pub(crate) i_image_damage: ll::Component<Damage>,
 }
 
 impl PartialEq for Image {
@@ -381,6 +358,7 @@ impl Renderer {
     pub fn create_image_from_bits(
         &mut self,
         rend_mtx: Arc<Mutex<Renderer>>,
+        image_damage: ll::Component<Damage>,
         data: &[u8],
         width: u32,
         height: u32,
@@ -410,6 +388,7 @@ impl Renderer {
 
             return self.create_image_common(
                 rend_mtx,
+                image_damage,
                 ImagePrivate::MemImage,
                 &tex_res,
                 image,
@@ -598,6 +577,7 @@ impl Renderer {
     pub fn create_image_from_dmabuf(
         &mut self,
         rend_mtx: Arc<Mutex<Renderer>>,
+        image_damage: ll::Component<Damage>,
         dmabuf: &Dmabuf,
         release: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
@@ -695,6 +675,7 @@ impl Renderer {
 
             return self.create_image_common(
                 rend_mtx,
+                image_damage,
                 ImagePrivate::Dmabuf(dmabuf_priv),
                 &vk::Extent2D {
                     width: dmabuf.db_width as u32,
@@ -743,6 +724,7 @@ impl Renderer {
     fn create_image_common(
         &mut self,
         rend_mtx: Arc<Mutex<Renderer>>,
+        image_damage: ll::Component<Damage>,
         private: ImagePrivate,
         res: &vk::Extent2D,
         image: vk::Image,
@@ -760,7 +742,6 @@ impl Renderer {
         };
 
         let internal = ImageInternal {
-            i_rend: rend_mtx,
             i_id: self.r_image_ecs.add_entity(),
             i_general_layout: false,
             i_priv: private,
@@ -775,6 +756,7 @@ impl Renderer {
 
         return Some(Image {
             i_internal: Arc::new(RwLock::new(internal)),
+            i_image_damage: image_damage,
         });
     }
 
