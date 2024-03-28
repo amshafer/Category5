@@ -5,9 +5,12 @@
 //
 // Austin Shafer - 2024
 
+use ash::extensions::khr;
 use ash::vk;
+use lluvia as ll;
 
 extern crate utils as cat5_utils;
+use crate::image::ImageVk;
 use crate::instance::Instance;
 use crate::platform::VKDeviceFeatures;
 use crate::{CreateInfo, Damage, Result, ThundrError};
@@ -27,13 +30,22 @@ pub struct Device {
     /// the physical device selected to display to
     pub(crate) pdev: vk::PhysicalDevice,
     pub(crate) mem_props: vk::PhysicalDeviceMemoryProperties,
-
-    d_internal: Arc<RwLock<DeviceInternal>>,
+    /// needed for VkGetMemoryFdPropertiesKHR
+    pub(crate) external_mem_fd_loader: khr::ExternalMemoryFd,
+    /// Externally synchronized and mutable state
+    pub(crate) d_internal: Arc<RwLock<DeviceInternal>>,
+    /// This is a per-image backing resource that is resident on this Device
+    pub d_image_vk: ll::Component<ImageVk>,
 }
 
 /// This is the set of per-device data that needs to be "externally synchronized"
-/// according to Vulkan.
+/// according to Vulkan. Also contains any mutable state.
 pub struct DeviceInternal {
+    /// The graphics queue families in use by Renderers created for
+    /// this device. These can't actually live here since they are
+    /// determined by Displays driven by Renderers, and at Device
+    /// creation we don't know what those Display's surfaces will support.
+    pub(crate) graphics_queue_families: Vec<u32>,
     /// queue for copy operations
     pub(crate) transfer_queue: vk::Queue,
 
@@ -182,6 +194,23 @@ impl Device {
             .expect("Could not find a suitable queue family")
     }
 
+    /// Register a graphics queue family for this Device.
+    ///
+    /// This is used by Renderer to declare that a specific queue is being
+    /// used so the Device knows to synchronize against it
+    pub fn register_graphics_queue_family(&self, family: u32) {
+        let mut internal = self.d_internal.write().unwrap();
+
+        if internal
+            .graphics_queue_families
+            .iter()
+            .position(|&f| f == family)
+            .is_none()
+        {
+            internal.graphics_queue_families.push(family);
+        }
+    }
+
     /// Choose a vkPhysicalDevice and queue family index.
     ///
     /// selects a physical device and a queue family
@@ -208,7 +237,11 @@ impl Device {
     ///
     /// This creates a new device for the default chosen physical device
     /// in the Instance.
-    pub fn new(instance: Arc<Instance>, info: &CreateInfo) -> Result<Self> {
+    pub fn new(
+        instance: Arc<Instance>,
+        img_ecs: &mut ll::Instance,
+        info: &CreateInfo,
+    ) -> Result<Self> {
         let pdev = Self::select_pdev(&instance.inst);
 
         let transfer_queue_family =
@@ -227,6 +260,7 @@ impl Device {
         );
 
         let transfer_queue = unsafe { dev.get_device_queue(transfer_queue_family, 0) };
+        let ext_mem_loader = khr::ExternalMemoryFd::new(&instance.inst, &dev);
 
         // Make a fence which will be signalled after
         // copies are completed
@@ -244,7 +278,9 @@ impl Device {
             dev_features: dev_features,
             pdev: pdev,
             mem_props: mem_props,
+            external_mem_fd_loader: ext_mem_loader,
             d_internal: Arc::new(RwLock::new(DeviceInternal {
+                graphics_queue_families: Vec::new(),
                 copy_cmd_pool: vk::CommandPool::null(),
                 copy_cbuf: vk::CommandBuffer::null(),
                 copy_cbuf_fence: copy_fence,
@@ -253,6 +289,7 @@ impl Device {
                 transfer_mem: vk::DeviceMemory::null(),
                 transfer_buf_len: 0,
             })),
+            d_image_vk: img_ecs.add_component(),
         };
 
         {
@@ -950,11 +987,7 @@ impl Device {
     /// In order to use a dmabuf VkImage we need to transition it to the foreign
     /// queue. This gives the driver a chance to perform any residency operations
     /// or format conversions.
-    pub(crate) fn acquire_dmabuf_image_from_external_queue(
-        &self,
-        image: vk::Image,
-        queue_family: u32,
-    ) {
+    pub(crate) fn acquire_dmabuf_image_from_external_queue(&self, image: vk::Image) {
         self.wait_for_copy();
 
         let int_lock = self.d_internal.clone();
@@ -968,35 +1001,98 @@ impl Device {
             vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
         );
 
-        let acquire_barrier = vk::ImageMemoryBarrier::builder()
-            .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
-            .dst_queue_family_index(queue_family)
-            .image(image)
-            .old_layout(vk::ImageLayout::UNDEFINED)
-            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .src_access_mask(vk::AccessFlags::empty())
-            .dst_access_mask(vk::AccessFlags::SHADER_READ)
-            .subresource_range(
-                vk::ImageSubresourceRange::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .layer_count(1)
-                    .level_count(1)
-                    .build(),
-            )
-            .build();
+        // Acquire the dmabuf for each queue family
+        for queue_family in internal.graphics_queue_families.iter() {
+            let acquire_barrier = vk::ImageMemoryBarrier::builder()
+                .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
+                .dst_queue_family_index(*queue_family)
+                .image(image)
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .src_access_mask(vk::AccessFlags::empty())
+                .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                .subresource_range(
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .layer_count(1)
+                        .level_count(1)
+                        .build(),
+                )
+                .build();
 
-        unsafe {
-            self.dev.cmd_pipeline_barrier(
-                internal.copy_cbuf,
-                vk::PipelineStageFlags::TOP_OF_PIPE, // src
-                vk::PipelineStageFlags::FRAGMENT_SHADER
-                    | vk::PipelineStageFlags::VERTEX_SHADER
-                    | vk::PipelineStageFlags::COMPUTE_SHADER, // dst
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[acquire_barrier],
-            );
+            unsafe {
+                self.dev.cmd_pipeline_barrier(
+                    internal.copy_cbuf,
+                    vk::PipelineStageFlags::TOP_OF_PIPE, // src
+                    vk::PipelineStageFlags::FRAGMENT_SHADER
+                        | vk::PipelineStageFlags::VERTEX_SHADER
+                        | vk::PipelineStageFlags::COMPUTE_SHADER, // dst
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[acquire_barrier],
+                );
+            }
+        }
+
+        self.cbuf_end_recording(internal.copy_cbuf);
+        self.cbuf_submit_async(
+            internal.copy_cbuf,
+            internal.transfer_queue,
+            &[], // wait_stages
+            &[], // wait_semas
+            &[], // signal_semas
+            internal.copy_cbuf_fence,
+        );
+    }
+
+    /// Release a dmabuf VkImage
+    ///
+    /// This transfers ownership of the dmabuf memory out of vulkan
+    pub(crate) fn release_dmabuf_image_from_external_queue(&self, image: vk::Image) {
+        self.wait_for_copy();
+
+        let int_lock = self.d_internal.clone();
+        let internal = int_lock.write().unwrap();
+
+        unsafe { self.dev.reset_fences(&[internal.copy_cbuf_fence]).unwrap() };
+
+        // now perform the copy
+        self.cbuf_begin_recording(
+            internal.copy_cbuf,
+            vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+        );
+
+        // Acquire the dmabuf for each queue family
+        for queue_family in internal.graphics_queue_families.iter() {
+            let release_barrier = vk::ImageMemoryBarrier::builder()
+                .src_queue_family_index(*queue_family)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
+                .image(image)
+                .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .new_layout(vk::ImageLayout::GENERAL)
+                .src_access_mask(vk::AccessFlags::SHADER_READ)
+                .dst_access_mask(vk::AccessFlags::empty())
+                .subresource_range(
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .layer_count(1)
+                        .level_count(1)
+                        .build(),
+                )
+                .build();
+
+            unsafe {
+                self.dev.cmd_pipeline_barrier(
+                    internal.copy_cbuf,
+                    vk::PipelineStageFlags::ALL_GRAPHICS, // src
+                    vk::PipelineStageFlags::BOTTOM_OF_PIPE, // dst
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[release_barrier],
+                );
+            }
         }
 
         self.cbuf_end_recording(internal.copy_cbuf);

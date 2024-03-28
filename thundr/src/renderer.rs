@@ -16,7 +16,6 @@ use ash::vk;
 
 use crate::descpool::DescPool;
 use crate::display::Display;
-use crate::image::ImageVk;
 use crate::instance::Instance;
 use crate::list::SurfaceList;
 use crate::pipelines::PipelineType;
@@ -116,8 +115,6 @@ pub struct Renderer {
     /// This fence coordinates draw call reuse. It will be signaled
     /// when submitting the draw calls to the queue has finished
     pub(crate) submit_fence: vk::Fence,
-    /// needed for VkGetMemoryFdPropertiesKHR
-    pub(crate) external_mem_fd_loader: khr::ExternalMemoryFd,
     /// The pending release list
     /// This is the set of wayland resources used last frame
     /// for rendering that should now be released
@@ -159,13 +156,9 @@ pub struct Renderer {
     tmp_image_view: vk::ImageView,
     tmp_image_mem: vk::DeviceMemory,
 
-    /// Memory barriers.
-    pub r_barriers: VkBarriers,
-
     // We keep this around to ensure the image array isn't empty
     r_null_image: ll::Entity,
     pub r_image_ecs: ll::Instance,
-    pub r_image_vk: ll::Component<ImageVk>,
     pub r_image_infos: ll::NonSparseComponent<vk::DescriptorImageInfo>,
 
     /// Identical to the parent Thundr struct's session
@@ -632,14 +625,13 @@ impl Renderer {
     /// The goal is to have this make dealing with the api less wordy.
     pub fn new(
         instance: Arc<Instance>,
+        dev: Arc<Device>,
         info: &CreateInfo,
         ecs: &mut ll::Instance,
         mut img_ecs: ll::Instance,
         pass_comp: ll::Component<usize>,
     ) -> Result<(Renderer, Display)> {
         unsafe {
-            let dev = Arc::new(Device::new(instance.clone(), info)?);
-
             // Our display is in charge of choosing a medium to draw on,
             // and will create a surface on that medium
             let mut display = Display::new(info, dev.clone());
@@ -666,6 +658,7 @@ impl Renderer {
                 display.d_surface,
                 vk::QueueFlags::GRAPHICS,
             );
+            dev.register_graphics_queue_family(graphics_queue_family);
             let present_queue = dev.dev.get_device_queue(graphics_queue_family, 0);
 
             let swapchain_loader = khr::Swapchain::new(&instance.inst, &dev.dev);
@@ -700,8 +693,6 @@ impl Renderer {
                     None,
                 )
                 .expect("Could not create fence");
-
-            let ext_mem_loader = khr::ExternalMemoryFd::new(&instance.inst, &dev.dev);
 
             let damage_regs = std::iter::repeat(Vec::new()).take(images.len()).collect();
 
@@ -751,16 +742,13 @@ impl Renderer {
             // Create the window list component
             let win_comp = ecs.add_component();
 
-            // Add our vulkan resource ECS entry
-            let img_vk_comp = img_ecs.add_component();
-
             // Create the image vk info component
             // We have deleted this image, but it's invalid to pass a
             // NULL VkImageView as a descriptor. Instead we will populate
             // it with our "null"/"tmp" image, which is just a black square
             let null_sampler = sampler;
             let null_view = tmp_view;
-            let mut img_info_comp = img_ecs.add_non_sparse_component(move || {
+            let img_info_comp = img_ecs.add_non_sparse_component(move || {
                 vk::DescriptorImageInfo::builder()
                     .sampler(null_sampler)
                     .image_view(null_view)
@@ -803,7 +791,6 @@ impl Renderer {
                 present_sema: present_sema,
                 render_sema: render_sema,
                 submit_fence: fence,
-                external_mem_fd_loader: ext_mem_loader,
                 r_release: Vec::new(),
                 desc_pool: descpool,
                 draw_call_submitted: false,
@@ -821,13 +808,8 @@ impl Renderer {
                 tmp_image: tmp,
                 tmp_image_view: tmp_view,
                 tmp_image_mem: tmp_mem,
-                r_barriers: VkBarriers {
-                    r_acquire_barriers: Vec::new(),
-                    r_release_barriers: Vec::new(),
-                },
                 r_null_image: null_image,
                 r_image_ecs: img_ecs,
-                r_image_vk: img_vk_comp,
                 r_image_infos: img_info_comp,
                 r_surface_pass: pass_comp,
             };
@@ -908,7 +890,7 @@ impl Renderer {
         // parent surface(s), and give us the offset from which we should start
         // doing our calculations. Basically off_x is the parent surfaces X position.
         let surf = surf_rc.s_internal.read().unwrap();
-        let opaque_reg = match surf_rc.get_opaque(self) {
+        let opaque_reg = match surf_rc.get_opaque(&self.dev) {
             Some(r) => r,
             // If no opaque data was attached, place a -1 in the start.x component
             // to tell the shader to ignore this
@@ -1086,7 +1068,7 @@ impl Renderer {
         for surf_rc in surfaces.iter_mut() {
             // add the new damage to the list of damages
             // If the surface does not have damage attached, then don't generate tiles
-            if let Some(damage) = surf_rc.get_global_damage(self) {
+            if let Some(damage) = surf_rc.get_global_damage(&self.dev) {
                 self.aggregate_damage(&damage);
             }
 

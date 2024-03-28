@@ -863,7 +863,7 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     /// The `set` method must be called before this can be used, or else the
     /// value of the entity for this property cannot be determined and None
     /// will be returned.
-    pub fn get_mut(&mut self, entity: &Entity) -> Option<TableRefMut<T, C>> {
+    pub fn get_mut(&self, entity: &Entity) -> Option<TableRefMut<T, C>> {
         if !self.c_inst.id_is_valid(entity) {
             return None;
         }
@@ -887,7 +887,7 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     /// This is the first thing that should be called when populating a value for
     /// the entity. This will set the initial value, which can then be modified
     /// with `get_mut`
-    pub fn set(&mut self, entity: &Entity, val: T) {
+    pub fn set(&self, entity: &Entity, val: T) {
         assert!(self.c_inst.id_is_valid(entity));
 
         // First clear the existing value. We do this first to avoid having the
@@ -905,7 +905,7 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     ///
     /// This will set the value of this component only if `val` is
     /// `Some()`. This helps avoid boilerplate Option handling.
-    pub fn set_opt(&mut self, entity: &Entity, val: Option<T>) {
+    pub fn set_opt(&self, entity: &Entity, val: Option<T>) {
         match val {
             Some(v) => self.set(entity, v),
             None => {
@@ -919,7 +919,7 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     /// This is the opposite of `set`. It will unset the value of the component for this
     /// entity and will return the value that was stored there. The component entry will
     /// be undefined after this.
-    pub fn take(&mut self, entity: &Entity) -> Option<T> {
+    pub fn take(&self, entity: &Entity) -> Option<T> {
         assert!(self.c_inst.id_is_valid(entity));
 
         self.c_modified
@@ -1122,12 +1122,12 @@ impl<T: Clone + 'static> Snapshot<T> {
         self.s_ids.get(entity).is_some()
     }
     /// record that we updated this entity in the snapshot
-    fn mark_entity(&mut self, entity: &Entity) {
+    fn mark_entity(&self, entity: &Entity) {
         self.assert_alive();
         self.s_ids.set(&entity, entity.clone());
     }
 
-    fn ensure_value(&mut self, entity: &Entity) {
+    fn ensure_value(&self, entity: &Entity) {
         // If we haven't yet set this id in this snapshot then
         // try to grab it from the parent
         if self.s_ids.get(entity).is_none() {
@@ -1217,21 +1217,21 @@ impl<T: Clone + 'static> Snapshot<T> {
     }
 
     /// Get a mutable reference to data corresponding to the (component, entity) pair
-    pub fn get_mut(&mut self, entity: &Entity) -> Option<TableRefMut<T, VecContainer<T>>> {
+    pub fn get_mut(&self, entity: &Entity) -> Option<TableRefMut<T, VecContainer<T>>> {
         self.ensure_value(entity);
 
         self.s_data.get_mut(entity)
     }
 
     /// Set the value of an entity for the component corresponding to this session
-    pub fn set(&mut self, entity: &Entity, val: T) {
+    pub fn set(&self, entity: &Entity, val: T) {
         self.mark_entity(entity);
 
         self.s_data.set(entity, val);
     }
 
     /// Take a value out of the component table
-    pub fn take(&mut self, entity: &Entity) -> Option<T> {
+    pub fn take(&self, entity: &Entity) -> Option<T> {
         self.ensure_value(entity);
 
         self.s_data.take(entity)

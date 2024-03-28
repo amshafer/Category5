@@ -7,8 +7,7 @@
 // Austin Shafer - 2020
 #![allow(dead_code)]
 extern crate nix;
-use crate::renderer::Renderer;
-use crate::{Damage, Result, ThundrError};
+use crate::{Damage, Device, Result, ThundrError};
 use lluvia as ll;
 
 use super::image::Image;
@@ -81,11 +80,11 @@ impl SurfaceInternal {
     }
 
     /// adjusts from image-coords to surface-coords.
-    pub fn get_opaque(&self, rend: &Renderer) -> Option<Rect<i32>> {
+    pub fn get_opaque(&self, dev: &Arc<Device>) -> Option<Rect<i32>> {
         if let Some(image_rc) = self.s_image.as_ref() {
             let image = image_rc.i_internal.read().unwrap();
             if let Some(opaque) = image.i_opaque.as_ref() {
-                let image_vk = rend.r_image_vk.get(&image.i_id).unwrap();
+                let image_vk = dev.d_image_vk.get(&image.i_id).unwrap();
                 // We need to scale from the image size to the
                 // size of this particular surface
                 let scale = (
@@ -248,13 +247,13 @@ impl Surface {
         surf.s_color = Some(color);
     }
 
-    pub fn get_opaque(&self, rend: &Renderer) -> Option<Rect<i32>> {
+    pub fn get_opaque(&self, dev: &Arc<Device>) -> Option<Rect<i32>> {
         let surf = self.s_internal.read().unwrap();
-        return surf.get_opaque(rend);
+        return surf.get_opaque(dev);
     }
 
     /// Gets damage. Returned values are in surface coordinates.
-    pub(crate) fn get_surf_damage(&mut self, rend: &Renderer) -> Option<Damage> {
+    pub(crate) fn get_surf_damage(&mut self, dev: &Arc<Device>) -> Option<Damage> {
         let mut surf = self.s_internal.write().unwrap();
         let mut ret = Damage::empty();
         let surf_extent = Rect::new(
@@ -268,7 +267,7 @@ impl Surface {
         if let Some(image_rc) = surf.s_image.as_ref() {
             let image = image_rc.i_internal.read().unwrap();
             if let Some(damage) = image_rc.i_image_damage.get(&image.i_id) {
-                let image_vk = rend.r_image_vk.get(&image.i_id).unwrap();
+                let image_vk = dev.d_image_vk.get(&image.i_id).unwrap();
                 // We need to scale the damage from the image size to the
                 // size of this particular surface
                 let scale = (
@@ -314,8 +313,8 @@ impl Surface {
 
     /// This gets the surface damage and offsets it into the
     /// screen coordinate space.
-    pub fn get_global_damage(&mut self, rend: &Renderer) -> Option<Damage> {
-        let mut ret = self.get_surf_damage(rend);
+    pub fn get_global_damage(&mut self, dev: &Arc<Device>) -> Option<Damage> {
+        let mut ret = self.get_surf_damage(dev);
         let surf = self.s_internal.write().unwrap();
 
         if let Some(surf_damage) = ret.as_mut() {
@@ -332,7 +331,7 @@ impl Surface {
     /// This is used for getting the total amount of damage that the image should be
     /// updated by. It's a union of the unchanged image damage and the screen
     /// damage mapped on the image dimensions.
-    pub(crate) fn get_image_damage(&mut self, rend: &Renderer) -> Option<Damage> {
+    pub(crate) fn get_image_damage(&mut self, dev: &Arc<Device>) -> Option<Damage> {
         let mut surf = self.s_internal.write().unwrap();
         let surf_damage = surf.s_surf_damage.take();
         let mut ret = Damage::empty();
@@ -340,7 +339,7 @@ impl Surface {
         // First add up the damage from the buffer
         if let Some(image_rc) = surf.s_image.as_ref() {
             let image = image_rc.i_internal.read().unwrap();
-            let image_vk = rend.r_image_vk.get(&image.i_id).unwrap();
+            let image_vk = dev.d_image_vk.get(&image.i_id).unwrap();
 
             let image_extent = Rect::new(
                 0,

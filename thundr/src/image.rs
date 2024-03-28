@@ -7,7 +7,8 @@ extern crate lluvia as ll;
 extern crate nix;
 
 use super::device::Device;
-use super::renderer::Renderer;
+use crate::Thundr;
+use crate::{Damage, Droppable};
 use utils::log;
 use utils::region::Rect;
 
@@ -15,13 +16,11 @@ use std::fmt;
 use std::ops::Drop;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::OwnedFd;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 use ash::vk;
 use nix::fcntl::{fcntl, FcntlArg};
 use nix::Error;
-
-use crate::{Damage, Droppable};
 
 // For now we only support one format.
 // According to the mesa source, this supports all modifiers.
@@ -93,7 +92,9 @@ impl Dmabuf {
 /// the VkImage and other resources that we need to drop once they
 /// are unreffed in the renderer.
 pub struct ImageVk {
-    iv_rend: Arc<Mutex<Renderer>>,
+    iv_dev: Arc<Device>,
+    /// Is this ImageVk backed by external dmabuf memory
+    iv_is_dmabuf: bool,
     /// image containing the contents of the window.
     pub iv_image: vk::Image,
     pub iv_image_view: vk::ImageView,
@@ -105,15 +106,21 @@ pub struct ImageVk {
 }
 
 impl ImageVk {
-    pub fn cleanup(&mut self, rend: &mut Renderer) {
+    pub fn clear(&mut self) {
+        // Now that we are done with this vulkan image, release ownership
+        // of it.
+        self.iv_dev
+            .release_dmabuf_image_from_external_queue(self.iv_image);
+
         unsafe {
-            rend.dev.dev.destroy_image(self.iv_image, None);
-            rend.dev.dev.destroy_image_view(self.iv_image_view, None);
-            rend.dev.free_memory(self.iv_image_mem);
+            self.iv_dev.dev.destroy_image(self.iv_image, None);
+            self.iv_dev.dev.destroy_image_view(self.iv_image_view, None);
+            self.iv_dev.free_memory(self.iv_image_mem);
         }
 
         *self = Self {
-            iv_rend: self.iv_rend.clone(),
+            iv_dev: self.iv_dev.clone(),
+            iv_is_dmabuf: false,
             iv_image: vk::Image::null(),
             iv_image_view: vk::ImageView::null(),
             iv_image_mem: vk::DeviceMemory::null(),
@@ -135,15 +142,10 @@ impl Drop for ImageVk {
             return;
         }
 
-        let rend = self.iv_rend.lock().unwrap();
-        rend.wait_for_prev_submit();
+        self.iv_dev.wait_for_copy();
         log::debug!("Deleting image view {:?}", self.iv_image_view);
 
-        unsafe {
-            rend.dev.dev.destroy_image(self.iv_image, None);
-            rend.dev.dev.destroy_image_view(self.iv_image_view, None);
-            rend.dev.free_memory(self.iv_image_mem);
-        }
+        self.clear();
     }
 }
 
@@ -158,7 +160,6 @@ impl Drop for ImageVk {
 pub(crate) struct ImageInternal {
     /// This id is the index of this image in Thundr's image list (th_image_list).
     pub i_id: ll::Entity,
-    i_general_layout: bool,
     /// specific to the type of image
     i_priv: ImagePrivate,
     pub i_opaque: Option<Rect<i32>>,
@@ -271,13 +272,13 @@ struct DmabufPrivate {
     dp_memtype_index: u32,
 }
 
-impl Renderer {
+impl Device {
     /// Helper that unifies the call for allocating a bgra image
-    unsafe fn alloc_bgra8_image(
+    fn alloc_bgra8_image(
         &self,
         resolution: &vk::Extent2D,
     ) -> (vk::Image, vk::ImageView, vk::DeviceMemory) {
-        self.dev.create_image(
+        self.create_image(
             resolution,
             TARGET_FORMAT,
             vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
@@ -291,7 +292,7 @@ impl Renderer {
 
     /// Update an existing image from a shm buffer
     pub fn update_image_from_bits(
-        &mut self,
+        &self,
         image: &Image,
         data: &[u8],
         width: u32,
@@ -300,7 +301,7 @@ impl Renderer {
         damage: Option<Damage>,
         release: Option<Box<dyn Droppable + Send + Sync>>,
     ) {
-        self.wait_for_prev_submit();
+        self.wait_for_copy();
 
         {
             let mut image_internal = image.i_internal.write().unwrap();
@@ -311,9 +312,9 @@ impl Renderer {
             if width == resolution.width && height == resolution.height {
                 // Get our vk image here, we can copy it since we know we are in
                 // the Renderer Mutex, so nobody else should be updating this entry
-                let vkimage = self.r_image_vk.get_mut(&imgvk_id).unwrap().iv_image;
+                let vkimage = self.d_image_vk.get_mut(&imgvk_id).unwrap().iv_image;
 
-                self.dev.update_image_contents_from_damaged_data(
+                self.update_image_contents_from_damaged_data(
                     vkimage, data, width, height, stride, damage,
                 );
                 return;
@@ -326,18 +327,13 @@ impl Renderer {
                 height: height,
             };
 
-            let (image, view, img_mem) = unsafe { self.alloc_bgra8_image(&new_size) };
+            let (image, view, img_mem) = self.alloc_bgra8_image(&new_size);
             let _old_release = {
-                let mut image_vk = self.r_image_vk.get_mut(&imgvk_id).unwrap();
-                unsafe {
-                    self.dev.dev.destroy_image(image_vk.iv_image, None);
-                    self.dev
-                        .dev
-                        .destroy_image_view(image_vk.iv_image_view, None);
-                    self.dev.dev.free_memory(image_vk.iv_image_mem, None);
-                }
+                let mut image_vk = self.d_image_vk.get_mut(&imgvk_id).unwrap();
+                image_vk.clear();
 
                 image_vk.iv_image = image;
+                image_vk.iv_is_dmabuf = false;
                 image_vk.iv_image_view = view;
                 image_vk.iv_image_mem = img_mem;
                 image_vk.iv_image_resolution = new_size;
@@ -347,55 +343,7 @@ impl Renderer {
                 ret
             };
 
-            self.dev
-                .update_image_from_data(image, data, width, height, stride);
-        }
-
-        self.update_image_vk_info(image.i_internal.read().as_ref().unwrap());
-    }
-
-    /// Create a new image from a shm buffer
-    pub fn create_image_from_bits(
-        &mut self,
-        rend_mtx: Arc<Mutex<Renderer>>,
-        image_damage: ll::Component<Damage>,
-        data: &[u8],
-        width: u32,
-        height: u32,
-        stride: u32,
-        release: Option<Box<dyn Droppable + Send + Sync>>,
-    ) -> Option<Image> {
-        unsafe {
-            let tex_res = vk::Extent2D {
-                width: width,
-                height: height,
-            };
-
-            log::debug!("create_image_from_bits: Image {}x{}", width, height,);
-
-            //log::error!(
-            //    "create_image_from_bits: Image {}x{} checksum {}",
-            //    img.width,
-            //    img.height,
-            //    img.checksum()
-            //);
-
-            // This image will back the contents of the on-screen client window.
-            let (image, view, img_mem) = self.alloc_bgra8_image(&tex_res);
-
-            self.dev
-                .update_image_from_data(image, data, width, height, stride);
-
-            return self.create_image_common(
-                rend_mtx,
-                image_damage,
-                ImagePrivate::MemImage,
-                &tex_res,
-                image,
-                img_mem,
-                view,
-                release,
-            );
+            self.update_image_from_data(image, data, width, height, stride);
         }
     }
 
@@ -426,8 +374,8 @@ impl Renderer {
         return None;
     }
 
-    unsafe fn create_dmabuf_image(
-        &mut self,
+    fn create_dmabuf_image(
+        &self,
         dmabuf: &Dmabuf,
         dmabuf_priv: &mut DmabufPrivate,
     ) -> Result<(vk::Image, vk::ImageView, vk::DeviceMemory), Error> {
@@ -471,31 +419,29 @@ impl Renderer {
             .build();
         ext_mem_info.p_next = &drm_create_info as *const _ as *mut std::ffi::c_void;
         image_info.p_next = &ext_mem_info as *const _ as *mut std::ffi::c_void;
-        let image = self.dev.dev.create_image(&image_info, None).unwrap();
+        let image = unsafe { self.dev.create_image(&image_info, None).unwrap() };
 
         // Update the private tracker with memory info
         // -------------------------------------------------------
         // supported types we can import as
-        let dmabuf_type_bits = self
-            .external_mem_fd_loader
-            .get_memory_fd_properties(
-                vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT,
-                plane.db_fd.as_raw_fd(),
-            )
-            .expect("Could not get memory fd properties")
-            // bitmask set for each supported memory type
-            .memory_type_bits;
+        let dmabuf_type_bits = unsafe {
+            self.external_mem_fd_loader
+                .get_memory_fd_properties(
+                    vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT,
+                    plane.db_fd.as_raw_fd(),
+                )
+                .expect("Could not get memory fd properties")
+                // bitmask set for each supported memory type
+                .memory_type_bits
+        };
         // we need to find a memory type that matches the type our
         // new image needs
-        dmabuf_priv.dp_mem_reqs = self.dev.dev.get_image_memory_requirements(image);
-        let mem_props = Device::get_pdev_mem_properties(&self.dev.inst.inst, self.dev.pdev);
+        dmabuf_priv.dp_mem_reqs = unsafe { self.dev.get_image_memory_requirements(image) };
+        let mem_props = Device::get_pdev_mem_properties(&self.inst.inst, self.pdev);
 
-        dmabuf_priv.dp_memtype_index = Renderer::find_memtype_for_dmabuf(
-            dmabuf_type_bits,
-            &mem_props,
-            &dmabuf_priv.dp_mem_reqs,
-        )
-        .expect("Could not find a memtype for the dmabuf");
+        dmabuf_priv.dp_memtype_index =
+            Self::find_memtype_for_dmabuf(dmabuf_type_bits, &mem_props, &dmabuf_priv.dp_mem_reqs)
+                .expect("Could not find a memtype for the dmabuf");
 
         //
         // -------------------------------------------------------
@@ -510,7 +456,8 @@ impl Renderer {
         // instead of allocating it.
         let mut alloc_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(dmabuf_priv.dp_mem_reqs.size)
-            .memory_type_index(dmabuf_priv.dp_memtype_index);
+            .memory_type_index(dmabuf_priv.dp_memtype_index)
+            .build();
 
         // Since we are VERY async/threading friendly here, it is
         // possible that the fd may be bad since the program that
@@ -537,72 +484,115 @@ impl Renderer {
         alloc_info.p_next = &import_fd_info as *const _ as *const std::ffi::c_void;
 
         // perform the import
-        let image_memory = self.dev.dev.allocate_memory(&alloc_info, None).unwrap();
-        self.dev
-            .dev
-            .bind_image_memory(image, image_memory, 0)
-            .expect("Unable to bind device memory to image");
+        unsafe {
+            let image_memory = self.dev.allocate_memory(&alloc_info, None).unwrap();
+            self.dev
+                .bind_image_memory(image, image_memory, 0)
+                .expect("Unable to bind device memory to image");
 
-        // finally make a view to wrap the image
-        let view_info = vk::ImageViewCreateInfo::builder()
-            .subresource_range(
-                vk::ImageSubresourceRange::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .level_count(1)
-                    .layer_count(1)
-                    .build(),
-            )
-            .image(image)
-            .format(image_info.format)
-            .view_type(vk::ImageViewType::TYPE_2D);
+            // finally make a view to wrap the image
+            let view_info = vk::ImageViewCreateInfo::builder()
+                .subresource_range(
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .level_count(1)
+                        .layer_count(1)
+                        .build(),
+                )
+                .image(image)
+                .format(image_info.format)
+                .view_type(vk::ImageViewType::TYPE_2D);
 
-        let view = self.dev.dev.create_image_view(&view_info, None).unwrap();
+            let view = self.dev.create_image_view(&view_info, None).unwrap();
 
-        self.dev
-            .acquire_dmabuf_image_from_external_queue(image, self.graphics_queue_family);
+            self.acquire_dmabuf_image_from_external_queue(image);
 
-        log::debug!(
-            "Created Vulkan image {:?} from dmabuf {}",
+            log::debug!(
+                "Created Vulkan image {:?} from dmabuf {}",
+                image,
+                plane.db_fd.as_raw_fd(),
+            );
+            Ok((image, view, image_memory))
+        }
+    }
+}
+
+impl Thundr {
+    /// create_image_from_bits
+    ///
+    /// A stride of zero implies tightly packed data
+    pub fn create_image_from_bits(
+        &mut self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32,
+        release_info: Option<Box<dyn Droppable + Send + Sync>>,
+    ) -> Option<Image> {
+        let tex_res = vk::Extent2D {
+            width: width,
+            height: height,
+        };
+
+        log::debug!("create_image_from_bits: Image {}x{}", width, height,);
+
+        //log::error!(
+        //    "create_image_from_bits: Image {}x{} checksum {}",
+        //    img.width,
+        //    img.height,
+        //    img.checksum()
+        //);
+
+        // This image will back the contents of the on-screen client window.
+        let (image, view, img_mem) = self.th_dev.alloc_bgra8_image(&tex_res);
+
+        self.th_dev
+            .update_image_from_data(image, data, width, height, stride);
+
+        return self.create_image_common(
+            self.th_image_damage.clone(),
+            ImagePrivate::MemImage,
+            &tex_res,
             image,
-            plane.db_fd.as_raw_fd(),
+            img_mem,
+            view,
+            false,
+            release_info,
         );
-        Ok((image, view, image_memory))
     }
 
-    /// Create a new image from a dmabuf
+    /// create_image_from_dmabuf
     ///
     /// This is used during the first update of window
     /// contents on an app. It will import the dmabuf
     /// and create an image/view pair representing it.
     pub fn create_image_from_dmabuf(
         &mut self,
-        rend_mtx: Arc<Mutex<Renderer>>,
-        image_damage: ll::Component<Damage>,
         dmabuf: &Dmabuf,
-        release: Option<Box<dyn Droppable + Send + Sync>>,
+        release_info: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
-        self.wait_for_prev_submit();
+        self.th_dev.wait_for_copy();
 
         log::debug!("Updating new image with dmabuf {:?}", dmabuf);
         // A lot of this is duplicated from Renderer::create_image
-        unsafe {
-            // Check validity of dmabuf format and print info
-            // -------------------------------------------------------
-            // TODO: multiplanar support
-            let plane = &dmabuf.db_planes[0];
+        // Check validity of dmabuf format and print info
+        // -------------------------------------------------------
+        // TODO: multiplanar support
+        let plane = &dmabuf.db_planes[0];
 
-            #[cfg(debug_assertions)]
-            {
-                use std::iter;
+        #[cfg(debug_assertions)]
+        {
+            use std::iter;
 
-                // get_physical_device_format_properties2
-                let mut format_props = vk::FormatProperties2::builder().build();
-                let mut drm_fmt_props = vk::DrmFormatModifierPropertiesListEXT::builder().build();
-                format_props.p_next = &drm_fmt_props as *const _ as *mut std::ffi::c_void;
+            // get_physical_device_format_properties2
+            let mut format_props = vk::FormatProperties2::builder().build();
+            let mut drm_fmt_props = vk::DrmFormatModifierPropertiesListEXT::builder().build();
+            format_props.p_next = &drm_fmt_props as *const _ as *mut std::ffi::c_void;
 
-                // get the number of drm format mods props
-                self.inst.inst.get_physical_device_format_properties2(
-                    self.dev.pdev,
+            // get the number of drm format mods props
+            unsafe {
+                self.th_inst.inst.get_physical_device_format_properties2(
+                    self.th_dev.pdev,
                     TARGET_FORMAT,
                     &mut format_props,
                 );
@@ -611,8 +601,8 @@ impl Renderer {
                     .collect();
 
                 drm_fmt_props.p_drm_format_modifier_properties = mods.as_mut_ptr();
-                self.inst.inst.get_physical_device_format_properties2(
-                    self.dev.pdev,
+                self.th_inst.inst.get_physical_device_format_properties2(
+                    self.th_dev.pdev,
                     TARGET_FORMAT,
                     &mut format_props,
                 );
@@ -621,80 +611,90 @@ impl Renderer {
                     log::debug!("dmabuf {} found mod {:#?}", plane.db_fd.as_raw_fd(), m);
                 }
             }
+        }
 
-            // the parameters to use for image creation
-            let mut img_fmt_info = vk::PhysicalDeviceImageFormatInfo2::builder()
-                .format(TARGET_FORMAT)
-                .ty(vk::ImageType::TYPE_2D)
-                .usage(vk::ImageUsageFlags::SAMPLED)
-                .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
-                .flags(vk::ImageCreateFlags::empty())
-                .build();
-            let drm_img_props = vk::PhysicalDeviceImageDrmFormatModifierInfoEXT::builder()
-                .drm_format_modifier(plane.db_mods)
-                .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                .queue_family_indices(&[self.graphics_queue_family])
-                .build();
-            img_fmt_info.p_next = &drm_img_props as *const _ as *mut std::ffi::c_void;
-            // the returned properties
-            // the dimensions of the image will be returned here
-            let mut img_fmt_props = vk::ImageFormatProperties2::builder().build();
-            self.inst
+        // the parameters to use for image creation
+        let mut img_fmt_info = vk::PhysicalDeviceImageFormatInfo2::builder()
+            .format(TARGET_FORMAT)
+            .ty(vk::ImageType::TYPE_2D)
+            .usage(vk::ImageUsageFlags::SAMPLED)
+            .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
+            .flags(vk::ImageCreateFlags::empty())
+            .build();
+        let drm_img_props = vk::PhysicalDeviceImageDrmFormatModifierInfoEXT::builder()
+            .drm_format_modifier(plane.db_mods)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .queue_family_indices(
+                self.th_dev
+                    .d_internal
+                    .read()
+                    .unwrap()
+                    .graphics_queue_families
+                    .as_slice(),
+            )
+            .build();
+        img_fmt_info.p_next = &drm_img_props as *const _ as *mut std::ffi::c_void;
+        // the returned properties
+        // the dimensions of the image will be returned here
+        let mut img_fmt_props = vk::ImageFormatProperties2::builder().build();
+        unsafe {
+            self.th_inst
                 .inst
                 .get_physical_device_image_format_properties2(
-                    self.dev.pdev,
+                    self.th_dev.pdev,
                     &img_fmt_info,
                     &mut img_fmt_props,
                 )
                 .unwrap();
-            // -------------------------------------------------------
-            log::debug!(
-                "dmabuf {} image format properties {:#?} {:#?}",
-                plane.db_fd.as_raw_fd(),
-                img_fmt_props,
-                drm_img_props
-            );
-
-            // Make Dmabuf private struct
-            // -------------------------------------------------------
-            // This will be updated by create_dmabuf_image
-            let mut dmabuf_priv = DmabufPrivate {
-                dp_mem_reqs: vk::MemoryRequirements::builder().build(),
-                dp_memtype_index: 0,
-            };
-            // Import the dmabuf
-            // -------------------------------------------------------
-            let (image, view, image_memory) =
-                match self.create_dmabuf_image(&dmabuf, &mut dmabuf_priv) {
-                    Ok((i, v, im)) => (i, v, im),
-                    Err(_e) => {
-                        log::debug!("Could not update dmabuf image: {:?}", _e);
-                        return None;
-                    }
-                };
-
-            return self.create_image_common(
-                rend_mtx,
-                image_damage,
-                ImagePrivate::Dmabuf(dmabuf_priv),
-                &vk::Extent2D {
-                    width: dmabuf.db_width as u32,
-                    height: dmabuf.db_height as u32,
-                },
-                image,
-                image_memory,
-                view,
-                release,
-            );
         }
+        // -------------------------------------------------------
+        log::debug!(
+            "dmabuf {} image format properties {:#?} {:#?}",
+            plane.db_fd.as_raw_fd(),
+            img_fmt_props,
+            drm_img_props
+        );
+
+        // Make Dmabuf private struct
+        // -------------------------------------------------------
+        // This will be updated by create_dmabuf_image
+        let mut dmabuf_priv = DmabufPrivate {
+            dp_mem_reqs: vk::MemoryRequirements::builder().build(),
+            dp_memtype_index: 0,
+        };
+        // Import the dmabuf
+        // -------------------------------------------------------
+        let (image, view, image_memory) =
+            match self.th_dev.create_dmabuf_image(&dmabuf, &mut dmabuf_priv) {
+                Ok((i, v, im)) => (i, v, im),
+                Err(_e) => {
+                    log::debug!("Could not update dmabuf image: {:?}", _e);
+                    return None;
+                }
+            };
+
+        return self.create_image_common(
+            self.th_image_damage.clone(),
+            ImagePrivate::Dmabuf(dmabuf_priv),
+            &vk::Extent2D {
+                width: dmabuf.db_width as u32,
+                height: dmabuf.db_height as u32,
+            },
+            image,
+            image_memory,
+            view,
+            true,
+            release_info,
+        );
     }
 
     /// Update the `VkDescriptorImageInfo` entry in the image ECS for the renderer
     ///
     /// This updates the descriptor info we pass to Vulkan describing our images.
-    fn update_image_vk_info(&mut self, internal: &ImageInternal) {
+    pub(crate) fn update_image_vk_info(&mut self, internal: &ImageInternal) {
         let view = self
-            .r_image_vk
+            .th_dev
+            .d_image_vk
             .get(&internal.i_id)
             .as_ref()
             .unwrap()
@@ -705,15 +705,14 @@ impl Renderer {
             internal.i_id.get_raw_id(),
             view
         );
-        self.r_image_infos.set(
-            &internal.i_id,
-            vk::DescriptorImageInfo::builder()
-                .sampler(self.image_sampler)
-                // The image view could have been recreated and this would be stale
-                .image_view(view)
-                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .build(),
-        );
+        let rend = self.th_rend.lock().unwrap();
+        let desc_info = vk::DescriptorImageInfo::builder()
+            .sampler(rend.image_sampler)
+            // The image view could have been recreated and this would be stale
+            .image_view(view)
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .build();
+        rend.r_image_infos.set(&internal.i_id, desc_info);
     }
 
     /// Create a image
@@ -723,17 +722,18 @@ impl Renderer {
     /// descriptors and constructs the image struct
     fn create_image_common(
         &mut self,
-        rend_mtx: Arc<Mutex<Renderer>>,
         image_damage: ll::Component<Damage>,
         private: ImagePrivate,
         res: &vk::Extent2D,
         image: vk::Image,
         image_mem: vk::DeviceMemory,
         view: vk::ImageView,
+        is_dmabuf: bool,
         release: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
         let image_vk = ImageVk {
-            iv_rend: rend_mtx.clone(),
+            iv_dev: self.th_dev.clone(),
+            iv_is_dmabuf: is_dmabuf,
             iv_image: image,
             iv_image_view: view,
             iv_image_mem: image_mem,
@@ -742,15 +742,14 @@ impl Renderer {
         };
 
         let internal = ImageInternal {
-            i_id: self.r_image_ecs.add_entity(),
-            i_general_layout: false,
+            i_id: self.th_image_ecs.add_entity(),
             i_priv: private,
             i_opaque: None,
             i_resolution: *res,
         };
 
         // Add our vulkan resources to the ECS
-        self.r_image_vk.set(&internal.i_id, image_vk);
+        self.th_dev.d_image_vk.set(&internal.i_id, image_vk);
 
         self.update_image_vk_info(&internal);
 
@@ -758,86 +757,5 @@ impl Renderer {
             i_internal: Arc::new(RwLock::new(internal)),
             i_image_damage: image_damage,
         });
-    }
-
-    /// Add a Cmd full of image barriers for all images that need it.
-    /// This should be called before cbuf_end_recording in the renderer's
-    /// big cbuf.
-    pub unsafe fn add_image_barriers_for_dmabuf_images(
-        &mut self,
-        cbuf: vk::CommandBuffer,
-        images: &[Image],
-    ) {
-        self.r_barriers.r_acquire_barriers.clear();
-        self.r_barriers.r_release_barriers.clear();
-
-        for img_rc in images.iter() {
-            let mut img = img_rc.i_internal.write().unwrap();
-            let image_vk = self.r_image_vk.get_mut(&img.i_id).unwrap();
-
-            let src_layout = match img.i_general_layout {
-                true => vk::ImageLayout::GENERAL,
-                false => vk::ImageLayout::UNDEFINED,
-            };
-            img.i_general_layout = true;
-
-            self.r_barriers.r_acquire_barriers.push(
-                vk::ImageMemoryBarrier::builder()
-                    .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
-                    .dst_queue_family_index(self.graphics_queue_family)
-                    .image(image_vk.iv_image)
-                    .old_layout(src_layout)
-                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .src_access_mask(vk::AccessFlags::empty())
-                    .dst_access_mask(vk::AccessFlags::SHADER_READ)
-                    .subresource_range(
-                        vk::ImageSubresourceRange::builder()
-                            .aspect_mask(vk::ImageAspectFlags::COLOR)
-                            .layer_count(1)
-                            .level_count(1)
-                            .build(),
-                    )
-                    .build(),
-            );
-            self.dev.dev.cmd_pipeline_barrier(
-                cbuf,
-                vk::PipelineStageFlags::TOP_OF_PIPE, // src
-                vk::PipelineStageFlags::FRAGMENT_SHADER
-                    | vk::PipelineStageFlags::VERTEX_SHADER
-                    | vk::PipelineStageFlags::COMPUTE_SHADER, // dst
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                self.r_barriers.r_acquire_barriers.as_slice(),
-            );
-
-            self.r_barriers.r_release_barriers.push(
-                vk::ImageMemoryBarrier::builder()
-                    .src_queue_family_index(self.graphics_queue_family)
-                    .dst_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
-                    .image(image_vk.iv_image)
-                    .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .new_layout(vk::ImageLayout::GENERAL)
-                    .src_access_mask(vk::AccessFlags::SHADER_READ)
-                    .dst_access_mask(vk::AccessFlags::empty())
-                    .subresource_range(
-                        vk::ImageSubresourceRange::builder()
-                            .aspect_mask(vk::ImageAspectFlags::COLOR)
-                            .layer_count(1)
-                            .level_count(1)
-                            .build(),
-                    )
-                    .build(),
-            );
-            self.dev.dev.cmd_pipeline_barrier(
-                cbuf,
-                vk::PipelineStageFlags::ALL_GRAPHICS | vk::PipelineStageFlags::COMPUTE_SHADER, // src
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE, // dst
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                self.r_barriers.r_release_barriers.as_slice(),
-            );
-        }
     }
 }

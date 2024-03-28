@@ -143,6 +143,10 @@ pub enum ThundrError {
 }
 
 pub struct Thundr {
+    /// The vulkan Instance
+    th_inst: Arc<Instance>,
+    /// Our primary device
+    th_dev: Arc<Device>,
     /// Our core rendering resources
     ///
     /// This holds the majority of the vulkan objects, and allows them
@@ -320,17 +324,18 @@ impl Thundr {
     pub fn new(info: &CreateInfo) -> Result<Thundr> {
         let mut ecs = ll::Instance::new();
         let pass_comp = ecs.add_component();
-
-        let inst = Arc::new(Instance::new(&info));
-
         // Create our own ECS for the image resources
         let mut img_ecs = ll::Instance::new();
+
+        let inst = Arc::new(Instance::new(&info));
+        let dev = Arc::new(Device::new(inst.clone(), &mut img_ecs, info)?);
 
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
         let (mut rend, mut display) = Renderer::new(
             inst.clone(),
-            &info,
+            dev.clone(),
+            info,
             &mut ecs,
             img_ecs.clone(),
             pass_comp.clone(),
@@ -351,6 +356,8 @@ impl Thundr {
         let img_damage_comp = img_ecs.add_component();
 
         Ok(Thundr {
+            th_inst: inst,
+            th_dev: dev,
             th_rend: Arc::new(Mutex::new(rend)),
             th_display: display,
             th_ecs_inst: ecs,
@@ -378,31 +385,6 @@ impl Thundr {
         )
     }
 
-    /// create_image_from_bits
-    ///
-    /// A stride of zero implies tightly packed data
-    pub fn create_image_from_bits(
-        &mut self,
-        data: &[u8],
-        width: u32,
-        height: u32,
-        stride: u32,
-        release_info: Option<Box<dyn Droppable + Send + Sync>>,
-    ) -> Option<Image> {
-        let rend_mtx = self.th_rend.clone();
-        let mut rend = self.th_rend.lock().unwrap();
-
-        rend.create_image_from_bits(
-            rend_mtx,
-            self.th_image_damage.clone(),
-            data,
-            width,
-            height,
-            stride,
-            release_info,
-        )
-    }
-
     /// Update an existing image from a shm buffer
     pub fn update_image_from_bits(
         &mut self,
@@ -414,21 +396,10 @@ impl Thundr {
         damage: Option<Damage>,
         release: Option<Box<dyn Droppable + Send + Sync>>,
     ) {
-        let mut rend = self.th_rend.lock().unwrap();
+        self.th_dev
+            .update_image_from_bits(image, data, width, height, stride, damage, release);
 
-        rend.update_image_from_bits(image, data, width, height, stride, damage, release)
-    }
-
-    /// create_image_from_dmabuf
-    pub fn create_image_from_dmabuf(
-        &mut self,
-        dmabuf: &Dmabuf,
-        release_info: Option<Box<dyn Droppable + Send + Sync>>,
-    ) -> Option<Image> {
-        let rend_mtx = self.th_rend.clone();
-        let mut rend = self.th_rend.lock().unwrap();
-
-        rend.create_image_from_dmabuf(rend_mtx, self.th_image_damage.clone(), dmabuf, release_info)
+        self.update_image_vk_info(image.i_internal.read().as_ref().unwrap());
     }
 
     /// This gets damage in image-coords.
@@ -437,8 +408,7 @@ impl Thundr {
     /// updated by. It's a union of the unchanged image damage and the screen
     /// damage mapped on the image dimensions.
     pub fn get_image_damage(&mut self, surf: &mut Surface) -> Option<Damage> {
-        let mut rend = self.th_rend.lock().unwrap();
-        surf.get_image_damage(&mut *rend)
+        surf.get_image_damage(&self.th_dev)
     }
 
     /// Creates a new surface.
@@ -510,7 +480,7 @@ impl Thundr {
     }
 
     pub fn get_drm_dev(&self) -> (i64, i64) {
-        self.th_rend.lock().unwrap().dev.get_drm_dev()
+        self.th_dev.get_drm_dev()
     }
 
     /// Flushes all surface updates to the GPU
@@ -671,7 +641,7 @@ impl Thundr {
             }
             let rend = self.th_rend.lock().unwrap();
 
-            if rend.dev.dev_features.vkc_supports_incremental_present {
+            if self.th_dev.dev_features.vkc_supports_incremental_present {
                 log::debug!("Damaged vkPresentRegions:");
                 log::debug!("--------------------------------");
                 for (i, pr) in rend.current_damage.iter().enumerate() {
