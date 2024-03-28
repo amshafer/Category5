@@ -176,10 +176,10 @@ pub struct Renderer {
     /// We keep a list of all the images allocated by this context
     /// so that Pipeline::draw doesn't have to dedup the surfacelist's images
     pub r_image_ecs: ll::Instance,
+    pub r_image_damage: ll::Component<Damage>,
     // We keep this around to ensure the image array isn't empty
     r_null_image: ll::Entity,
     pub r_image_vk: ll::Component<ImageVk>,
-    pub r_image_damage: ll::Component<Damage>,
     pub r_image_infos: ll::NonSparseComponent<vk::DescriptorImageInfo>,
 
     /// Identical to the parent Thundr struct's session

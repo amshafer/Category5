@@ -106,15 +106,15 @@ pub struct ImageVk {
 }
 
 impl ImageVk {
-    pub fn cleanup(&mut self, rend: &mut Renderer) {
+    pub fn cleanup(&mut self) {
         unsafe {
-            rend.dev.dev.destroy_image(self.iv_image, None);
-            rend.dev.dev.destroy_image_view(self.iv_image_view, None);
-            rend.dev.free_memory(self.iv_image_mem);
+            self.i_dev.dev.destroy_image(self.iv_image, None);
+            self.i_dev.dev.destroy_image_view(self.iv_image_view, None);
+            self.i_dev.free_memory(self.iv_image_mem);
         }
 
         *self = Self {
-            iv_rend: self.iv_rend.clone(),
+            iv_rend: self.i_dev.clone(),
             iv_image: vk::Image::null(),
             iv_image_view: vk::ImageView::null(),
             iv_image_mem: vk::DeviceMemory::null(),
@@ -136,14 +136,13 @@ impl Drop for ImageVk {
             return;
         }
 
-        let rend = self.iv_rend.lock().unwrap();
-        rend.wait_for_prev_submit();
+        self.i_dev.wait_for_copy();
         log::debug!("Deleting image view {:?}", self.iv_image_view);
 
         unsafe {
-            rend.dev.dev.destroy_image(self.iv_image, None);
-            rend.dev.dev.destroy_image_view(self.iv_image_view, None);
-            rend.dev.free_memory(self.iv_image_mem);
+            self.i_dev.dev.destroy_image(self.iv_image, None);
+            self.i_dev.dev.destroy_image_view(self.iv_image_view, None);
+            self.i_dev.free_memory(self.iv_image_mem);
         }
     }
 }
@@ -157,7 +156,9 @@ impl Drop for ImageVk {
 /// Images must be created from the global thundr instance. All
 /// images must be destroyed before the instance can be.
 pub(crate) struct ImageInternal {
-    i_rend: Arc<Mutex<Renderer>>,
+    /// The Device this Image is resident on
+    /// TODO: Make this multidevice?
+    i_dev: Arc<Device>,
     /// This id is the index of this image in Thundr's image list (th_image_list).
     pub i_id: ll::Entity,
     i_general_layout: bool,
@@ -172,7 +173,7 @@ impl ImageInternal {
     ///
     /// Note: potentially expensive copy
     pub fn get_damage(&self) -> Option<Damage> {
-        if let Some(d) = self.i_rend.lock().unwrap().r_image_damage.get(&self.i_id) {
+        if let Some(d) = self.i_dev.lock().unwrap().r_image_damage.get(&self.i_id) {
             Some((*d).clone())
         } else {
             None
@@ -183,9 +184,8 @@ impl ImageInternal {
 impl Image {
     pub(crate) fn get_view(&self) -> vk::ImageView {
         let internal = self.i_internal.write().unwrap();
-        let rend = internal.i_rend.lock().unwrap();
 
-        let image_vk = rend.r_image_vk.get(&internal.i_id).unwrap();
+        let image_vk = self.i_dev.d_image_vk.get(&internal.i_id).unwrap();
         return image_vk.iv_image_view;
     }
 
@@ -203,22 +203,22 @@ impl Image {
     /// Attach damage to this surface. Damage is specified in surface-coordinates.
     pub fn set_damage(&mut self, x: i32, y: i32, width: i32, height: i32) {
         let internal = self.i_internal.write().unwrap();
-        let mut rend = internal.i_rend.lock().unwrap();
         // Check if damage is initialized. If it isn't create a new one.
         // If it is, add the damage to the existing list
         let new_rect = Rect::new(x, y, width, height);
-        if let Some(mut d) = rend.r_image_damage.get_mut(&internal.i_id) {
+        if let Some(mut d) = self.i_dev.d_image_damage.get_mut(&internal.i_id) {
             d.add(&new_rect);
             return;
         }
 
-        rend.r_image_damage
+        self.i_dev
+            .d_image_damage
             .set(&internal.i_id, Damage::new(vec![new_rect]));
     }
 
     pub fn reset_damage(&mut self, damage: Damage) {
         let internal = self.i_internal.write().unwrap();
-        let mut rend = internal.i_rend.lock().unwrap();
+        let mut rend = internal.i_dev.lock().unwrap();
 
         rend.r_image_damage.set(&internal.i_id, damage);
         // TODO: clip to image size
@@ -233,7 +233,7 @@ impl Image {
     /// Removes any damage from this image.
     pub fn clear_damage(&self) {
         let internal = self.i_internal.write().unwrap();
-        let mut rend = internal.i_rend.lock().unwrap();
+        let mut rend = internal.i_dev.lock().unwrap();
 
         rend.r_image_damage.take(&internal.i_id);
     }
@@ -294,13 +294,13 @@ struct DmabufPrivate {
     dp_memtype_index: u32,
 }
 
-impl Renderer {
+impl Device {
     /// Helper that unifies the call for allocating a bgra image
-    unsafe fn alloc_bgra8_image(
+    fn alloc_bgra8_image(
         &self,
         resolution: &vk::Extent2D,
     ) -> (vk::Image, vk::ImageView, vk::DeviceMemory) {
-        self.dev.create_image(
+        self.create_image(
             resolution,
             TARGET_FORMAT,
             vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
@@ -323,7 +323,7 @@ impl Renderer {
         damage: Option<Damage>,
         release: Option<Box<dyn Droppable + Send + Sync>>,
     ) {
-        self.wait_for_prev_submit();
+        self.wait_for_copy();
 
         {
             let mut image_internal = image.i_internal.write().unwrap();
@@ -601,7 +601,7 @@ impl Renderer {
         dmabuf: &Dmabuf,
         release: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
-        self.wait_for_prev_submit();
+        self.wait_for_copy();
 
         log::debug!("Updating new image with dmabuf {:?}", dmabuf);
         // A lot of this is duplicated from Renderer::create_image
@@ -742,7 +742,7 @@ impl Renderer {
     /// descriptors and constructs the image struct
     fn create_image_common(
         &mut self,
-        rend_mtx: Arc<Mutex<Renderer>>,
+        dev: Arc<Device>,
         private: ImagePrivate,
         res: &vk::Extent2D,
         image: vk::Image,
@@ -760,7 +760,7 @@ impl Renderer {
         };
 
         let internal = ImageInternal {
-            i_rend: rend_mtx,
+            i_dev: dev,
             i_id: self.r_image_ecs.add_entity(),
             i_general_layout: false,
             i_priv: private,
