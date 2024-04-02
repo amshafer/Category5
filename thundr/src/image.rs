@@ -107,10 +107,13 @@ pub struct ImageVk {
 
 impl ImageVk {
     pub fn clear(&mut self) {
-        // Now that we are done with this vulkan image, release ownership
-        // of it.
-        self.iv_dev
-            .release_dmabuf_image_from_external_queue(self.iv_image);
+        if self.iv_is_dmabuf {
+            // Now that we are done with this vulkan image, release ownership
+            // of it.
+            self.iv_dev
+                .release_dmabuf_image_from_external_queue(self.iv_image);
+            self.iv_dev.wait_for_copy();
+        }
 
         unsafe {
             self.iv_dev.dev.destroy_image(self.iv_image, None);
@@ -118,18 +121,16 @@ impl ImageVk {
             self.iv_dev.free_memory(self.iv_image_mem);
         }
 
-        *self = Self {
-            iv_dev: self.iv_dev.clone(),
-            iv_is_dmabuf: false,
-            iv_image: vk::Image::null(),
-            iv_image_view: vk::ImageView::null(),
-            iv_image_mem: vk::DeviceMemory::null(),
-            iv_image_resolution: vk::Extent2D {
-                width: 0,
-                height: 0,
-            },
-            iv_release_info: None,
+        self.iv_dev = self.iv_dev.clone();
+        self.iv_is_dmabuf = false;
+        self.iv_image = vk::Image::null();
+        self.iv_image_view = vk::ImageView::null();
+        self.iv_image_mem = vk::DeviceMemory::null();
+        self.iv_image_resolution = vk::Extent2D {
+            width: 0,
+            height: 0,
         };
+        self.iv_release_info = None;
     }
 }
 
