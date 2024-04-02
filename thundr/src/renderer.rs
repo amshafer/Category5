@@ -4,7 +4,7 @@
 // unsafe/vulkan/ash/etc should be exposed to upper layers
 //
 // Austin Shafer - 2020
-#![allow(dead_code, non_camel_case_types)]
+#![allow(non_camel_case_types)]
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::marker::Copy;
@@ -14,7 +14,6 @@ use std::sync::Arc;
 use ash::extensions::khr;
 use ash::vk;
 
-use crate::descpool::DescPool;
 use crate::display::Display;
 use crate::instance::Instance;
 use crate::list::SurfaceList;
@@ -78,8 +77,6 @@ pub struct Renderer {
     pub(crate) images: Vec<vk::Image>,
     /// One sampler for all swapchain images
     pub(crate) image_sampler: vk::Sampler,
-    /// number of framebuffers (2 is double buffering)
-    pub(crate) fb_count: usize,
     /// views describing how to access the images
     pub(crate) views: Vec<vk::ImageView>,
     /// The age of the swapchain image. This is equal to the number
@@ -96,8 +93,6 @@ pub struct Renderer {
     /// This is the final compiled set of damages for this frame.
     pub(crate) current_damage: Vec<vk::RectLayerKHR>,
 
-    /// Graphics queue family to use. This comes from the Display
-    pub(crate) graphics_queue_family: u32,
     /// processes things to be physically displayed
     pub(crate) r_present_queue: vk::Queue,
     /// pools provide the memory allocated to command buffers
@@ -120,8 +115,6 @@ pub struct Renderer {
     /// for rendering that should now be released
     /// See WindowManger's worker_thread for more
     pub(crate) r_release: Vec<Box<dyn Droppable + Send + Sync>>,
-    /// This is an allocator for the dynamic sets (samplers)
-    pub(crate) desc_pool: DescPool,
 
     /// Has vkQueueSubmit been called.
     pub(crate) draw_call_submitted: bool,
@@ -157,7 +150,7 @@ pub struct Renderer {
     tmp_image_mem: vk::DeviceMemory,
 
     // We keep this around to ensure the image array isn't empty
-    r_null_image: ll::Entity,
+    _r_null_image: ll::Entity,
     pub r_image_ecs: ll::Instance,
     pub r_image_infos: ll::NonSparseComponent<vk::DescriptorImageInfo>,
 
@@ -644,11 +637,6 @@ impl Renderer {
                 panic!("Unsupported pipeline type");
             };
 
-            // Each window is going to have a sampler descriptor for every
-            // framebuffer image. Unfortunately this means the descriptor
-            // count will be runtime dependent.
-            // This is an allocator for those descriptors
-            let descpool = DescPool::create(dev.clone());
             let sampler = dev.create_sampler();
 
             let graphics_queue_family = Display::select_queue_family(
@@ -776,7 +764,6 @@ impl Renderer {
                 swapchain_loader: swapchain_loader,
                 swapchain: swapchain,
                 current_image: 0,
-                fb_count: images.len(),
                 swap_ages: std::iter::repeat(0).take(images.len()).collect(),
                 damage_regions: damage_regs,
                 current_damage: Vec::new(),
@@ -784,7 +771,6 @@ impl Renderer {
                 images: images,
                 image_sampler: sampler,
                 views: image_views,
-                graphics_queue_family: graphics_queue_family,
                 r_present_queue: present_queue,
                 pool: pool,
                 cbufs: buffers,
@@ -792,7 +778,6 @@ impl Renderer {
                 render_sema: render_sema,
                 submit_fence: fence,
                 r_release: Vec::new(),
-                desc_pool: descpool,
                 draw_call_submitted: false,
                 r_pipe_type: pipe_type,
                 r_ecs: ecs.clone(),
@@ -808,7 +793,7 @@ impl Renderer {
                 tmp_image: tmp,
                 tmp_image_view: tmp_view,
                 tmp_image_mem: tmp_mem,
-                r_null_image: null_image,
+                _r_null_image: null_image,
                 r_image_ecs: img_ecs,
                 r_image_infos: img_info_comp,
                 r_surface_pass: pass_comp,
@@ -1120,67 +1105,6 @@ impl Renderer {
             .build();
 
         self.dev.dev.allocate_descriptor_sets(&info).unwrap()
-    }
-
-    /// Update an image sampler descriptor set
-    ///
-    /// This is what actually sets the image that the sampler
-    /// will filter for the shader. The image is referenced
-    /// by the `view` argument.
-    pub(crate) unsafe fn update_sampler_descriptor_set(
-        &self,
-        set: vk::DescriptorSet,
-        binding: u32,
-        element: u32,
-        sampler: vk::Sampler,
-        view: vk::ImageView,
-    ) {
-        let info = vk::DescriptorImageInfo::builder()
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .image_view(view)
-            .sampler(sampler)
-            .build();
-        let write_info = [vk::WriteDescriptorSet::builder()
-            .dst_set(set)
-            .dst_binding(binding)
-            // descriptors can be arrays, so we need to specify an offset
-            // into that array if applicable
-            .dst_array_element(element)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(&[info])
-            .build()];
-
-        self.dev.dev.update_descriptor_sets(
-            &write_info, // descriptor writes
-            &[],         // descriptor copies
-        );
-    }
-
-    /// Create descriptors for the image samplers
-    ///
-    /// Each Image will have a descriptor for each framebuffer,
-    /// since multiple frames will be in flight. This allocates
-    /// `image_count` sampler descriptors.
-    unsafe fn create_sampler_descriptors(
-        &self,
-        pool: vk::DescriptorPool,
-        layout: vk::DescriptorSetLayout,
-        image_count: u32,
-    ) -> (vk::Sampler, Vec<vk::DescriptorSet>) {
-        // One image sampler is going to be used for everything
-        let sampler = self.dev.create_sampler();
-        // A descriptor needs to be created for every swapchaing image
-        // so we can prepare the next frame while the current one is
-        // processing.
-        let mut descriptors = Vec::new();
-
-        for _ in 0..image_count {
-            let set = self.allocate_descriptor_sets(pool, &[layout])[0];
-
-            descriptors.push(set);
-        }
-
-        return (sampler, descriptors);
     }
 
     /// Descriptor flags for the unbounded array of images

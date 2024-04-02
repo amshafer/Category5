@@ -101,15 +101,17 @@ impl Device {
             .enabled_features(&features)
             .build();
 
-        if dev_features.vkc_supports_desc_indexing {
-            let indexing_info = vk::PhysicalDeviceDescriptorIndexingFeaturesEXT::builder()
-                .shader_sampled_image_array_non_uniform_indexing(true)
-                .runtime_descriptor_array(true)
-                .descriptor_binding_variable_descriptor_count(true)
-                .descriptor_binding_partially_bound(true)
-                .descriptor_binding_update_unused_while_pending(true)
-                .build();
+        // Create this outside the check that adds it so it doesn't get freed during
+        // a compiler optimization
+        let indexing_info = vk::PhysicalDeviceDescriptorIndexingFeaturesEXT::builder()
+            .shader_sampled_image_array_non_uniform_indexing(true)
+            .runtime_descriptor_array(true)
+            .descriptor_binding_variable_descriptor_count(true)
+            .descriptor_binding_partially_bound(true)
+            .descriptor_binding_update_unused_while_pending(true)
+            .build();
 
+        if dev_features.vkc_supports_desc_indexing {
             dev_create_info.p_next = &indexing_info as *const _ as *mut std::ffi::c_void;
         }
 
@@ -445,7 +447,8 @@ impl Device {
         let create_info = vk::BufferCreateInfo::builder()
             .size(size)
             .usage(usage)
-            .sharing_mode(mode);
+            .sharing_mode(mode)
+            .build();
 
         let buffer = unsafe { self.dev.create_buffer(&create_info, None).unwrap() };
         let req = unsafe { self.dev.get_buffer_memory_requirements(buffer) };
@@ -637,12 +640,13 @@ impl Device {
         signal_semas: &[vk::Semaphore],
         signal_fence: vk::Fence,
     ) {
+        let command_bufs = &[cbuf];
         // The buffer must have been recorded before we can submit
         // it for execution.
         let submits = [vk::SubmitInfo::builder()
             .wait_semaphores(wait_semas)
             .wait_dst_stage_mask(wait_stages)
-            .command_buffers(&[cbuf])
+            .command_buffers(command_bufs)
             .signal_semaphores(signal_semas)
             .build()];
 

@@ -143,22 +143,24 @@ impl Pass {
             .unwrap();
 
         // Now allocate our descriptor
+        let layouts = &[rend.r_order_desc_layout];
         let info = vk::DescriptorSetAllocateInfo::builder()
             .descriptor_pool(self.p_order_desc_pool)
-            .set_layouts(&[rend.r_order_desc_layout])
+            .set_layouts(layouts)
             .build();
         self.p_order_desc = rend.dev.dev.allocate_descriptor_sets(&info).unwrap()[0];
 
+        let buffer_infos = &[vk::DescriptorBufferInfo::builder()
+            .buffer(self.p_order_buf)
+            .offset(0)
+            .range(vk::WHOLE_SIZE)
+            .build()];
         let write_info = &[vk::WriteDescriptorSet::builder()
             .dst_set(self.p_order_desc)
             .dst_binding(0)
             .dst_array_element(0)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .buffer_info(&[vk::DescriptorBufferInfo::builder()
-                .buffer(self.p_order_buf)
-                .offset(0)
-                .range(vk::WHOLE_SIZE)
-                .build()])
+            .buffer_info(buffer_infos)
             .build()];
         rend.dev.dev.update_descriptor_sets(
             write_info, // descriptor writes

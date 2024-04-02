@@ -17,7 +17,6 @@ use super::Pipeline;
 use crate::display::Display;
 use crate::renderer::{PushConstants, RecordParams, Renderer};
 use crate::{SurfaceList, Viewport};
-
 use utils::log;
 
 // This is the reference data for a normal quad
@@ -531,10 +530,7 @@ impl GeomPipeline {
 
             // now we need to update the descriptor set with the
             // buffer of the uniform constants to use
-            ctx.update_uniform_descriptor_set(
-                rend, buf, ubo, 0, // binding
-                0, // element
-            );
+            ctx.update_uniform_descriptor_set(rend);
             ctx.setup_depth_image(rend);
 
             return ctx;
@@ -956,32 +952,25 @@ impl GeomPipeline {
     /// Update the entry in `set` at offset `element` to use the
     /// values in `buf`. Descriptor sets can be updated outside of
     /// command buffers.
-    unsafe fn update_uniform_descriptor_set(
-        &mut self,
-        rend: &mut Renderer,
-        buf: vk::Buffer,
-        set: vk::DescriptorSet,
-        binding: u32,
-        element: u32,
-    ) {
-        let info = vk::DescriptorBufferInfo::builder()
-            .buffer(buf)
+    unsafe fn update_uniform_descriptor_set(&mut self, rend: &mut Renderer) {
+        let info = &[vk::DescriptorBufferInfo::builder()
+            .buffer(self.uniform_buffer)
             .offset(0)
             .range(mem::size_of::<ShaderConstants>() as u64)
-            .build();
-        let write_info = [vk::WriteDescriptorSet::builder()
-            .dst_set(set)
-            .dst_binding(binding)
+            .build()];
+        let write_info = &[vk::WriteDescriptorSet::builder()
+            .dst_set(self.g_desc)
+            .dst_binding(0)
             // descriptors can be arrays, so we need to specify an offset
             // into that array if applicable
-            .dst_array_element(element)
+            .dst_array_element(0)
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .buffer_info(&[info])
+            .buffer_info(info)
             .build()];
 
         rend.dev.dev.update_descriptor_sets(
-            &write_info, // descriptor writes
-            &[],         // descriptor copies
+            write_info, // descriptor writes
+            &[],        // descriptor copies
         );
     }
 
