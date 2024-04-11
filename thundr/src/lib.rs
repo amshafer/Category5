@@ -391,6 +391,7 @@ impl Thundr {
         damage: Option<Damage>,
         release: Option<Box<dyn Droppable + Send + Sync>>,
     ) {
+        self.th_rend.lock().unwrap().wait_for_prev_submit();
         self.th_dev
             .update_image_from_bits(image, data, width, height, stride, damage, release);
 

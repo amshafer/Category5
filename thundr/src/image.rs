@@ -498,6 +498,7 @@ impl Thundr {
         stride: u32,
         release_info: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
+        self.th_rend.lock().unwrap().wait_for_prev_submit();
         let tex_res = vk::Extent2D {
             width: width,
             height: height,
@@ -539,6 +540,7 @@ impl Thundr {
         dmabuf: &Dmabuf,
         release_info: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
+        self.th_rend.lock().unwrap().wait_for_prev_submit();
         self.th_dev.wait_for_copy();
 
         log::debug!("Updating new image with dmabuf {:?}", dmabuf);
