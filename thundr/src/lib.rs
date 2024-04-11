@@ -171,7 +171,6 @@ pub struct Thundr {
     /// We keep a list of all the images allocated by this context
     /// so that Pipeline::draw doesn't have to dedup the surfacelist's images
     pub th_image_ecs: ll::Instance,
-    pub th_image_damage: ll::Component<Damage>,
 }
 
 /// A region to display to
@@ -352,8 +351,6 @@ impl Thundr {
             return Err(ThundrError::COMPOSITION_TYPE_NOT_SPECIFIED);
         };
 
-        let img_damage_comp = img_ecs.add_component();
-
         Ok(Thundr {
             th_inst: inst,
             th_dev: dev,
@@ -365,7 +362,6 @@ impl Thundr {
             th_pipe: pipe,
             th_params: None,
             th_image_ecs: img_ecs,
-            th_image_damage: img_damage_comp,
         })
     }
 
@@ -399,15 +395,6 @@ impl Thundr {
             .update_image_from_bits(image, data, width, height, stride, damage, release);
 
         self.update_image_vk_info(image.i_internal.read().as_ref().unwrap());
-    }
-
-    /// This gets damage in image-coords.
-    ///
-    /// This is used for getting the total amount of damage that the image should be
-    /// updated by. It's a union of the unchanged image damage and the screen
-    /// damage mapped on the image dimensions.
-    pub fn get_image_damage(&mut self, surf: &mut Surface) -> Option<Damage> {
-        surf.get_image_damage(&self.th_dev)
     }
 
     /// Creates a new surface.
@@ -455,14 +442,6 @@ impl Thundr {
         self.th_rend.lock().unwrap().release_pending_resources();
     }
 
-    /// Helper for removing all surfaces/objects currently loaded
-    ///
-    /// This will totally flush thundr, and reset it back to when it was
-    /// created.
-    pub fn clear_all(&mut self) {
-        self.th_image_damage.clear();
-    }
-
     /// This is a candidate for an out of date error. We should
     /// let the application know about this so it can recalculate anything
     /// that depends on the window size, so we exit returning OOD.
@@ -493,7 +472,6 @@ impl Thundr {
         }
 
         let mut rend = self.th_rend.lock().unwrap();
-        rend.add_damage_for_list(surfaces)?;
 
         // TODO: check and see if the image list has been changed, or if
         // any images have been updated.
@@ -587,8 +565,6 @@ impl Thundr {
 
         self.th_pipe
             .end_record(self.th_rend.lock().unwrap().deref_mut(), params);
-        // Clear damage from all Images
-        self.th_image_damage.clear();
         self.th_params = None;
 
         Ok(())
@@ -639,14 +615,6 @@ impl Thundr {
                 self.print_surface(s, i, 0);
             }
             let rend = self.th_rend.lock().unwrap();
-
-            if self.th_dev.dev_features.vkc_supports_incremental_present {
-                log::debug!("Damaged vkPresentRegions:");
-                log::debug!("--------------------------------");
-                for (i, pr) in rend.current_damage.iter().enumerate() {
-                    log::debug!("[{}] Base={:?}, Size={:?}", i, pr.offset, pr.extent);
-                }
-            }
 
             log::debug!("Window list:");
             for (i, val) in rend.r_windows.iter().enumerate() {

@@ -179,48 +179,16 @@ impl Image {
         self.i_internal.write().unwrap().i_opaque = opaque;
     }
 
-    /// Attach damage to this surface. Damage is specified in surface-coordinates.
-    pub fn set_damage(&mut self, x: i32, y: i32, width: i32, height: i32) {
-        let internal = self.i_internal.write().unwrap();
-        // Check if damage is initialized. If it isn't create a new one.
-        // If it is, add the damage to the existing list
-        let new_rect = Rect::new(x, y, width, height);
-        if let Some(mut d) = self.i_image_damage.get_mut(&internal.i_id) {
-            d.add(&new_rect);
-            return;
-        }
-
-        self.i_image_damage
-            .set(&internal.i_id, Damage::new(vec![new_rect]));
-    }
-
-    pub fn reset_damage(&mut self, damage: Damage) {
-        let internal = self.i_internal.write().unwrap();
-
-        self.i_image_damage.set(&internal.i_id, damage);
-        // TODO: clip to image size
-    }
-
     /// Get the id. This is consumed by the pipelines that need to contruct the descriptor
     /// indexing array.
     pub(crate) fn get_id(&self) -> ll::Entity {
         self.i_internal.read().unwrap().i_id.clone()
-    }
-
-    /// Removes any damage from this image.
-    pub fn clear_damage(&mut self) {
-        let internal = self.i_internal.write().unwrap();
-
-        self.i_image_damage.take(&internal.i_id);
     }
 }
 
 #[derive(Clone)]
 pub struct Image {
     pub(crate) i_internal: Arc<RwLock<ImageInternal>>,
-
-    /// From Thundr.th_image_ecs
-    pub(crate) i_image_damage: ll::Component<Damage>,
 }
 
 impl PartialEq for Image {
@@ -551,7 +519,6 @@ impl Thundr {
             .update_image_from_data(image, data, width, height, stride);
 
         return self.create_image_common(
-            self.th_image_damage.clone(),
             ImagePrivate::MemImage,
             &tex_res,
             image,
@@ -675,7 +642,6 @@ impl Thundr {
             };
 
         return self.create_image_common(
-            self.th_image_damage.clone(),
             ImagePrivate::Dmabuf(dmabuf_priv),
             &vk::Extent2D {
                 width: dmabuf.db_width as u32,
@@ -723,7 +689,6 @@ impl Thundr {
     /// descriptors and constructs the image struct
     fn create_image_common(
         &mut self,
-        image_damage: ll::Component<Damage>,
         private: ImagePrivate,
         res: &vk::Extent2D,
         image: vk::Image,
@@ -756,7 +721,6 @@ impl Thundr {
 
         return Some(Image {
             i_internal: Arc::new(RwLock::new(internal)),
-            i_image_damage: image_damage,
         });
     }
 }

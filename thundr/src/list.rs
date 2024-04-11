@@ -4,8 +4,8 @@
 
 use super::surface::Surface;
 use crate::renderer::{Renderer, WINDOW_LIST_GLSL_OFFSET};
+use crate::Result;
 use crate::Thundr;
-use crate::{Damage, Result};
 use ash::vk;
 use lluvia as ll;
 use std::iter::DoubleEndedIterator;
@@ -174,8 +174,6 @@ pub struct SurfaceList {
     /// This will get cleared during Thundr::draw
     pub(crate) l_changed: bool,
     l_vec: Vec<Surface>,
-    /// List of damage caused by removing/adding surfaces
-    pub(crate) l_damage: Vec<Damage>,
     pub l_pass: Vec<Option<Pass>>,
 }
 
@@ -185,7 +183,6 @@ impl SurfaceList {
             l_rend: thund.th_rend.clone(),
             l_changed: false,
             l_vec: Vec::new(),
-            l_damage: Vec::new(),
             // Always create the "first"/zeroeth render pass
             l_pass: vec![Some(Pass::new(&mut thund.th_rend.lock().unwrap(), 0, 8))],
         }
@@ -242,18 +239,9 @@ impl SurfaceList {
         }
     }
 
-    fn damage_removed_surf(&mut self, mut surf: Surface) {
-        surf.record_damage();
-        match surf.take_surface_damage() {
-            Some(d) => self.l_damage.push(d),
-            None => {}
-        };
-    }
-
     pub fn remove(&mut self, index: usize) {
         self.l_changed = true;
-        let surf = self.l_vec.remove(index);
-        self.damage_removed_surf(surf);
+        self.l_vec.remove(index);
     }
 
     pub fn remove_surface(&mut self, surf: Surface) -> Result<()> {
@@ -272,15 +260,13 @@ impl SurfaceList {
         Ok(())
     }
 
-    pub fn insert(&mut self, order: usize, mut surf: Surface) {
+    pub fn insert(&mut self, order: usize, surf: Surface) {
         self.l_changed = true;
-        surf.record_damage();
         self.l_vec.insert(order, surf);
     }
 
-    pub fn push(&mut self, mut surf: Surface) {
+    pub fn push(&mut self, surf: Surface) {
         self.l_changed = true;
-        surf.record_damage();
         self.l_vec.push(surf);
     }
 
@@ -290,10 +276,6 @@ impl SurfaceList {
     pub fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut Surface> {
         self.l_vec.iter_mut()
     }
-    pub fn damage(&self) -> impl DoubleEndedIterator<Item = &Damage> {
-        self.l_damage.iter()
-    }
-
     fn map_per_surf_recurse<F>(&self, func: &mut F, surf: &Surface, x: i32, y: i32) -> bool
     where
         F: FnMut(&Surface, i32, i32) -> bool,
@@ -326,10 +308,6 @@ impl SurfaceList {
         }
     }
 
-    pub fn clear_damage(&mut self) {
-        self.l_damage.clear();
-    }
-
     pub fn clear_order_buf(&mut self) {
         for p in self.l_pass.iter_mut() {
             if let Some(pass) = p {
@@ -340,14 +318,6 @@ impl SurfaceList {
 
     pub fn clear(&mut self) {
         self.l_changed = true;
-        // Get the damage from all removed surfaces
-        for surf in self.l_vec.iter_mut() {
-            surf.record_damage();
-            match surf.take_surface_damage() {
-                Some(d) => self.l_damage.push(d),
-                None => {}
-            };
-        }
 
         for surf in self.l_vec.iter_mut() {
             surf.remove_all_subsurfaces();

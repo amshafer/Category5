@@ -6,9 +6,7 @@
 // Austin Shafer - 2020
 #![allow(non_camel_case_types)]
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
 use std::marker::Copy;
-use std::os::raw::c_void;
 use std::sync::Arc;
 
 use ash::extensions::khr;
@@ -22,7 +20,7 @@ use crate::platform::VKDeviceFeatures;
 use crate::{Device, Droppable, Surface, Viewport};
 
 extern crate utils as cat5_utils;
-use crate::{CreateInfo, Damage};
+use crate::CreateInfo;
 use crate::{Result, ThundrError};
 use cat5_utils::{log, region::Rect};
 
@@ -79,19 +77,6 @@ pub struct Renderer {
     pub(crate) image_sampler: vk::Sampler,
     /// views describing how to access the images
     pub(crate) views: Vec<vk::ImageView>,
-    /// The age of the swapchain image. This is equal to the number
-    /// of frames it has been since this image was drawn/presented.
-    /// This is indexed by `current_image`.
-    pub(crate) swap_ages: Vec<usize>,
-    /// The lists of regions to pass to vkPresentRegionsKHR. This
-    /// allows us to only present the changed regions. This is calculated
-    /// from the damages present in the `SurfaceList`.
-    pub(crate) damage_regions: VecDeque<Vec<vk::RectLayerKHR>>,
-    /// This is the compiled damage regions from all surfacelists rendered. it
-    /// will be added to global damage sources and placed in current_damage
-    surfacelist_regions: Vec<vk::RectLayerKHR>,
-    /// This is the final compiled set of damages for this frame.
-    pub(crate) current_damage: Vec<vk::RectLayerKHR>,
 
     /// processes things to be physically displayed
     pub(crate) r_present_queue: vk::Queue,
@@ -682,8 +667,6 @@ impl Renderer {
                 )
                 .expect("Could not create fence");
 
-            let damage_regs = std::iter::repeat(Vec::new()).take(images.len()).collect();
-
             // TODO:
             // We need to handle the case where the ISV doesn't support
             // a large enough number of bound samplers. In that case, I guess
@@ -764,10 +747,6 @@ impl Renderer {
                 swapchain_loader: swapchain_loader,
                 swapchain: swapchain,
                 current_image: 0,
-                swap_ages: std::iter::repeat(0).take(images.len()).collect(),
-                damage_regions: damage_regs,
-                current_damage: Vec::new(),
-                surfacelist_regions: Vec::new(),
                 images: images,
                 image_sampler: sampler,
                 views: image_views,
@@ -965,28 +944,6 @@ impl Renderer {
         }
     }
 
-    /// Adds damage to `regions` without modifying the damage
-    fn aggregate_damage(&mut self, damage: &Damage) {
-        for region in damage.regions() {
-            let rect = vk::RectLayerKHR::builder()
-                .offset(
-                    vk::Offset2D::builder()
-                        .x(region.r_pos.0)
-                        .y(region.r_pos.1)
-                        .build(),
-                )
-                .extent(
-                    vk::Extent2D::builder()
-                        .width(region.r_size.0 as u32)
-                        .height(region.r_size.1 as u32)
-                        .build(),
-                )
-                .build();
-
-            self.surfacelist_regions.push(rect);
-        }
-    }
-
     /// Start recording a cbuf for one frame
     ///
     /// Each framebuffer has a set of resources, including command
@@ -996,97 +953,17 @@ impl Renderer {
     /// The frame is not submitted to be drawn until
     /// `begin_frame` is called. `end_recording_one_frame` must be called
     /// before `begin_frame`
-    ///
-    /// This adds to the current_damage that has been set by surface moving
-    /// and mapping.
     pub fn begin_recording_one_frame(&mut self) -> Result<RecordParams> {
         // At least wait for any image copies to complete
         self.dev.wait_for_copy();
         // get the next frame to draw into
         self.get_next_swapchain_image()?;
 
-        // Now combine the first n lists (depending on the current
-        // image's age) into one list for vkPresentRegionsKHR (and `gen_tile_list`)
-        // We need to do this first since popping an entry off damage_regions
-        // would remove one of the regions we need to process.
-        // Using in lets us never go past the end of the array
-        if self.dev.dev_features.vkc_supports_incremental_present {
-            assert!(self.swap_ages[self.current_image as usize] <= self.damage_regions.len());
-            for i in 0..(self.swap_ages[self.current_image as usize]) {
-                self.current_damage.extend(&self.damage_regions[i as usize]);
-            }
-
-            // We need to accumulate a list of damage for the current frame. We are
-            // going to retire the oldest damage lists, and create a new one from
-            // the damages passed to surfaces
-            let mut am_eldest = true;
-            let mut next_oldest = 0;
-            for (i, age) in self.swap_ages.iter().enumerate() {
-                // oldest until proven otherwise
-                if self.swap_ages[i] > self.swap_ages[self.current_image as usize] {
-                    am_eldest = false;
-                }
-                // Get the max age of the other framebuffers
-                if i != self.current_image as usize && *age > next_oldest {
-                    next_oldest = *age;
-                }
-            }
-            if am_eldest {
-                log::debug!(
-                    "I (image {:?}) am the eldest: {:?}",
-                    self.current_image,
-                    self.swap_ages
-                );
-                log::debug!(
-                    "Truncating damage_regions from {:?} to {:?}",
-                    self.damage_regions.len(),
-                    next_oldest
-                );
-                self.damage_regions.truncate(next_oldest);
-            }
-        }
-
         Ok(self.get_recording_parameters())
     }
 
-    pub fn add_damage_for_list(&mut self, surfaces: &mut SurfaceList) -> Result<()> {
-        for surf_rc in surfaces.iter_mut() {
-            // add the new damage to the list of damages
-            // If the surface does not have damage attached, then don't generate tiles
-            if let Some(damage) = surf_rc.get_global_damage(&self.dev) {
-                self.aggregate_damage(&damage);
-            }
-
-            // now we have to consider damage caused by moving the surface
-            //
-            // We don't have to correct the position based on the surface pos
-            // since the damage was already recorded for the surface
-            if let Some(damage) = surf_rc.take_surface_damage() {
-                self.aggregate_damage(&damage);
-            }
-        }
-
-        // Finally we add any damage that the surfacelist has
-        for damage in surfaces.damage() {
-            self.aggregate_damage(damage);
-        }
-        surfaces.clear_damage();
-
-        Ok(())
-    }
-
     /// End a total frame recording
-    ///
-    /// This finalizes any damage and updates the buffer ages
-    pub fn end_recording_one_frame(&mut self) {
-        self.current_damage.extend(&self.surfacelist_regions);
-        let mut regions = Vec::new();
-        std::mem::swap(&mut regions, &mut self.surfacelist_regions);
-        self.damage_regions.push_front(regions);
-
-        // Only update the ages after we have processed them
-        self.update_buffer_ages();
-    }
+    pub fn end_recording_one_frame(&mut self) {}
 
     /// Allocate a descriptor set for each layout in `layouts`
     ///
@@ -1300,17 +1177,6 @@ impl Renderer {
         }
     }
 
-    /// This increments the ages of all buffers, except current_image.
-    /// The current_image is reset to 0 since it is in use.
-    fn update_buffer_ages(&mut self) {
-        for (i, age) in self.swap_ages.iter_mut().enumerate() {
-            if i != self.current_image as usize {
-                *age += 1;
-            }
-        }
-        self.swap_ages[self.current_image as usize] = 0;
-    }
-
     /// Returns true if we are ready to call present
     pub fn frame_submission_complete(&mut self) -> bool {
         match unsafe { self.dev.dev.get_fence_status(self.submit_fence) } {
@@ -1338,24 +1204,10 @@ impl Renderer {
         };
         let swapchains = [self.swapchain];
         let indices = [self.current_image];
-        let mut info = vk::PresentInfoKHR::builder()
+        let info = vk::PresentInfoKHR::builder()
             .wait_semaphores(&wait_semas)
             .swapchains(&swapchains)
             .image_indices(&indices);
-
-        if self.dev.dev_features.vkc_supports_incremental_present {
-            if self.current_damage.len() > 0 {
-                let pres_info = vk::PresentRegionsKHR::builder()
-                    .regions(&[vk::PresentRegionKHR::builder()
-                        .rectangles(self.current_damage.as_slice())
-                        .build()])
-                    .build();
-                info.p_next = &pres_info as *const _ as *const c_void;
-            }
-        }
-        // Now that this frame's damage has been consumed, clear it
-        self.current_damage.clear();
-        self.surfacelist_regions.clear();
 
         unsafe {
             match self

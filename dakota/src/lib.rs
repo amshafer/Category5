@@ -684,26 +684,6 @@ impl Dakota {
         );
     }
 
-    /// Hint that part of this resource has been damaged to the rendering stack
-    ///
-    /// This makes a hint to Thundr that only a portion of this resource is has
-    /// changed compared to the previous one. This should only be used by category5.
-    pub fn damage_resource(&mut self, resource: &DakotaId, damage: Damage) {
-        if let Some(mut image) = self.d_resource_thundr_image.get_mut(resource) {
-            image.reset_damage(damage);
-        }
-    }
-
-    /// Hint that part of this element has been damaged to the rendering stack
-    ///
-    /// This makes a hint to Thundr that only a portion of this element is has
-    /// changed compared during draw update. This should only be used by category5.
-    pub fn damage_element(&mut self, resource: &DakotaId, damage: Damage) {
-        if let Some(mut surf) = self.d_layout_node_surfaces.get_mut(resource) {
-            surf.damage(damage);
-        }
-    }
-
     /// Get the current size of the drawing region for this display
     pub fn get_resolution(&self) -> (u32, u32) {
         self.d_thund.get_resolution()
@@ -1208,35 +1188,6 @@ impl Dakota {
         return parent_viewport;
     }
 
-    fn clear_viewports(&mut self, id: ViewportId) {
-        self.d_viewport_nodes
-            .get_mut(&id)
-            .unwrap()
-            .v_surfaces
-            .clear();
-
-        let num_children = self.d_viewport_nodes.get(&id).unwrap().v_children.len();
-        for i in 0..num_children {
-            let child = self.d_viewport_nodes.get(&id).unwrap().v_children[i].clone();
-            self.clear_viewports(child);
-        }
-    }
-
-    fn clear_thundr_surfaces(&mut self) {
-        if let Some(root) = self.d_root_viewport.clone() {
-            self.clear_viewports(root);
-        }
-    }
-
-    /// This takes care of freeing all of our Thundr Images and such.
-    /// This isn't handled by th::Image::Drop since we have to call
-    /// functions on Thundr to free the image.
-    fn clear_thundr(&mut self) {
-        self.clear_thundr_surfaces();
-        // This destroys all of the images
-        self.d_thund.clear_all();
-    }
-
     /// Helper for creating a thundr surface for only this element
     ///
     /// This does not recurse and create elements for the children.
@@ -1653,7 +1604,6 @@ impl Dakota {
 
         // reset our thundr surface list. If the set of resources has
         // changed, then we should have called clear_thundr to do so by now.
-        self.clear_thundr_surfaces();
         self.d_root_viewport = None;
         self.d_layout_tree_root = None;
 
@@ -1702,7 +1652,6 @@ impl Dakota {
 
     /// Completely flush the thundr surfaces/images and recreate the scene
     pub fn refresh_full(&mut self, dom: &DakotaId) -> Result<()> {
-        self.clear_thundr();
         self.refresh_elements(dom)
             .context("Refreshing element layout")
     }

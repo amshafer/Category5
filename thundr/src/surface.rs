@@ -7,7 +7,7 @@
 // Austin Shafer - 2020
 #![allow(dead_code)]
 extern crate nix;
-use crate::{Damage, Device, Result, ThundrError};
+use crate::{Device, Result, ThundrError};
 use lluvia as ll;
 
 use super::image::Image;
@@ -28,14 +28,6 @@ pub(crate) struct SurfaceInternal {
     /// For rendering a surface as a constant color
     /// This is mutually exclusive to s_image
     pub(crate) s_color: Option<(f32, f32, f32, f32)>,
-    /// Damage caused by moving or altering the surface itself.
-    s_damage: Option<Damage>,
-    /// This is the surface damage that has been attached by clients.
-    /// It differs from s_damage in that it needs to be offset by the surface pos.
-    s_surf_damage: Option<Damage>,
-    /// Was this surface moved/mapped? This signifies if the pipeline needs
-    /// to update its data
-    pub(crate) s_was_damaged: bool,
     /// A list of subsurfaces.
     /// Surfaces may be layered above one another. This allows us to model wayland
     /// subsurfaces. The surfaces here will be drawn in-order on top of the base
@@ -67,9 +59,6 @@ impl SurfaceInternal {
             s_rect: Rect::new(x, y, width, height),
             s_image: None,
             s_color: None,
-            s_damage: None,
-            s_surf_damage: None,
-            s_was_damaged: false,
             s_subsurfaces: Vec::with_capacity(0), // this keeps us from allocating
             s_parent: None,
             // When the surface is first created we don't send its size to
@@ -101,22 +90,6 @@ impl SurfaceInternal {
             }
         }
         return None;
-    }
-
-    fn record_damage(&mut self) {
-        self.s_modified = true;
-        self.s_was_damaged = true;
-        let new_rect = self.s_rect.into();
-
-        if let Some(d) = self.s_damage.as_mut() {
-            d.add(&new_rect);
-        } else {
-            self.s_damage = Some(Damage::new(vec![new_rect]));
-        }
-    }
-
-    fn damage(&mut self, other: Damage) {
-        self.s_surf_damage = Some(other);
     }
 }
 
@@ -176,20 +149,6 @@ impl Surface {
         self.s_internal.write().unwrap().s_modified = modified;
     }
 
-    /// Internally record a damage rectangle for the dimensions
-    /// of this surface.
-    ///
-    /// Methods that alter the surface should be wrapped in two
-    /// calls to this to record their movement.
-    pub(crate) fn record_damage(&mut self) {
-        self.s_internal.write().unwrap().record_damage();
-    }
-
-    /// Thundr clients use this to add *surface* damage.
-    pub fn damage(&mut self, other: Damage) {
-        self.s_internal.write().unwrap().damage(other);
-    }
-
     /// Attaches an image to this surface, when this surface
     /// is drawn the contents will be sample from `image`
     pub fn bind_image(&mut self, image: Image) {
@@ -212,10 +171,8 @@ impl Surface {
         self.set_modified(true);
         let mut surf = self.s_internal.write().unwrap();
         if surf.s_rect.r_pos.0 != x || surf.s_rect.r_pos.1 != y {
-            surf.record_damage();
             surf.s_rect.r_pos.0 = x;
             surf.s_rect.r_pos.1 = y;
-            surf.record_damage();
         }
     }
 
@@ -229,10 +186,8 @@ impl Surface {
         self.set_modified(true);
         let mut surf = self.s_internal.write().unwrap();
         if surf.s_rect.r_size.0 != w || surf.s_rect.r_size.1 != h {
-            surf.record_damage();
             surf.s_rect.r_size.0 = w;
             surf.s_rect.r_size.1 = h;
-            surf.record_damage();
         }
     }
 
@@ -250,138 +205,6 @@ impl Surface {
     pub fn get_opaque(&self, dev: &Arc<Device>) -> Option<Rect<i32>> {
         let surf = self.s_internal.read().unwrap();
         return surf.get_opaque(dev);
-    }
-
-    /// Gets damage. Returned values are in surface coordinates.
-    pub(crate) fn get_surf_damage(&mut self, dev: &Arc<Device>) -> Option<Damage> {
-        let mut surf = self.s_internal.write().unwrap();
-        let mut ret = Damage::empty();
-        let surf_extent = Rect::new(
-            0,
-            0,
-            surf.s_rect.r_size.0 as i32,
-            surf.s_rect.r_size.1 as i32,
-        );
-
-        // First add up the damage from the buffer
-        if let Some(image_rc) = surf.s_image.as_ref() {
-            let image = image_rc.i_internal.read().unwrap();
-            if let Some(damage) = image_rc.i_image_damage.get(&image.i_id) {
-                let image_vk = dev.d_image_vk.get(&image.i_id).unwrap();
-                // We need to scale the damage from the image size to the
-                // size of this particular surface
-                let scale = (
-                    image_vk.iv_image_resolution.width as f32 / surf.s_rect.r_size.0,
-                    image_vk.iv_image_resolution.height as f32 / surf.s_rect.r_size.1,
-                );
-
-                for r in damage.regions() {
-                    // The image region scaled to surface space
-                    let region = Rect::new(
-                        (r.r_pos.0 as f32 / scale.0) as i32,
-                        (r.r_pos.1 as f32 / scale.1) as i32,
-                        (r.r_size.0 as f32 / scale.0) as i32,
-                        (r.r_size.1 as f32 / scale.1) as i32,
-                    );
-
-                    // Here we scale the image damage onto the surface size, and then
-                    // clip it to the max surf extent.
-                    ret.add(&region.clip(&surf_extent));
-                }
-            }
-        }
-
-        // Now add in the surface damage
-        if let Some(damage) = surf.s_surf_damage.take() {
-            for r in damage.regions() {
-                // The image region scaled to surface space
-                let region = Rect::new(
-                    r.r_pos.0 as i32,
-                    r.r_pos.1 as i32,
-                    r.r_size.0 as i32,
-                    r.r_size.1 as i32,
-                );
-                ret.add(&region.clip(&surf_extent));
-            }
-        }
-
-        if ret.is_empty() {
-            return None;
-        }
-        return Some(ret);
-    }
-
-    /// This gets the surface damage and offsets it into the
-    /// screen coordinate space.
-    pub fn get_global_damage(&mut self, dev: &Arc<Device>) -> Option<Damage> {
-        let mut ret = self.get_surf_damage(dev);
-        let surf = self.s_internal.write().unwrap();
-
-        if let Some(surf_damage) = ret.as_mut() {
-            for r in surf_damage.d_regions.iter_mut() {
-                r.r_pos.0 += surf.s_rect.r_pos.0 as i32;
-                r.r_pos.1 += surf.s_rect.r_pos.1 as i32;
-            }
-        }
-        return ret;
-    }
-
-    /// This gets damage in image-coords.
-    ///
-    /// This is used for getting the total amount of damage that the image should be
-    /// updated by. It's a union of the unchanged image damage and the screen
-    /// damage mapped on the image dimensions.
-    pub(crate) fn get_image_damage(&mut self, dev: &Arc<Device>) -> Option<Damage> {
-        let mut surf = self.s_internal.write().unwrap();
-        let surf_damage = surf.s_surf_damage.take();
-        let mut ret = Damage::empty();
-
-        // First add up the damage from the buffer
-        if let Some(image_rc) = surf.s_image.as_ref() {
-            let image = image_rc.i_internal.read().unwrap();
-            let image_vk = dev.d_image_vk.get(&image.i_id).unwrap();
-
-            let image_extent = Rect::new(
-                0,
-                0,
-                image_vk.iv_image_resolution.width as i32,
-                image_vk.iv_image_resolution.height as i32,
-            );
-
-            // We need to scale the damage from the image size to the
-            // size of this particular surface
-            let scale = (
-                surf.s_rect.r_size.0 / image_vk.iv_image_resolution.width as f32,
-                surf.s_rect.r_size.1 / image_vk.iv_image_resolution.height as f32,
-            );
-
-            if let Some(damage) = image_rc.i_image_damage.get(&image.i_id) {
-                ret.union(&damage);
-            }
-
-            // Now add in the surface damage
-            if let Some(damage) = surf_damage {
-                for r in damage.regions() {
-                    // Remap the damage in image-coords, and clamp at the image size
-                    let region = Rect::new(
-                        r.r_pos.0,
-                        r.r_pos.1,
-                        (r.r_size.0 as f32 / scale.0) as i32,
-                        (r.r_size.1 as f32 / scale.0) as i32,
-                    );
-
-                    ret.add(&region.clip(&image_extent));
-                }
-            }
-        }
-
-        if ret.is_empty() {
-            return None;
-        }
-        return Some(ret);
-    }
-    pub(crate) fn take_surface_damage(&self) -> Option<Damage> {
-        self.s_internal.write().unwrap().s_damage.take()
     }
 
     /// This appends `surf` to the end of the subsurface list
