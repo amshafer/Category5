@@ -2,7 +2,7 @@
 // It draws windows as textured quads
 //
 // Austin Shafer - 2020
-#![allow(dead_code, non_camel_case_types)]
+#![allow(non_camel_case_types)]
 
 use cgmath::{Matrix4, Vector2, Vector3};
 
@@ -14,7 +14,7 @@ use std::mem;
 use ash::{util, vk};
 
 use super::Pipeline;
-use crate::display::Display;
+use crate::display::DisplayState;
 use crate::renderer::{PushConstants, RecordParams, Renderer};
 use crate::{SurfaceList, Viewport};
 use utils::log;
@@ -120,7 +120,7 @@ impl Pipeline for GeomPipeline {
     /// Each framebuffer has a set of resources, including command
     /// buffers. This records the cbufs for the framebuffer
     /// specified by `img`.
-    fn begin_record(&mut self, display: &Display, rend: &Renderer, params: &RecordParams) {
+    fn begin_record(&mut self, dstate: &DisplayState, rend: &Renderer, params: &RecordParams) {
         unsafe {
             // we need to clear any existing data when we start a pass
             let clear_vals = [
@@ -141,10 +141,10 @@ impl Pipeline for GeomPipeline {
             // our drawing. The actual pass is started in the cbuf
             let pass_begin_info = vk::RenderPassBeginInfo::builder()
                 .render_pass(self.pass)
-                .framebuffer(self.framebuffers[params.image_num])
+                .framebuffer(self.framebuffers[dstate.d_current_image as usize])
                 .render_area(vk::Rect2D {
                     offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: display.d_resolution,
+                    extent: dstate.d_resolution,
                 })
                 .clear_values(&clear_vals);
 
@@ -298,7 +298,7 @@ impl Pipeline for GeomPipeline {
         return true;
     }
 
-    fn end_record(&mut self, rend: &mut Renderer, params: &RecordParams) {
+    fn end_record(&mut self, dstate: &DisplayState, rend: &mut Renderer, params: &RecordParams) {
         unsafe {
             // make sure to end recording
             rend.dev.dev.cmd_end_render_pass(params.cbuf);
@@ -307,7 +307,7 @@ impl Pipeline for GeomPipeline {
             rend.dev.cbuf_end_recording(params.cbuf);
         }
         // now submit the cbuf
-        self.submit_frame(rend);
+        self.submit_frame(dstate, rend);
     }
 
     fn debug_frame_print(&self) {
@@ -316,7 +316,7 @@ impl Pipeline for GeomPipeline {
         log::debug!("---------------------------------");
     }
 
-    fn handle_ood(&mut self, display: &mut Display, rend: &mut Renderer) {
+    fn handle_ood(&mut self, dstate: &DisplayState, rend: &mut Renderer) {
         unsafe {
             rend.dev.free_memory(self.depth_image_mem);
             rend.dev.dev.destroy_image_view(self.depth_image_view, None);
@@ -325,13 +325,13 @@ impl Pipeline for GeomPipeline {
                 rend.dev.dev.destroy_framebuffer(*f, None);
             }
 
-            let consts = GeomPipeline::get_shader_constants(display.d_resolution);
+            let consts = GeomPipeline::get_shader_constants(dstate);
             rend.dev
                 .update_memory(self.uniform_buffers_memory, 0, &[consts]);
 
             // the depth attachment needs to have its own resources
             let (depth_image, depth_image_view, depth_image_mem) = rend.dev.create_image(
-                &display.d_resolution,
+                &dstate.d_resolution,
                 vk::Format::D16_UNORM,
                 vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
                 vk::ImageAspectFlags::DEPTH,
@@ -343,12 +343,8 @@ impl Pipeline for GeomPipeline {
             self.depth_image_mem = depth_image_mem;
             self.setup_depth_image(rend);
 
-            self.framebuffers = GeomPipeline::create_framebuffers(
-                rend,
-                self.pass,
-                display.d_resolution,
-                self.depth_image_view,
-            );
+            self.framebuffers =
+                GeomPipeline::create_framebuffers(rend, self.pass, dstate, self.depth_image_view);
         }
     }
 
@@ -419,9 +415,9 @@ impl GeomPipeline {
     /// shaders, geometry, and the like.
     ///
     /// This fills in the GeomPipeline struct in the Renderer
-    pub fn new(display: &mut Display, rend: &mut Renderer) -> GeomPipeline {
+    pub fn new(dstate: &DisplayState, rend: &mut Renderer) -> GeomPipeline {
         unsafe {
-            let pass = GeomPipeline::create_pass(display, rend);
+            let pass = GeomPipeline::create_pass(dstate.d_surface_format.format, rend);
 
             // This is a really annoying issue with CString ptrs
             let program_entrypoint_name = CString::new("main").unwrap();
@@ -468,11 +464,11 @@ impl GeomPipeline {
                 .unwrap();
 
             let pipeline =
-                GeomPipeline::create_pipeline(display, rend, layout, pass, &*shader_stages);
+                GeomPipeline::create_pipeline(dstate, rend, layout, pass, &*shader_stages);
 
             // the depth attachment needs to have its own resources
             let (depth_image, depth_image_view, depth_image_mem) = rend.dev.create_image(
-                &display.d_resolution,
+                &dstate.d_resolution,
                 vk::Format::D16_UNORM,
                 vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
                 vk::ImageAspectFlags::DEPTH,
@@ -480,18 +476,14 @@ impl GeomPipeline {
                 vk::ImageTiling::OPTIMAL,
             );
 
-            let framebuffers = GeomPipeline::create_framebuffers(
-                rend,
-                pass,
-                display.d_resolution,
-                depth_image_view,
-            );
+            let framebuffers =
+                GeomPipeline::create_framebuffers(rend, pass, dstate, depth_image_view);
 
             // Allocate a pool only for the ubo descriptors
             let g_desc_pool = Self::create_descriptor_pool(rend);
             let ubo = rend.allocate_descriptor_sets(g_desc_pool, &[ubo_layout])[0];
 
-            let consts = GeomPipeline::get_shader_constants(display.d_resolution);
+            let consts = GeomPipeline::get_shader_constants(dstate);
 
             // create a uniform buffer
             let (buf, mem) = rend.dev.create_buffer(
@@ -542,20 +534,20 @@ impl GeomPipeline {
     /// Think of this as the "main" rendering operation. It will draw
     /// all geometry to the current framebuffer. Presentation is
     /// done later, in case operations need to occur inbetween.
-    fn submit_frame(&mut self, rend: &Renderer) {
+    fn submit_frame(&mut self, dstate: &DisplayState, rend: &Renderer) {
         rend.wait_for_prev_submit();
         unsafe { rend.dev.dev.reset_fences(&[rend.submit_fence]).unwrap() };
 
         // Submit the recorded cbuf to perform the draw calls
         rend.dev.cbuf_submit_async(
             // submit the cbuf for the current image
-            rend.cbufs[rend.current_image as usize],
+            rend.cbufs[dstate.d_current_image as usize],
             rend.r_present_queue, // the graphics queue
             // wait_stages
             &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT],
-            &[rend.present_sema], // wait_semas
-            &[rend.render_sema],  // signal_semas
-            rend.submit_fence,    // signal fence
+            &[dstate.d_present_sema], // wait_semas
+            &[rend.render_sema],      // signal_semas
+            rend.submit_fence,        // signal fence
         );
     }
 
@@ -563,13 +555,13 @@ impl GeomPipeline {
     ///
     /// Render passses signify what attachments are used in which
     /// stages. They are composed of one or more subpasses.
-    unsafe fn create_pass(display: &mut Display, rend: &Renderer) -> vk::RenderPass {
+    unsafe fn create_pass(format: vk::Format, rend: &Renderer) -> vk::RenderPass {
         let attachments = [
             // the color dest. Its the surface we slected in Renderer::new.
             // see Renderer::create_swapchain for why we aren't using
             // the native surface formate
             vk::AttachmentDescription {
-                format: display.d_surface_format.format,
+                format: format,
                 samples: vk::SampleCountFlags::TYPE_1,
                 load_op: vk::AttachmentLoadOp::CLEAR,
                 store_op: vk::AttachmentStoreOp::STORE,
@@ -697,7 +689,7 @@ impl GeomPipeline {
     /// This method roughly follows the "fixed function" part of the
     /// vulkan tutorial.
     unsafe fn create_pipeline(
-        display: &mut Display,
+        dstate: &DisplayState,
         rend: &Renderer,
         layout: vk::PipelineLayout,
         pass: vk::RenderPass,
@@ -752,15 +744,15 @@ impl GeomPipeline {
         let viewport = [vk::Viewport {
             x: 0.0,
             y: 0.0,
-            width: display.d_resolution.width as f32,
-            height: display.d_resolution.height as f32,
+            width: dstate.d_resolution.width as f32,
+            height: dstate.d_resolution.height as f32,
             min_depth: 0.0,
             max_depth: 1.0,
         }];
         // no scissor test
         let scissor = [vk::Rect2D {
             offset: vk::Offset2D { x: 0, y: 0 },
-            extent: display.d_resolution,
+            extent: dstate.d_resolution,
         }];
 
         let viewport_info = vk::PipelineViewportStateCreateInfo::builder()
@@ -857,13 +849,14 @@ impl GeomPipeline {
     unsafe fn create_framebuffers(
         rend: &mut Renderer,
         pass: vk::RenderPass,
-        res: vk::Extent2D,
+        dstate: &DisplayState,
         depth_image_view: vk::ImageView,
     ) -> Vec<vk::Framebuffer> {
         // A framebuffer should be created for each of the swapchain
         // images. Reuse the depth buffer for all images since it
         // doesn't change.
-        rend.views
+        dstate
+            .d_views
             .iter()
             .map(|&view| {
                 // color, depth
@@ -872,8 +865,8 @@ impl GeomPipeline {
                 let info = vk::FramebufferCreateInfo::builder()
                     .render_pass(pass)
                     .attachments(&attachments)
-                    .width(res.width)
-                    .height(res.height)
+                    .width(dstate.d_resolution.width)
+                    .height(dstate.d_resolution.height)
                     .layers(1);
 
                 rend.dev.dev.create_framebuffer(&info, None).unwrap()
@@ -886,14 +879,14 @@ impl GeomPipeline {
     /// Constants will be the contents of the uniform buffers which are
     /// processed by the shaders. The most obvious entry is the model + view
     /// + perspective projection matrix.
-    fn get_shader_constants(resolution: vk::Extent2D) -> ShaderConstants {
+    fn get_shader_constants(dstate: &DisplayState) -> ShaderConstants {
         // transform from blender's coordinate system to vulkan
         let model = Matrix4::from_translation(Vector3::new(-1.0, -1.0, 0.0));
 
         ShaderConstants {
             model: model,
-            width: resolution.width as f32,
-            height: resolution.height as f32,
+            width: dstate.d_resolution.width as f32,
+            height: dstate.d_resolution.height as f32,
         }
     }
 
@@ -972,23 +965,6 @@ impl GeomPipeline {
             write_info, // descriptor writes
             &[],        // descriptor copies
         );
-    }
-
-    /// Apply a transform matrix to all images
-    ///
-    /// This updates the model matrix of the shader constants
-    /// used for all models
-    pub fn transform_images(
-        &mut self,
-        display: &mut Display,
-        rend: &Renderer,
-        transform: &Matrix4<f32>,
-    ) {
-        let mut consts = GeomPipeline::get_shader_constants(display.d_resolution);
-        consts.model = consts.model * transform;
-
-        rend.dev
-            .update_memory(self.uniform_buffers_memory, 0, &[consts]);
     }
 
     /// set up the depth image in self.

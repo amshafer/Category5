@@ -139,6 +139,12 @@ pub enum ThundrError {
     RECORDING_NOT_IN_PROGRESS,
     #[error("Invalid Operation")]
     INVALID,
+    #[error("Could not create the Vulkan swapchain")]
+    COULD_NOT_CREATE_SWAPCHAIN,
+    #[error("Failed to create Vulkan image")]
+    COULD_NOT_CREATE_IMAGE,
+    #[error("Invalid format or no format found")]
+    INVALID_FORMAT,
 }
 
 pub struct Thundr {
@@ -330,7 +336,7 @@ impl Thundr {
 
         // creates a context, swapchain, images, and others
         // initialize the pipeline, renderpasses, and display engine
-        let (mut rend, mut display) = Renderer::new(
+        let (mut rend, display) = Renderer::new(
             inst.clone(),
             dev.clone(),
             info,
@@ -344,7 +350,7 @@ impl Thundr {
         // on window resizing
         let (pipe, ty): (Box<dyn Pipeline>, PipelineType) = if info.enable_traditional_composition {
             (
-                Box::new(GeomPipeline::new(&mut display, &mut rend)),
+                Box::new(GeomPipeline::new(&display.d_state, &mut rend)),
                 PipelineType::GEOMETRIC,
             )
         } else {
@@ -375,8 +381,8 @@ impl Thundr {
 
     pub fn get_resolution(&self) -> (u32, u32) {
         (
-            self.th_display.d_resolution.width,
-            self.th_display.d_resolution.height,
+            self.th_display.d_state.d_resolution.width,
+            self.th_display.d_state.d_resolution.height,
         )
     }
 
@@ -449,13 +455,14 @@ impl Thundr {
     ///
     /// We have to destroy and recreate our pipeline along the way since
     /// it depends on the swapchain.
-    pub fn handle_ood(&mut self) {
+    pub fn handle_ood(&mut self) -> Result<()> {
         let mut rend = self.th_rend.lock().unwrap();
-        unsafe {
-            rend.recreate_swapchain(&mut self.th_display);
-        }
+        self.th_display.recreate_swapchain()?;
+        rend.recreate_swapchain_resources(&mut self.th_display.d_state);
         self.th_pipe
-            .handle_ood(&mut self.th_display, rend.deref_mut());
+            .handle_ood(&mut self.th_display.d_state, rend.deref_mut());
+
+        Ok(())
     }
 
     pub fn get_drm_dev(&self) -> (i64, i64) {
@@ -494,20 +501,22 @@ impl Thundr {
             return Err(ThundrError::RECORDING_ALREADY_IN_PROGRESS);
         }
 
-        // record rendering commands
-        let res = self.th_rend.lock().unwrap().begin_recording_one_frame();
-        let params = match res {
-            Ok(params) => params,
+        // Get our next swapchain image
+        match self.th_display.get_next_swapchain_image() {
+            Ok(()) => (),
             Err(ThundrError::OUT_OF_DATE) => {
-                self.handle_ood();
+                self.handle_ood()?;
                 return Err(ThundrError::OUT_OF_DATE);
             }
             Err(e) => return Err(e),
         };
-
         let mut rend = self.th_rend.lock().unwrap();
+        let params = rend.get_recording_parameters(&self.th_display.d_state);
+
+        // record rendering commands
+        rend.begin_recording_one_frame(&self.th_display.d_state)?;
         self.th_pipe
-            .begin_record(&mut self.th_display, rend.deref_mut(), &params);
+            .begin_record(&self.th_display.d_state, rend.deref_mut(), &params);
         self.th_params = Some(params);
 
         Ok(())
@@ -538,9 +547,8 @@ impl Thundr {
 
         {
             let mut rend = self.th_rend.lock().unwrap();
-            rend.draw_call_submitted =
-                self.th_pipe
-                    .draw(rend.deref_mut(), &params, surfaces, pass, viewport);
+            self.th_pipe
+                .draw(rend.deref_mut(), &params, surfaces, pass, viewport);
         }
 
         // Update the amount of depth used while drawing this surface list. This
@@ -564,8 +572,11 @@ impl Thundr {
             .as_ref()
             .ok_or(ThundrError::RECORDING_NOT_IN_PROGRESS)?;
 
-        self.th_pipe
-            .end_record(self.th_rend.lock().unwrap().deref_mut(), params);
+        self.th_pipe.end_record(
+            &self.th_display.d_state,
+            self.th_rend.lock().unwrap().deref_mut(),
+            params,
+        );
         self.th_params = None;
 
         Ok(())
@@ -573,7 +584,8 @@ impl Thundr {
 
     // present
     pub fn present(&mut self) -> Result<()> {
-        self.th_rend.lock().unwrap().present()
+        let mut rend = self.th_rend.lock().unwrap();
+        self.th_display.present(&mut rend)
     }
 
     /// Helper for printing all of the subsurfaces under surf.

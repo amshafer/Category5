@@ -16,7 +16,7 @@ pub mod geometric;
 
 pub use geometric::GeomPipeline;
 
-use crate::display::Display;
+use crate::display::DisplayState;
 use crate::renderer::{RecordParams, Renderer};
 use crate::{SurfaceList, Viewport};
 
@@ -33,7 +33,7 @@ pub trait Pipeline {
     /// it is ready.
     fn is_ready(&self) -> bool;
 
-    fn begin_record(&mut self, display: &Display, rend: &Renderer, params: &RecordParams);
+    fn begin_record(&mut self, dstate: &DisplayState, rend: &Renderer, params: &RecordParams);
 
     /// Our function which records the cbufs used to draw
     /// a frame. `params` tells us which cbufs/image we are
@@ -54,7 +54,7 @@ pub trait Pipeline {
         viewport: &Viewport,
     ) -> bool;
 
-    fn end_record(&mut self, rend: &mut Renderer, params: &RecordParams);
+    fn end_record(&mut self, dstate: &DisplayState, rend: &mut Renderer, params: &RecordParams);
 
     /// This helper prints out any per-frame statistics for debug
     /// info, such as the window positions and the attached images.
@@ -64,7 +64,7 @@ pub trait Pipeline {
     ///
     /// This call tells the pipeline to recreate any resources that
     /// depend on the swapchain/screen size. i.e. VkFramebuffers
-    fn handle_ood(&mut self, display: &mut Display, rend: &mut Renderer);
+    fn handle_ood(&mut self, dstate: &DisplayState, rend: &mut Renderer);
 
     fn destroy(&mut self, rend: &mut Renderer);
 }

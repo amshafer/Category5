@@ -9,19 +9,15 @@ use serde::{Deserialize, Serialize};
 use std::marker::Copy;
 use std::sync::Arc;
 
-use ash::extensions::khr;
 use ash::vk;
 
-use crate::display::Display;
+use crate::display::{Display, DisplayState};
 use crate::instance::Instance;
 use crate::list::SurfaceList;
-use crate::pipelines::PipelineType;
-use crate::platform::VKDeviceFeatures;
 use crate::{Device, Droppable, Surface, Viewport};
 
 extern crate utils as cat5_utils;
-use crate::CreateInfo;
-use crate::{Result, ThundrError};
+use crate::{CreateInfo, Result};
 use cat5_utils::{log, region::Rect};
 
 use lluvia as ll;
@@ -60,23 +56,12 @@ unsafe impl Sync for VkBarriers {}
 /// struct, with the commonly required fields at the top.
 pub struct Renderer {
     /// The instance this rendering context was created from
-    pub(crate) inst: Arc<Instance>,
+    pub(crate) _inst: Arc<Instance>,
     /// The GPU this Renderer is resident on
     pub(crate) dev: Arc<Device>,
 
-    /// loads swapchain extension
-    pub(crate) swapchain_loader: khr::Swapchain,
-    /// the actual swapchain
-    pub(crate) swapchain: vk::SwapchainKHR,
-    /// index into swapchain images that we are currently using
-    pub(crate) current_image: u32,
-
-    /// a set of images belonging to swapchain
-    pub(crate) images: Vec<vk::Image>,
     /// One sampler for all swapchain images
     pub(crate) image_sampler: vk::Sampler,
-    /// views describing how to access the images
-    pub(crate) views: Vec<vk::ImageView>,
 
     /// processes things to be physically displayed
     pub(crate) r_present_queue: vk::Queue,
@@ -84,10 +69,6 @@ pub struct Renderer {
     pub(crate) pool: vk::CommandPool,
     /// the command buffers allocated from pool
     pub(crate) cbufs: Vec<vk::CommandBuffer>,
-    /// This signals that the latest contents have been presented.
-    /// It is signaled by acquire next image and is consumed by
-    /// the cbuf submission
-    pub(crate) present_sema: vk::Semaphore,
     /// This is signaled by start_frame, and is consumed by present.
     /// This keeps presentation from occurring until rendering is
     /// complete
@@ -100,12 +81,6 @@ pub struct Renderer {
     /// for rendering that should now be released
     /// See WindowManger's worker_thread for more
     pub(crate) r_release: Vec<Box<dyn Droppable + Send + Sync>>,
-
-    /// Has vkQueueSubmit been called.
-    pub(crate) draw_call_submitted: bool,
-
-    /// The type of pipeline(s) being in use
-    pub(crate) r_pipe_type: PipelineType,
 
     /// Our ECS
     pub r_ecs: ll::Instance,
@@ -177,7 +152,6 @@ pub struct Window {
 /// This is that structure.
 pub struct RecordParams {
     pub cbuf: vk::CommandBuffer,
-    pub image_num: usize,
     /// This calculates the depth we should use when starting to draw
     /// a set of surfaces in a viewport.
     ///
@@ -208,254 +182,21 @@ pub struct PushConstants {
 // should be used by the applications. The unsafe functions are mostly for
 // internal use.
 impl Renderer {
-    /// Tear down all the swapchain-dependent vulkan objects we have created.
-    /// This will be used when dropping everything and when we need to handle
-    /// OOD events.
-    unsafe fn destroy_swapchain(&mut self) {
-        // Don't destroy the images here, the destroy swapchain call
-        // will take care of them
-        for view in self.views.iter() {
-            self.dev.dev.destroy_image_view(*view, None);
-        }
-        self.views.clear();
-
-        self.dev
-            .dev
-            .free_command_buffers(self.pool, self.cbufs.as_slice());
-        self.cbufs.clear();
-
-        self.swapchain_loader
-            .destroy_swapchain(self.swapchain, None);
-        self.swapchain = vk::SwapchainKHR::null();
-    }
-
     /// Recreate our swapchain.
     ///
     /// This will be done on VK_ERROR_OUT_OF_DATE_KHR, signifying that
     /// the window is being resized and we have to regenerate accordingly.
-    /// Keep in mind the Pipeline in Thundr will also have to be recreated
-    /// separately.
-    pub unsafe fn recreate_swapchain(&mut self, display: &mut Display) {
-        // first wait for the device to finish working
-        self.dev.dev.device_wait_idle().unwrap();
+    pub fn recreate_swapchain_resources(&mut self, dstate: &DisplayState) {
+        unsafe {
+            self.dev
+                .dev
+                .free_command_buffers(self.pool, self.cbufs.as_slice());
+            self.cbufs.clear();
 
-        // We need to get the updated size of our swapchain. This
-        // will be the current size of the surface in use. We should
-        // also update Display.d_resolution while we are at it.
-        let new_res = display.get_vulkan_drawable_size(self.dev.pdev);
-        // TODO: clamp resolution here
-        display.d_resolution = new_res;
-
-        let new_swapchain = Renderer::create_swapchain(
-            display,
-            &self.swapchain_loader,
-            &self.dev.dev_features,
-            self.r_pipe_type,
-            Some(self.swapchain), // oldSwapChain
-        );
-
-        // Now that we recreated the swapchain destroy the old one
-        self.destroy_swapchain();
-        self.swapchain = new_swapchain;
-
-        let (images, views) = Renderer::select_images_and_views(
-            display,
-            &self.inst.inst,
-            &self.swapchain_loader,
-            self.swapchain,
-            &self.dev,
-        );
-        self.images = images;
-        self.views = views;
-
-        self.cbufs = self
-            .dev
-            .create_command_buffers(self.pool, self.images.len() as u32);
-    }
-
-    /// create a new vkSwapchain
-    ///
-    /// Swapchains contain images that can be used for WSI presentation
-    /// They take a vkSurfaceKHR and provide a way to manage swapping
-    /// effects such as double/triple buffering (mailbox mode). The created
-    /// swapchain is dependent on the characteristics and format of the surface
-    /// it is created for.
-    /// The application resolution is set by this method.
-    unsafe fn create_swapchain(
-        display: &mut Display,
-        swapchain_loader: &khr::Swapchain,
-        dev_features: &VKDeviceFeatures,
-        _pipe_type: PipelineType,
-        old_swapchain: Option<vk::SwapchainKHR>,
-    ) -> vk::SwapchainKHR {
-        // how many images we want the swapchain to contain
-        let mut desired_image_count = display.d_surface_caps.min_image_count + 1;
-        if display.d_surface_caps.max_image_count > 0
-            && desired_image_count > display.d_surface_caps.max_image_count
-        {
-            desired_image_count = display.d_surface_caps.max_image_count;
+            self.cbufs = self
+                .dev
+                .create_command_buffers(self.pool, dstate.d_views.len() as u32);
         }
-
-        let transform = if display
-            .d_surface_caps
-            .supported_transforms
-            .contains(vk::SurfaceTransformFlagsKHR::IDENTITY)
-        {
-            vk::SurfaceTransformFlagsKHR::IDENTITY
-        } else {
-            display.d_surface_caps.current_transform
-        };
-
-        // we need to check if the surface format supports the
-        // storage image type
-        let mut extra_usage = vk::ImageUsageFlags::empty();
-        let mut swap_flags = vk::SwapchainCreateFlagsKHR::empty();
-        let mut use_mut_swapchain = false;
-        // We should use a mutable swapchain to allow for rendering to
-        // RGBA8888 if the swapchain doesn't suppport it and if the mutable
-        // swapchain extensions are present. This is for intel
-        if display
-            .d_surface_caps
-            .supported_usage_flags
-            .contains(vk::ImageUsageFlags::STORAGE)
-        {
-            extra_usage |= vk::ImageUsageFlags::STORAGE;
-            log::info!(
-                "Format {:?} supports Storage usage",
-                display.d_surface_format.format
-            );
-        } else {
-            assert!(dev_features.vkc_supports_mut_swapchain);
-            log::info!(
-                "Format {:?} does not support Storage usage, using mutable swapchain",
-                display.d_surface_format.format
-            );
-            use_mut_swapchain = true;
-
-            extra_usage |= vk::ImageUsageFlags::STORAGE;
-            swap_flags |= vk::SwapchainCreateFlagsKHR::MUTABLE_FORMAT;
-        }
-
-        // see this for how to get storage swapchain on intel:
-        // https://github.com/doitsujin/dxvk/issues/504
-
-        let mut create_info = vk::SwapchainCreateInfoKHR::builder()
-            .flags(swap_flags)
-            .surface(display.d_surface)
-            .min_image_count(desired_image_count)
-            .image_color_space(display.d_surface_format.color_space)
-            .image_format(display.d_surface_format.format)
-            .image_extent(display.d_resolution)
-            // the color attachment is guaranteed to be available
-            //
-            // WEIRD: validation layers throw an issue with this on intel since it doesn't
-            // support storage for the swapchain format.
-            // You can ignore this:
-            // https://www.reddit.com/r/vulkan/comments/ahtw8x/shouldnt_validation_layers_catch_the_wrong_format/
-            //
-            // Leave the STORAGE flag to be explicit that we need it
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | extra_usage)
-            .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .pre_transform(transform)
-            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-            .present_mode(display.d_present_mode)
-            .clipped(true)
-            .image_array_layers(1)
-            .old_swapchain(match old_swapchain {
-                Some(s) => s,
-                None => vk::SwapchainKHR::null(),
-            });
-
-        if use_mut_swapchain {
-            // specifying the mutable format flag also requires that we add a
-            // list of additional formats. We need this so that mesa will
-            // set VK_IMAGE_CREATE_EXTENDED_USAGE_BIT_KHR for the swapchain images
-            // we also need to include the surface format, since it seems mesa wants
-            // the supported format + any new formats we select.
-            let add_formats = vk::ImageFormatListCreateInfoKHR::builder()
-                // just add rgba32 because it's the most common.
-                .view_formats(&[display.d_surface_format.format])
-                .build();
-            create_info.p_next = &add_formats as *const _ as *mut std::ffi::c_void;
-        }
-
-        // views for all of the swapchains images will be set up in
-        // select_images_and_views
-        swapchain_loader
-            .create_swapchain(&create_info, None)
-            .unwrap()
-    }
-
-    /// Get the vkImage's for the swapchain, and create vkImageViews for them
-    ///
-    /// get all the presentation images for the swapchain
-    /// specify the image views, which specify how we want
-    /// to access our images
-    unsafe fn select_images_and_views(
-        display: &mut Display,
-        inst: &ash::Instance,
-        swapchain_loader: &khr::Swapchain,
-        swapchain: vk::SwapchainKHR,
-        dev: &Device,
-    ) -> (Vec<vk::Image>, Vec<vk::ImageView>) {
-        let images = swapchain_loader.get_swapchain_images(swapchain).unwrap();
-
-        let image_views = images
-            .iter()
-            .map(|&image| {
-                let format_props = inst.get_physical_device_format_properties(
-                    dev.pdev,
-                    display.d_surface_format.format,
-                );
-                log::info!("format props: {:#?}", format_props);
-
-                // we want to interact with this image as a 2D
-                // array of RGBA pixels (i.e. the "normal" way)
-                let mut create_info = vk::ImageViewCreateInfo::builder()
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    // see `create_swapchain` for why we don't use surface_format
-                    .format(display.d_surface_format.format)
-                    // select the normal RGBA type
-                    // swap the R and B channels because we are mapping this
-                    // to B8G8R8_SRGB using a mutable swapchain
-                    // TODO: make mutable swapchain optional
-                    .components(vk::ComponentMapping {
-                        r: vk::ComponentSwizzle::R,
-                        g: vk::ComponentSwizzle::G,
-                        b: vk::ComponentSwizzle::B,
-                        a: vk::ComponentSwizzle::A,
-                    })
-                    // this view pertains to the entire image
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    })
-                    .image(image)
-                    .build();
-
-                let ext_info = vk::ImageViewUsageCreateInfoKHR::builder()
-                    .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
-                    .build();
-
-                // if the format doesn't support storage (intel doesn't),
-                // then we need to attach an extra struct telling to to
-                // allow the storage format in the view even though the
-                // underlying format doesn't
-                if !format_props
-                    .optimal_tiling_features
-                    .contains(vk::FormatFeatureFlags::STORAGE_IMAGE)
-                {
-                    create_info.p_next = &ext_info as *const _ as *mut std::ffi::c_void;
-                }
-
-                dev.dev.create_image_view(&create_info, None).unwrap()
-            })
-            .collect();
-
-        return (images, image_views);
     }
 
     /// Returns true if there are any resources in
@@ -612,15 +353,7 @@ impl Renderer {
         unsafe {
             // Our display is in charge of choosing a medium to draw on,
             // and will create a surface on that medium
-            let mut display = Display::new(info, dev.clone());
-
-            // TODO: allow for multiple pipes in use at once
-            let pipe_type = if info.enable_traditional_composition {
-                log::debug!("Using render pipeline");
-                PipelineType::GEOMETRIC
-            } else {
-                panic!("Unsupported pipeline type");
-            };
+            let display = Display::new(info, dev.clone())?;
 
             let sampler = dev.create_sampler();
 
@@ -630,33 +363,14 @@ impl Renderer {
                 &display.d_surface_loader,
                 display.d_surface,
                 vk::QueueFlags::GRAPHICS,
-            );
+            )?;
             dev.register_graphics_queue_family(graphics_queue_family);
             let present_queue = dev.dev.get_device_queue(graphics_queue_family, 0);
 
-            let swapchain_loader = khr::Swapchain::new(&instance.inst, &dev.dev);
-            let swapchain = Renderer::create_swapchain(
-                &mut display,
-                &swapchain_loader,
-                &dev.dev_features,
-                pipe_type,
-                None,
-            );
-
-            let (images, image_views) = Renderer::select_images_and_views(
-                &mut display,
-                &instance.inst,
-                &swapchain_loader,
-                swapchain,
-                &dev,
-            );
-
             let pool = dev.create_command_pool(graphics_queue_family);
-            let buffers = dev.create_command_buffers(pool, images.len() as u32);
+            let buffers = dev.create_command_buffers(pool, display.d_images.len() as u32);
 
             let sema_create_info = vk::SemaphoreCreateInfo::default();
-
-            let present_sema = dev.dev.create_semaphore(&sema_create_info, None).unwrap();
             let render_sema = dev.dev.create_semaphore(&sema_create_info, None).unwrap();
 
             let fence = dev
@@ -686,7 +400,7 @@ impl Renderer {
                     width: 2,
                     height: 2,
                 },
-                display.d_surface_format.format,
+                display.d_state.d_surface_format.format,
                 vk::ImageUsageFlags::SAMPLED,
                 vk::ImageAspectFlags::COLOR,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
@@ -742,23 +456,15 @@ impl Renderer {
             // rendering context
             // p.s. you still need a Pipeline
             let mut rend = Renderer {
-                inst: instance,
+                _inst: instance,
                 dev: dev,
-                swapchain_loader: swapchain_loader,
-                swapchain: swapchain,
-                current_image: 0,
-                images: images,
-                image_sampler: sampler,
-                views: image_views,
                 r_present_queue: present_queue,
                 pool: pool,
                 cbufs: buffers,
-                present_sema: present_sema,
+                image_sampler: sampler,
                 render_sema: render_sema,
                 submit_fence: fence,
                 r_release: Vec::new(),
-                draw_call_submitted: false,
-                r_pipe_type: pipe_type,
                 r_ecs: ecs.clone(),
                 r_images_desc_pool: bindless_pool,
                 r_images_desc_layout: bindless_layout,
@@ -935,31 +641,20 @@ impl Renderer {
         }
     }
 
-    pub fn get_recording_parameters(&mut self) -> RecordParams {
+    pub fn get_recording_parameters(&mut self, dstate: &DisplayState) -> RecordParams {
         RecordParams {
-            cbuf: self.cbufs[self.current_image as usize],
-            image_num: self.current_image as usize,
+            cbuf: self.cbufs[dstate.d_current_image as usize],
             // Start at max depth of 1.0 and go to zero
             starting_depth: 0.0,
         }
     }
 
     /// Start recording a cbuf for one frame
-    ///
-    /// Each framebuffer has a set of resources, including command
-    /// buffers. This records the cbufs for the framebuffer
-    /// specified by `img`.
-    ///
-    /// The frame is not submitted to be drawn until
-    /// `begin_frame` is called. `end_recording_one_frame` must be called
-    /// before `begin_frame`
-    pub fn begin_recording_one_frame(&mut self) -> Result<RecordParams> {
+    pub fn begin_recording_one_frame(&mut self, dstate: &DisplayState) -> Result<RecordParams> {
         // At least wait for any image copies to complete
         self.dev.wait_for_copy();
-        // get the next frame to draw into
-        self.get_next_swapchain_image()?;
 
-        Ok(self.get_recording_parameters())
+        Ok(self.get_recording_parameters(dstate))
     }
 
     /// End a total frame recording
@@ -1129,54 +824,6 @@ impl Renderer {
         }
     }
 
-    /// Update self.current_image with the swapchain image to render to
-    ///
-    /// If the next image is not ready (i.e. if Vulkan returned NOT_READY or
-    /// TIMEOUT), then this will loop on calling `vkAcquireNextImageKHR` until
-    /// it gets a valid image. This has to be done on AMD hw or else the TIMEOUT
-    /// error will get passed up the callstack and fail.
-    pub fn get_next_swapchain_image(&mut self) -> Result<()> {
-        unsafe {
-            loop {
-                match self.swapchain_loader.acquire_next_image(
-                    self.swapchain,
-                    0,                 // use a zero timeout to immediately get the state
-                    self.present_sema, // signals presentation
-                    vk::Fence::null(),
-                ) {
-                    // TODO: handle suboptimal surface regeneration
-                    Ok((index, _)) => {
-                        log::debug!(
-                            "Getting next swapchain image: Current {:?}, New {:?}",
-                            self.current_image,
-                            index
-                        );
-                        self.current_image = index;
-                        return Ok(());
-                    }
-                    Err(vk::Result::NOT_READY) => {
-                        log::debug!(
-                            "vkAcquireNextImageKHR: vk::Result::NOT_READY: Current {:?}",
-                            self.current_image
-                        );
-                        continue;
-                    }
-                    Err(vk::Result::TIMEOUT) => {
-                        log::debug!(
-                            "vkAcquireNextImageKHR: vk::Result::TIMEOUT: Current {:?}",
-                            self.current_image
-                        );
-                        continue;
-                    }
-                    Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Err(ThundrError::OUT_OF_DATE),
-                    Err(vk::Result::SUBOPTIMAL_KHR) => return Err(ThundrError::OUT_OF_DATE),
-                    // the call did not succeed
-                    Err(_) => return Err(ThundrError::COULD_NOT_ACQUIRE_NEXT_IMAGE),
-                }
-            }
-        }
-    }
-
     /// Returns true if we are ready to call present
     pub fn frame_submission_complete(&mut self) -> bool {
         match unsafe { self.dev.dev.get_fence_status(self.submit_fence) } {
@@ -1185,41 +832,6 @@ impl Renderer {
             Ok(complete) => return complete,
             Err(_) => panic!("Failed to get fence status"),
         };
-    }
-
-    /// Present the current swapchain image to the screen.
-    ///
-    /// Finally we can actually flip the buffers and present
-    /// this image.
-    pub fn present(&mut self) -> Result<()> {
-        // This is a bit odd. So if a draw call was submitted, then
-        // we need to wait for rendering to complete before presenting. If
-        // no draw call was submitted (no work to do) then we need to
-        // wait on the present of the previous frame.
-        let wait_semas = match self.draw_call_submitted {
-            true => [self.render_sema],
-            false => {
-                panic!("No draw call was submitted, but thundr.present was still called");
-            }
-        };
-        let swapchains = [self.swapchain];
-        let indices = [self.current_image];
-        let info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(&wait_semas)
-            .swapchains(&swapchains)
-            .image_indices(&indices);
-
-        unsafe {
-            match self
-                .swapchain_loader
-                .queue_present(self.r_present_queue, &info)
-            {
-                Ok(_) => Ok(()),
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(ThundrError::OUT_OF_DATE),
-                Err(vk::Result::SUBOPTIMAL_KHR) => Err(ThundrError::OUT_OF_DATE),
-                Err(_) => Err(ThundrError::PRESENT_FAILED),
-            }
-        }
     }
 }
 
@@ -1243,7 +855,6 @@ impl Drop for Renderer {
             self.dev.dev.destroy_image_view(self.tmp_image_view, None);
             self.dev.free_memory(self.tmp_image_mem);
 
-            self.dev.dev.destroy_semaphore(self.present_sema, None);
             self.dev.dev.destroy_semaphore(self.render_sema, None);
             self.dev.dev.destroy_sampler(self.image_sampler, None);
             self.dev
@@ -1259,7 +870,9 @@ impl Drop for Renderer {
             self.dev.dev.destroy_buffer(self.r_windows_buf, None);
             self.dev.free_memory(self.r_windows_mem);
 
-            self.destroy_swapchain();
+            self.dev
+                .dev
+                .free_command_buffers(self.pool, self.cbufs.as_slice());
 
             self.dev.dev.destroy_command_pool(self.pool, None);
             self.dev.dev.destroy_fence(self.submit_fence, None);
