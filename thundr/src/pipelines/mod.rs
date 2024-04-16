@@ -33,7 +33,7 @@ pub trait Pipeline {
     /// it is ready.
     fn is_ready(&self) -> bool;
 
-    fn begin_record(&mut self, dstate: &DisplayState, rend: &Renderer, params: &RecordParams);
+    fn begin_record(&mut self, dstate: &DisplayState);
 
     /// Our function which records the cbufs used to draw
     /// a frame. `params` tells us which cbufs/image we are
@@ -49,12 +49,13 @@ pub trait Pipeline {
         &mut self,
         rend: &mut Renderer,
         params: &RecordParams,
+        dstate: &DisplayState,
         surfaces: &SurfaceList,
         pass_number: usize,
         viewport: &Viewport,
     ) -> bool;
 
-    fn end_record(&mut self, dstate: &DisplayState, rend: &mut Renderer, params: &RecordParams);
+    fn end_record(&mut self, dstate: &DisplayState);
 
     /// This helper prints out any per-frame statistics for debug
     /// info, such as the window positions and the attached images.
@@ -64,9 +65,7 @@ pub trait Pipeline {
     ///
     /// This call tells the pipeline to recreate any resources that
     /// depend on the swapchain/screen size. i.e. VkFramebuffers
-    fn handle_ood(&mut self, dstate: &DisplayState, rend: &mut Renderer);
-
-    fn destroy(&mut self, rend: &mut Renderer);
+    fn handle_ood(&mut self, dstate: &DisplayState);
 }
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]

@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use crate::display::{Display, DisplayState};
+use crate::display::Display;
 use crate::instance::Instance;
 use crate::list::SurfaceList;
 use crate::{Device, Droppable, Surface, Viewport};
@@ -63,19 +63,6 @@ pub struct Renderer {
     /// One sampler for all swapchain images
     pub(crate) image_sampler: vk::Sampler,
 
-    /// processes things to be physically displayed
-    pub(crate) r_present_queue: vk::Queue,
-    /// pools provide the memory allocated to command buffers
-    pub(crate) pool: vk::CommandPool,
-    /// the command buffers allocated from pool
-    pub(crate) cbufs: Vec<vk::CommandBuffer>,
-    /// This is signaled by start_frame, and is consumed by present.
-    /// This keeps presentation from occurring until rendering is
-    /// complete
-    pub(crate) render_sema: vk::Semaphore,
-    /// This fence coordinates draw call reuse. It will be signaled
-    /// when submitting the draw calls to the queue has finished
-    pub(crate) submit_fence: vk::Fence,
     /// The pending release list
     /// This is the set of wayland resources used last frame
     /// for rendering that should now be released
@@ -151,7 +138,6 @@ pub struct Window {
 /// to Renderer to begin/end recording operations
 /// This is that structure.
 pub struct RecordParams {
-    pub cbuf: vk::CommandBuffer,
     /// This calculates the depth we should use when starting to draw
     /// a set of surfaces in a viewport.
     ///
@@ -182,23 +168,6 @@ pub struct PushConstants {
 // should be used by the applications. The unsafe functions are mostly for
 // internal use.
 impl Renderer {
-    /// Recreate our swapchain.
-    ///
-    /// This will be done on VK_ERROR_OUT_OF_DATE_KHR, signifying that
-    /// the window is being resized and we have to regenerate accordingly.
-    pub fn recreate_swapchain_resources(&mut self, dstate: &DisplayState) {
-        unsafe {
-            self.dev
-                .dev
-                .free_command_buffers(self.pool, self.cbufs.as_slice());
-            self.cbufs.clear();
-
-            self.cbufs = self
-                .dev
-                .create_command_buffers(self.pool, dstate.d_views.len() as u32);
-        }
-    }
-
     /// Returns true if there are any resources in
     /// the current release list.
     pub fn release_is_empty(&mut self) -> bool {
@@ -357,30 +326,6 @@ impl Renderer {
 
             let sampler = dev.create_sampler();
 
-            let graphics_queue_family = Display::select_queue_family(
-                &instance.inst,
-                dev.pdev,
-                &display.d_surface_loader,
-                display.d_surface,
-                vk::QueueFlags::GRAPHICS,
-            )?;
-            dev.register_graphics_queue_family(graphics_queue_family);
-            let present_queue = dev.dev.get_device_queue(graphics_queue_family, 0);
-
-            let pool = dev.create_command_pool(graphics_queue_family);
-            let buffers = dev.create_command_buffers(pool, display.d_images.len() as u32);
-
-            let sema_create_info = vk::SemaphoreCreateInfo::default();
-            let render_sema = dev.dev.create_semaphore(&sema_create_info, None).unwrap();
-
-            let fence = dev
-                .dev
-                .create_fence(
-                    &vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED),
-                    None,
-                )
-                .expect("Could not create fence");
-
             // TODO:
             // We need to handle the case where the ISV doesn't support
             // a large enough number of bound samplers. In that case, I guess
@@ -458,12 +403,7 @@ impl Renderer {
             let mut rend = Renderer {
                 _inst: instance,
                 dev: dev,
-                r_present_queue: present_queue,
-                pool: pool,
-                cbufs: buffers,
                 image_sampler: sampler,
-                render_sema: render_sema,
-                submit_fence: fence,
                 r_release: Vec::new(),
                 r_ecs: ecs.clone(),
                 r_images_desc_pool: bindless_pool,
@@ -616,12 +556,17 @@ impl Renderer {
     }
 
     /// Wait for the submit_fence
+    ///
+    /// This waits for the last frame render operation to finish submitting.
     pub fn wait_for_prev_submit(&self) {
         self.dev.wait_for_copy();
 
         unsafe {
+            // can do read lock here since the fence isn't externally synchronized during
+            // this vkWaitForFences call.
+            let internal = self.dev.d_internal.read().unwrap();
             match self.dev.dev.wait_for_fences(
-                &[self.submit_fence],
+                &[internal.submit_fence],
                 true,          // wait for all
                 std::u64::MAX, //timeout
             ) {
@@ -641,43 +586,23 @@ impl Renderer {
         }
     }
 
-    pub fn get_recording_parameters(&mut self, dstate: &DisplayState) -> RecordParams {
+    pub fn get_recording_parameters(&mut self) -> RecordParams {
         RecordParams {
-            cbuf: self.cbufs[dstate.d_current_image as usize],
             // Start at max depth of 1.0 and go to zero
             starting_depth: 0.0,
         }
     }
 
     /// Start recording a cbuf for one frame
-    pub fn begin_recording_one_frame(&mut self, dstate: &DisplayState) -> Result<RecordParams> {
+    pub fn begin_recording_one_frame(&mut self) -> Result<RecordParams> {
         // At least wait for any image copies to complete
         self.dev.wait_for_copy();
 
-        Ok(self.get_recording_parameters(dstate))
+        Ok(self.get_recording_parameters())
     }
 
     /// End a total frame recording
     pub fn end_recording_one_frame(&mut self) {}
-
-    /// Allocate a descriptor set for each layout in `layouts`
-    ///
-    /// A descriptor set specifies a group of attachments that can
-    /// be referenced by the graphics pipeline. Think of a descriptor
-    /// as the hardware's handle to a resource. The set of descriptors
-    /// allocated in each set is specified in the layout.
-    pub(crate) unsafe fn allocate_descriptor_sets(
-        &self,
-        pool: vk::DescriptorPool,
-        layouts: &[vk::DescriptorSetLayout],
-    ) -> Vec<vk::DescriptorSet> {
-        let info = vk::DescriptorSetAllocateInfo::builder()
-            .descriptor_pool(pool)
-            .set_layouts(layouts)
-            .build();
-
-        self.dev.dev.allocate_descriptor_sets(&info).unwrap()
-    }
 
     /// Descriptor flags for the unbounded array of images
     /// we need to say that it is a variably sized array, and that it is partially
@@ -826,7 +751,9 @@ impl Renderer {
 
     /// Returns true if we are ready to call present
     pub fn frame_submission_complete(&mut self) -> bool {
-        match unsafe { self.dev.dev.get_fence_status(self.submit_fence) } {
+        // can do read lock here since the fence isn't externally synchronized
+        let internal = self.dev.d_internal.read().unwrap();
+        match unsafe { self.dev.dev.get_fence_status(internal.submit_fence) } {
             // true means vk::Result::SUCCESS
             // false means vk::Result::NOT_READY
             Ok(complete) => return complete,
@@ -855,7 +782,6 @@ impl Drop for Renderer {
             self.dev.dev.destroy_image_view(self.tmp_image_view, None);
             self.dev.free_memory(self.tmp_image_mem);
 
-            self.dev.dev.destroy_semaphore(self.render_sema, None);
             self.dev.dev.destroy_sampler(self.image_sampler, None);
             self.dev
                 .dev
@@ -869,13 +795,6 @@ impl Drop for Renderer {
                 .destroy_descriptor_pool(self.r_images_desc_pool, None);
             self.dev.dev.destroy_buffer(self.r_windows_buf, None);
             self.dev.free_memory(self.r_windows_mem);
-
-            self.dev
-                .dev
-                .free_command_buffers(self.pool, self.cbufs.as_slice());
-
-            self.dev.dev.destroy_command_pool(self.pool, None);
-            self.dev.dev.destroy_fence(self.submit_fence, None);
         }
     }
 }

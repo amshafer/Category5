@@ -13,7 +13,6 @@ use ash::vk;
 use ash::Entry;
 
 use crate::device::Device;
-use crate::Renderer;
 use crate::{CreateInfo, Result as ThundrResult, SurfaceType, ThundrError};
 use utils::log;
 
@@ -42,6 +41,8 @@ pub struct DisplayState {
     /// It is signaled by acquire next image and is consumed by
     /// the cbuf submission
     pub(crate) d_present_sema: vk::Semaphore,
+    /// processes things to be physically displayed
+    pub(crate) d_present_queue: vk::Queue,
 }
 
 /// A display represents a physical screen
@@ -216,13 +217,14 @@ impl Display {
             let surface_format = Self::select_surface_format(&s_loader, surf, dev.pdev).unwrap();
 
             // Ensure that there is a valid queue, validation layer checks for this
-            Self::select_queue_family(
+            let graphics_queue_family = Self::select_queue_family(
                 &dev.inst.inst,
                 dev.pdev,
                 &s_loader,
                 surf,
                 vk::QueueFlags::GRAPHICS,
             )?;
+            let present_queue = dev.dev.get_device_queue(graphics_queue_family, 0);
 
             let swapchain_loader = khr::Swapchain::new(&dev.inst.inst, &dev.dev);
             let sema_create_info = vk::SemaphoreCreateInfo::default();
@@ -237,6 +239,7 @@ impl Display {
                     d_views: Vec::with_capacity(0),
                     d_current_image: 0,
                     d_present_sema: present_sema,
+                    d_present_queue: present_queue,
                 },
                 d_surface_loader: s_loader,
                 d_back: back,
@@ -585,8 +588,10 @@ impl Display {
     ///
     /// Finally we can actually flip the buffers and present
     /// this image.
-    pub fn present(&mut self, rend: &mut Renderer) -> ThundrResult<()> {
-        let wait_semas = &[rend.render_sema];
+    pub fn present(&mut self) -> ThundrResult<()> {
+        // have to write lock here since the fence is externally synchronized
+        let dev_internal = self.d_dev.d_internal.write().unwrap();
+        let wait_semas = &[dev_internal.render_sema];
         let swapchains = [self.d_swapchain];
         let indices = [self.d_state.d_current_image];
         let info = vk::PresentInfoKHR::builder()
@@ -597,7 +602,7 @@ impl Display {
         unsafe {
             match self
                 .d_swapchain_loader
-                .queue_present(rend.r_present_queue, &info)
+                .queue_present(self.d_state.d_present_queue, &info)
             {
                 Ok(_) => Ok(()),
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(ThundrError::OUT_OF_DATE),

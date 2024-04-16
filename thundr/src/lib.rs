@@ -350,7 +350,7 @@ impl Thundr {
         // on window resizing
         let (pipe, ty): (Box<dyn Pipeline>, PipelineType) = if info.enable_traditional_composition {
             (
-                Box::new(GeomPipeline::new(&display.d_state, &mut rend)),
+                Box::new(GeomPipeline::new(dev.clone(), &display, &mut rend)?),
                 PipelineType::GEOMETRIC,
             )
         } else {
@@ -456,11 +456,8 @@ impl Thundr {
     /// We have to destroy and recreate our pipeline along the way since
     /// it depends on the swapchain.
     pub fn handle_ood(&mut self) -> Result<()> {
-        let mut rend = self.th_rend.lock().unwrap();
         self.th_display.recreate_swapchain()?;
-        rend.recreate_swapchain_resources(&mut self.th_display.d_state);
-        self.th_pipe
-            .handle_ood(&mut self.th_display.d_state, rend.deref_mut());
+        self.th_pipe.handle_ood(&mut self.th_display.d_state);
 
         Ok(())
     }
@@ -511,12 +508,11 @@ impl Thundr {
             Err(e) => return Err(e),
         };
         let mut rend = self.th_rend.lock().unwrap();
-        let params = rend.get_recording_parameters(&self.th_display.d_state);
+        let params = rend.get_recording_parameters();
 
         // record rendering commands
-        rend.begin_recording_one_frame(&self.th_display.d_state)?;
-        self.th_pipe
-            .begin_record(&self.th_display.d_state, rend.deref_mut(), &params);
+        rend.begin_recording_one_frame()?;
+        self.th_pipe.begin_record(&self.th_display.d_state);
         self.th_params = Some(params);
 
         Ok(())
@@ -547,8 +543,14 @@ impl Thundr {
 
         {
             let mut rend = self.th_rend.lock().unwrap();
-            self.th_pipe
-                .draw(rend.deref_mut(), &params, surfaces, pass, viewport);
+            self.th_pipe.draw(
+                rend.deref_mut(),
+                &params,
+                &self.th_display.d_state,
+                surfaces,
+                pass,
+                viewport,
+            );
         }
 
         // Update the amount of depth used while drawing this surface list. This
@@ -567,16 +569,9 @@ impl Thundr {
     ///
     /// This should only be called after a proper begin_recording + draw_surfaces sequence.
     pub fn end_recording(&mut self) -> Result<()> {
-        let params = self
-            .th_params
-            .as_ref()
-            .ok_or(ThundrError::RECORDING_NOT_IN_PROGRESS)?;
-
-        self.th_pipe.end_record(
-            &self.th_display.d_state,
-            self.th_rend.lock().unwrap().deref_mut(),
-            params,
-        );
+        let rend = self.th_rend.lock().unwrap();
+        rend.wait_for_prev_submit();
+        self.th_pipe.end_record(&self.th_display.d_state);
         self.th_params = None;
 
         Ok(())
@@ -584,8 +579,7 @@ impl Thundr {
 
     // present
     pub fn present(&mut self) -> Result<()> {
-        let mut rend = self.th_rend.lock().unwrap();
-        self.th_display.present(&mut rend)
+        self.th_display.present()
     }
 
     /// Helper for printing all of the subsurfaces under surf.
@@ -647,14 +641,5 @@ impl Thundr {
 
         self.th_pipe.debug_frame_print();
         log::debug!("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<");
-    }
-}
-
-impl Drop for Thundr {
-    fn drop(&mut self) {
-        // first destroy the pipeline specific resources
-        let mut rend = self.th_rend.lock().unwrap();
-        rend.wait_for_prev_submit();
-        self.th_pipe.destroy(rend.deref_mut());
     }
 }

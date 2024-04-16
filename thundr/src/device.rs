@@ -52,7 +52,16 @@ pub struct DeviceInternal {
     pub(crate) copy_cmd_pool: vk::CommandPool,
     /// command buffer for copying shm images
     pub(crate) copy_cbuf: vk::CommandBuffer,
+
+    /// Fence tracking the progress of copy operations
     pub(crate) copy_cbuf_fence: vk::Fence,
+    /// This fence coordinates draw call reuse. It will be signaled
+    /// when submitting the draw calls to the queue has finished
+    pub(crate) submit_fence: vk::Fence,
+    /// This is signaled by start_frame, and is consumed by present.
+    /// This keeps presentation from occurring until rendering is
+    /// complete
+    pub(crate) render_sema: vk::Semaphore,
 
     /// These are for loading textures into images
     pub(crate) transfer_buf_len: usize,
@@ -274,6 +283,20 @@ impl Device {
             .expect("Could not create fence")
         };
 
+        let sema_create_info = vk::SemaphoreCreateInfo::default();
+        let render_sema = unsafe {
+            dev.create_semaphore(&sema_create_info, None)
+                .or(Err(ThundrError::INVALID))?
+        };
+
+        let submit_fence = unsafe {
+            dev.create_fence(
+                &vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED),
+                None,
+            )
+            .expect("Could not create fence")
+        };
+
         let ret = Self {
             inst: instance,
             dev: dev,
@@ -290,6 +313,8 @@ impl Device {
                 transfer_buf: vk::Buffer::null(), // Initialize in its own method
                 transfer_mem: vk::DeviceMemory::null(),
                 transfer_buf_len: 0,
+                submit_fence: submit_fence,
+                render_sema: render_sema,
             })),
             d_image_vk: img_ecs.add_component(),
         };
@@ -1196,6 +1221,8 @@ impl Drop for Device {
             // first wait for the device to finish working
             self.dev.device_wait_idle().unwrap();
 
+            self.dev.destroy_semaphore(internal.render_sema, None);
+            self.dev.destroy_fence(internal.submit_fence, None);
             self.dev.destroy_buffer(internal.transfer_buf, None);
             self.free_memory(internal.transfer_mem);
 
