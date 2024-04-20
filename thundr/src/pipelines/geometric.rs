@@ -586,25 +586,13 @@ impl GeomPipeline {
     /// all geometry to the current framebuffer. Presentation is
     /// done later, in case operations need to occur inbetween.
     fn submit_frame(&mut self, dstate: &DisplayState) {
-        // have to write lock here since the fence is externally synchronized
-        let dev_internal = self.g_dev.d_internal.write().unwrap();
-        unsafe {
-            self.g_dev
-                .dev
-                .reset_fences(&[dev_internal.submit_fence])
-                .unwrap()
-        };
-
         // Submit the recorded cbuf to perform the draw calls
         self.g_dev.cbuf_submit_async(
             // submit the cbuf for the current image
             self.g_cbufs[dstate.d_current_image as usize],
-            dstate.d_present_queue, // the graphics queue
-            // wait_stages
-            &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT],
-            &[dstate.d_present_sema],    // wait_semas
-            &[dev_internal.render_sema], // signal_semas
-            dev_internal.submit_fence,   // signal fence
+            dstate.d_present_queue,   // the graphics queue
+            &[dstate.d_present_sema], // wait_semas
+            &[dstate.d_frame_sema],   // signal_semas
         );
     }
 
@@ -1025,60 +1013,58 @@ impl GeomPipeline {
     /// usable. We will use an image barrier to set the image as a depth
     /// stencil attachment to be used later.
     pub unsafe fn setup_depth_image(&mut self) {
-        // allocate a new cbuf for us to work with
-        let new_cbuf = self.g_dev.create_command_buffers(self.g_pool, 1)[0]; // only get one
+        self.g_dev.wait_for_copy();
+        {
+            let internal = self.g_dev.d_internal.read().unwrap();
 
-        self.g_dev
-            .cbuf_begin_recording(new_cbuf, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+            self.g_dev.cbuf_begin_recording(
+                internal.copy_cbuf,
+                vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+            );
 
-        // the depth image and view have already been created by new
-        // we need to execute a cbuf to set up the memory we are
-        // going to use later
-        // We need to initialize the depth attachment by
-        // performing a layout transition to the optimal
-        // depth layout
-        //
-        // we do not use rend.transition_image_layout since that
-        // is specific to texture images
-        let layout_barrier = vk::ImageMemoryBarrier::builder()
-            .image(self.depth_image)
-            // access patern for the resulting layout
-            .dst_access_mask(
-                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
-                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-            )
-            // go from an undefined old layout to whatever the
-            // driver decides is the optimal depth layout
-            .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-            .old_layout(vk::ImageLayout::UNDEFINED)
-            .subresource_range(
-                vk::ImageSubresourceRange::builder()
-                    .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                    .layer_count(1)
-                    .level_count(1)
-                    .build(),
-            )
-            .build();
+            // the depth image and view have already been created by new
+            // we need to execute a cbuf to set up the memory we are
+            // going to use later
+            // We need to initialize the depth attachment by
+            // performing a layout transition to the optimal
+            // depth layout
+            //
+            // we do not use rend.transition_image_layout since that
+            // is specific to texture images
+            let layout_barrier = vk::ImageMemoryBarrier::builder()
+                .image(self.depth_image)
+                // access patern for the resulting layout
+                .dst_access_mask(
+                    vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                )
+                // go from an undefined old layout to whatever the
+                // driver decides is the optimal depth layout
+                .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .subresource_range(
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                        .layer_count(1)
+                        .level_count(1)
+                        .build(),
+                )
+                .build();
 
-        // process the barrier we created, which will perform
-        // the actual transition.
-        self.g_dev.dev.cmd_pipeline_barrier(
-            new_cbuf,
-            vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-            vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-            vk::DependencyFlags::empty(),
-            &[],
-            &[],
-            &[layout_barrier],
-        );
+            // process the barrier we created, which will perform
+            // the actual transition.
+            self.g_dev.dev.cmd_pipeline_barrier(
+                internal.copy_cbuf,
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[layout_barrier],
+            );
+            self.g_dev.cbuf_end_recording(internal.copy_cbuf);
+        }
 
-        let internal = self.g_dev.d_internal.read().unwrap();
-        self.g_dev.cbuf_submit_and_wait(
-            new_cbuf,
-            internal.transfer_queue,
-            &[], // wait_stages
-            &[], // wait_semas
-            &[], // signal_semas
-        );
+        self.g_dev.copy_cbuf_submit_async();
     }
 }

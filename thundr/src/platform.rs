@@ -46,6 +46,7 @@ pub struct VKDeviceFeatures {
     vkc_incremental_present_exts: [*const i8; 1],
     vkc_phys_dev_drm_exts: [*const i8; 1],
     vkc_nv_aftermath_exts: [*const i8; 2],
+    vkc_timeline_exts: [*const i8; 1],
 
     // Capabilities
     pub max_sampler_count: u32,
@@ -128,6 +129,7 @@ impl VKDeviceFeatures {
                 vk::NvDeviceDiagnosticsConfigFn::name().as_ptr(),
                 vk::NvDeviceDiagnosticCheckpointsFn::name().as_ptr(),
             ],
+            vkc_timeline_exts: [vk::KhrTimelineSemaphoreFn::name().as_ptr()],
         };
 
         let exts = unsafe { inst.enumerate_device_extension_properties(pdev).unwrap() };
@@ -158,6 +160,10 @@ impl VKDeviceFeatures {
             false => {
                 log::error!("This vulkan device does not support importing with drm modifiers")
             }
+        }
+
+        if !contains_extensions(exts.as_slice(), &ret.vkc_timeline_exts) {
+            panic!("Thundr: required support for VK_KHR_timeline_semaphore not found");
         }
 
         let mut supports_incremental_present =
@@ -262,6 +268,10 @@ impl VKDeviceFeatures {
             for e in self.vkc_nv_aftermath_exts.iter() {
                 ret.push(*e)
             }
+        }
+
+        for e in self.vkc_timeline_exts.iter() {
+            ret.push(*e)
         }
 
         return ret;

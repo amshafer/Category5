@@ -52,16 +52,25 @@ pub struct DeviceInternal {
     pub(crate) copy_cmd_pool: vk::CommandPool,
     /// command buffer for copying shm images
     pub(crate) copy_cbuf: vk::CommandBuffer,
+    /// Timeline for copy operations
+    ///
+    /// This has to be tracked separately or else we can end up in the situation
+    /// where doing an intern-frame copy update signals the frame completion.
+    pub(crate) copy_timeline_sema: vk::Semaphore,
+    pub(crate) copy_timeline_point: u64,
+    /// The latest copy point we have already waited for. We can skip waiting on
+    /// this again if needed.
+    pub(crate) latest_acked_copy_timeline_point: u64,
 
-    /// Fence tracking the progress of copy operations
-    pub(crate) copy_cbuf_fence: vk::Fence,
-    /// This fence coordinates draw call reuse. It will be signaled
-    /// when submitting the draw calls to the queue has finished
-    pub(crate) submit_fence: vk::Fence,
-    /// This is signaled by start_frame, and is consumed by present.
-    /// This keeps presentation from occurring until rendering is
-    /// complete
-    pub(crate) render_sema: vk::Semaphore,
+    /// The latest timeline point. The last work submission is tracked by
+    /// this value
+    pub(crate) timeline_point: u64,
+    /// This is our device's timeline, which synchronizes all operations
+    /// by dependent objects. We will wait on the current timeline value
+    /// before drawing the next frame, so updates/copies can simply signal
+    /// the point on the timeline and bump the next value. This avoids
+    /// oversynchronizing or having many semaphores.
+    pub(crate) timeline_sema: vk::Semaphore,
 
     /// These are for loading textures into images
     pub(crate) transfer_buf_len: usize,
@@ -91,6 +100,15 @@ impl Device {
             .vertex_pipeline_stores_and_atomics(true)
             .fragment_stores_and_atomics(true)
             .build();
+        let mut vulkan12_features = vk::PhysicalDeviceVulkan12Features::builder()
+            .timeline_semaphore(true)
+            .descriptor_indexing(true)
+            .shader_sampled_image_array_non_uniform_indexing(true)
+            .runtime_descriptor_array(true)
+            .descriptor_binding_variable_descriptor_count(true)
+            .descriptor_binding_partially_bound(true)
+            .descriptor_binding_update_unused_while_pending(true)
+            .build();
 
         // for now we only have one graphics queue, so one priority
         let priorities = [1.0];
@@ -104,25 +122,12 @@ impl Device {
             );
         }
 
-        let mut dev_create_info = vk::DeviceCreateInfo::builder()
+        #[allow(unused_mut)]
+        let mut devinfo_builder = vk::DeviceCreateInfo::builder()
             .queue_create_infos(queue_infos.as_ref())
             .enabled_extension_names(dev_extension_names.as_slice())
             .enabled_features(&features)
-            .build();
-
-        // Create this outside the check that adds it so it doesn't get freed during
-        // a compiler optimization
-        let indexing_info = vk::PhysicalDeviceDescriptorIndexingFeaturesEXT::builder()
-            .shader_sampled_image_array_non_uniform_indexing(true)
-            .runtime_descriptor_array(true)
-            .descriptor_binding_variable_descriptor_count(true)
-            .descriptor_binding_partially_bound(true)
-            .descriptor_binding_update_unused_while_pending(true)
-            .build();
-
-        if dev_features.vkc_supports_desc_indexing {
-            dev_create_info.p_next = &indexing_info as *const _ as *mut std::ffi::c_void;
-        }
+            .push_next(&mut vulkan12_features);
 
         #[cfg(feature = "aftermath")]
         {
@@ -132,12 +137,13 @@ impl Device {
                         | vk::DeviceDiagnosticsConfigFlagsNV::ENABLE_RESOURCE_TRACKING,
                 )
                 .build();
-            aftermath_info.p_next = dev_create_info.p_next;
 
-            dev_create_info.p_next = &aftermath_info as *const _ as *mut std::ffi::c_void;
+            devinfo_builder = devinfo_builder.push_next(&mut aftermath_info);
             // do our call here so aftermath_info is still in scope
             return inst.create_device(pdev, &dev_create_info, None).unwrap();
         }
+
+        let dev_create_info = devinfo_builder.build();
 
         // return a newly created device
         unsafe { inst.create_device(pdev, &dev_create_info, None).unwrap() }
@@ -273,28 +279,21 @@ impl Device {
         let transfer_queue = unsafe { dev.get_device_queue(transfer_queue_family, 0) };
         let ext_mem_loader = khr::ExternalMemoryFd::new(&instance.inst, &dev);
 
-        // Make a fence which will be signalled after
-        // copies are completed
-        let copy_fence = unsafe {
-            dev.create_fence(
-                &vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED),
-                None,
-            )
-            .expect("Could not create fence")
-        };
-
-        let sema_create_info = vk::SemaphoreCreateInfo::default();
-        let render_sema = unsafe {
+        // make our timeline semaphore
+        let mut timeline_info = vk::SemaphoreTypeCreateInfoKHR::builder()
+            .semaphore_type(vk::SemaphoreType::TIMELINE_KHR)
+            .initial_value(0) // timeline_point
+            .build();
+        let sema_create_info = vk::SemaphoreCreateInfo::builder()
+            .push_next(&mut timeline_info)
+            .build();
+        let timeline_sema = unsafe {
             dev.create_semaphore(&sema_create_info, None)
                 .or(Err(ThundrError::INVALID))?
         };
-
-        let submit_fence = unsafe {
-            dev.create_fence(
-                &vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED),
-                None,
-            )
-            .expect("Could not create fence")
+        let copy_timeline_sema = unsafe {
+            dev.create_semaphore(&sema_create_info, None)
+                .or(Err(ThundrError::INVALID))?
         };
 
         let ret = Self {
@@ -308,13 +307,15 @@ impl Device {
                 graphics_queue_families: Vec::new(),
                 copy_cmd_pool: vk::CommandPool::null(),
                 copy_cbuf: vk::CommandBuffer::null(),
-                copy_cbuf_fence: copy_fence,
                 transfer_queue: transfer_queue,
                 transfer_buf: vk::Buffer::null(), // Initialize in its own method
                 transfer_mem: vk::DeviceMemory::null(),
                 transfer_buf_len: 0,
-                submit_fence: submit_fence,
-                render_sema: render_sema,
+                copy_timeline_point: 0,
+                latest_acked_copy_timeline_point: 0,
+                copy_timeline_sema: copy_timeline_sema,
+                timeline_point: 0,
+                timeline_sema: timeline_sema,
             })),
             d_image_vk: img_ecs.add_component(),
         };
@@ -405,20 +406,58 @@ impl Device {
         unsafe { self.dev.create_sampler(&info, None).unwrap() }
     }
 
-    /// Wait for the previous copy operation to complete
+    /// Wait for the latest timeline sync point to complete
     ///
     /// If no copy operation is in flight this returns immediately.
-    pub fn wait_for_copy(&self) {
-        let internal = self.d_internal.write().unwrap();
+    ///
+    /// Waits for the copy and frame timelines
+    pub fn wait_for_latest_timeline(&self) {
+        let mut internal = self.d_internal.write().unwrap();
+
+        let wait_semas = &[internal.timeline_sema, internal.copy_timeline_sema];
+        let wait_values = &[internal.timeline_point, internal.copy_timeline_point];
+        let wait_info = vk::SemaphoreWaitInfoKHR::builder()
+            .semaphores(wait_semas)
+            .values(wait_values)
+            .build();
+
+        // Immediately wait for our timeline point
         unsafe {
             self.dev
-                .wait_for_fences(
-                    &[internal.copy_cbuf_fence],
-                    true,          // wait for all
-                    std::u64::MAX, //timeout
-                )
-                .expect("Could not wait for the copy fence");
+                .wait_semaphores(&wait_info, u64::MAX)
+                .expect("Could not wait for timeline semaphore");
         }
+
+        internal.latest_acked_copy_timeline_point = internal.copy_timeline_point;
+    }
+
+    /// Waits for the latest copy operation to complete
+    ///
+    /// This waits for the copy timeline
+    pub fn wait_for_copy(&self) {
+        let mut internal = self.d_internal.write().unwrap();
+
+        // If we have already waited for this point before then return and avoid
+        // the vkWaitSemaphores overhead.
+        if internal.latest_acked_copy_timeline_point >= internal.copy_timeline_point {
+            return;
+        }
+
+        let wait_semas = &[internal.copy_timeline_sema];
+        let wait_values = &[internal.copy_timeline_point];
+        let wait_info = vk::SemaphoreWaitInfoKHR::builder()
+            .semaphores(wait_semas)
+            .values(wait_values)
+            .build();
+
+        // Immediately wait for our timeline point
+        unsafe {
+            self.dev
+                .wait_semaphores(&wait_info, u64::MAX)
+                .expect("Could not wait for timeline semaphore");
+        }
+
+        internal.latest_acked_copy_timeline_point = internal.copy_timeline_point;
     }
 
     /// Load a memory region into our staging area
@@ -586,101 +625,118 @@ impl Device {
         (buffer, memory)
     }
 
-    /// Records and submits a one-time command buffer.
+    /// Submits the copy command buffer asynchronously.
     ///
-    /// cbuf - the command buffer to use
-    /// queue - the queue to submit cbuf to
-    /// wait_stages - a list of pipeline stages to wait on
-    /// wait_semas - semaphores we consume
-    /// signal_semas - semaphores we notify
+    /// Simple wrapper for queue submission. Waits for only copy
+    /// work.
     ///
-    /// All operations in the `record_fn` argument will be
-    /// submitted in the command buffer `cbuf`. This aims to make
-    /// constructing buffers more ergonomic.
-    pub(crate) fn cbuf_submit_and_wait(
-        &self,
-        cbuf: vk::CommandBuffer,
-        queue: vk::Queue,
-        wait_stages: &[vk::PipelineStageFlags],
-        wait_semas: &[vk::Semaphore],
-        signal_semas: &[vk::Semaphore],
-    ) {
-        self.cbuf_end_recording(cbuf);
+    /// The buffer MUST have been recorded before this
+    pub(crate) fn copy_cbuf_submit_async(&self) {
+        let mut internal = self.d_internal.write().unwrap();
 
-        // once the one-time buffer has been recorded we can submit
-        // it for execution.
-        // Interesting: putting the cbuf into a list in the builder
-        // struct makes it segfault in release mode... Deep dive
-        // needed...
-        let cbufs = [cbuf];
-        let submit_info = vk::SubmitInfo::builder()
-            .wait_semaphores(wait_semas)
-            .wait_dst_stage_mask(wait_stages)
-            .command_buffers(&cbufs)
-            .signal_semaphores(signal_semas)
-            .build();
+        // Bump our timeline to the next point, and register it to
+        // be signaled by this cbuf's execution
+        internal.copy_timeline_point += 1;
+        let signal_values = vec![internal.copy_timeline_point];
 
-        unsafe {
-            let fence = self
-                .dev
-                .create_fence(&vk::FenceCreateInfo::default(), None)
-                .expect("Could not create fence");
+        let all_signal_semas = vec![internal.copy_timeline_sema];
 
-            // create a fence to be notified when the commands have finished
-            // executing. Wait immediately for the fence.
-            self.dev
-                .queue_submit(queue, &[submit_info], fence)
-                .expect("Could not submit buffer to queue");
-
-            self.dev
-                .wait_for_fences(
-                    &[fence],
-                    true,          // wait for all
-                    std::u64::MAX, //timeout
-                )
-                .expect("Could not wait for the submit fence");
-            // the commands are now executed
-            self.dev.destroy_fence(fence, None);
-        }
+        self.cbuf_submit_async_internal(
+            internal.copy_cbuf,
+            internal.transfer_queue,
+            &[], // wait semas
+            &[],
+            all_signal_semas.as_slice(),
+            signal_values.as_slice(),
+        );
     }
 
     /// Submits a command buffer asynchronously.
     ///
-    /// Simple wrapper for queue submission. Does not
-    /// wait for anything.
+    /// Simple wrapper for queue submission. Waits for previously
+    /// submitted work to complete, both copy and graphics work.
     ///
     /// The buffer MUST have been recorded before this
     ///
-    /// cbuf - the command buffer to use
-    /// queue - the queue to submit cbuf to
+    /// cbuf - the command buffer to use, or copy cbuf if None
+    /// queue - a queue to use instead of the default
     /// wait_stages - a list of pipeline stages to wait on
     /// wait_semas - semaphores we consume
-    /// signal_semas - semaphores we notify
     pub(crate) fn cbuf_submit_async(
         &self,
         cbuf: vk::CommandBuffer,
         queue: vk::Queue,
-        wait_stages: &[vk::PipelineStageFlags],
         wait_semas: &[vk::Semaphore],
         signal_semas: &[vk::Semaphore],
-        signal_fence: vk::Fence,
     ) {
-        let command_bufs = &[cbuf];
-        // The buffer must have been recorded before we can submit
-        // it for execution.
-        let submits = [vk::SubmitInfo::builder()
+        let mut internal = self.d_internal.write().unwrap();
+
+        // Get our wait values. We need to have an entry for each sema
+        // in the list, binary semas will ignore this
+        let mut wait_values = vec![internal.timeline_point, internal.copy_timeline_point];
+        wait_values.extend(std::iter::repeat(0).take(wait_semas.len()));
+        // Bump our timeline to the next point, and register it to
+        // be signaled by this cbuf's execution
+        internal.timeline_point += 1;
+        let mut signal_values = vec![internal.timeline_point];
+        signal_values.extend(std::iter::repeat(0).take(wait_semas.len()));
+
+        // Construct a slice of our wait semaphores
+        let mut all_wait_semas = vec![internal.timeline_sema, internal.copy_timeline_sema];
+        all_wait_semas.extend_from_slice(wait_semas);
+
+        // Construct a slice of our signal semaphores
+        let mut all_signal_semas = vec![internal.timeline_sema];
+        all_signal_semas.extend_from_slice(signal_semas);
+
+        self.cbuf_submit_async_internal(
+            cbuf,
+            queue,
+            all_wait_semas.as_slice(),
+            wait_values.as_slice(),
+            all_signal_semas.as_slice(),
+            signal_values.as_slice(),
+        );
+    }
+
+    /// Common submission code
+    ///
+    /// This submits the cbuf to the queue, all parameters are decided on and timeline
+    /// values calculated by caller
+    fn cbuf_submit_async_internal(
+        &self,
+        cbuf: vk::CommandBuffer,
+        queue: vk::Queue,
+        wait_semas: &[vk::Semaphore],
+        wait_values: &[u64],
+        signal_semas: &[vk::Semaphore],
+        signal_values: &[u64],
+    ) {
+        // dst stages overwrites the semaphore count in the builder
+        // Do all here to wait before we access anything, top of pipe is not sufficient
+        let wait_stages: Vec<_> = std::iter::repeat(vk::PipelineStageFlags::ALL_COMMANDS)
+            .take(wait_semas.len())
+            .collect();
+
+        let mut timeline_info = vk::TimelineSemaphoreSubmitInfoKHR::builder()
+            .wait_semaphore_values(wait_values)
+            .signal_semaphore_values(signal_values)
+            .build();
+
+        // default to using our copy cbuf
+        let cbufs = [cbuf];
+        let submit_info = &[vk::SubmitInfo::builder()
             .wait_semaphores(wait_semas)
-            .wait_dst_stage_mask(wait_stages)
-            .command_buffers(command_bufs)
+            .wait_dst_stage_mask(wait_stages.as_slice())
+            .command_buffers(&cbufs)
             .signal_semaphores(signal_semas)
+            .push_next(&mut timeline_info)
             .build()];
 
-        // create a fence to be notified when the commands have finished
-        // executing.
         unsafe {
             self.dev
-                .queue_submit(queue, &submits, signal_fence)
-                .unwrap();
+                .queue_submit(queue, submit_info, vk::Fence::null())
+                .expect("Could not submit buffer to queue");
         }
     }
 
@@ -896,12 +952,11 @@ impl Device {
         // Now copy the bits into the image
         // TODO: only upload damaged regions
         self.upload_memimage_to_transfer(data);
+        self.wait_for_copy();
 
-        let int_lock = self.d_internal.clone();
-        let internal = int_lock.write().unwrap();
         unsafe {
-            // Reset the fences for our cbuf submission below
-            self.dev.reset_fences(&[internal.copy_cbuf_fence]).unwrap();
+            let int_lock = self.d_internal.clone();
+            let internal = int_lock.write().unwrap();
 
             // transition us into the appropriate memory layout for shaders
             self.cbuf_begin_recording(
@@ -970,16 +1025,10 @@ impl Device {
                 &[layout_barrier],
             );
             self.cbuf_end_recording(internal.copy_cbuf);
-
-            self.cbuf_submit_async(
-                internal.copy_cbuf,
-                internal.transfer_queue,
-                &[], // wait_stages
-                &[], // wait_semas
-                &[], // signal_semas
-                internal.copy_cbuf_fence,
-            );
         }
+
+        // Do this without
+        self.copy_cbuf_submit_async();
     }
 
     /// Returns an index into the array of memory types for the memory
@@ -1019,60 +1068,54 @@ impl Device {
     pub(crate) fn acquire_dmabuf_image_from_external_queue(&self, image: vk::Image) {
         self.wait_for_copy();
 
-        let int_lock = self.d_internal.clone();
-        let internal = int_lock.write().unwrap();
+        {
+            let int_lock = self.d_internal.clone();
+            let internal = int_lock.write().unwrap();
 
-        unsafe { self.dev.reset_fences(&[internal.copy_cbuf_fence]).unwrap() };
+            // now perform the copy
+            self.cbuf_begin_recording(
+                internal.copy_cbuf,
+                vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+            );
 
-        // now perform the copy
-        self.cbuf_begin_recording(
-            internal.copy_cbuf,
-            vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-        );
+            // Acquire the dmabuf for each queue family
+            for queue_family in internal.graphics_queue_families.iter() {
+                let acquire_barrier = vk::ImageMemoryBarrier::builder()
+                    .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
+                    .dst_queue_family_index(*queue_family)
+                    .image(image)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .src_access_mask(vk::AccessFlags::empty())
+                    .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                    .subresource_range(
+                        vk::ImageSubresourceRange::builder()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .layer_count(1)
+                            .level_count(1)
+                            .build(),
+                    )
+                    .build();
 
-        // Acquire the dmabuf for each queue family
-        for queue_family in internal.graphics_queue_families.iter() {
-            let acquire_barrier = vk::ImageMemoryBarrier::builder()
-                .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
-                .dst_queue_family_index(*queue_family)
-                .image(image)
-                .old_layout(vk::ImageLayout::UNDEFINED)
-                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .src_access_mask(vk::AccessFlags::empty())
-                .dst_access_mask(vk::AccessFlags::SHADER_READ)
-                .subresource_range(
-                    vk::ImageSubresourceRange::builder()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .layer_count(1)
-                        .level_count(1)
-                        .build(),
-                )
-                .build();
-
-            unsafe {
-                self.dev.cmd_pipeline_barrier(
-                    internal.copy_cbuf,
-                    vk::PipelineStageFlags::TOP_OF_PIPE, // src
-                    vk::PipelineStageFlags::FRAGMENT_SHADER
-                        | vk::PipelineStageFlags::VERTEX_SHADER
-                        | vk::PipelineStageFlags::COMPUTE_SHADER, // dst
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &[acquire_barrier],
-                );
+                unsafe {
+                    self.dev.cmd_pipeline_barrier(
+                        internal.copy_cbuf,
+                        vk::PipelineStageFlags::TOP_OF_PIPE, // src
+                        vk::PipelineStageFlags::FRAGMENT_SHADER
+                            | vk::PipelineStageFlags::VERTEX_SHADER
+                            | vk::PipelineStageFlags::COMPUTE_SHADER, // dst
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[],
+                        &[acquire_barrier],
+                    );
+                }
             }
+
+            self.cbuf_end_recording(internal.copy_cbuf);
         }
 
-        self.cbuf_end_recording(internal.copy_cbuf);
-        self.cbuf_submit_async(
-            internal.copy_cbuf,
-            internal.transfer_queue,
-            &[], // wait_stages
-            &[], // wait_semas
-            &[], // signal_semas
-            internal.copy_cbuf_fence,
-        );
+        self.copy_cbuf_submit_async();
     }
 
     /// Release a dmabuf VkImage
@@ -1081,58 +1124,51 @@ impl Device {
     pub(crate) fn release_dmabuf_image_from_external_queue(&self, image: vk::Image) {
         self.wait_for_copy();
 
-        let int_lock = self.d_internal.clone();
-        let internal = int_lock.write().unwrap();
+        {
+            let int_lock = self.d_internal.clone();
+            let internal = int_lock.write().unwrap();
 
-        unsafe { self.dev.reset_fences(&[internal.copy_cbuf_fence]).unwrap() };
+            // now perform the copy
+            self.cbuf_begin_recording(
+                internal.copy_cbuf,
+                vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+            );
 
-        // now perform the copy
-        self.cbuf_begin_recording(
-            internal.copy_cbuf,
-            vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-        );
+            // Acquire the dmabuf for each queue family
+            for queue_family in internal.graphics_queue_families.iter() {
+                let release_barrier = vk::ImageMemoryBarrier::builder()
+                    .src_queue_family_index(*queue_family)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
+                    .image(image)
+                    .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .new_layout(vk::ImageLayout::GENERAL)
+                    .src_access_mask(vk::AccessFlags::SHADER_READ)
+                    .dst_access_mask(vk::AccessFlags::empty())
+                    .subresource_range(
+                        vk::ImageSubresourceRange::builder()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .layer_count(1)
+                            .level_count(1)
+                            .build(),
+                    )
+                    .build();
 
-        // Acquire the dmabuf for each queue family
-        for queue_family in internal.graphics_queue_families.iter() {
-            let release_barrier = vk::ImageMemoryBarrier::builder()
-                .src_queue_family_index(*queue_family)
-                .dst_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
-                .image(image)
-                .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .new_layout(vk::ImageLayout::GENERAL)
-                .src_access_mask(vk::AccessFlags::SHADER_READ)
-                .dst_access_mask(vk::AccessFlags::empty())
-                .subresource_range(
-                    vk::ImageSubresourceRange::builder()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .layer_count(1)
-                        .level_count(1)
-                        .build(),
-                )
-                .build();
-
-            unsafe {
-                self.dev.cmd_pipeline_barrier(
-                    internal.copy_cbuf,
-                    vk::PipelineStageFlags::ALL_GRAPHICS, // src
-                    vk::PipelineStageFlags::BOTTOM_OF_PIPE, // dst
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &[release_barrier],
-                );
+                unsafe {
+                    self.dev.cmd_pipeline_barrier(
+                        internal.copy_cbuf,
+                        vk::PipelineStageFlags::ALL_GRAPHICS, // src
+                        vk::PipelineStageFlags::BOTTOM_OF_PIPE, // dst
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[],
+                        &[release_barrier],
+                    );
+                }
             }
+            self.cbuf_end_recording(internal.copy_cbuf);
         }
 
-        self.cbuf_end_recording(internal.copy_cbuf);
-        self.cbuf_submit_async(
-            internal.copy_cbuf,
-            internal.transfer_queue,
-            &[], // wait_stages
-            &[], // wait_semas
-            &[], // signal_semas
-            internal.copy_cbuf_fence,
-        );
+        self.copy_cbuf_submit_async();
     }
 
     /// Create a vkImage and the resources needed to use it
@@ -1221,13 +1257,13 @@ impl Drop for Device {
             // first wait for the device to finish working
             self.dev.device_wait_idle().unwrap();
 
-            self.dev.destroy_semaphore(internal.render_sema, None);
-            self.dev.destroy_fence(internal.submit_fence, None);
+            self.dev
+                .destroy_semaphore(internal.copy_timeline_sema, None);
+            self.dev.destroy_semaphore(internal.timeline_sema, None);
             self.dev.destroy_buffer(internal.transfer_buf, None);
             self.free_memory(internal.transfer_mem);
 
             self.dev.destroy_command_pool(internal.copy_cmd_pool, None);
-            self.dev.destroy_fence(internal.copy_cbuf_fence, None);
             self.dev.destroy_device(None);
         }
     }

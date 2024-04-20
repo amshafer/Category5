@@ -43,6 +43,8 @@ pub struct DisplayState {
     pub(crate) d_present_sema: vk::Semaphore,
     /// processes things to be physically displayed
     pub(crate) d_present_queue: vk::Queue,
+    /// Frame end semaphore
+    pub(crate) d_frame_sema: vk::Semaphore,
 }
 
 /// A display represents a physical screen
@@ -229,6 +231,7 @@ impl Display {
             let swapchain_loader = khr::Swapchain::new(&dev.inst.inst, &dev.dev);
             let sema_create_info = vk::SemaphoreCreateInfo::default();
             let present_sema = dev.dev.create_semaphore(&sema_create_info, None).unwrap();
+            let frame_sema = dev.dev.create_semaphore(&sema_create_info, None).unwrap();
 
             let mut ret = Self {
                 d_dev: dev,
@@ -240,6 +243,7 @@ impl Display {
                     d_current_image: 0,
                     d_present_sema: present_sema,
                     d_present_queue: present_queue,
+                    d_frame_sema: frame_sema,
                 },
                 d_surface_loader: s_loader,
                 d_back: back,
@@ -589,9 +593,9 @@ impl Display {
     /// Finally we can actually flip the buffers and present
     /// this image.
     pub fn present(&mut self) -> ThundrResult<()> {
-        // have to write lock here since the fence is externally synchronized
-        let dev_internal = self.d_dev.d_internal.write().unwrap();
-        let wait_semas = &[dev_internal.render_sema];
+        // We can't wait for a timeline semaphore here, so instead wait for a semaphore
+        // we signal during the last cbuf submitted in a frame
+        let wait_semas = &[self.d_state.d_frame_sema];
         let swapchains = [self.d_swapchain];
         let indices = [self.d_state.d_current_image];
         let info = vk::PresentInfoKHR::builder()
@@ -618,6 +622,9 @@ impl Drop for Display {
         println!("Destroying display");
         unsafe {
             self.d_dev.dev.device_wait_idle().unwrap();
+            self.d_dev
+                .dev
+                .destroy_semaphore(self.d_state.d_frame_sema, None);
             self.d_dev
                 .dev
                 .destroy_semaphore(self.d_state.d_present_sema, None);

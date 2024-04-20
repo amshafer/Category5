@@ -559,31 +559,7 @@ impl Renderer {
     ///
     /// This waits for the last frame render operation to finish submitting.
     pub fn wait_for_prev_submit(&self) {
-        self.dev.wait_for_copy();
-
-        unsafe {
-            // can do read lock here since the fence isn't externally synchronized during
-            // this vkWaitForFences call.
-            let internal = self.dev.d_internal.read().unwrap();
-            match self.dev.dev.wait_for_fences(
-                &[internal.submit_fence],
-                true,          // wait for all
-                std::u64::MAX, //timeout
-            ) {
-                Ok(_) => {}
-                Err(e) => match e {
-                    vk::Result::ERROR_DEVICE_LOST => {
-                        // If aftermath support is enabled, wait for aftermath
-                        // to dump the GPU state
-                        #[cfg(feature = "aftermath")]
-                        {
-                            self.inst.aftermath.wait_for_dump();
-                        }
-                    }
-                    _ => panic!("Could not wait for vulkan fences"),
-                },
-            };
-        }
+        self.dev.wait_for_latest_timeline();
     }
 
     pub fn get_recording_parameters(&mut self) -> RecordParams {
@@ -747,18 +723,6 @@ impl Renderer {
                 },
             );
         }
-    }
-
-    /// Returns true if we are ready to call present
-    pub fn frame_submission_complete(&mut self) -> bool {
-        // can do read lock here since the fence isn't externally synchronized
-        let internal = self.dev.d_internal.read().unwrap();
-        match unsafe { self.dev.dev.get_fence_status(internal.submit_fence) } {
-            // true means vk::Result::SUCCESS
-            // false means vk::Result::NOT_READY
-            Ok(complete) => return complete,
-            Err(_) => panic!("Failed to get fence status"),
-        };
     }
 }
 
