@@ -39,7 +39,7 @@ pub struct VKDeviceFeatures {
 
     // The following are the lists of extensions that map to the above features
     vkc_ext_mem_exts: [*const i8; 1],
-    vkc_dmabuf_exts: [*const i8; 2],
+    vkc_dmabuf_exts: [*const i8; 3],
     vkc_mut_swapchain_exts: [*const i8; 3],
     vkc_desc_indexing_exts: [*const i8; 2],
     vkc_drm_modifiers_exts: [*const i8; 1],
@@ -106,6 +106,7 @@ impl VKDeviceFeatures {
             vkc_supports_nvidia_aftermath: false,
             vkc_ext_mem_exts: [khr::ExternalMemoryFd::name().as_ptr()],
             vkc_dmabuf_exts: [
+                vk::ExtExternalMemoryDmaBufFn::name().as_ptr(),
                 khr::ExternalMemoryFd::name().as_ptr(),
                 vk::ExtQueueFamilyForeignFn::name().as_ptr(),
             ],
