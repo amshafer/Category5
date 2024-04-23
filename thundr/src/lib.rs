@@ -67,6 +67,7 @@ use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
 mod damage;
+mod descpool;
 mod device;
 mod display;
 mod image;
