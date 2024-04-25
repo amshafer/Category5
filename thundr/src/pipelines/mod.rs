@@ -18,7 +18,7 @@ pub use geometric::GeomPipeline;
 
 use crate::display::DisplayState;
 use crate::renderer::{RecordParams, Renderer};
-use crate::{SurfaceList, Viewport};
+use crate::{Result, Surface, Viewport};
 
 // The pipeline trait is essentially a mini-backend for the
 // renderer. It determines what draw calls we generate for the
@@ -35,24 +35,27 @@ pub trait Pipeline {
 
     fn begin_record(&mut self, dstate: &DisplayState);
 
-    /// Our function which records the cbufs used to draw
-    /// a frame. `params` tells us which cbufs/image we are
-    /// recording for. We need to generate draw calls to update
-    /// changes that have happened in `surfaces`.
+    /// Set the viewport
     ///
-    /// pass_number represents the render pass id, this determines which surfaces
-    /// out of the list get drawn.
+    /// This restricts the draw operations to within the specified region
+    fn set_viewport(
+        &mut self,
+        params: &mut RecordParams,
+        dstate: &DisplayState,
+        viewport: &Viewport,
+    ) -> Result<()>;
+
+    /// Our function which records the cbufs used to draw
+    /// a Surface.
     ///
     /// Returns if vkQueueSubmit was called, and if Renderer.render_sema
     /// should be waited on during presentation.
     fn draw(
         &mut self,
         rend: &mut Renderer,
-        params: &RecordParams,
+        params: &mut RecordParams,
         dstate: &DisplayState,
-        surfaces: &SurfaceList,
-        pass_number: usize,
-        viewport: &Viewport,
+        surfaces: &Surface,
     ) -> bool;
 
     fn end_record(&mut self, dstate: &DisplayState);

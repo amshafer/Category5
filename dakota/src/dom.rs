@@ -397,7 +397,7 @@ impl Dakota {
             }
         }
 
-        let needs_size_to_child = !self.d_layout_nodes.get(el).unwrap().l_is_viewport
+        let needs_size_to_child = !self.d_viewports.get(el).is_some()
             && !is_image_resource
             && self.d_layout_nodes.get(el).unwrap().l_children.len() > 0;
 

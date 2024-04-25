@@ -17,8 +17,8 @@ use ash::{util, vk};
 use super::Pipeline;
 use crate::display::{Display, DisplayState};
 use crate::renderer::{PushConstants, RecordParams, Renderer};
-use crate::{Device, Result, SurfaceList, Viewport};
-use utils::log;
+use crate::{Device, Result, Surface, Viewport};
+use utils::{log, region::Rect};
 
 // This is the reference data for a normal quad
 // that will be used to draw client windows.
@@ -191,50 +191,18 @@ impl Pipeline for GeomPipeline {
         }
     }
 
-    /// Our implementation of drawing one frame using geometry
-    fn draw(
+    /// Set the viewport
+    ///
+    /// This restricts the draw operations to within the specified region
+    fn set_viewport(
         &mut self,
-        rend: &mut Renderer,
-        params: &RecordParams,
+        params: &mut RecordParams,
         dstate: &DisplayState,
-        surfaces: &SurfaceList,
-        pass_number: usize,
         viewport: &Viewport,
-    ) -> bool {
-        let pass = surfaces.l_pass[pass_number].as_ref().unwrap();
+    ) -> Result<()> {
         let cbuf = self.g_cbufs[dstate.d_current_image as usize];
 
         unsafe {
-            // Descriptor sets can be updated elsewhere, but
-            // they must be bound before drawing
-            //
-            // We need to bind both the uniform set, and the per-Image
-            // set for the image sampler
-            self.g_dev.dev.cmd_bind_descriptor_sets(
-                cbuf,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.pipeline_layout,
-                0, // first set
-                &[self.g_desc, pass.p_order_desc, rend.r_images_desc],
-                &[], // dynamic offsets
-            );
-
-            // Now update our cbuf constants. This is how we pass in
-            // the viewport information
-            let consts = rend.get_push_constants(params, viewport);
-            self.g_dev.dev.cmd_push_constants(
-                cbuf,
-                self.pipeline_layout,
-                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                0, // offset
-                // Get the raw bytes for our push constants without doing any
-                // expensinve serialization
-                std::slice::from_raw_parts(
-                    &consts as *const _ as *const u8,
-                    std::mem::size_of::<PushConstants>(),
-                ),
-            );
-
             log::info!("Viewport is : {:?}", viewport);
 
             // Set our current viewport
@@ -264,44 +232,79 @@ impl Pipeline for GeomPipeline {
                     },
                 }],
             );
+        }
 
-            // Actually draw our objects
+        // Update our push constants with the new viewport location
+        params.push.scroll_x = viewport.scroll_offset.0 as f32;
+        params.push.scroll_y = viewport.scroll_offset.1 as f32;
+        params.push.width = viewport.size.0 as f32;
+        params.push.height = viewport.size.1 as f32;
+        params.push.starting_depth = params.starting_depth;
+
+        Ok(())
+    }
+
+    /// Our implementation of drawing one Surface
+    fn draw(
+        &mut self,
+        rend: &mut Renderer,
+        params: &mut RecordParams,
+        dstate: &DisplayState,
+        surface: &Surface,
+    ) -> bool {
+        let cbuf = self.g_cbufs[dstate.d_current_image as usize];
+
+        // update our cbuf constants. This is how we pass in
+        // the viewport information
+        self.update_surf_push_constants(surface, params);
+
+        // If this surface has no content then skip drawing it
+        let mut num_contents = (params.push.image_id > 0) as i32;
+        num_contents += params.push.use_color;
+        if num_contents <= 0 {
+            return true;
+        }
+
+        // TODO: If this surface is not contained in the viewport then don't draw it
+
+        unsafe {
+            // Bind this surface's backing texture if it has one. Descriptor
+            // sets can be updated elsewhere, but they must be bound before drawing
             //
-            // This is done with bindless+instanced drawing. We have one quad object that we will
-            // draw and texture, but instance it for every surface in our surface list. This means
-            // one draw call for any number of elements.
-            //
-            // Unfortunately it seems AMD's driver has a bug where they do not properly handle this
-            // particular draw call sequence. The result is lots of corruption, in the form of
-            // little squares which make it look like compressed pixel data was written to a linear
-            // texture. So on AMD we do not do the instancing, but instead have a draw call for
-            // every object (gross)
-            if pass.p_window_order.len() > 0 {
-                if self.g_dev.dev_features.vkc_war_disable_instanced_drawing {
-                    for i in 0..pass.p_window_order.len() as u32 {
-                        // [WAR] Launch each instance manually :(
-                        // TODO: skip if incorrect pass
-                        self.g_dev.dev.cmd_draw_indexed(
-                            cbuf,            // drawing command buffer
-                            self.vert_count, // number of verts
-                            1,               // number of instances
-                            0,               // first vertex
-                            0,               // vertex offset
-                            i as u32,        // first instance
-                        );
-                    }
-                } else {
-                    self.g_dev.dev.cmd_draw_indexed(
-                        cbuf,                             // drawing command buffer
-                        self.vert_count,                  // number of verts
-                        pass.p_window_order.len() as u32, // number of instances
-                        0,                                // first vertex
-                        0,                                // vertex offset
-                        0,                                // first instance
-                    );
-                }
-            }
-            log::info!("Drawing {} objects", pass.p_window_order.len());
+            // We need to bind both the uniform set, and the per-Image
+            // set for the image sampler
+            self.g_dev.dev.cmd_bind_descriptor_sets(
+                cbuf,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.pipeline_layout,
+                0, // first set
+                &[self.g_desc, rend.r_images_desc],
+                &[], // dynamic offsets
+            );
+
+            self.g_dev.dev.cmd_push_constants(
+                cbuf,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                0, // offset
+                // Get the raw bytes for our push constants without doing any
+                // expensinve serialization
+                std::slice::from_raw_parts(
+                    &params.push as *const _ as *const u8,
+                    std::mem::size_of::<PushConstants>(),
+                ),
+            );
+
+            // Draw this surface
+            self.g_dev.dev.cmd_draw_indexed(
+                cbuf,            // drawing command buffer
+                self.vert_count, // number of verts
+                1,               // number of instances
+                0,               // first vertex
+                0,               // vertex offset
+                0,               // first instance
+            );
+            log::info!("Drawing surface at {:?}", surface.s_rect);
         }
 
         return true;
@@ -422,6 +425,34 @@ impl Drop for GeomPipeline {
 }
 
 impl GeomPipeline {
+    /// Helper for getting the push constants
+    ///
+    /// This will be where we calculate the viewport scroll amount
+    fn update_surf_push_constants(&mut self, surf: &Surface, params: &mut RecordParams) {
+        // transform from blender's coordinate system to vulkan
+        params.push.image_id = surf
+            .s_image
+            .as_ref()
+            .map(|i| i.get_id().get_raw_id() as i32)
+            .unwrap_or(-1);
+        params.push.use_color = surf.s_color.is_some() as i32;
+        params.push.padding = 0;
+        params.push.color = match surf.s_color {
+            Some((r, g, b, a)) => (r, g, b, a),
+            // magic value so it's easy to debug
+            // this is clear, since we don't have a color
+            // assigned and we may not have an image bound.
+            // In that case, we want this surface to be clear.
+            None => (0.0, 50.0, 100.0, 0.0),
+        };
+        params.push.dims = Rect::new(
+            surf.s_rect.r_pos.0,
+            surf.s_rect.r_pos.1,
+            surf.s_rect.r_size.0,
+            surf.s_rect.r_size.1,
+        );
+    }
+
     /// Create a descriptor pool for the uniform buffer
     ///
     /// All other dynamic sets are tracked using a DescPool. This pool
@@ -474,7 +505,6 @@ impl GeomPipeline {
             // These are the layout recognized by the pipeline
             let descriptor_layouts = &[
                 ubo_layout, // set 0
-                rend.r_order_desc_layout,
                 rend.r_images_desc_layout,
             ];
 
@@ -512,9 +542,10 @@ impl GeomPipeline {
 
             // Allocate a pool only for the ubo descriptors
             let g_desc_pool = Self::create_descriptor_pool(&dev);
+            let layouts = [ubo_layout];
             let info = vk::DescriptorSetAllocateInfo::builder()
                 .descriptor_pool(g_desc_pool)
-                .set_layouts(&[ubo_layout])
+                .set_layouts(&layouts)
                 .build();
 
             let ubo = dev.dev.allocate_descriptor_sets(&info).unwrap()[0];

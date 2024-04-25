@@ -80,7 +80,10 @@ impl DescPool {
     /// allocated from this pool
     fn free_set(&mut self, set: vk::DescriptorSet) {
         unsafe {
-            self.dp_dev.dev.free_descriptor_sets(self.dp_pool, &[set]);
+            self.dp_dev
+                .dev
+                .free_descriptor_sets(self.dp_pool, &[set])
+                .unwrap();
         }
         self.dp_capacity -= 1;
     }

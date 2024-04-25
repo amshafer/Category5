@@ -233,16 +233,27 @@ impl FontInstance {
     pub fn get_thundr_surf_for_glyph(
         &mut self,
         thund: &mut Thundr,
-        surf: &mut th::Surface,
         id: u16,
-        pos: dom::Offset<f32>,
-    ) {
+        pos: &(f32, f32),
+    ) -> th::Surface {
         self.ensure_glyph_exists(thund, id);
         let glyph = self.f_glyphs[id as usize].as_ref().unwrap();
-        surf.reset_surface(pos.x, pos.y, glyph.g_bitmap_size.0, glyph.g_bitmap_size.1);
+
+        let mut surf = th::Surface::new(
+            th::Rect::new(pos.0, pos.1, glyph.g_bitmap_size.0, glyph.g_bitmap_size.1),
+            None,
+            None,
+        );
+
         if let Some(image) = glyph.g_image.as_ref() {
-            thund.bind_image(surf, image.clone());
+            surf.bind_image(image.clone());
         }
+
+        if let Some(color) = self.f_color {
+            surf.set_color((color.r, color.g, color.b, color.a));
+        }
+
+        return surf;
     }
 
     /// Handle one line of text

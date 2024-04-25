@@ -568,38 +568,6 @@ impl Device {
         }
     }
 
-    /// Update our memory, calling `callback` to provide the caller an opportunity
-    /// to fill in the data.
-    pub(crate) fn update_memory_from_callback<T: Copy, F: FnOnce(&mut [T])>(
-        &self,
-        memory: vk::DeviceMemory,
-        offset: isize,
-        len: usize,
-        callback: F,
-    ) {
-        // Now we copy our data into the buffer
-        let data_size = std::mem::size_of::<T>();
-        unsafe {
-            let ptr = self
-                .dev
-                .map_memory(
-                    memory,
-                    offset as u64, // offset
-                    (data_size * len) as u64,
-                    vk::MemoryMapFlags::empty(),
-                )
-                .unwrap();
-
-            // rust doesn't have a raw memcpy, so we need to transform the void
-            // ptr to a slice. This is unsafe as the length needs to be correct
-            let dst = std::slice::from_raw_parts_mut(ptr as *mut T, len);
-
-            callback(dst);
-
-            self.dev.unmap_memory(memory)
-        };
-    }
-
     /// allocates a buffer/memory pair and fills it with `data`
     ///
     /// There are two components to a memory backed resource in vulkan:
