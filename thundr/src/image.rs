@@ -355,15 +355,30 @@ impl Device {
         // -------------------------------------------------------
         // we create the image now, but will have to bind
         // some memory to it later.
-        let mut image_info = vk::ImageCreateInfo::builder()
+        let layouts = &[vk::SubresourceLayout::builder()
+            .offset(plane.db_offset as u64)
+            .row_pitch(plane.db_stride as u64)
+            .size(0)
+            .build()];
+        let mut drm_create_info = vk::ImageDrmFormatModifierExplicitCreateInfoEXT::builder()
+            .drm_format_modifier(plane.db_mods)
+            .plane_layouts(layouts)
+            .build();
+
+        let mut ext_mem_info = vk::ExternalMemoryImageCreateInfo::builder()
+            .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
+            .build();
+
+        let extent = vk::Extent3D {
+            width: dmabuf.db_width as u32,
+            height: dmabuf.db_height as u32,
+            depth: 1,
+        };
+        let image_info = vk::ImageCreateInfo::builder()
             .image_type(vk::ImageType::TYPE_2D)
             // TODO: add other formats
             .format(TARGET_FORMAT)
-            .extent(vk::Extent3D {
-                width: dmabuf.db_width as u32,
-                height: dmabuf.db_height as u32,
-                depth: 1,
-            })
+            .extent(extent)
             .image_type(vk::ImageType::TYPE_2D)
             .mip_levels(1)
             .array_layers(1)
@@ -373,21 +388,10 @@ impl Device {
             .usage(vk::ImageUsageFlags::SAMPLED)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             .flags(vk::ImageCreateFlags::empty())
-            .build();
-        let mut ext_mem_info = vk::ExternalMemoryImageCreateInfo::builder()
-            .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
+            .push_next(&mut ext_mem_info)
+            .push_next(&mut drm_create_info)
             .build();
 
-        let drm_create_info = vk::ImageDrmFormatModifierExplicitCreateInfoEXT::builder()
-            .drm_format_modifier(plane.db_mods)
-            .plane_layouts(&[vk::SubresourceLayout::builder()
-                .offset(plane.db_offset as u64)
-                .row_pitch(plane.db_stride as u64)
-                .size(0)
-                .build()])
-            .build();
-        ext_mem_info.p_next = &drm_create_info as *const _ as *mut std::ffi::c_void;
-        image_info.p_next = &ext_mem_info as *const _ as *mut std::ffi::c_void;
         let image = unsafe { self.dev.create_image(&image_info, None).unwrap() };
 
         // Update the private tracker with memory info
@@ -419,15 +423,6 @@ impl Device {
         // VkPhysicalDeviceExternalBufferInfo
         // VkPhysicalDeviceExternalImageInfo
 
-        // We need to import from the dmabuf fd, so we will
-        // add a VkImportMemoryFdInfoKHR struct to the next ptr
-        // here to tell vulkan that we should import mem
-        // instead of allocating it.
-        let mut alloc_info = vk::MemoryAllocateInfo::builder()
-            .allocation_size(dmabuf_priv.dp_mem_reqs.size)
-            .memory_type_index(dmabuf_priv.dp_memtype_index)
-            .build();
-
         // Since we are VERY async/threading friendly here, it is
         // possible that the fd may be bad since the program that
         // owns it was killed. If that is the case just return and
@@ -443,14 +438,23 @@ impl Device {
             .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
             // need to dup the fd since it seems the implementation will
             // internally free it
-            .fd(fd);
+            .fd(fd)
+            .build();
 
-        let dedicated_alloc_info = vk::MemoryDedicatedAllocateInfo::builder()
+        let mut dedicated_alloc_info = vk::MemoryDedicatedAllocateInfo::builder()
             .image(image)
             .build();
 
-        import_fd_info.p_next = &dedicated_alloc_info as *const _ as *const std::ffi::c_void;
-        alloc_info.p_next = &import_fd_info as *const _ as *const std::ffi::c_void;
+        // We need to import from the dmabuf fd, so we will
+        // add a VkImportMemoryFdInfoKHR struct to the next ptr
+        // here to tell vulkan that we should import mem
+        // instead of allocating it.
+        let alloc_info = vk::MemoryAllocateInfo::builder()
+            .allocation_size(dmabuf_priv.dp_mem_reqs.size)
+            .memory_type_index(dmabuf_priv.dp_memtype_index)
+            .push_next(&mut import_fd_info)
+            .push_next(&mut dedicated_alloc_info)
+            .build();
 
         // perform the import
         unsafe {
