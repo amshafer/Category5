@@ -6,7 +6,6 @@ layout(location = 0) in vec2 coord;
 layout(location = 0) out vec4 res;
 
 layout(push_constant) uniform PushConstants {
- vec2 viewport_offset;
  float width;
  float height;
  float starting_depth;

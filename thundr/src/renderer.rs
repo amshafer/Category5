@@ -107,14 +107,12 @@ impl RecordParams {
         Self {
             starting_depth: 0.0,
             push: PushConstants {
-                scroll_x: 0.0,
-                scroll_y: 0.0,
                 width: 0.0,
                 height: 0.0,
                 starting_depth: 0.0,
                 image_id: -1,
                 use_color: -1,
-                padding: 0,
+                padding: [0, 0, 0],
                 color: (0.0, 0.0, 0.0, 0.0),
                 dims: Rect::new(0.0, 0.0, 0.0, 0.0),
             },
@@ -132,8 +130,6 @@ impl RecordParams {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PushConstants {
-    pub scroll_x: f32,
-    pub scroll_y: f32,
     pub width: f32,
     pub height: f32,
     pub starting_depth: f32,
@@ -143,7 +139,7 @@ pub struct PushConstants {
     /// if we should use color instead of texturing
     pub use_color: i32,
     /// Padding to match our shader's struct
-    pub padding: i32,
+    pub padding: [i32; 3],
     /// Opaque color
     pub color: (f32, f32, f32, f32),
     /// The complete dimensions of the window.

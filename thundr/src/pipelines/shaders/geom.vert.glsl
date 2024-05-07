@@ -13,7 +13,6 @@ layout(binding = 0) uniform ShaderConstants {
 } ubo;
 
 layout(push_constant) uniform PushConstants {
- vec2 viewport_offset;
  float width;
  float height;
  float starting_depth;
@@ -34,9 +33,6 @@ layout(push_constant) uniform PushConstants {
 layout(set = 1, binding = 1) uniform sampler2D images[];
 
 void main() {
- // Add our viewport offset to the location
- vec2 position = push.surface_pos + push.viewport_offset;
-
  // 1. loc should ALWAYS be 0,1 for the default quad.
  // 2. multiply by two since the axis are over the range (-1,1).
  // 3. multiply by the percentage of the screen that the window
@@ -49,7 +45,7 @@ void main() {
  vec2 adjusted = loc
   * vec2(2, 2)
   * (push.surface_size / vec2(push.width, push.height))
-  + (position / vec2(push.width, push.height))
+  + (push.surface_pos / vec2(push.width, push.height))
   * vec2(2, 2);
 
  // use our instance number as the depth. Smaller means farther back in

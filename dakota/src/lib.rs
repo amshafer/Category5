@@ -1015,58 +1015,7 @@ impl Dakota {
         let final_size = self.get_final_size(el, space)?.into();
         self.d_layout_nodes.get_mut(el).unwrap().l_size = final_size;
 
-        // Test if our children exceed our final size
-        self.calculate_needs_viewport(el, parent)?;
-
         return Ok(());
-    }
-
-    fn calculate_needs_viewport(
-        &mut self,
-        el: &DakotaId,
-        _grandparent: Option<&DakotaId>,
-    ) -> Result<()> {
-        // Now check if child elements overflow our final size to determine if this
-        // needs to be a new viewport boundary
-        let child_count = self.d_layout_nodes.get(el).unwrap().l_children.len();
-
-        // If this element does not have children then it can't overflow
-        if child_count == 0 {
-            return Ok(());
-        }
-
-        for i in 0..child_count {
-            let child_id = self.d_layout_nodes.get(el).unwrap().l_children[i].clone();
-            // ----- check if we overflow our bounds and need to enable scrolling ----
-            {
-                // Test if the child exceeds the parent space. If so, this is a scrolling
-                // region and we should mark it as a viewport boundary.
-                let (child_offset, child_size) = {
-                    let child_size = self.d_layout_nodes.get(&child_id).unwrap();
-                    (child_size.l_offset, child_size.l_size)
-                };
-                // The parent we are bounding inside of doesn't necessarily have to be the
-                // element this child is attached to. Elements marked as unbounded subsurfaces
-                // will actually be "layered" ontop of their parent, which means not being
-                // bound by anything.
-                if self.d_unbounded_subsurf.get(&child_id).is_some() {
-                    continue;
-                }
-
-                let bounding_parent = self.d_layout_nodes.get(el).unwrap();
-                if child_offset.x < 0.0
-                    || child_offset.y < 0.0
-                    || child_offset.x + child_size.width > bounding_parent.l_size.width
-                    || child_offset.y + child_size.height > bounding_parent.l_size.height
-                {
-                    log::debug!("Element exceeds available space, marking parent as viewport");
-                    self.set_viewport(el);
-                    return Ok(());
-                }
-            }
-        }
-
-        Ok(())
     }
 
     /// Get the total internal size for this layout node. This is used to calculate
@@ -1102,35 +1051,6 @@ impl Dakota {
         viewport.set_scroll_region(scroll_region.0 as i32, scroll_region.1 as i32);
 
         self.d_viewports.set(id, viewport);
-    }
-
-    /// Helper method to print out our layout tree
-    #[allow(dead_code)]
-    #[cfg(debug_assertions)]
-    fn print_node(&self, _id: &DakotaId, node: &LayoutNode, indent_level: usize) {
-        let spaces = std::iter::repeat("  ")
-            .take(indent_level)
-            .collect::<String>();
-
-        log::verbose!("{}Layout node:", spaces);
-        log::verbose!(
-            "{}    offset={:?}, size={:?}",
-            spaces,
-            node.l_offset,
-            node.l_size
-        );
-
-        log::verbose!(
-            "{}    glyph_id={:?}, num_children={}",
-            spaces,
-            node.l_glyph_id,
-            node.l_children.len(),
-        );
-
-        for child_id in node.l_children.iter() {
-            let child = &self.d_layout_nodes.get(child_id).unwrap();
-            self.print_node(child_id, child, indent_level + 1);
-        }
     }
 
     fn assert_id_has_type(&self, id: &DakotaId, ty: DakotaObjectType) {
@@ -1322,25 +1242,7 @@ impl Dakota {
         )?;
         // Manually mark the root node as a viewport node. It always is, and it will
         // always have the root viewport.
-        {
-            let layout = self.d_layout_nodes.get(&root_node_id).unwrap();
-            self.d_viewports.set(
-                &root_node_id,
-                th::Viewport::new(
-                    layout.l_offset.x as i32,
-                    layout.l_offset.y as i32,
-                    layout.l_size.width as i32,
-                    layout.l_size.height as i32,
-                ),
-            );
-        }
-
-        //#[cfg(debug_assertions)]
-        //{
-        //    if let Some(root_id) = self.d_layout_tree_root.as_ref() {
-        //        self.print_node(&self.d_layout_nodes.get(&root_id).unwrap(), 0);
-        //    }
-        //}
+        self.set_viewport(&root_node_id);
 
         // Perform the Thundr pass
         //
@@ -1588,8 +1490,8 @@ impl Dakota {
 
         // Update the starting dimensions of the returned viewport
         ret.offset = (
-            base.0 as i32 + parent.scroll_offset.0 + layout.l_offset.x as i32,
-            base.1 as i32 + parent.scroll_offset.1 + layout.l_offset.y as i32,
+            base.0 as i32 + layout.l_offset.x as i32,
+            base.1 as i32 + layout.l_offset.y as i32,
         );
         ret.size = (layout.l_size.width as i32, layout.l_size.height as i32);
 
@@ -1630,11 +1532,9 @@ impl Dakota {
             if (offset.x > viewport.size.0 as f32
                     && offset.y > viewport.size.1 as f32)
                     // Have we scrolled past this horizontally
-                    || (offset.x < viewport.offset.0 as f32
-                        && offset.x * -1.0 > layout.l_size.width)
+                    || (offset.x < 0.0 && offset.x * -1.0 > layout.l_size.width)
                     // Have we scrolled past this vertically
-                    || (offset.y < viewport.offset.1 as f32
-                        && offset.y * -1.0 > layout.l_size.height)
+                    || (offset.y < 0.0 && offset.y * -1.0 > layout.l_size.height)
             {
                 return Ok(());
             }
@@ -1681,12 +1581,12 @@ impl Dakota {
 
         // Update our subsurf offset
         // If this node is a viewport then the base offset needs to be reset
-        let new_base = match self.d_viewports.get(node).is_some() {
-            true => (0.0, 0.0),
-            false => (base.0 + layout.l_offset.x, base.1 + layout.l_offset.y),
+        let new_base = match self.d_viewports.get(node) {
+            // do scrolling here to allow us to test things that are off screen?
+            // By putting the offset here all children will be offset by it
+            Some(vp) => (vp.scroll_offset.0 as f32, vp.scroll_offset.1 as f32),
+            None => (base.0 + layout.l_offset.x, base.1 + layout.l_offset.y),
         };
-
-        // TODO: do scrolling here to allow us to test things that are off screen?
 
         // Now draw each of our children
         for child in layout.l_children.iter() {

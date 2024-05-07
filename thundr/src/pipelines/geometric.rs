@@ -235,8 +235,6 @@ impl Pipeline for GeomPipeline {
         }
 
         // Update our push constants with the new viewport location
-        params.push.scroll_x = viewport.scroll_offset.0 as f32;
-        params.push.scroll_y = viewport.scroll_offset.1 as f32;
         params.push.width = viewport.size.0 as f32;
         params.push.height = viewport.size.1 as f32;
         params.push.starting_depth = params.starting_depth;
@@ -436,7 +434,6 @@ impl GeomPipeline {
             .map(|i| i.get_id().get_raw_id() as i32)
             .unwrap_or(-1);
         params.push.use_color = surf.s_color.is_some() as i32;
-        params.push.padding = 0;
         params.push.color = match surf.s_color {
             Some((r, g, b, a)) => (r, g, b, a),
             // magic value so it's easy to debug
