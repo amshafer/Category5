@@ -15,14 +15,11 @@ layout(binding = 0) uniform ShaderConstants {
 layout(push_constant) uniform PushConstants {
  float width;
  float height;
- float starting_depth;
  // The id of the image. This is the offset into the unbounded sampler array.
  // id that's the offset into the unbound sampler array
  int image_id;
  // if we should use color instead of texturing
  int use_color;
- // Padding to match our shader's struct
- int padding;
  vec4 color;
  // The complete dimensions of the window.
  vec2 surface_pos;
@@ -48,15 +45,7 @@ void main() {
   + (push.surface_pos / vec2(push.width, push.height))
   * vec2(2, 2);
 
- // use our instance number as the depth. Smaller means farther back in
- // the scene, so we are drawing back to front but our depth value is
- // increasing
- //
- // We also have a starting depth that is set, which keeps track of the
- // latest depth to start at. This will be updated every time a surface
- // list is drawn in thundr, that way lists don't Z-fight
- // One hundred million objects is our max right now.
- gl_Position = ubo.model * vec4(adjusted, push.starting_depth, 1.0);
+ gl_Position = ubo.model * vec4(adjusted, 0.0, 1.0);
 
  fragcoord = coord;
 }

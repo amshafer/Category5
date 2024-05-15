@@ -427,7 +427,11 @@ impl Thundr {
         let mut rend = self.th_rend.lock().unwrap();
 
         // record rendering commands
-        let params = rend.begin_recording_one_frame()?;
+        let mut params = rend.begin_recording_one_frame()?;
+        let res = self.get_resolution();
+        params.push.width = res.0 as f32;
+        params.push.height = res.1 as f32;
+
         rend.refresh_window_resources();
         self.th_pipe.begin_record(&self.th_display.d_state);
         self.th_params = Some(params);
@@ -463,9 +467,6 @@ impl Thundr {
             self.th_pipe
                 .draw(rend.deref_mut(), params, &self.th_display.d_state, surface);
         }
-
-        // Update the depth for the next surface
-        params.starting_depth += 1.0 / 100000000000.0;
 
         Ok(())
     }

@@ -8,14 +8,11 @@ layout(location = 0) out vec4 res;
 layout(push_constant) uniform PushConstants {
  float width;
  float height;
- float starting_depth;
  // The id of the image. This is the offset into the unbounded sampler array.
  // id that's the offset into the unbound sampler array
  int image_id;
  // if we should use color instead of texturing
  int use_color;
- // Padding to match our shader's struct
- int padding;
  vec4 color;
  // The complete dimensions of the window.
  vec2 surface_pos;

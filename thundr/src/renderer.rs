@@ -89,15 +89,6 @@ pub struct Renderer {
 /// to Renderer to begin/end recording operations
 /// This is that structure.
 pub struct RecordParams {
-    /// This calculates the depth we should use when starting to draw
-    /// a set of surfaces in a viewport.
-    ///
-    /// This will start at 1.0, the max depth. Every surface will draw
-    /// itself starting_depth - (gl_InstanceIndex * 0.00000001) away from the max
-    /// depth. We will update this after every draw to calculate the
-    /// new depth to offset from, so we don't collide with previously drawn
-    /// surfaces in a different viewport.
-    pub starting_depth: f32,
     /// our cached pushbuffer constants
     pub push: PushConstants,
 }
@@ -105,14 +96,11 @@ pub struct RecordParams {
 impl RecordParams {
     pub fn new() -> Self {
         Self {
-            starting_depth: 0.0,
             push: PushConstants {
                 width: 0.0,
                 height: 0.0,
-                starting_depth: 0.0,
                 image_id: -1,
                 use_color: -1,
-                padding: [0, 0, 0],
                 color: (0.0, 0.0, 0.0, 0.0),
                 dims: Rect::new(0.0, 0.0, 0.0, 0.0),
             },
@@ -132,14 +120,11 @@ impl RecordParams {
 pub struct PushConstants {
     pub width: f32,
     pub height: f32,
-    pub starting_depth: f32,
     /// The id of the image. This is the offset into the unbounded sampler array.
     /// id that's the offset into the unbound sampler array
     pub image_id: i32,
     /// if we should use color instead of texturing
     pub use_color: i32,
-    /// Padding to match our shader's struct
-    pub padding: [i32; 3],
     /// Opaque color
     pub color: (f32, f32, f32, f32),
     /// The complete dimensions of the window.

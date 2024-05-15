@@ -234,11 +234,6 @@ impl Pipeline for GeomPipeline {
             );
         }
 
-        // Update our push constants with the new viewport location
-        params.push.width = viewport.size.0 as f32;
-        params.push.height = viewport.size.1 as f32;
-        params.push.starting_depth = params.starting_depth;
-
         Ok(())
     }
 
@@ -442,11 +437,14 @@ impl GeomPipeline {
             // In that case, we want this surface to be clear.
             None => (0.0, 50.0, 100.0, 0.0),
         };
+        // Round these floats to guarantee we don't accidentally offset ourselves
+        // by part of a pixel, this can lead to blurry text
+        // TODO: use i32 everywhere
         params.push.dims = Rect::new(
-            surf.s_rect.r_pos.0,
-            surf.s_rect.r_pos.1,
-            surf.s_rect.r_size.0,
-            surf.s_rect.r_size.1,
+            surf.s_rect.r_pos.0.round(),
+            surf.s_rect.r_pos.1.round(),
+            surf.s_rect.r_size.0.round(),
+            surf.s_rect.r_size.1.round(),
         );
     }
 
