@@ -762,7 +762,6 @@ impl WindowManager {
             self.wm_renderdoc
                 .end_frame_capture(std::ptr::null(), std::ptr::null());
         }
-        atmos.release_consumables();
 
         log::debug!("_____________________________ FRAME END");
 

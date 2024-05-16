@@ -13,7 +13,7 @@ extern crate utils as cat5_utils;
 use crate::image::ImageVk;
 use crate::instance::Instance;
 use crate::platform::VKDeviceFeatures;
-use crate::{CreateInfo, Damage, Result, ThundrError};
+use crate::{CreateInfo, Damage, DeletionQueue, Droppable, Result, ThundrError};
 use cat5_utils::log;
 
 use std::sync::{Arc, RwLock};
@@ -71,6 +71,10 @@ pub struct DeviceInternal {
     /// the point on the timeline and bump the next value. This avoids
     /// oversynchronizing or having many semaphores.
     pub(crate) timeline_sema: vk::Semaphore,
+
+    /// Deletion queue
+    /// This holds all data that will be dropped after each frame is complete
+    pub(crate) deletion_queue: DeletionQueue,
 
     /// These are for loading textures into images
     pub(crate) transfer_buf_len: usize,
@@ -316,6 +320,7 @@ impl Device {
                 copy_timeline_sema: copy_timeline_sema,
                 timeline_point: 0,
                 timeline_sema: timeline_sema,
+                deletion_queue: DeletionQueue::new(),
             })),
             d_image_vk: img_ecs.add_component(),
         };
@@ -1213,6 +1218,52 @@ impl Device {
         let view = unsafe { self.dev.create_image_view(&view_info, None).unwrap() };
 
         return (image, view, image_memory);
+    }
+
+    /// Schedule the item to be dropped once the specified timeline
+    /// point has passed.
+    ///
+    /// This does not drop the item immediately, unless the timeline point
+    /// is already known to be signaled.
+    pub fn schedule_drop_at_point(
+        &mut self,
+        item: Box<dyn Droppable + Send + Sync>,
+        sync_point: u64,
+    ) {
+        self.d_internal
+            .write()
+            .unwrap()
+            .deletion_queue
+            .schedule_drop_at_point(item, sync_point);
+    }
+
+    /// Schedule the item to be dropped once the current timeline point
+    ///
+    /// This empties the deletion queue at the latest signaled point.
+    pub fn flush_deletion_queue(&self) {
+        let mut internal = self.d_internal.write().unwrap();
+
+        // use one less than the current pending timeline point
+        //
+        // timeline_point is the latest submitted timeline point, meaning that
+        // the prior point should have already completed. Confirm this by waiting
+        // for the previous point
+        let timeline_point = internal.timeline_point.checked_sub(1).unwrap_or(0);
+        let wait_semas = &[internal.timeline_sema];
+        let wait_values = &[timeline_point];
+        let wait_info = vk::SemaphoreWaitInfoKHR::builder()
+            .semaphores(wait_semas)
+            .values(wait_values)
+            .build();
+
+        // Immediately wait for our timeline point
+        unsafe {
+            self.dev
+                .wait_semaphores(&wait_info, u64::MAX)
+                .expect("Could not wait for timeline semaphore");
+        }
+
+        internal.deletion_queue.drop_all_at_point(timeline_point);
     }
 }
 

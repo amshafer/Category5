@@ -1721,8 +1721,6 @@ impl Dakota {
         // and will return that to the dakota user so they have a chance to resize
         // anything they want
         if self.d_needs_redraw {
-            self.d_thund.release_pending_resources();
-
             match self.draw_surfacelists() {
                 Ok(()) => {}
                 Err(th::ThundrError::OUT_OF_DATE) => {

@@ -12,7 +12,7 @@ use ash::vk;
 
 use crate::display::Display;
 use crate::instance::Instance;
-use crate::{Device, Droppable};
+use crate::Device;
 
 extern crate utils as cat5_utils;
 use crate::{CreateInfo, Result};
@@ -55,12 +55,6 @@ pub struct Renderer {
 
     /// One sampler for all swapchain images
     pub(crate) image_sampler: vk::Sampler,
-
-    /// The pending release list
-    /// This is the set of wayland resources used last frame
-    /// for rendering that should now be released
-    /// See WindowManger's worker_thread for more
-    pub(crate) r_release: Vec<Box<dyn Droppable + Send + Sync>>,
 
     /// We keep a list of image views from the surface list's images
     /// to be passed as our unsized image array in our shader. This needs
@@ -135,32 +129,6 @@ pub struct PushConstants {
 // should be used by the applications. The unsafe functions are mostly for
 // internal use.
 impl Renderer {
-    /// Returns true if there are any resources in
-    /// the current release list.
-    pub fn release_is_empty(&mut self) -> bool {
-        return self.r_release.is_empty();
-    }
-
-    /// Drop all of the resources, this is used to
-    /// release wl_buffers after they have been drawn.
-    /// We should not deal with wayland structs
-    /// directly, just with releaseinfo
-    pub fn release_pending_resources(&mut self) {
-        log::profiling!("-- releasing pending resources --");
-
-        // This is the previous frames's pending release list
-        // We will clear it, therefore dropping all the relinfos
-        self.r_release.clear();
-    }
-
-    /// Add a ReleaseInfo to the list of resources to be
-    /// freed this frame
-    ///
-    /// Takes care of choosing what list to add info to
-    pub fn register_for_release(&mut self, release: Box<dyn Droppable + Send + Sync>) {
-        self.r_release.push(release);
-    }
-
     unsafe fn allocate_bindless_resources(
         dev: &Device,
         max_image_count: u32,
@@ -284,7 +252,6 @@ impl Renderer {
                 _inst: instance,
                 dev: dev,
                 image_sampler: sampler,
-                r_release: Vec::new(),
                 r_images_desc_pool: bindless_pool,
                 r_images_desc_layout: bindless_layout,
                 r_images_desc: bindless_desc,

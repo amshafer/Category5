@@ -64,6 +64,7 @@ use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
 mod damage;
+mod deletion_queue;
 mod descpool;
 mod device;
 mod display;
@@ -77,6 +78,7 @@ mod surface;
 pub use self::image::Image;
 pub use self::image::{Dmabuf, DmabufPlane};
 pub use damage::Damage;
+pub(crate) use deletion_queue::DeletionQueue;
 pub use device::Device;
 use display::Display;
 use instance::Instance;
@@ -383,11 +385,6 @@ impl Thundr {
         self.update_image_vk_info(image.i_internal.read().as_ref().unwrap());
     }
 
-    // release_pending_resources
-    pub fn release_pending_resources(&mut self) {
-        self.th_rend.lock().unwrap().release_pending_resources();
-    }
-
     /// This is a candidate for an out of date error. We should
     /// let the application know about this so it can recalculate anything
     /// that depends on the window size, so we exit returning OOD.
@@ -414,6 +411,10 @@ impl Thundr {
         if self.th_params.is_some() {
             return Err(ThundrError::RECORDING_ALREADY_IN_PROGRESS);
         }
+
+        // Before waiting for the latest frame, free the previous
+        // frame's release data
+        self.th_dev.flush_deletion_queue();
 
         // Get our next swapchain image
         match self.th_display.get_next_swapchain_image() {

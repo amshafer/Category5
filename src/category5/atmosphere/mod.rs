@@ -285,12 +285,6 @@ impl Atmosphere {
         }
     }
 
-    /// This releases any resources that exist for only one frame, such
-    /// as damage regions for a window. These per-frame data will be added
-    /// in ways, propogated to vkcomp, and then released with this once the
-    /// frame has completed
-    pub fn release_consumables(&mut self) {}
-
     /// Has the current hemisphere been changed
     ///
     /// Ways will use this to know if it should flip
