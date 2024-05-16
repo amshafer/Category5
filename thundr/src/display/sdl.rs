@@ -103,7 +103,7 @@ impl Backend for SDL2DisplayBackend {
         }
     }
 
-    fn get_dpi(&self) -> ThundrResult<(f32, f32)> {
+    fn get_dpi(&self) -> ThundrResult<(i32, i32)> {
         let dpi = self
             .sdl_video
             .display_dpi(self.sdl_window.display_index().unwrap())
@@ -115,8 +115,8 @@ impl Backend for SDL2DisplayBackend {
 
         // return hdpi and vdpi
         let ret = Ok((
-            dpi.1 * (win_size.0 as f32 / vk_size.0 as f32),
-            dpi.2 * (win_size.1 as f32 / vk_size.1 as f32),
+            dpi.1 as i32 * (win_size.0 as i32 / vk_size.0 as i32),
+            dpi.2 as i32 * (win_size.1 as i32 / vk_size.1 as i32),
         ));
 
         log::info!("Final DPI: {:?}", ret);

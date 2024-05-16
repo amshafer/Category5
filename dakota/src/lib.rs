@@ -1,4 +1,3 @@
-extern crate freetype as ft;
 /// Dakota UI Toolkit
 ///
 /// Dakota is a UI toolkit designed for rendering trees of surfaces. These
@@ -6,6 +5,7 @@ extern crate freetype as ft;
 /// by the application.
 ///
 /// Austin Shafer - 2022
+extern crate freetype as ft;
 extern crate image;
 extern crate lluvia as ll;
 extern crate thundr as th;
@@ -158,7 +158,7 @@ pub struct Dakota {
     ///
     /// Mouse updates are relative, so we need to add them to the last
     /// known mouse location. That is the value stored here.
-    d_mouse_pos: (f64, f64),
+    d_mouse_pos: (i32, i32),
 }
 
 /// Enum for specifying subsurface operations
@@ -176,8 +176,8 @@ pub(crate) struct LayoutNode {
     pub l_glyph_id: Option<u16>,
     /// True if the dakota file specified an offset for this el
     pub l_offset_specified: bool,
-    pub l_offset: dom::Offset<f32>,
-    pub l_size: dom::Size<f32>,
+    pub l_offset: dom::Offset<i32>,
+    pub l_size: dom::Size<i32>,
     /// Ids of the children that this layout node has
     pub l_children: Vec<DakotaId>,
 }
@@ -187,15 +187,15 @@ impl Default for LayoutNode {
         Self {
             l_glyph_id: None,
             l_offset_specified: false,
-            l_offset: dom::Offset::new(0.0, 0.0),
-            l_size: dom::Size::new(0.0, 0.0),
+            l_offset: dom::Offset::new(0, 0),
+            l_size: dom::Size::new(0, 0),
             l_children: Vec::with_capacity(0),
         }
     }
 }
 
 impl LayoutNode {
-    fn new(glyph_id: Option<u16>, off: dom::Offset<f32>, size: dom::Size<f32>) -> Self {
+    fn new(glyph_id: Option<u16>, off: dom::Offset<i32>, size: dom::Size<i32>) -> Self {
         Self {
             l_glyph_id: glyph_id,
             l_offset_specified: false,
@@ -220,8 +220,8 @@ impl LayoutNode {
     #[allow(dead_code)]
     pub fn resize_to_children(&mut self, dakota: &Dakota) -> Result<()> {
         self.l_size = dom::Size {
-            width: 0.0,
-            height: 0.0,
+            width: 0,
+            height: 0,
         };
 
         for child_id in self.l_children.iter() {
@@ -254,9 +254,9 @@ struct TileInfo {
 #[derive(Debug, Clone)]
 pub struct LayoutSpace {
     /// This is essentially the width of the parent container
-    pub avail_width: f32,
+    pub avail_width: i32,
     /// This is essentially the height of the parent container
-    pub avail_height: f32,
+    pub avail_height: i32,
 }
 
 macro_rules! create_component_and_table {
@@ -282,7 +282,7 @@ impl Dakota {
     /// get the DPI of the display. These three are tested since they all may fail
     /// given different configurations. DPI fails if SDL2 tries to initialize us on
     /// a physical display.
-    fn initialize_platform() -> Result<(Box<dyn Platform>, th::Thundr, (f32, f32))> {
+    fn initialize_platform() -> Result<(Box<dyn Platform>, th::Thundr, (i32, i32))> {
         #[cfg(feature = "sdl")]
         if std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok() {
             match platform::SDL2Plat::new() {
@@ -382,7 +382,7 @@ impl Dakota {
             d_freetype: ft::Library::init().context(anyhow!("Could not get freetype library"))?,
             d_ood_counter: 30,
             d_font_instances: Vec::new(),
-            d_mouse_pos: (0.0, 0.0),
+            d_mouse_pos: (0, 0),
         };
 
         ret.d_node_types.set(&default_inst, DakotaObjectType::Font);
@@ -684,14 +684,10 @@ impl Dakota {
             // half the size of the child.
             //
             // The child size should have already been clipped to the available space
-            child_size.l_offset.x = utils::partial_max(
-                (parent_size.width / 2.0) - (child_size.l_size.width / 2.0),
-                0.0,
-            );
-            child_size.l_offset.y = utils::partial_max(
-                (parent_size.height / 2.0) - (child_size.l_size.height / 2.0),
-                0.0,
-            );
+            child_size.l_offset.x =
+                utils::partial_max((parent_size.width / 2) - (child_size.l_size.width / 2), 0);
+            child_size.l_offset.y =
+                utils::partial_max((parent_size.height / 2) - (child_size.l_size.height / 2), 0);
         }
 
         let mut node = self.d_layout_nodes.get_mut(el).unwrap();
@@ -744,16 +740,16 @@ impl Dakota {
                 if !child_size.l_offset_specified {
                     // if this element exceeds the horizontal or vertical space, set it on a
                     // new line
-                    if tile_info.t_last_x as f32 + child_size.l_size.width > space.avail_width
-                        || tile_info.t_last_y as f32 + child_size.l_size.height > space.avail_height
+                    if tile_info.t_last_x as i32 + child_size.l_size.width > space.avail_width
+                        || tile_info.t_last_y as i32 + child_size.l_size.height > space.avail_height
                     {
                         tile_info.t_last_x = 0;
                         tile_info.t_last_y = tile_info.t_greatest_y;
                     }
 
                     child_size.l_offset = dom::Offset {
-                        x: tile_info.t_last_x as f32,
-                        y: tile_info.t_last_y as f32,
+                        x: tile_info.t_last_x as i32,
+                        y: tile_info.t_last_y as i32,
                     };
 
                     // now we need to update the space that we have seen children
@@ -793,7 +789,7 @@ impl Dakota {
         _parent: Option<&DakotaId>,
         space: &LayoutSpace,
     ) -> Result<()> {
-        let mut node = LayoutNode::new(None, dom::Offset::new(0.0, 0.0), dom::Size::new(0.0, 0.0));
+        let mut node = LayoutNode::new(None, dom::Offset::new(0, 0), dom::Size::new(0, 0));
 
         node.l_offset_specified = self.d_offsets.get(el).is_some();
         node.l_offset = self
@@ -848,7 +844,7 @@ impl Dakota {
             let node = self.d_layout_nodes.get(el).unwrap();
             Cursor {
                 c_i: 0,
-                c_x: 0.0,
+                c_x: 0,
                 c_y: line_space,
                 c_min: node.l_offset.x,
                 c_max: node.l_offset.x + node.l_size.width,
@@ -897,8 +893,8 @@ impl Dakota {
                             let child_size = LayoutNode::new(
                                 Some(ch.glyph_id),
                                 dom::Offset {
-                                    x: (curse.c_x + ch.offset.0).round(),
-                                    y: (curse.c_y + ch.offset.1).round(),
+                                    x: curse.c_x + ch.offset.0,
+                                    y: curse.c_y + ch.offset.1,
                                 },
                                 dom::Size {
                                     width: size.0,
@@ -927,25 +923,6 @@ impl Dakota {
         }
 
         Ok(())
-    }
-
-    /// Create a new LayoutNode and id pair
-    ///
-    /// This is a helper for creating a LayoutNode and a matching DakotaId.
-    /// We need both because we need a) a node struct holding a bunch of data
-    /// and b) we need an ECS ID to perform lookups with.
-    #[allow(dead_code)]
-    fn create_layout_node(
-        &mut self,
-        glyph_id: Option<u16>,
-        off: dom::Offset<f32>,
-        size: dom::Size<f32>,
-    ) -> DakotaId {
-        let new_id = self.d_ecs_inst.add_entity();
-        self.d_layout_nodes
-            .set(&new_id, LayoutNode::new(glyph_id, off, size));
-
-        new_id
     }
 
     /// Create a layout tree of boxes.
@@ -1020,7 +997,7 @@ impl Dakota {
 
     /// Get the total internal size for this layout node. This is used to calculate
     /// the scrolling region within this node, useful if it is a viewport node.
-    fn get_node_internal_size(&self, id: DakotaId) -> (f32, f32) {
+    fn get_node_internal_size(&self, id: DakotaId) -> (i32, i32) {
         let node = self.d_layout_nodes.get(&id).unwrap();
         let mut ret = (node.l_size.width, node.l_size.height);
 
@@ -1236,8 +1213,8 @@ impl Dakota {
             &root_node_id,
             None, // no parent since we are the root node
             &LayoutSpace {
-                avail_width: self.d_window_dims.unwrap().0 as f32, // available width
-                avail_height: self.d_window_dims.unwrap().1 as f32, // available height
+                avail_width: self.d_window_dims.unwrap().0 as i32, // available width
+                avail_height: self.d_window_dims.unwrap().1 as i32, // available height
             },
         )?;
         // Manually mark the root node as a viewport node. It always is, and it will
@@ -1295,9 +1272,9 @@ impl Dakota {
     fn viewport_at_pos_recursive(
         &self,
         id: &DakotaId,
-        base: (f32, f32),
-        x: f32,
-        y: f32,
+        base: (i32, i32),
+        x: i32,
+        y: i32,
     ) -> Option<DakotaId> {
         let layout = self.d_layout_nodes.get(id).unwrap();
         let offset = (base.0 + layout.l_offset.x, base.1 + layout.l_offset.y);
@@ -1329,12 +1306,12 @@ impl Dakota {
     /// Walks the viewport tree and returns the ECS id of the
     /// viewport at this location. Note there will always be a viewport
     /// because the entire window surface is at the very least, the root viewport
-    fn viewport_at_pos(&self, x: f32, y: f32) -> DakotaId {
+    fn viewport_at_pos(&self, x: i32, y: i32) -> DakotaId {
         assert!(self.d_layout_tree_root.is_some());
         let root_node = self.d_layout_tree_root.as_ref().unwrap();
         assert!(self.d_viewports.get(root_node).is_some());
 
-        self.viewport_at_pos_recursive(root_node, (0.0, 0.0), x, y)
+        self.viewport_at_pos_recursive(root_node, (0, 0), x, y)
             .unwrap()
     }
 
@@ -1352,23 +1329,22 @@ impl Dakota {
                     ..
                 } => {
                     let x = match *xrel {
-                        Some(v) => v,
-                        None => 0.0,
+                        Some(v) => v as i32,
+                        None => 0,
                     };
                     let y = match *yrel {
-                        Some(v) => v,
-                        None => 0.0,
+                        Some(v) => v as i32,
+                        None => 0,
                     };
                     // Update our mouse
-                    self.d_mouse_pos = *position;
+                    self.d_mouse_pos = (position.0 as i32, position.1 as i32);
 
                     // Find viewport at this location
-                    let node =
-                        self.viewport_at_pos(self.d_mouse_pos.0 as f32, self.d_mouse_pos.1 as f32);
+                    let node = self.viewport_at_pos(self.d_mouse_pos.0, self.d_mouse_pos.1);
                     let mut viewport = self.d_viewports.get_mut(&node).unwrap();
                     log::error!("original_scroll_offset: {:?}", viewport.scroll_offset);
 
-                    viewport.update_scroll_amount(x as i32, y as i32);
+                    viewport.update_scroll_amount(x, y);
                     log::error!("new_scroll_offset: {:?}", viewport.scroll_offset);
 
                     self.d_needs_redraw = true;
@@ -1388,14 +1364,14 @@ impl Dakota {
     fn get_thundr_surf_for_el(
         &mut self,
         node: &DakotaId,
-        base: (f32, f32),
+        base: (i32, i32),
     ) -> th::Result<th::Surface> {
         let layout = self.d_layout_nodes.get(node).unwrap();
 
         // If this node is a viewport then ignore its offset, setting the viewport
         // will take care of positioning it.
         let offset = match self.d_viewports.get(node).is_some() {
-            true => (0.0, 0.0),
+            true => (0, 0),
             false => (base.0 + layout.l_offset.x, base.1 + layout.l_offset.y),
         };
 
@@ -1458,7 +1434,7 @@ impl Dakota {
         &self,
         parent: &th::Viewport,
         node: &DakotaId, // child viewport
-        base: (f32, f32),
+        base: (i32, i32),
     ) -> Option<th::Viewport> {
         let layout = self.d_layout_nodes.get(node)?;
         let viewport = self.d_viewports.get(node)?;
@@ -1522,19 +1498,19 @@ impl Dakota {
         &mut self,
         viewport: &th::Viewport,
         node: &DakotaId,
-        base: (f32, f32),
+        base: (i32, i32),
     ) -> th::Result<()> {
         {
             let layout = self.d_layout_nodes.get(node).unwrap();
 
             // Test that this child is visible before drawing it
             let offset = dom::Offset::new(base.0 + layout.l_offset.x, base.1 + layout.l_offset.y);
-            if (offset.x > viewport.size.0 as f32
-                    && offset.y > viewport.size.1 as f32)
+            if (offset.x > viewport.size.0
+                    && offset.y > viewport.size.1 )
                     // Have we scrolled past this horizontally
-                    || (offset.x < 0.0 && offset.x * -1.0 > layout.l_size.width)
+                    || (offset.x < 0 && offset.x * -1 > layout.l_size.width)
                     // Have we scrolled past this vertically
-                    || (offset.y < 0.0 && offset.y * -1.0 > layout.l_size.height)
+                    || (offset.y < 0 && offset.y * -1 > layout.l_size.height)
             {
                 return Ok(());
             }
@@ -1552,7 +1528,7 @@ impl Dakota {
         &mut self,
         viewport: &th::Viewport,
         node: &DakotaId,
-        base: (f32, f32),
+        base: (i32, i32),
     ) -> th::Result<()> {
         // If this node is a viewport then update our thundr viewport
         let new_th_viewport = match self.d_viewports.get(node).is_some() {
@@ -1584,7 +1560,7 @@ impl Dakota {
         let new_base = match self.d_viewports.get(node) {
             // do scrolling here to allow us to test things that are off screen?
             // By putting the offset here all children will be offset by it
-            Some(vp) => (vp.scroll_offset.0 as f32, vp.scroll_offset.1 as f32),
+            Some(vp) => (vp.scroll_offset.0, vp.scroll_offset.1),
             None => (base.0 + layout.l_offset.x, base.1 + layout.l_offset.y),
         };
 
@@ -1609,7 +1585,7 @@ impl Dakota {
         let root_viewport = self.d_viewports.get_clone(&root_node).unwrap();
 
         self.d_thund.begin_recording()?;
-        self.draw_node_recurse(&root_viewport, &root_node, (0.0, 0.0))?;
+        self.draw_node_recurse(&root_viewport, &root_node, (0, 0))?;
         self.d_thund.end_recording()?;
 
         Ok(())

@@ -166,11 +166,11 @@ impl Backend for PhysicalDisplay {
         }
     }
 
-    fn get_dpi(&self) -> ThundrResult<(f32, f32)> {
+    fn get_dpi(&self) -> ThundrResult<(i32, i32)> {
         let dpi_h = self.pd_native_res.width / self.pd_phys_dims.width;
         let dpi_v = self.pd_native_res.height / self.pd_phys_dims.height;
 
-        Ok((dpi_h as f32, dpi_v as f32))
+        Ok((dpi_h as i32, dpi_v as i32))
     }
 
     fn get_vulkan_drawable_size(&self) -> Option<vk::Extent2D> {

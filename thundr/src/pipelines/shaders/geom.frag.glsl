@@ -6,8 +6,8 @@ layout(location = 0) in vec2 coord;
 layout(location = 0) out vec4 res;
 
 layout(push_constant) uniform PushConstants {
- float width;
- float height;
+ int width;
+ int height;
  // The id of the image. This is the offset into the unbounded sampler array.
  // id that's the offset into the unbound sampler array
  int image_id;
@@ -15,8 +15,8 @@ layout(push_constant) uniform PushConstants {
  int use_color;
  vec4 color;
  // The complete dimensions of the window.
- vec2 surface_pos;
- vec2 surface_offset;
+ ivec2 surface_pos;
+ ivec2 surface_size;
 } push;
 
 /* The array of textures that are the window contents */

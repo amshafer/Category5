@@ -113,8 +113,8 @@ struct VertData {
 #[repr(C)]
 struct ShaderConstants {
     pub model: Matrix4<f32>,
-    pub width: f32,
-    pub height: f32,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl Pipeline for GeomPipeline {
@@ -196,7 +196,7 @@ impl Pipeline for GeomPipeline {
     /// This restricts the draw operations to within the specified region
     fn set_viewport(
         &mut self,
-        params: &mut RecordParams,
+        _params: &mut RecordParams,
         dstate: &DisplayState,
         viewport: &Viewport,
     ) -> Result<()> {
@@ -437,14 +437,11 @@ impl GeomPipeline {
             // In that case, we want this surface to be clear.
             None => (0.0, 50.0, 100.0, 0.0),
         };
-        // Round these floats to guarantee we don't accidentally offset ourselves
-        // by part of a pixel, this can lead to blurry text
-        // TODO: use i32 everywhere
         params.push.dims = Rect::new(
-            surf.s_rect.r_pos.0.round(),
-            surf.s_rect.r_pos.1.round(),
-            surf.s_rect.r_size.0.round(),
-            surf.s_rect.r_size.1.round(),
+            surf.s_rect.r_pos.0,
+            surf.s_rect.r_pos.1,
+            surf.s_rect.r_size.0,
+            surf.s_rect.r_size.1,
         );
     }
 
@@ -954,8 +951,8 @@ impl GeomPipeline {
 
         ShaderConstants {
             model: model,
-            width: dstate.d_resolution.width as f32,
-            height: dstate.d_resolution.height as f32,
+            width: dstate.d_resolution.width,
+            height: dstate.d_resolution.height,
         }
     }
 

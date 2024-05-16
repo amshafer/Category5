@@ -13,8 +13,8 @@ layout(binding = 0) uniform ShaderConstants {
 } ubo;
 
 layout(push_constant) uniform PushConstants {
- float width;
- float height;
+ int width;
+ int height;
  // The id of the image. This is the offset into the unbounded sampler array.
  // id that's the offset into the unbound sampler array
  int image_id;
@@ -22,8 +22,8 @@ layout(push_constant) uniform PushConstants {
  int use_color;
  vec4 color;
  // The complete dimensions of the window.
- vec2 surface_pos;
- vec2 surface_size;
+ ivec2 surface_pos;
+ ivec2 surface_size;
 } push;
 
 /* The array of textures that are the window contents */

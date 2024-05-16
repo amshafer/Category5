@@ -354,7 +354,7 @@ impl Thundr {
     ///
     /// For VK_KHR_display we will calculate it ourselves, and for
     /// SDL we will ask SDL to tell us it.
-    pub fn get_dpi(&self) -> Result<(f32, f32)> {
+    pub fn get_dpi(&self) -> Result<(i32, i32)> {
         self.th_display.get_dpi()
     }
 
@@ -429,8 +429,8 @@ impl Thundr {
         // record rendering commands
         let mut params = rend.begin_recording_one_frame()?;
         let res = self.get_resolution();
-        params.push.width = res.0 as f32;
-        params.push.height = res.1 as f32;
+        params.push.width = res.0;
+        params.push.height = res.1;
 
         rend.refresh_window_resources();
         self.th_pipe.begin_record(&self.th_display.d_state);

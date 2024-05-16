@@ -112,9 +112,9 @@ impl Value {
         Ok((current * val) as i32)
     }
 
-    pub fn get_value(&self, avail_space: f32) -> Result<i32> {
+    pub fn get_value(&self, avail_space: i32) -> Result<i32> {
         Ok(match *self {
-            Self::Relative(r) => Self::scale(r, avail_space)? as i32,
+            Self::Relative(r) => Self::scale(r, avail_space as f32)? as i32,
             Self::Constant(c) => c,
         })
     }
@@ -146,15 +146,6 @@ impl<T: PartialOrd + Copy> Offset<T> {
     }
 }
 
-impl From<Offset<i32>> for Offset<f32> {
-    fn from(item: Offset<i32>) -> Self {
-        Self {
-            x: item.x as f32,
-            y: item.y as f32,
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
 pub struct Size<T: Copy> {
     pub width: T,
@@ -174,11 +165,11 @@ impl<T: PartialOrd + Copy> Size<T> {
     }
 }
 
-impl From<Size<u32>> for Size<f32> {
+impl From<Size<u32>> for Size<i32> {
     fn from(item: Size<u32>) -> Self {
         Self {
-            width: item.width as f32,
-            height: item.height as f32,
+            width: item.width as i32,
+            height: item.height as i32,
         }
     }
 }
@@ -310,12 +301,12 @@ impl Dakota {
 
     pub fn get_default_size_val(
         &self,
-        avail_space: u32,
+        avail_space: i32,
         resource_size: Option<u32>,
         val: Option<Value>,
     ) -> Result<u32> {
         if let Some(size) = val {
-            Ok(size.get_value(avail_space as f32)? as u32)
+            Ok(size.get_value(avail_space)? as u32)
         } else {
             // If no size was provided but an image resource has been assigned, then
             // size this element to the resource. Text resource sizing will be
@@ -332,7 +323,7 @@ impl Dakota {
             }
 
             // If no size was specified then this defaults to the size of its container
-            Ok(avail_space)
+            Ok(avail_space as u32)
         }
     }
 
@@ -353,12 +344,12 @@ impl Dakota {
         };
 
         let width = self.get_default_size_val(
-            space.avail_width as u32,
+            space.avail_width,
             get_image_size(true),
             self.d_widths.get(el).map(|val| *val),
         )?;
         let height = self.get_default_size_val(
-            space.avail_height as u32,
+            space.avail_height,
             get_image_size(false),
             self.d_heights.get(el).map(|val| *val),
         )?;

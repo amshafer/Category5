@@ -93,7 +93,7 @@ pub(crate) trait Backend {
     /// This is useful because some upper parts of the stack (dakota
     /// text management) need to know this value to calculate the
     /// resolution of things.
-    fn get_dpi(&self) -> ThundrResult<(f32, f32)>;
+    fn get_dpi(&self) -> ThundrResult<(i32, i32)>;
 
     /// Helper for getting the drawable size according to the
     /// display. This will basically just be passed to SDL's
@@ -456,10 +456,10 @@ impl Display {
     ///
     /// For VK_KHR_display we will calculate it ourselves, and for
     /// SDL we will ask SDL to tell us it.
-    pub fn get_dpi(&self) -> ThundrResult<(f32, f32)> {
+    pub fn get_dpi(&self) -> ThundrResult<(i32, i32)> {
         // Check for a user set DPI
         if let Ok(env) = std::env::var("THUNDR_DPI") {
-            let val: f32 = f32::from_str(env.as_str())
+            let val: i32 = i32::from_str(env.as_str())
                 .expect("THUNDR_DPI value must be a valid 32-bit floating point number");
             log::debug!("Using user specified DPI {:?}", val);
             return Ok((val, val));

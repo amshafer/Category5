@@ -16,7 +16,7 @@ use utils::region::Rect;
 #[derive(PartialEq, Debug, Default)]
 pub struct Surface {
     /// The position and size of the surface.
-    pub s_rect: Rect<f32>,
+    pub s_rect: Rect<i32>,
     /// The size of the surface.
     /// The currently attached image.
     pub s_image: Option<Image>,
@@ -27,7 +27,7 @@ pub struct Surface {
 
 impl Surface {
     pub fn new(
-        geometry: Rect<f32>,
+        geometry: Rect<i32>,
         image: Option<Image>,
         color: Option<(f32, f32, f32, f32)>,
     ) -> Self {
@@ -46,21 +46,21 @@ impl Surface {
         self.s_image.clone()
     }
 
-    pub fn get_pos(&self) -> (f32, f32) {
+    pub fn get_pos(&self) -> (i32, i32) {
         (self.s_rect.r_pos.0, self.s_rect.r_pos.1)
     }
-    pub fn set_pos(&mut self, x: f32, y: f32) {
+    pub fn set_pos(&mut self, x: i32, y: i32) {
         if self.s_rect.r_pos.0 != x || self.s_rect.r_pos.1 != y {
             self.s_rect.r_pos.0 = x;
             self.s_rect.r_pos.1 = y;
         }
     }
 
-    pub fn get_size(&self) -> (f32, f32) {
+    pub fn get_size(&self) -> (i32, i32) {
         (self.s_rect.r_size.0, self.s_rect.r_size.1)
     }
 
-    pub fn set_size(&mut self, w: f32, h: f32) {
+    pub fn set_size(&mut self, w: i32, h: i32) {
         if self.s_rect.r_size.0 != w || self.s_rect.r_size.1 != h {
             self.s_rect.r_size.0 = w;
             self.s_rect.r_size.1 = h;

@@ -17,15 +17,15 @@ pub struct Cursor {
     /// The index into the harfbuzz data arrays
     pub c_i: usize,
     /// The X position of the pen
-    pub c_x: f32,
+    pub c_x: i32,
     /// The Y position of the pen
-    pub c_y: f32,
+    pub c_y: i32,
     /// The minimum width for line wrap
     /// This is the left side of the layout bounding box
-    pub c_min: f32,
+    pub c_min: i32,
     /// The max width before line wrapping
     /// This is the right side of the layout bounding box
-    pub c_max: f32,
+    pub c_max: i32,
 }
 
 struct Glyph {
@@ -33,20 +33,20 @@ struct Glyph {
     /// This will be none if the glyph does not have an outline
     /// which happens if it's a space.
     g_image: Option<th::Image>,
-    g_bitmap_size: (f32, f32),
-    g_bitmap_left: f32,
-    g_bitmap_top: f32,
+    g_bitmap_size: (i32, i32),
+    g_bitmap_left: i32,
+    g_bitmap_top: i32,
     _g_metrics: ft::GlyphMetrics,
 }
 
 /// Returns (x_offset, y_offset, x_advance, y_advance)
-fn scale_hb_positions(position: &hb::GlyphPosition) -> (f32, f32, f32, f32) {
+fn scale_hb_positions(position: &hb::GlyphPosition) -> (i32, i32, i32, i32) {
     // (hb_position_t * font_point_size) / (units / em)
-    let buzz_scale = 64.0;
-    let x_offset = position.x_offset as f32 / buzz_scale;
-    let y_offset = position.y_offset as f32 / buzz_scale;
-    let x_advance = position.x_advance as f32 / buzz_scale;
-    let y_advance = position.y_advance as f32 / buzz_scale;
+    let buzz_scale = 64;
+    let x_offset = position.x_offset / buzz_scale;
+    let y_offset = position.y_offset / buzz_scale;
+    let x_advance = position.x_advance / buzz_scale;
+    let y_advance = position.y_advance / buzz_scale;
 
     (x_offset, y_offset, x_advance, y_advance)
 }
@@ -63,9 +63,9 @@ pub struct CachedChar {
     pub glyph_id: u16,
     /// The final offset calculated by freetype/harfbuzz that we will add to the
     /// cursor when laying out text.
-    pub cursor_advance: (f32, f32),
+    pub cursor_advance: (i32, i32),
     /// This is the offset from the cursor position to place this char
-    pub offset: (f32, f32),
+    pub offset: (i32, i32),
 }
 
 /// Instance of a Font
@@ -197,9 +197,9 @@ impl FontInstance {
         // Create a new glyph for this UTF-8 character
         Glyph {
             g_image: th_image,
-            g_bitmap_size: (bitmap.width() as f32, bitmap.rows() as f32),
-            g_bitmap_left: glyph.bitmap_left() as f32,
-            g_bitmap_top: glyph.bitmap_top() as f32,
+            g_bitmap_size: (bitmap.width(), bitmap.rows()),
+            g_bitmap_left: glyph.bitmap_left(),
+            g_bitmap_top: glyph.bitmap_top(),
             _g_metrics: glyph.metrics(),
         }
     }
@@ -218,7 +218,7 @@ impl FontInstance {
 
     /// Helper to get the size of a surface. Used to fill in the LayoutNode
     /// size in Dakota.
-    pub fn get_glyph_thundr_size(&mut self, thund: &mut Thundr, id: u16) -> (f32, f32) {
+    pub fn get_glyph_thundr_size(&mut self, thund: &mut Thundr, id: u16) -> (i32, i32) {
         self.ensure_glyph_exists(thund, id);
         let glyph = self.f_glyphs[id as usize]
             .as_ref()
@@ -234,7 +234,7 @@ impl FontInstance {
         &mut self,
         thund: &mut Thundr,
         id: u16,
-        pos: &(f32, f32),
+        pos: &(i32, i32),
     ) -> th::Surface {
         self.ensure_glyph_exists(thund, id);
         let glyph = self.f_glyphs[id as usize].as_ref().unwrap();
@@ -335,8 +335,8 @@ impl FontInstance {
     }
 
     /// Helper for getting the height of a line of text
-    pub fn get_vertical_line_spacing(&self) -> f32 {
-        self.f_ft_face.size_metrics().unwrap().height as f32 / 64.0
+    pub fn get_vertical_line_spacing(&self) -> i32 {
+        self.f_ft_face.size_metrics().unwrap().height as i32 / 64
     }
 
     /// Kicks off layout calculation and text rendering for a paragraph. Increments

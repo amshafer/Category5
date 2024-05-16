@@ -97,12 +97,12 @@ impl RecordParams {
     pub fn new() -> Self {
         Self {
             push: PushConstants {
-                width: 0.0,
-                height: 0.0,
+                width: 0,
+                height: 0,
                 image_id: -1,
                 use_color: -1,
                 color: (0.0, 0.0, 0.0, 0.0),
-                dims: Rect::new(0.0, 0.0, 0.0, 0.0),
+                dims: Rect::new(0, 0, 0, 0),
             },
         }
     }
@@ -118,8 +118,8 @@ impl RecordParams {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PushConstants {
-    pub width: f32,
-    pub height: f32,
+    pub width: u32,
+    pub height: u32,
     /// The id of the image. This is the offset into the unbounded sampler array.
     /// id that's the offset into the unbound sampler array
     pub image_id: i32,
@@ -128,7 +128,7 @@ pub struct PushConstants {
     /// Opaque color
     pub color: (f32, f32, f32, f32),
     /// The complete dimensions of the window.
-    pub dims: Rect<f32>,
+    pub dims: Rect<i32>,
 }
 
 // Most of the functions below will be unsafe. Only the safe functions
