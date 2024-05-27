@@ -269,7 +269,6 @@ impl Dakota {
     /// Helper for initializing Thundr for a given platform.
     fn init_thundr(plat: &mut Box<dyn Platform>) -> Result<th::Thundr> {
         let info = th::CreateInfo::builder()
-            .enable_traditional_composition()
             .surface_type(plat.get_th_surf_type()?)
             .build();
 

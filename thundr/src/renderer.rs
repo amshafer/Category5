@@ -52,28 +52,6 @@ pub struct Renderer {
     pub(crate) _inst: Arc<Instance>,
     /// The GPU this Renderer is resident on
     pub(crate) dev: Arc<Device>,
-
-    /// One sampler for all swapchain images
-    pub(crate) image_sampler: vk::Sampler,
-
-    /// We keep a list of image views from the surface list's images
-    /// to be passed as our unsized image array in our shader. This needs
-    /// to be regenerated any time a change to the surfacelist is made
-    pub(crate) r_images_desc_pool: vk::DescriptorPool,
-    pub(crate) r_images_desc_layout: vk::DescriptorSetLayout,
-    pub(crate) r_images_desc: vk::DescriptorSet,
-    r_images_desc_size: usize,
-
-    /// Temporary image to bind to the image list when
-    /// no images are attached.
-    tmp_image: vk::Image,
-    tmp_image_view: vk::ImageView,
-    tmp_image_mem: vk::DeviceMemory,
-
-    // We keep this around to ensure the image array isn't empty
-    _r_null_image: ll::Entity,
-    pub r_image_ecs: ll::Instance,
-    pub r_image_infos: ll::NonSparseComponent<vk::DescriptorImageInfo>,
 }
 
 /// Recording parameters
@@ -129,54 +107,6 @@ pub struct PushConstants {
 // should be used by the applications. The unsafe functions are mostly for
 // internal use.
 impl Renderer {
-    unsafe fn allocate_bindless_resources(
-        dev: &Device,
-        max_image_count: u32,
-    ) -> (vk::DescriptorPool, vk::DescriptorSetLayout) {
-        // create the bindless desc set resources
-        let size = [vk::DescriptorPoolSize::builder()
-            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            // Okay it looks like this must match the layout
-            // TODO: should this be changed?
-            .descriptor_count(max_image_count)
-            .build()];
-        let info = vk::DescriptorPoolCreateInfo::builder()
-            .pool_sizes(&size)
-            .max_sets(1);
-        let bindless_pool = dev.dev.create_descriptor_pool(&info, None).unwrap();
-
-        let bindings = [
-            // the variable image list
-            vk::DescriptorSetLayoutBinding::builder()
-                .binding(1)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .stage_flags(
-                    vk::ShaderStageFlags::COMPUTE
-                        | vk::ShaderStageFlags::VERTEX
-                        | vk::ShaderStageFlags::FRAGMENT,
-                )
-                // This is the upper bound on the amount of descriptors that
-                // can be attached. The amount actually attached will be
-                // determined by the amount allocated using this layout.
-                .descriptor_count(max_image_count)
-                .build(),
-        ];
-        let mut info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
-
-        // We need to attach some binding flags stating that we intend
-        // to use the storage image as an unsized array
-        let usage_info = vk::DescriptorSetLayoutBindingFlagsCreateInfoEXT::builder()
-            .binding_flags(&[
-                Self::get_bindless_desc_flags(), // The unbounded array of images
-            ])
-            .build();
-        info.p_next = &usage_info as *const _ as *mut std::ffi::c_void;
-
-        let bindless_layout = dev.dev.create_descriptor_set_layout(&info, None).unwrap();
-
-        (bindless_pool, bindless_layout)
-    }
-
     /// Create a new Vulkan Renderer
     ///
     /// This renderer is very application specific. It is not meant to be
@@ -191,81 +121,21 @@ impl Renderer {
         instance: Arc<Instance>,
         dev: Arc<Device>,
         info: &CreateInfo,
-        mut img_ecs: ll::Instance,
+        _img_ecs: ll::Instance,
     ) -> Result<(Renderer, Display)> {
-        unsafe {
-            // Our display is in charge of choosing a medium to draw on,
-            // and will create a surface on that medium
-            let display = Display::new(info, dev.clone())?;
+        // Our display is in charge of choosing a medium to draw on,
+        // and will create a surface on that medium
+        let display = Display::new(info, dev.clone())?;
 
-            let sampler = dev.create_sampler();
+        // you are now the proud owner of a half complete
+        // rendering context
+        // p.s. you still need a Pipeline
+        let rend = Renderer {
+            _inst: instance,
+            dev: dev,
+        };
 
-            let (bindless_pool, bindless_layout) =
-                // Subtract three resources from the theoretical max that the driver reported.
-                // This is to account for our null image and other resources we create in
-                // addition to our bindless count.
-                Self::allocate_bindless_resources(&dev, dev.dev_features.max_sampler_count - 3);
-            let bindless_desc =
-                Self::allocate_bindless_desc(&dev, bindless_pool, &[bindless_layout], 1);
-
-            let (tmp, tmp_view, tmp_mem) = dev.create_image(
-                &vk::Extent2D {
-                    width: 2,
-                    height: 2,
-                },
-                display.d_state.d_surface_format.format,
-                vk::ImageUsageFlags::SAMPLED,
-                vk::ImageAspectFlags::COLOR,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                vk::ImageTiling::LINEAR,
-            );
-
-            // Create the image vk info component
-            // We have deleted this image, but it's invalid to pass a
-            // NULL VkImageView as a descriptor. Instead we will populate
-            // it with our "null"/"tmp" image, which is just a black square
-            let null_sampler = sampler;
-            let null_view = tmp_view;
-            let img_info_comp = img_ecs.add_non_sparse_component(move || {
-                vk::DescriptorImageInfo::builder()
-                    .sampler(null_sampler)
-                    .image_view(null_view)
-                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .build()
-            });
-
-            // Add our null image
-            let null_image = img_ecs.add_entity();
-            img_info_comp.set(
-                &null_image,
-                vk::DescriptorImageInfo::builder()
-                    .sampler(sampler)
-                    .image_view(tmp_view)
-                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .build(),
-            );
-
-            // you are now the proud owner of a half complete
-            // rendering context
-            // p.s. you still need a Pipeline
-            let rend = Renderer {
-                _inst: instance,
-                dev: dev,
-                image_sampler: sampler,
-                r_images_desc_pool: bindless_pool,
-                r_images_desc_layout: bindless_layout,
-                r_images_desc: bindless_desc,
-                r_images_desc_size: 0,
-                tmp_image: tmp,
-                tmp_image_view: tmp_view,
-                tmp_image_mem: tmp_mem,
-                _r_null_image: null_image,
-                r_image_ecs: img_ecs,
-                r_image_infos: img_info_comp,
-            };
-
-            return Ok((rend, display));
-        }
+        return Ok((rend, display));
     }
 
     /// Wait for the submit_fence
@@ -285,85 +155,6 @@ impl Renderer {
 
     /// End a total frame recording
     pub fn end_recording_one_frame(&mut self) {}
-
-    /// Descriptor flags for the unbounded array of images
-    /// we need to say that it is a variably sized array, and that it is partially
-    /// bound (aka we aren't populating the full MAX_IMAGE_LIMIT)
-    pub fn get_bindless_desc_flags() -> vk::DescriptorBindingFlags {
-        vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
-            | vk::DescriptorBindingFlags::PARTIALLY_BOUND
-    }
-
-    fn allocate_bindless_desc(
-        dev: &Device,
-        pool: vk::DescriptorPool,
-        layouts: &[vk::DescriptorSetLayout],
-        desc_count: u32,
-    ) -> vk::DescriptorSet {
-        // if thundr has allocated a different number of images than we were expecting,
-        // we need to realloc the variable descriptor memory
-        let mut info = vk::DescriptorSetAllocateInfo::builder()
-            .descriptor_pool(pool)
-            .set_layouts(layouts)
-            .build();
-        let variable_info = vk::DescriptorSetVariableDescriptorCountAllocateInfo::builder()
-            // This list specifies the number of allocations for the variable
-            // descriptor entry in each layout. We only have one layout.
-            .descriptor_counts(&[desc_count])
-            .build();
-
-        info.p_next = &variable_info as *const _ as *mut std::ffi::c_void;
-
-        unsafe { dev.dev.allocate_descriptor_sets(&info).unwrap()[0] }
-    }
-
-    pub fn refresh_window_resources(&mut self) {
-        self.wait_for_prev_submit();
-
-        // Construct a list of image views from the submitted surface list
-        // this will be our unsized texture array that the composite shader will reference
-        // TODO: make this a changed flag
-        if self.r_images_desc_size < self.r_image_ecs.capacity() {
-            // free the previous descriptor sets
-            unsafe {
-                self.dev
-                    .dev
-                    .reset_descriptor_pool(
-                        self.r_images_desc_pool,
-                        vk::DescriptorPoolResetFlags::empty(),
-                    )
-                    .unwrap();
-            }
-
-            self.r_images_desc_size = self.r_image_ecs.capacity();
-            self.r_images_desc = Self::allocate_bindless_desc(
-                &self.dev,
-                self.r_images_desc_pool,
-                &[self.r_images_desc_layout],
-                self.r_images_desc_size as u32,
-            );
-        }
-
-        // Now write the new bindless descriptor
-        let write_infos = &[vk::WriteDescriptorSet::builder()
-            .dst_set(self.r_images_desc)
-            .dst_binding(1)
-            .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(self.r_image_infos.get_data_slice().data())
-            .build()];
-        log::info!(
-            "Raw image infos is {:#?}",
-            self.r_image_infos.get_data_slice().data()
-        );
-
-        unsafe {
-            self.dev.dev.update_descriptor_sets(
-                write_infos, // descriptor writes
-                &[],         // descriptor copies
-            );
-        }
-    }
 }
 
 // Clean up after ourselves when the renderer gets destroyed.
@@ -381,19 +172,6 @@ impl Drop for Renderer {
 
             // first wait for the device to finish working
             self.dev.dev.device_wait_idle().unwrap();
-
-            self.dev.dev.destroy_image(self.tmp_image, None);
-            self.dev.dev.destroy_image_view(self.tmp_image_view, None);
-            self.dev.free_memory(self.tmp_image_mem);
-
-            self.dev.dev.destroy_sampler(self.image_sampler, None);
-            self.dev
-                .dev
-                .destroy_descriptor_set_layout(self.r_images_desc_layout, None);
-
-            self.dev
-                .dev
-                .destroy_descriptor_pool(self.r_images_desc_pool, None);
         }
     }
 }

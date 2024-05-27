@@ -238,6 +238,9 @@ impl Pipeline for GeomPipeline {
     }
 
     /// Our implementation of drawing one Surface
+    ///
+    /// This binds any resources for the surface's image and loads its
+    /// data into the push constants. We can then draw the surface.
     fn draw(
         &mut self,
         rend: &mut Renderer,
@@ -252,11 +255,28 @@ impl Pipeline for GeomPipeline {
         self.update_surf_push_constants(surface, params);
 
         // If this surface has no content then skip drawing it
-        let mut num_contents = (params.push.image_id > 0) as i32;
+        let mut num_contents = (params.push.image_id >= 0) as i32;
         num_contents += params.push.use_color;
-        if num_contents <= 0 {
+        if num_contents == 0 {
             return true;
         }
+
+        // if we have an image bound to this surface grab its descriptor from the
+        // imagevk. If not, then use the default tmp image
+        let image_desc = match surface.s_image.as_ref() {
+            Some(img) => {
+                let id = img.get_id();
+                let imagevk = rend
+                    .dev
+                    .d_image_vk
+                    .get(&id)
+                    .expect("Image does not have ImageVK");
+
+                assert!(imagevk.iv_desc.d_set != vk::DescriptorSet::null());
+                imagevk.iv_desc.d_set
+            }
+            None => rend.dev.d_internal.read().unwrap().tmp_image_desc.d_set,
+        };
 
         // TODO: If this surface is not contained in the viewport then don't draw it
 
@@ -271,7 +291,7 @@ impl Pipeline for GeomPipeline {
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline_layout,
                 0, // first set
-                &[self.g_desc, rend.r_images_desc],
+                &[self.g_desc, image_desc],
                 &[], // dynamic offsets
             );
 
@@ -472,7 +492,7 @@ impl GeomPipeline {
     /// shaders, geometry, and the like.
     ///
     /// This fills in the GeomPipeline struct in the Renderer
-    pub fn new(dev: Arc<Device>, display: &Display, rend: &Renderer) -> Result<GeomPipeline> {
+    pub fn new(dev: Arc<Device>, display: &Display, _rend: &Renderer) -> Result<GeomPipeline> {
         let dstate = &display.d_state;
         unsafe {
             let pass = GeomPipeline::create_pass(dstate.d_surface_format.format, &dev);
@@ -497,7 +517,7 @@ impl GeomPipeline {
             // These are the layout recognized by the pipeline
             let descriptor_layouts = &[
                 ubo_layout, // set 0
-                rend.r_images_desc_layout,
+                dev.d_internal.read().unwrap().descpool.ds_layout,
             ];
 
             // make a push constant entry for the z ordering of a window

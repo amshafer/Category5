@@ -20,11 +20,11 @@ layout(push_constant) uniform PushConstants {
 } push;
 
 /* The array of textures that are the window contents */
-layout(set = 1, binding = 1) uniform sampler2D images[];
+layout(set = 1, binding = 1) uniform sampler2D image;
 
 void main() {
  if (push.image_id >= 0) {
-  res = texture(images[push.image_id], coord);
+  res = texture(image, coord);
  }
 
  if (push.use_color > 0) {

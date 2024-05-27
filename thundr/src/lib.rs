@@ -266,10 +266,6 @@ pub enum SurfaceType<'a> {
 /// be enabled. See `Pipeline` for methods that drive the data
 /// contained here.
 pub struct CreateInfo<'a> {
-    /// Enable the traditional quad rendering method. This is a bindless
-    /// engine that draws on a set of quads to composite images. This
-    /// is the default and recommended option
-    pub enable_traditional_composition: bool,
     pub surface_type: SurfaceType<'a>,
 }
 
@@ -277,8 +273,6 @@ impl<'a> CreateInfo<'a> {
     pub fn builder() -> CreateInfoBuilder<'a> {
         CreateInfoBuilder {
             ci: CreateInfo {
-                // This should always be used
-                enable_traditional_composition: true,
                 surface_type: SurfaceType::Display(PhantomData),
             },
         }
@@ -290,10 +284,6 @@ pub struct CreateInfoBuilder<'a> {
     ci: CreateInfo<'a>,
 }
 impl<'a> CreateInfoBuilder<'a> {
-    pub fn enable_traditional_composition(mut self) -> Self {
-        self.ci.enable_traditional_composition = true;
-        self
-    }
     pub fn surface_type(mut self, ty: SurfaceType<'a>) -> Self {
         self.ci.surface_type = ty;
         self
@@ -331,14 +321,10 @@ impl Thundr {
         // Create the pipeline(s) requested
         // Record the type we are using so that we know which type to regenerate
         // on window resizing
-        let (pipe, ty): (Box<dyn Pipeline>, PipelineType) = if info.enable_traditional_composition {
-            (
-                Box::new(GeomPipeline::new(dev.clone(), &display, &mut rend)?),
-                PipelineType::GEOMETRIC,
-            )
-        } else {
-            return Err(ThundrError::COMPOSITION_TYPE_NOT_SPECIFIED);
-        };
+        let (pipe, ty): (Box<dyn Pipeline>, PipelineType) = (
+            Box::new(GeomPipeline::new(dev.clone(), &display, &mut rend)?),
+            PipelineType::GEOMETRIC,
+        );
 
         Ok(Thundr {
             th_inst: inst,
@@ -381,8 +367,6 @@ impl Thundr {
         self.th_rend.lock().unwrap().wait_for_prev_submit();
         self.th_dev
             .update_image_from_bits(image, data, width, height, stride, damage, release);
-
-        self.update_image_vk_info(image.i_internal.read().as_ref().unwrap());
     }
 
     /// This is a candidate for an out of date error. We should
@@ -433,7 +417,6 @@ impl Thundr {
         params.push.width = res.0;
         params.push.height = res.1;
 
-        rend.refresh_window_resources();
         self.th_pipe.begin_record(&self.th_display.d_state);
         self.th_params = Some(params);
 

@@ -27,7 +27,7 @@ layout(push_constant) uniform PushConstants {
 } push;
 
 /* The array of textures that are the window contents */
-layout(set = 1, binding = 1) uniform sampler2D images[];
+layout(set = 1, binding = 1) uniform sampler2D image;
 
 void main() {
  // 1. loc should ALWAYS be 0,1 for the default quad.

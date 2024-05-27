@@ -7,6 +7,7 @@ extern crate lluvia as ll;
 extern crate nix;
 
 use super::device::Device;
+use crate::descpool::Descriptor;
 use crate::Thundr;
 use crate::{Damage, Droppable};
 use utils::log;
@@ -103,6 +104,9 @@ pub struct ImageVk {
     /// Stuff to release when we are no longer using
     /// this gpu buffer (release the wl_buffer)
     iv_release_info: Option<Box<dyn Droppable + Send + Sync>>,
+    /// Our image descriptor to pass to the Pipeline
+    /// This tells the shaders how to find this image.
+    pub iv_desc: Descriptor,
 }
 
 impl ImageVk {
@@ -131,6 +135,7 @@ impl ImageVk {
             height: 0,
         };
         self.iv_release_info = None;
+        self.iv_desc.destroy(&self.iv_dev.dev);
     }
 }
 
@@ -309,6 +314,7 @@ impl Device {
                 image_internal.i_resolution = new_size;
                 let ret = image_vk.iv_release_info.take();
                 image_vk.iv_release_info = release;
+                image_vk.iv_desc = self.create_new_image_descriptor(view);
                 ret
             };
 
@@ -664,30 +670,6 @@ impl Thundr {
     /// Update the `VkDescriptorImageInfo` entry in the image ECS for the renderer
     ///
     /// This updates the descriptor info we pass to Vulkan describing our images.
-    pub(crate) fn update_image_vk_info(&mut self, internal: &ImageInternal) {
-        let view = self
-            .th_dev
-            .d_image_vk
-            .get(&internal.i_id)
-            .as_ref()
-            .unwrap()
-            .iv_image_view;
-
-        log::info!(
-            "Image list index {}: writing view {:?}",
-            internal.i_id.get_raw_id(),
-            view
-        );
-        let rend = self.th_rend.lock().unwrap();
-        let desc_info = vk::DescriptorImageInfo::builder()
-            .sampler(rend.image_sampler)
-            // The image view could have been recreated and this would be stale
-            .image_view(view)
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .build();
-        rend.r_image_infos.set(&internal.i_id, desc_info);
-    }
-
     /// Create a image
     ///
     /// This logic is the same no matter what type of
@@ -703,6 +685,8 @@ impl Thundr {
         is_dmabuf: bool,
         release: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
+        let descriptor = self.th_dev.create_new_image_descriptor(view);
+
         let image_vk = ImageVk {
             iv_dev: self.th_dev.clone(),
             iv_is_dmabuf: is_dmabuf,
@@ -711,6 +695,7 @@ impl Thundr {
             iv_image_mem: image_mem,
             iv_image_resolution: *res,
             iv_release_info: release,
+            iv_desc: descriptor,
         };
 
         let internal = ImageInternal {
@@ -722,8 +707,6 @@ impl Thundr {
 
         // Add our vulkan resources to the ECS
         self.th_dev.d_image_vk.set(&internal.i_id, image_vk);
-
-        self.update_image_vk_info(&internal);
 
         return Some(Image {
             i_internal: Arc::new(RwLock::new(internal)),
