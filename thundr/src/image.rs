@@ -135,7 +135,7 @@ impl ImageVk {
             height: 0,
         };
         self.iv_release_info = None;
-        self.iv_desc.destroy(&self.iv_dev.dev);
+        self.iv_desc.destroy();
     }
 }
 

@@ -21,13 +21,14 @@ static POOL_SIZE: u32 = 4;
 pub struct Descriptor {
     /// The owning pool
     d_pool: Arc<Mutex<DescSingleVKPool>>,
-    /// The descriptor set itself
+    /// The descriptor set itself. This is borrowed from the above pool and
+    /// will be returned when this struct is freed.
     pub d_set: vk::DescriptorSet,
 }
 
 impl Descriptor {
-    pub fn destroy(&mut self, dev: &ash::Device) {
-        self.d_pool.lock().unwrap().free_set(dev, self.d_set);
+    pub fn destroy(&mut self) {
+        self.d_pool.lock().unwrap().free_set(self.d_set);
         self.d_set = vk::DescriptorSet::null();
     }
 }
@@ -36,8 +37,12 @@ impl Descriptor {
 /// All resources allocated by the Renderer which holds this
 pub struct DescSingleVKPool {
     dp_pool: vk::DescriptorPool,
-    /// number of allocations made from this pool, from 0 to POOL_SIZE
-    dp_capacity: usize,
+    /// The descriptors allocated form this pool
+    ///
+    /// These are all allocated up front. We are repeatedly creating
+    /// and binding images constantly, so this avoids overhead from
+    /// reallocating the sets in the driver.
+    dp_descriptors: Vec<vk::DescriptorSet>,
 }
 
 impl DescSingleVKPool {
@@ -52,36 +57,20 @@ impl DescSingleVKPool {
     ///
     /// This may add a new pool to the system if needed. Returns None
     /// if this pool is full.
-    pub fn alloc_descriptor(
-        &mut self,
-        dev: &ash::Device,
-        layout: vk::DescriptorSetLayout,
-    ) -> Option<vk::DescriptorSet> {
-        if self.dp_capacity + 1 >= POOL_SIZE as usize {
+    pub fn alloc_descriptor(&mut self) -> Option<vk::DescriptorSet> {
+        if self.dp_descriptors.len() == 0 {
             return None;
         }
 
-        let info = vk::DescriptorSetAllocateInfo::builder()
-            .descriptor_pool(self.dp_pool)
-            .set_layouts(&[layout])
-            .build();
-
-        let set = unsafe { dev.allocate_descriptor_sets(&info).unwrap()[0] };
-
-        self.dp_capacity += 1;
-
-        Some(set)
+        Some(self.dp_descriptors.pop().unwrap())
     }
 
     /// Free one set in this pool
     ///
     /// This frees the set object, and decrements the tracker of sets
     /// allocated from this pool
-    fn free_set(&mut self, dev: &ash::Device, set: vk::DescriptorSet) {
-        unsafe {
-            dev.free_descriptor_sets(self.dp_pool, &[set]).unwrap();
-        }
-        self.dp_capacity -= 1;
+    fn free_set(&mut self, set: vk::DescriptorSet) {
+        self.dp_descriptors.push(set);
     }
 }
 
@@ -103,7 +92,7 @@ impl DescPool {
     /// This may add a new pool to the system if needed.
     pub fn alloc_descriptor(&mut self, dev: &ash::Device) -> Descriptor {
         for pool in self.ds_pools.iter() {
-            if let Some(set) = pool.lock().unwrap().alloc_descriptor(dev, self.ds_layout) {
+            if let Some(set) = pool.lock().unwrap().alloc_descriptor() {
                 return Descriptor {
                     d_pool: pool.clone(),
                     d_set: set,
@@ -115,11 +104,7 @@ impl DescPool {
         let pool = self.add_pool(dev);
         let ret = Descriptor {
             d_pool: pool.clone(),
-            d_set: pool
-                .lock()
-                .unwrap()
-                .alloc_descriptor(dev, self.ds_layout)
-                .unwrap(),
+            d_set: pool.lock().unwrap().alloc_descriptor().unwrap(),
         };
 
         return ret;
@@ -163,9 +148,19 @@ impl DescPool {
 
         let pool = unsafe { dev.create_descriptor_pool(&info, None).unwrap() };
 
+        // Allocate all of our descriptors
+        let layouts: Vec<vk::DescriptorSetLayout> = std::iter::repeat(self.ds_layout)
+            .take(POOL_SIZE as usize)
+            .collect();
+        let alloc_info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(pool)
+            .set_layouts(layouts.as_slice())
+            .build();
+        let sets = unsafe { dev.allocate_descriptor_sets(&alloc_info).unwrap().to_vec() };
+
         let ret = Arc::new(Mutex::new(DescSingleVKPool {
             dp_pool: pool,
-            dp_capacity: 0,
+            dp_descriptors: sets,
         }));
 
         self.ds_pools.push(ret.clone());

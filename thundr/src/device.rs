@@ -426,7 +426,7 @@ impl Device {
         internal.tmp_image_view = tmp_view;
         internal.tmp_image_mem = tmp_mem;
         // replace the existing desc set
-        internal.tmp_image_desc.destroy(&self.dev);
+        internal.tmp_image_desc.destroy();
         internal.tmp_image_desc = tmp_desc;
     }
 
@@ -1405,7 +1405,7 @@ impl Drop for Device {
             self.dev.destroy_image(internal.tmp_image, None);
             self.dev.destroy_image_view(internal.tmp_image_view, None);
             self.free_memory(internal.tmp_image_mem);
-            internal.tmp_image_desc.destroy(&self.dev);
+            internal.tmp_image_desc.destroy();
             internal.descpool.destroy(&self.dev);
             self.dev.destroy_sampler(internal.image_sampler, None);
 
