@@ -1,10 +1,9 @@
 extern crate freetype as ft;
-extern crate harfbuzz_rs as hb;
+extern crate harfbuzz as hb;
 extern crate harfbuzz_sys as hb_sys;
 
 use crate::th::Thundr;
 use crate::{dom, DakotaId};
-use hb::HarfbuzzObject;
 use lluvia as ll;
 
 // Define this ourselves since hb crate doesn't do it
@@ -40,7 +39,7 @@ struct Glyph {
 }
 
 /// Returns (x_offset, y_offset, x_advance, y_advance)
-fn scale_hb_positions(position: &hb::GlyphPosition) -> (i32, i32, i32, i32) {
+fn scale_hb_positions(position: &hb_sys::hb_glyph_position_t) -> (i32, i32, i32, i32) {
     // (hb_position_t * font_point_size) / (units / em)
     let buzz_scale = 64;
     let x_offset = position.x_offset / buzz_scale;
@@ -291,13 +290,13 @@ impl FontInstance {
             // check for word breaks
             // For now this is just checking for spaces
             // TODO: use something smarter
-            if self.f_ft_face.get_char_index(' ' as u32 as usize) == glyph_id as u32 {
+            if self.f_ft_face.get_char_index(' ' as u32 as usize).unwrap_or(0) == glyph_id as u32 {
                 last_word = end_index;
             }
 
             // Check for newlines
             // gross, we have to convert to usize through u32 :(
-            if self.f_ft_face.get_char_index('\n' as u32 as usize) == glyph_id as u32 {
+            if self.f_ft_face.get_char_index('\n' as u32 as usize).unwrap_or(0) == glyph_id as u32 {
                 last_word = end_index;
                 ret = true;
                 break;
@@ -409,14 +408,23 @@ impl FontInstance {
         text: &str,
     ) -> Vec<CachedChar> {
         // Set up our HarfBuzz buffers
-        let buffer = hb::UnicodeBuffer::new().add_str(text);
+        let mut buffer = hb::Buffer::new();
+        buffer.set_direction(hb::Direction::LTR);
+        buffer.add_str(text);
         let mut ret = Vec::new();
 
         // Now the big call to get the shaping information
-        let font = unsafe { hb::Font::from_raw(self.f_hb_raw_font) };
-        let glyph_buffer = hb::shape(&font, buffer, Vec::with_capacity(0).as_slice());
-        let infos = glyph_buffer.get_glyph_infos();
-        let positions = glyph_buffer.get_glyph_positions();
+        unsafe { hb_sys::hb_shape(self.f_hb_raw_font, buffer.as_ptr(), std::ptr::null(), 0) };
+        let infos = unsafe {
+            let mut size: u32 = 0;
+            let r = hb_sys::hb_buffer_get_glyph_infos(buffer.as_ptr(), &mut size as *mut _);
+            std::slice::from_raw_parts(r, size as usize)
+        };
+        let positions = unsafe {
+            let mut size: u32 = 0;
+            let r = hb_sys::hb_buffer_get_glyph_positions(buffer.as_ptr(), &mut size as *mut _);
+            std::slice::from_raw_parts(r, size as usize)
+        };
 
         for i in 0..infos.len() {
             let glyph_id = infos[i].codepoint as u16;

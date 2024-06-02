@@ -15,11 +15,10 @@ image="0.23.14"
 lazy_static="1.4"
 bitflags = "1.3"
 regex = "1.5.5"
-# TODO: update harfbuzz freetype requirement
 # These need to match in the freetype-sys version they use
-freetype-rs = "0.26"
-harfbuzz-sys = "0.5"
-harfbuzz_rs = "2.0"
+freetype-rs = "0.36"
+harfbuzz-sys = "0.6"
+harfbuzz = "0.6"
 # for generating names in macros
 paste = "1.0"
 
