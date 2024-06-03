@@ -86,12 +86,6 @@ pub struct GeomPipeline {
     /// Resources for the index buffer
     index_buffer: vk::Buffer,
     index_buffer_memory: vk::DeviceMemory,
-
-    /// an image for recording depth test data
-    depth_image: vk::Image,
-    depth_image_view: vk::ImageView,
-    /// because we create the image, we need to back it with memory
-    depth_image_mem: vk::DeviceMemory,
 }
 
 /// Contiains a vertex and all its related data
@@ -129,19 +123,11 @@ impl Pipeline for GeomPipeline {
     /// specified by `img`.
     fn begin_record(&mut self, dstate: &DisplayState) {
         // we need to clear any existing data when we start a pass
-        let clear_vals = [
-            vk::ClearValue {
-                color: vk::ClearColorValue {
-                    float32: [0.0, 0.0, 0.0, 0.0],
-                },
+        let clear_vals = [vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 0.0],
             },
-            vk::ClearValue {
-                depth_stencil: vk::ClearDepthStencilValue {
-                    depth: 0.0,
-                    stencil: 0,
-                },
-            },
-        ];
+        }];
 
         // We want to start a render pass to hold all of
         // our drawing. The actual pass is started in the cbuf
@@ -343,11 +329,6 @@ impl Pipeline for GeomPipeline {
     /// Recreate our swapchain resources which are now out of date
     fn handle_ood(&mut self, dstate: &DisplayState) {
         unsafe {
-            self.g_dev.free_memory(self.depth_image_mem);
-            self.g_dev
-                .dev
-                .destroy_image_view(self.depth_image_view, None);
-            self.g_dev.dev.destroy_image(self.depth_image, None);
             for f in self.framebuffers.iter() {
                 self.g_dev.dev.destroy_framebuffer(*f, None);
             }
@@ -356,26 +337,7 @@ impl Pipeline for GeomPipeline {
             self.g_dev
                 .update_memory(self.uniform_buffers_memory, 0, &[consts]);
 
-            // the depth attachment needs to have its own resources
-            let (depth_image, depth_image_view, depth_image_mem) = self.g_dev.create_image(
-                &dstate.d_resolution,
-                vk::Format::D16_UNORM,
-                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                vk::ImageAspectFlags::DEPTH,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                vk::ImageTiling::OPTIMAL,
-            );
-            self.depth_image = depth_image;
-            self.depth_image_view = depth_image_view;
-            self.depth_image_mem = depth_image_mem;
-            self.setup_depth_image();
-
-            self.framebuffers = GeomPipeline::create_framebuffers(
-                &self.g_dev,
-                self.pass,
-                dstate,
-                self.depth_image_view,
-            );
+            self.framebuffers = GeomPipeline::create_framebuffers(&self.g_dev, self.pass, dstate);
             self.g_dev
                 .dev
                 .free_command_buffers(self.g_pool, self.g_cbufs.as_slice());
@@ -400,12 +362,6 @@ impl Drop for GeomPipeline {
                 .dev
                 .free_command_buffers(self.g_pool, self.g_cbufs.as_slice());
             self.g_dev.dev.destroy_command_pool(self.g_pool, None);
-
-            self.g_dev.free_memory(self.depth_image_mem);
-            self.g_dev
-                .dev
-                .destroy_image_view(self.depth_image_view, None);
-            self.g_dev.dev.destroy_image(self.depth_image, None);
 
             self.g_dev.dev.destroy_buffer(self.uniform_buffer, None);
             self.g_dev.free_memory(self.uniform_buffers_memory);
@@ -539,18 +495,7 @@ impl GeomPipeline {
             let pipeline =
                 GeomPipeline::create_pipeline(dstate, &dev, layout, pass, &*shader_stages);
 
-            // the depth attachment needs to have its own resources
-            let (depth_image, depth_image_view, depth_image_mem) = dev.create_image(
-                &dstate.d_resolution,
-                vk::Format::D16_UNORM,
-                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                vk::ImageAspectFlags::DEPTH,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                vk::ImageTiling::OPTIMAL,
-            );
-
-            let framebuffers =
-                GeomPipeline::create_framebuffers(&dev, pass, dstate, depth_image_view);
+            let framebuffers = GeomPipeline::create_framebuffers(&dev, pass, dstate);
 
             // Allocate a pool only for the ubo descriptors
             let g_desc_pool = Self::create_descriptor_pool(&dev);
@@ -609,15 +554,11 @@ impl GeomPipeline {
                 vert_count: QUAD_INDICES.len() as u32 * 3,
                 index_buffer: ibuf,
                 index_buffer_memory: imem,
-                depth_image: depth_image,
-                depth_image_view: depth_image_view,
-                depth_image_mem: depth_image_mem,
             };
 
             // now we need to update the descriptor set with the
             // buffer of the uniform constants to use
             ctx.update_uniform_descriptor_set();
-            ctx.setup_depth_image();
 
             return Ok(ctx);
         }
@@ -657,15 +598,6 @@ impl GeomPipeline {
                 final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
                 ..Default::default()
             },
-            // the depth attachment
-            vk::AttachmentDescription {
-                format: vk::Format::D16_UNORM,
-                samples: vk::SampleCountFlags::TYPE_1,
-                load_op: vk::AttachmentLoadOp::CLEAR,
-                initial_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                ..Default::default()
-            },
         ];
 
         // identify which of the above attachments
@@ -673,10 +605,6 @@ impl GeomPipeline {
             attachment: 0, // index into the attachments variable
             layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         }];
-        let depth_refs = vk::AttachmentReference {
-            attachment: 1,
-            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        };
 
         // our subpass isn't dependent on anything, and it writes to color output
         let dependencies = [vk::SubpassDependency {
@@ -691,7 +619,6 @@ impl GeomPipeline {
         // our render pass only has one subpass, which only does graphical ops
         let subpasses = [vk::SubpassDescription::builder()
             .color_attachments(&color_refs)
-            .depth_stencil_attachment(&depth_refs)
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
             .build()];
 
@@ -861,24 +788,10 @@ impl GeomPipeline {
             ..Default::default()
         };
 
-        // no stencil operations, so this just keeps everything
-        let stencil_state = vk::StencilOpState {
-            fail_op: vk::StencilOp::KEEP,
-            pass_op: vk::StencilOp::KEEP,
-            depth_fail_op: vk::StencilOp::KEEP,
-            compare_op: vk::CompareOp::ALWAYS,
-            ..Default::default()
-        };
-
-        // we do want a depth test enabled for this, using our noop stencil
-        // test. This should record Z-order to 1,000
+        // Disable the depth test
+        // We draw surfaces in order so we don't need this
         let depth_info = vk::PipelineDepthStencilStateCreateInfo {
-            depth_test_enable: 1,
-            depth_write_enable: 1,
-            depth_compare_op: vk::CompareOp::GREATER_OR_EQUAL,
-            front: stencil_state,
-            back: stencil_state,
-            // one million objects is our max for now
+            depth_test_enable: 0,
             ..Default::default()
         };
 
@@ -936,7 +849,6 @@ impl GeomPipeline {
         dev: &Device,
         pass: vk::RenderPass,
         dstate: &DisplayState,
-        depth_image_view: vk::ImageView,
     ) -> Vec<vk::Framebuffer> {
         // A framebuffer should be created for each of the swapchain
         // images. Reuse the depth buffer for all images since it
@@ -945,8 +857,7 @@ impl GeomPipeline {
             .d_views
             .iter()
             .map(|&view| {
-                // color, depth
-                let attachments = [view, depth_image_view];
+                let attachments = [view]; // color
 
                 let info = vk::FramebufferCreateInfo::builder()
                     .render_pass(pass)
@@ -1048,66 +959,5 @@ impl GeomPipeline {
             write_info, // descriptor writes
             &[],        // descriptor copies
         );
-    }
-
-    /// set up the depth image in self.
-    ///
-    /// We need to transfer the format of the depth image to something
-    /// usable. We will use an image barrier to set the image as a depth
-    /// stencil attachment to be used later.
-    pub unsafe fn setup_depth_image(&mut self) {
-        self.g_dev.wait_for_copy();
-        {
-            let internal = self.g_dev.d_internal.read().unwrap();
-
-            self.g_dev.cbuf_begin_recording(
-                internal.copy_cbuf,
-                vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-            );
-
-            // the depth image and view have already been created by new
-            // we need to execute a cbuf to set up the memory we are
-            // going to use later
-            // We need to initialize the depth attachment by
-            // performing a layout transition to the optimal
-            // depth layout
-            //
-            // we do not use rend.transition_image_layout since that
-            // is specific to texture images
-            let layout_barrier = vk::ImageMemoryBarrier::builder()
-                .image(self.depth_image)
-                // access patern for the resulting layout
-                .dst_access_mask(
-                    vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
-                        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                )
-                // go from an undefined old layout to whatever the
-                // driver decides is the optimal depth layout
-                .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                .old_layout(vk::ImageLayout::UNDEFINED)
-                .subresource_range(
-                    vk::ImageSubresourceRange::builder()
-                        .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                        .layer_count(1)
-                        .level_count(1)
-                        .build(),
-                )
-                .build();
-
-            // process the barrier we created, which will perform
-            // the actual transition.
-            self.g_dev.dev.cmd_pipeline_barrier(
-                internal.copy_cbuf,
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[layout_barrier],
-            );
-            self.g_dev.cbuf_end_recording(internal.copy_cbuf);
-        }
-
-        self.g_dev.copy_cbuf_submit_async();
     }
 }
