@@ -275,7 +275,7 @@ impl Device {
         damage: Option<Damage>,
         release: Option<Box<dyn Droppable + Send + Sync>>,
     ) {
-        self.wait_for_copy();
+        self.wait_for_latest_timeline();
 
         {
             let mut image_internal = image.i_internal.write().unwrap();
@@ -508,7 +508,6 @@ impl Thundr {
         stride: u32,
         release_info: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
-        self.th_rend.lock().unwrap().wait_for_prev_submit();
         let tex_res = vk::Extent2D {
             width: width,
             height: height,
@@ -550,9 +549,6 @@ impl Thundr {
         dmabuf: &Dmabuf,
         release_info: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Option<Image> {
-        self.th_rend.lock().unwrap().wait_for_prev_submit();
-        self.th_dev.wait_for_copy();
-
         log::debug!("Updating new image with dmabuf {:?}", dmabuf);
         // A lot of this is duplicated from Renderer::create_image
         // Check validity of dmabuf format and print info

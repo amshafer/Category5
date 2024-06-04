@@ -17,8 +17,7 @@ pub mod geometric;
 pub use geometric::GeomPipeline;
 
 use crate::display::DisplayState;
-use crate::renderer::{RecordParams, Renderer};
-use crate::{Result, Surface, Viewport};
+use crate::{RecordParams, Result, Surface, Viewport};
 
 // The pipeline trait is essentially a mini-backend for the
 // renderer. It determines what draw calls we generate for the
@@ -27,7 +26,7 @@ use crate::{Result, Surface, Viewport};
 /// This allows us to use one vkcomp instance with multiple drawing
 /// types. For now there is one: the traditional rendering pipeline
 /// (geometric).
-pub trait Pipeline {
+pub(crate) trait Pipeline {
     /// This returns true if the pipeline is ready to be used.
     /// False if it is still waiting on operations to complete before
     /// it is ready.
@@ -38,21 +37,12 @@ pub trait Pipeline {
     /// Set the viewport
     ///
     /// This restricts the draw operations to within the specified region
-    fn set_viewport(
-        &mut self,
-        params: &mut RecordParams,
-        dstate: &DisplayState,
-        viewport: &Viewport,
-    ) -> Result<()>;
+    fn set_viewport(&mut self, dstate: &DisplayState, viewport: &Viewport) -> Result<()>;
 
     /// Our function which records the cbufs used to draw
     /// a Surface.
-    ///
-    /// Returns if vkQueueSubmit was called, and if Renderer.render_sema
-    /// should be waited on during presentation.
     fn draw(
         &mut self,
-        rend: &mut Renderer,
         params: &mut RecordParams,
         dstate: &DisplayState,
         surfaces: &Surface,

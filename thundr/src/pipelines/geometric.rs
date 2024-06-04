@@ -16,8 +16,8 @@ use ash::{util, vk};
 
 use super::Pipeline;
 use crate::display::{Display, DisplayState};
-use crate::renderer::{PushConstants, RecordParams, Renderer};
 use crate::{Device, Result, Surface, Viewport};
+use crate::{PushConstants, RecordParams};
 use utils::{log, region::Rect};
 
 // This is the reference data for a normal quad
@@ -180,12 +180,7 @@ impl Pipeline for GeomPipeline {
     /// Set the viewport
     ///
     /// This restricts the draw operations to within the specified region
-    fn set_viewport(
-        &mut self,
-        _params: &mut RecordParams,
-        dstate: &DisplayState,
-        viewport: &Viewport,
-    ) -> Result<()> {
+    fn set_viewport(&mut self, dstate: &DisplayState, viewport: &Viewport) -> Result<()> {
         let cbuf = self.g_cbufs[dstate.d_current_image as usize];
 
         unsafe {
@@ -229,7 +224,6 @@ impl Pipeline for GeomPipeline {
     /// data into the push constants. We can then draw the surface.
     fn draw(
         &mut self,
-        rend: &mut Renderer,
         params: &mut RecordParams,
         dstate: &DisplayState,
         surface: &Surface,
@@ -252,8 +246,8 @@ impl Pipeline for GeomPipeline {
         let image_desc = match surface.s_image.as_ref() {
             Some(img) => {
                 let id = img.get_id();
-                let imagevk = rend
-                    .dev
+                let imagevk = self
+                    .g_dev
                     .d_image_vk
                     .get(&id)
                     .expect("Image does not have ImageVK");
@@ -261,7 +255,7 @@ impl Pipeline for GeomPipeline {
                 assert!(imagevk.iv_desc.d_set != vk::DescriptorSet::null());
                 imagevk.iv_desc.d_set
             }
-            None => rend.dev.d_internal.read().unwrap().tmp_image_desc.d_set,
+            None => self.g_dev.d_internal.read().unwrap().tmp_image_desc.d_set,
         };
 
         // TODO: If this surface is not contained in the viewport then don't draw it
@@ -448,7 +442,7 @@ impl GeomPipeline {
     /// shaders, geometry, and the like.
     ///
     /// This fills in the GeomPipeline struct in the Renderer
-    pub fn new(dev: Arc<Device>, display: &Display, _rend: &Renderer) -> Result<GeomPipeline> {
+    pub fn new(dev: Arc<Device>, display: &Display) -> Result<GeomPipeline> {
         let dstate = &display.d_state;
         unsafe {
             let pass = GeomPipeline::create_pass(dstate.d_surface_format.format, &dev);

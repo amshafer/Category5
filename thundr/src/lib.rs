@@ -60,8 +60,7 @@ use lluvia as ll;
 
 // Austin Shafer - 2020
 use std::marker::PhantomData;
-use std::ops::DerefMut;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 mod damage;
 mod deletion_queue;
@@ -72,8 +71,10 @@ mod image;
 mod instance;
 mod pipelines;
 mod platform;
-mod renderer;
 mod surface;
+
+#[cfg(feature = "sdl")]
+extern crate sdl2;
 
 pub use self::image::Image;
 pub use self::image::{Dmabuf, DmabufPlane};
@@ -82,10 +83,7 @@ pub(crate) use deletion_queue::DeletionQueue;
 pub use device::Device;
 use display::Display;
 use instance::Instance;
-pub use renderer::Renderer;
 pub use surface::Surface;
-
-use renderer::RecordParams;
 
 // Re-export some things from utils so clients
 // can use them
@@ -149,12 +147,6 @@ pub struct Thundr {
     th_inst: Arc<Instance>,
     /// Our primary device
     th_dev: Arc<Device>,
-    /// Our core rendering resources
-    ///
-    /// This holds the majority of the vulkan objects, and allows them
-    /// to be accessed by things in our ECS so they can tear down their
-    /// vulkan allocations
-    th_rend: Arc<Mutex<Renderer>>,
     /// vk_khr_display and vk_khr_surface wrapper.
     th_display: Display,
 
@@ -169,6 +161,55 @@ pub struct Thundr {
     /// We keep a list of all the images allocated by this context
     /// so that Pipeline::draw doesn't have to dedup the surfacelist's images
     pub th_image_ecs: ll::Instance,
+}
+
+/// Recording parameters
+///
+/// Layers above this one will need to call recording
+/// operations. They need a private structure to pass
+/// to begin/end recording operations
+/// This is that structure.
+pub(crate) struct RecordParams {
+    /// our cached pushbuffer constants
+    pub(crate) push: PushConstants,
+}
+
+impl RecordParams {
+    pub fn new() -> Self {
+        Self {
+            push: PushConstants {
+                width: 0,
+                height: 0,
+                image_id: -1,
+                use_color: -1,
+                color: (0.0, 0.0, 0.0, 0.0),
+                dims: Rect::new(0, 0, 0, 0),
+            },
+        }
+    }
+}
+
+/// Shader push constants
+///
+/// These will be updated when we record the per-viewport draw commands
+/// and will contain the scrolling model transformation of all content
+/// within a viewport.
+///
+/// This is also where we pass in the Surface's data.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct PushConstants {
+    pub width: u32,
+    pub height: u32,
+    /// The id of the image. This is the offset into the unbounded sampler array.
+    /// id that's the offset into the unbound sampler array
+    pub image_id: i32,
+    /// if we should use color instead of texturing
+    pub use_color: i32,
+    /// Opaque color
+    pub color: (f32, f32, f32, f32),
+    /// The complete dimensions of the window.
+    pub dims: Rect<i32>,
 }
 
 /// A region to display to
@@ -246,9 +287,6 @@ impl Viewport {
     }
 }
 
-#[cfg(feature = "sdl")]
-extern crate sdl2;
-
 pub enum SurfaceType<'a> {
     /// it exists to make the lifetime parameter play nice with rust.
     /// Since the Display variant doesn't have a lifetime, we need one that
@@ -260,7 +298,7 @@ pub enum SurfaceType<'a> {
     Wayland(wc::Display, wc::protocol::wl_surface::WlSurface),
 }
 
-/// Parameters for Renderer creation.
+/// Parameters for Thundr creation.
 ///
 /// These will be set by Thundr based on the Pipelines that will
 /// be enabled. See `Pipeline` for methods that drive the data
@@ -314,22 +352,21 @@ impl Thundr {
         let inst = Arc::new(Instance::new(&info));
         let dev = Arc::new(Device::new(inst.clone(), &mut img_ecs, info)?);
 
-        // creates a context, swapchain, images, and others
-        // initialize the pipeline, renderpasses, and display engine
-        let (mut rend, display) = Renderer::new(inst.clone(), dev.clone(), info, img_ecs.clone())?;
+        // Our display is in charge of choosing a medium to draw on,
+        // and will create a surface on that medium
+        let display = Display::new(info, dev.clone())?;
 
         // Create the pipeline(s) requested
         // Record the type we are using so that we know which type to regenerate
         // on window resizing
         let (pipe, ty): (Box<dyn Pipeline>, PipelineType) = (
-            Box::new(GeomPipeline::new(dev.clone(), &display, &mut rend)?),
+            Box::new(GeomPipeline::new(dev.clone(), &display)?),
             PipelineType::GEOMETRIC,
         );
 
         Ok(Thundr {
             th_inst: inst,
             th_dev: dev,
-            th_rend: Arc::new(Mutex::new(rend)),
             th_display: display,
             _th_pipe_type: ty,
             th_pipe: pipe,
@@ -364,7 +401,6 @@ impl Thundr {
         damage: Option<Damage>,
         release: Option<Box<dyn Droppable + Send + Sync>>,
     ) {
-        self.th_rend.lock().unwrap().wait_for_prev_submit();
         self.th_dev
             .update_image_from_bits(image, data, width, height, stride, damage, release);
     }
@@ -409,10 +445,9 @@ impl Thundr {
             }
             Err(e) => return Err(e),
         };
-        let mut rend = self.th_rend.lock().unwrap();
 
         // record rendering commands
-        let mut params = rend.begin_recording_one_frame()?;
+        let mut params = RecordParams::new();
         let res = self.get_resolution();
         params.push.width = res.0;
         params.push.height = res.1;
@@ -427,13 +462,8 @@ impl Thundr {
     ///
     /// This restricts the draw operations to within the specified region
     pub fn set_viewport(&mut self, viewport: &Viewport) -> Result<()> {
-        let params = self
-            .th_params
-            .as_mut()
-            .ok_or(ThundrError::RECORDING_NOT_IN_PROGRESS)?;
-
         self.th_pipe
-            .set_viewport(params, &self.th_display.d_state, viewport)
+            .set_viewport(&self.th_display.d_state, viewport)
     }
 
     /// Draw a set of surfaces within a viewport
@@ -446,11 +476,7 @@ impl Thundr {
             .as_mut()
             .ok_or(ThundrError::RECORDING_NOT_IN_PROGRESS)?;
 
-        {
-            let mut rend = self.th_rend.lock().unwrap();
-            self.th_pipe
-                .draw(rend.deref_mut(), params, &self.th_display.d_state, surface);
-        }
+        self.th_pipe.draw(params, &self.th_display.d_state, surface);
 
         Ok(())
     }
@@ -459,8 +485,6 @@ impl Thundr {
     ///
     /// This should only be called after a proper begin_recording + draw_surfaces sequence.
     pub fn end_recording(&mut self) -> Result<()> {
-        let rend = self.th_rend.lock().unwrap();
-        rend.wait_for_prev_submit();
         self.th_pipe.end_record(&self.th_display.d_state);
         self.th_params = None;
 

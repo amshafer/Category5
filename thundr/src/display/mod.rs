@@ -468,18 +468,6 @@ impl Display {
         self.d_back.get_dpi()
     }
 
-    /// Selects a resolution for the renderer
-    ///
-    /// We saved the resolution of the display surface when we created
-    /// it. If the surface capabilities doe not specify a requested
-    /// extent, then we will return the screen's resolution.
-    pub unsafe fn select_resolution(&self) -> vk::Extent2D {
-        match self.d_state.d_surface_caps.current_extent.width {
-            std::u32::MAX => self.d_state.d_resolution,
-            _ => self.d_state.d_surface_caps.current_extent,
-        }
-    }
-
     /// choose a vkSurfaceFormatKHR for the vkSurfaceKHR
     ///
     /// This selects the color space and layout for a surface. This should
