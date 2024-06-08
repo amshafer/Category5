@@ -515,13 +515,7 @@ impl GeomPipeline {
             // Allocate buffers for all geometry to be used
             let (vbuf, vmem, ibuf, imem) = GeomPipeline::create_default_geom_bufs(&dev);
 
-            let graphics_queue_family = Display::select_queue_family(
-                &dev.inst.inst,
-                dev.pdev,
-                &display.d_surface_loader,
-                display.d_surface,
-                vk::QueueFlags::GRAPHICS,
-            )?;
+            let graphics_queue_family = display.select_queue_family()?;
             dev.register_graphics_queue_family(graphics_queue_family);
 
             let pool = dev.create_command_pool(graphics_queue_family);

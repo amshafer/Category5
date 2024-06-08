@@ -7,7 +7,7 @@ use ash::extensions::khr;
 use ash::vk;
 use ash::Entry;
 
-use super::Backend;
+use super::VkSwapchainBackend;
 use crate::{Result as ThundrResult, SurfaceType};
 use utils::log;
 
@@ -32,7 +32,7 @@ impl SDL2DisplayBackend {
         pdev: vk::PhysicalDevice,
         surface_loader: &khr::Surface,
         surf_type: &SurfaceType,
-    ) -> Option<(Box<dyn Backend>, vk::SurfaceKHR, vk::Extent2D)> {
+    ) -> Option<(Box<dyn VkSwapchainBackend>, vk::SurfaceKHR, vk::Extent2D)> {
         match surf_type {
             SurfaceType::SDL2(vid_sys, win) => {
                 let ret = Box::new(Self {
@@ -55,26 +55,9 @@ impl SDL2DisplayBackend {
             _ => None,
         }
     }
-
-    /// The two most important extensions are Surface and Xcb.
-    pub fn extension_names(surf_type: &SurfaceType) -> Option<Vec<*const i8>> {
-        match surf_type {
-            SurfaceType::SDL2(_, win) => Some(
-                win.vulkan_instance_extensions()
-                    .unwrap()
-                    .iter()
-                    .map(|s| {
-                        // we need to turn a Vec<&str> into a Vec<*const i8>
-                        s.as_ptr() as *const i8
-                    })
-                    .collect(),
-            ),
-            _ => None,
-        }
-    }
 }
 
-impl Backend for SDL2DisplayBackend {
+impl VkSwapchainBackend for SDL2DisplayBackend {
     /// Get an x11 display surface.
     fn create_surface(
         &self,

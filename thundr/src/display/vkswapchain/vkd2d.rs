@@ -6,7 +6,7 @@ use ash::extensions::khr;
 use ash::vk;
 use ash::Entry;
 
-use super::Backend;
+use super::VkSwapchainBackend;
 use crate::{Result as ThundrResult, SurfaceType};
 
 /// This Display backend represents a physical monitor sitting
@@ -33,7 +33,7 @@ impl PhysicalDisplay {
         pdev: vk::PhysicalDevice,
         surface_loader: &khr::Surface,
         surf_type: &SurfaceType,
-    ) -> Option<(Box<dyn Backend>, vk::SurfaceKHR, vk::Extent2D)> {
+    ) -> Option<(Box<dyn VkSwapchainBackend>, vk::SurfaceKHR, vk::Extent2D)> {
         let d_loader = khr::Display::new(entry, inst);
         let disp_props = d_loader
             .get_physical_device_display_properties(pdev)
@@ -54,17 +54,9 @@ impl PhysicalDisplay {
 
         Some((ret, surface, caps.current_extent))
     }
-
-    /// this should really go in its own Platform module
-    ///
-    /// The two most important extensions are Surface and Display.
-    /// Without them we cannot render anything.
-    pub fn extension_names(_surf_type: &SurfaceType) -> Vec<*const i8> {
-        vec![khr::Surface::name().as_ptr(), khr::Display::name().as_ptr()]
-    }
 }
 
-impl Backend for PhysicalDisplay {
+impl VkSwapchainBackend for PhysicalDisplay {
     /// Get a physical display surface.
     ///
     /// This returns the surfaceKHR to create a swapchain with, the
