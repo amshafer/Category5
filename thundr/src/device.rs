@@ -739,16 +739,16 @@ impl Device {
 
         // Get our wait values. We need to have an entry for each sema
         // in the list, binary semas will ignore this
-        let mut wait_values = vec![internal.timeline_point, internal.copy_timeline_point];
+        let mut wait_values = vec![internal.copy_timeline_point];
         wait_values.extend(std::iter::repeat(0).take(wait_semas.len()));
         // Bump our timeline to the next point, and register it to
         // be signaled by this cbuf's execution
         internal.timeline_point += 1;
         let mut signal_values = vec![internal.timeline_point];
-        signal_values.extend(std::iter::repeat(0).take(wait_semas.len()));
+        signal_values.extend(std::iter::repeat(0).take(signal_semas.len()));
 
         // Construct a slice of our wait semaphores
-        let mut all_wait_semas = vec![internal.timeline_sema, internal.copy_timeline_sema];
+        let mut all_wait_semas = vec![internal.copy_timeline_sema];
         all_wait_semas.extend_from_slice(wait_semas);
 
         // Construct a slice of our signal semaphores

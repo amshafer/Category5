@@ -562,9 +562,9 @@ impl GeomPipeline {
         self.g_dev.cbuf_submit_async(
             // submit the cbuf for the current image
             self.g_cbufs[dstate.d_current_image as usize],
-            dstate.d_present_queue,   // the graphics queue
-            &[dstate.d_present_sema], // wait_semas
-            &[dstate.d_frame_sema],   // signal_semas
+            dstate.d_present_queue, // the graphics queue
+            &[dstate.d_present_semas[dstate.d_current_image as usize].unwrap()], // wait_semas
+            &[dstate.d_frame_sema], // signal_semas
         );
     }
 

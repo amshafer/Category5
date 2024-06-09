@@ -35,10 +35,13 @@ pub struct DisplayState {
     pub d_surface_format: vk::SurfaceFormatKHR,
     /// index into swapchain images that we are currently using
     pub(crate) d_current_image: u32,
-    /// This signals that the latest contents have been presented.
-    /// It is signaled by acquire next image and is consumed by
-    /// the cbuf submission
-    pub(crate) d_present_sema: vk::Semaphore,
+    /// These semaphores control access to d_images and signal
+    /// when they can be modified after vkAcquireNextImageKHR.
+    /// They will be moved from the available list and populated
+    /// for an image index when used
+    pub(crate) d_present_semas: Vec<Option<vk::Semaphore>>,
+    /// These are the currently unused semas for image acquire
+    pub(crate) d_available_present_semas: Vec<vk::Semaphore>,
     /// processes things to be physically displayed
     pub(crate) d_present_queue: vk::Queue,
     /// Frame end semaphore
@@ -82,13 +85,6 @@ pub(crate) trait Swapchain {
     /// surface capabilities. Even if the swapchain doesn't actually
     /// use VkSurfaceKHR these will still be filled in.
     fn get_surface_info(&self) -> ThundrResult<(vk::SurfaceCapabilitiesKHR, vk::SurfaceFormatKHR)>;
-
-    /// Tear down all the swapchain-dependent vulkan objects we have created.
-    /// This will be used when dropping everything and when we need to handle
-    /// OOD events.
-    ///
-    /// If dstate is passed in then the swapchain views will be cleared
-    fn destroy_swapchain(&mut self, dstate: Option<&mut DisplayState>);
 
     /// Recreate our swapchain.
     ///
@@ -139,7 +135,6 @@ impl Display {
             let present_queue = dev.dev.get_device_queue(graphics_queue_family, 0);
 
             let sema_create_info = vk::SemaphoreCreateInfo::default();
-            let present_sema = dev.dev.create_semaphore(&sema_create_info, None).unwrap();
             let frame_sema = dev.dev.create_semaphore(&sema_create_info, None).unwrap();
 
             let (surface_caps, surface_format) = swapchain.get_surface_info()?;
@@ -156,7 +151,8 @@ impl Display {
                     },
                     d_views: Vec::with_capacity(0),
                     d_current_image: 0,
-                    d_present_sema: present_sema,
+                    d_present_semas: Vec::new(),
+                    d_available_present_semas: Vec::new(),
                     d_present_queue: present_queue,
                     d_frame_sema: frame_sema,
                     d_images: Vec::with_capacity(0),
@@ -169,6 +165,29 @@ impl Display {
         }
     }
 
+    /// Destroy the swapchain bits in dstate
+    fn destroy_swapchain_resources(&mut self) {
+        unsafe {
+            self.d_dev.dev.device_wait_idle().unwrap();
+
+            // Don't destroy the images here, the destroy swapchain call
+            // will take care of them
+            for view in self.d_state.d_views.iter() {
+                self.d_dev.dev.destroy_image_view(*view, None);
+            }
+            self.d_state.d_views.clear();
+
+            for sema in self.d_state.d_present_semas.drain(..) {
+                if let Some(sema) = sema {
+                    self.d_dev.dev.destroy_semaphore(sema, None);
+                }
+            }
+            for sema in self.d_state.d_available_present_semas.drain(..) {
+                self.d_dev.dev.destroy_semaphore(sema, None);
+            }
+        }
+    }
+
     /// Recreate our swapchain.
     ///
     /// This will be done on VK_ERROR_OUT_OF_DATE_KHR, signifying that
@@ -176,7 +195,26 @@ impl Display {
     /// Keep in mind the Pipeline in Thundr will also have to be recreated
     /// separately.
     pub fn recreate_swapchain(&mut self) -> ThundrResult<()> {
-        self.d_swapchain.recreate_swapchain(&mut self.d_state)
+        self.destroy_swapchain_resources();
+
+        self.d_swapchain.recreate_swapchain(&mut self.d_state)?;
+
+        // Populate the present semas for these images
+        let sema_create_info = vk::SemaphoreCreateInfo::default();
+
+        // Have an extra semaphore since we need one to use but don't
+        // know which images are done yet
+        for _ in 0..(self.d_state.d_images.len() + 1) {
+            self.d_state.d_available_present_semas.push(unsafe {
+                self.d_dev
+                    .dev
+                    .create_semaphore(&sema_create_info, None)
+                    .unwrap()
+            });
+            self.d_state.d_present_semas.push(None);
+        }
+
+        Ok(())
     }
 
     /// Get the Dots Per Inch for this display.
@@ -229,17 +267,10 @@ impl Drop for Display {
         println!("Destroying display");
         unsafe {
             self.d_dev.dev.device_wait_idle().unwrap();
-            // Don't destroy the images here, the destroy swapchain call
-            // will take care of them
-            for view in self.d_state.d_views.iter() {
-                self.d_dev.dev.destroy_image_view(*view, None);
-            }
+            self.destroy_swapchain_resources();
             self.d_dev
                 .dev
                 .destroy_semaphore(self.d_state.d_frame_sema, None);
-            self.d_dev
-                .dev
-                .destroy_semaphore(self.d_state.d_present_sema, None);
         }
     }
 }

@@ -189,6 +189,17 @@ impl VkSwapchain {
         Ok(())
     }
 
+    /// Tear down all the swapchain-dependent vulkan objects we have created.
+    /// This will be used when dropping everything and when we need to handle
+    /// OOD events.
+    fn destroy_swapchain(&mut self) {
+        unsafe {
+            self.d_swapchain_loader
+                .destroy_swapchain(self.d_swapchain, None);
+            self.d_swapchain = vk::SwapchainKHR::null();
+        }
+    }
+
     /// Populates this display with a new vkSwapchain
     ///
     /// Swapchains contain images that can be used for WSI presentation
@@ -199,10 +210,9 @@ impl VkSwapchain {
     /// The application resolution is set by this method.
     fn create_swapchain(&mut self, dstate: &mut DisplayState) -> ThundrResult<()> {
         // how many images we want the swapchain to contain
-        let mut desired_image_count = dstate.d_surface_caps.min_image_count + 1;
-        if dstate.d_surface_caps.max_image_count > 0
-            && desired_image_count > dstate.d_surface_caps.max_image_count
-        {
+        // Default to double buffering for minimal input lag.
+        let mut desired_image_count = 2;
+        if desired_image_count < dstate.d_surface_caps.min_image_count {
             desired_image_count = dstate.d_surface_caps.max_image_count;
         }
 
@@ -244,7 +254,7 @@ impl VkSwapchain {
         };
 
         // Now that we recreated the swapchain destroy the old one
-        self.destroy_swapchain(Some(dstate));
+        self.destroy_swapchain();
         self.d_swapchain = new_swapchain;
 
         Ok(())
@@ -302,7 +312,7 @@ impl VkSwapchain {
             let mode = present_modes
                 .iter()
                 .cloned()
-                .find(|&mode| mode == vk::PresentModeKHR::FIFO)
+                .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
                 // fallback to FIFO if the mailbox mode is not available
                 .unwrap_or(vk::PresentModeKHR::FIFO);
 
@@ -365,26 +375,6 @@ impl Swapchain for VkSwapchain {
         Ok((surface_caps, surface_format))
     }
 
-    /// Tear down all the swapchain-dependent vulkan objects we have created.
-    /// This will be used when dropping everything and when we need to handle
-    /// OOD events.
-    fn destroy_swapchain(&mut self, dstate: Option<&mut DisplayState>) {
-        unsafe {
-            if let Some(dstate) = dstate {
-                // Don't destroy the images here, the destroy swapchain call
-                // will take care of them
-                for view in dstate.d_views.iter() {
-                    self.d_dev.dev.destroy_image_view(*view, None);
-                }
-                dstate.d_views.clear();
-            }
-
-            self.d_swapchain_loader
-                .destroy_swapchain(self.d_swapchain, None);
-            self.d_swapchain = vk::SwapchainKHR::null();
-        }
-    }
-
     /// Recreate our swapchain.
     ///
     /// This will be done on VK_ERROR_OUT_OF_DATE_KHR, signifying that
@@ -432,24 +422,34 @@ impl Swapchain for VkSwapchain {
     /// it gets a valid image. This has to be done on AMD hw or else the TIMEOUT
     /// error will get passed up the callstack and fail.
     fn get_next_swapchain_image(&mut self, dstate: &mut DisplayState) -> ThundrResult<()> {
+        let present_sema = dstate.d_available_present_semas.pop().unwrap();
+
         loop {
-            match unsafe {
+            let ret = match unsafe {
                 self.d_swapchain_loader.acquire_next_image(
                     self.d_swapchain,
-                    0,                     // use a zero timeout to immediately get the state
-                    dstate.d_present_sema, // signals presentation
+                    0,            // use a zero timeout to immediately get the state
+                    present_sema, // signals presentation
                     vk::Fence::null(),
                 )
             } {
-                // TODO: handle suboptimal surface regeneration
+                // On success, put this sema in the in-use slot for this image
                 Ok((index, _)) => {
                     log::debug!(
                         "Getting next swapchain image: Current {:?}, New {:?}",
                         dstate.d_current_image,
                         index
                     );
+
                     dstate.d_current_image = index;
-                    return Ok(());
+
+                    // Recycle the old sema and put it on the available list
+                    if let Some(sema) = dstate.d_present_semas[index as usize].take() {
+                        dstate.d_available_present_semas.push(sema);
+                    }
+                    dstate.d_present_semas[index as usize] = Some(present_sema);
+
+                    Ok(())
                 }
                 Err(vk::Result::NOT_READY) => {
                     log::debug!(
@@ -465,11 +465,18 @@ impl Swapchain for VkSwapchain {
                     );
                     continue;
                 }
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Err(ThundrError::OUT_OF_DATE),
-                Err(vk::Result::SUBOPTIMAL_KHR) => return Err(ThundrError::OUT_OF_DATE),
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(ThundrError::OUT_OF_DATE),
+                Err(vk::Result::SUBOPTIMAL_KHR) => Err(ThundrError::OUT_OF_DATE),
                 // the call did not succeed
-                Err(_) => return Err(ThundrError::COULD_NOT_ACQUIRE_NEXT_IMAGE),
+                Err(_) => Err(ThundrError::COULD_NOT_ACQUIRE_NEXT_IMAGE),
+            };
+
+            // If an error was returned, put the sema back on the list
+            if ret.is_err() {
+                dstate.d_available_present_semas.push(present_sema);
             }
+
+            return ret;
         }
     }
 
@@ -507,7 +514,7 @@ impl Drop for VkSwapchain {
         println!("Destroying swapchain");
         unsafe {
             self.d_dev.dev.device_wait_idle().unwrap();
-            self.destroy_swapchain(None);
+            self.destroy_swapchain();
             self.d_surface_loader.destroy_surface(self.d_surface, None);
         }
     }
