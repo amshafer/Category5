@@ -446,6 +446,15 @@ impl Thundr {
             Err(e) => return Err(e),
         };
 
+        // Wait for the previous frame to finish, preventing us from having the
+        // CPU run ahead more than one frame.
+        //
+        // This throttling helps reduce latency, as we don't queue up more than
+        // one frame at a time. With this we get one frame (16ms) latency.
+        //
+        // TODO: pace our frames better to reduce latency futher?
+        self.th_dev.wait_for_latest_timeline();
+
         // record rendering commands
         let mut params = RecordParams::new();
         let res = self.get_resolution();
