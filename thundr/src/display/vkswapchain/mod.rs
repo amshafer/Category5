@@ -300,6 +300,7 @@ impl VkSwapchain {
                     &s_loader,
                     &info.surface_type,
                 ),
+                _ => panic!("Unsupported surface type"),
             }
             .unwrap();
 

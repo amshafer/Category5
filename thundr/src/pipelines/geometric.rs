@@ -558,12 +558,17 @@ impl GeomPipeline {
     /// all geometry to the current framebuffer. Presentation is
     /// done later, in case operations need to occur inbetween.
     fn submit_frame(&mut self, dstate: &DisplayState) {
+        let mut wait_semas = Vec::new();
+        if let Some(sema) = dstate.d_present_semas[dstate.d_current_image as usize] {
+            wait_semas.push(sema);
+        }
+
         // Submit the recorded cbuf to perform the draw calls
         self.g_dev.cbuf_submit_async(
             // submit the cbuf for the current image
             self.g_cbufs[dstate.d_current_image as usize],
             dstate.d_present_queue, // the graphics queue
-            &[dstate.d_present_semas[dstate.d_current_image as usize].unwrap()], // wait_semas
+            wait_semas.as_slice(),
             &[dstate.d_frame_sema], // signal_semas
         );
     }
@@ -573,6 +578,13 @@ impl GeomPipeline {
     /// Render passses signify what attachments are used in which
     /// stages. They are composed of one or more subpasses.
     unsafe fn create_pass(format: vk::Format, dev: &Device) -> vk::RenderPass {
+        // According to the spec we can only use PRESENT_SRC when vkSwapchain's
+        // ext is enabled
+        let layout = match dev.dev_features.vkc_supports_swapchain {
+            true => vk::ImageLayout::PRESENT_SRC_KHR,
+            false => vk::ImageLayout::GENERAL,
+        };
+
         let attachments = [
             // the color dest. Its the surface we slected in Renderer::new.
             // see Renderer::create_swapchain for why we aren't using
@@ -583,7 +595,7 @@ impl GeomPipeline {
                 load_op: vk::AttachmentLoadOp::CLEAR,
                 store_op: vk::AttachmentStoreOp::STORE,
                 initial_layout: vk::ImageLayout::UNDEFINED,
-                final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                final_layout: layout,
                 ..Default::default()
             },
         ];

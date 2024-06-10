@@ -1,4 +1,6 @@
-#![allow(dead_code)]
+/// The platform abstraction
+///
+/// This hides away the window system code from the rest of Dakota
 use crate::dom;
 use crate::dom::DakotaDOM;
 use crate::{event::EventSystem, DakotaError, Result};
@@ -14,6 +16,12 @@ mod sdl2;
 #[cfg(feature = "sdl")]
 pub use self::sdl2::SDL2Plat;
 
+mod headless;
+pub use self::headless::HeadlessPlat;
+
+/// A Dakota platform
+///
+/// This isolates all of the Window system code.
 pub trait Platform {
     fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType>;
 

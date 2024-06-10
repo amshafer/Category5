@@ -90,11 +90,11 @@ pub struct DisplayPlat {
     /// libinput context
     dp_libin: Libinput,
     /// libxkbcommon context
-    dp_xkb_ctx: xkb::Context,
-    dp_xkb_keymap: xkb::Keymap,
+    _dp_xkb_ctx: xkb::Context,
+    _dp_xkb_keymap: xkb::Keymap,
     /// this is referenced by Seat, which needs to map and
     /// share it with the clients
-    dp_xkb_keymap_name: String,
+    _dp_xkb_keymap_name: String,
     /// xkb state machine
     dp_xkb_state: xkb::State,
     /// The current modifier key state. This will be updated using
@@ -136,9 +136,9 @@ impl DisplayPlat {
 
         Ok(Self {
             dp_libin: libin,
-            dp_xkb_ctx: context,
-            dp_xkb_keymap: keymap,
-            dp_xkb_keymap_name: km_name,
+            _dp_xkb_ctx: context,
+            _dp_xkb_keymap: keymap,
+            _dp_xkb_keymap_name: km_name,
             dp_xkb_state: state,
             dp_current_modifiers: Mods::NONE,
             dp_fdwatch: fdwatch,

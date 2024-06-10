@@ -8,12 +8,14 @@ use ash::extensions::khr;
 use ash::vk;
 
 use crate::device::Device;
-use crate::{CreateInfo, Result as ThundrResult, SurfaceType};
+use crate::{CreateInfo, Result as ThundrResult, SurfaceType, ThundrError};
 
 use std::sync::Arc;
 
 mod vkswapchain;
 use vkswapchain::VkSwapchain;
+mod headless;
+use headless::HeadlessSwapchain;
 
 /// Shared state that subsystems consume. We need this
 /// since Display holds rendering objects, but also has
@@ -116,6 +118,33 @@ pub(crate) trait Swapchain {
 }
 
 impl Display {
+    /// Figure out what the requested surface type is and call the appropriate
+    /// swapchain backend new function.
+    fn initialize_swapchain(
+        info: &CreateInfo,
+        dev: Arc<Device>,
+    ) -> ThundrResult<Box<dyn Swapchain>> {
+        let mut vkswap = false;
+        let mut headless = true;
+
+        match &info.surface_type {
+            #[cfg(feature = "sdl")]
+            SurfaceType::SDL2(_, _) => vkswap = true,
+            SurfaceType::Display(_) => vkswap = true,
+            SurfaceType::Headless => headless = true,
+        }
+
+        if vkswap {
+            return Ok(Box::new(VkSwapchain::new(info, dev.clone())?));
+        }
+
+        if headless {
+            return Ok(Box::new(HeadlessSwapchain::new(dev.clone())?));
+        }
+
+        return Err(ThundrError::NO_DISPLAY);
+    }
+
     /// Choose a queue family
     ///
     /// returns an index into the array of queue types.
@@ -128,7 +157,7 @@ impl Display {
 
     pub fn new(info: &CreateInfo, dev: Arc<Device>) -> ThundrResult<Display> {
         unsafe {
-            let swapchain = Box::new(VkSwapchain::new(info, dev.clone())?);
+            let swapchain = Self::initialize_swapchain(info, dev.clone())?;
 
             // Ensure that there is a valid queue, validation layer checks for this
             let graphics_queue_family = swapchain.select_queue_family()?;
@@ -227,6 +256,7 @@ impl Display {
 
     pub fn extension_names(info: &CreateInfo) -> Vec<*const i8> {
         match info.surface_type {
+            SurfaceType::Headless => Vec::with_capacity(0),
             SurfaceType::Display(_) => {
                 vec![khr::Surface::name().as_ptr(), khr::Display::name().as_ptr()]
             }

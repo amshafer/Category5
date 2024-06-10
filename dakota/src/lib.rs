@@ -267,12 +267,18 @@ macro_rules! create_component_and_table {
 
 impl Dakota {
     /// Helper for initializing Thundr for a given platform.
-    fn init_thundr(plat: &mut Box<dyn Platform>) -> Result<th::Thundr> {
+    fn init_thundr(plat: &mut Box<dyn Platform>) -> Result<(th::Thundr, (i32, i32))> {
         let info = th::CreateInfo::builder()
             .surface_type(plat.get_th_surf_type()?)
             .build();
 
-        th::Thundr::new(&info).context("Failed to initialize Thundr")
+        let thundr = th::Thundr::new(&info).context("Failed to initialize Thundr")?;
+
+        let dpi = thundr
+            .get_dpi()
+            .context("Failed to get DPI during platform init")?;
+
+        Ok((thundr, dpi))
     }
 
     /// Try initializing the different plaform backends until we find one that works
@@ -282,19 +288,22 @@ impl Dakota {
     /// given different configurations. DPI fails if SDL2 tries to initialize us on
     /// a physical display.
     fn initialize_platform() -> Result<(Box<dyn Platform>, th::Thundr, (i32, i32))> {
+        if std::env::var("DAKOTA_HEADLESS_BACKEND").is_ok() {
+            let headless = platform::HeadlessPlat::new();
+            let mut display: Box<dyn Platform> = Box::new(headless);
+            match Self::init_thundr(&mut display) {
+                Ok((thundr, dpi)) => return Ok((display, thundr, dpi)),
+                Err(e) => log::error!("Failed to create Headless backend: {:?}", e),
+            }
+        }
+
         #[cfg(feature = "sdl")]
         if std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok() {
             match platform::SDL2Plat::new() {
                 Ok(sdl) => {
                     let mut sdl: Box<dyn Platform> = Box::new(sdl);
                     match Self::init_thundr(&mut sdl) {
-                        Ok(thundr) => match thundr.get_dpi() {
-                            Ok(dpi) => {
-                                log::error!("Using SDL2 Platform Backend");
-                                return Ok((sdl, thundr, dpi));
-                            }
-                            Err(e) => log::error!("Failed to get DPI from SDL: {:?}", e),
-                        },
+                        Ok((thundr, dpi)) => return Ok((sdl, thundr, dpi)),
                         Err(e) => log::error!("Failed to create SDL2 backend: {:?}", e),
                     }
                 }
@@ -306,14 +315,8 @@ impl Dakota {
         if let Ok(display) = platform::DisplayPlat::new() {
             let mut display: Box<dyn Platform> = Box::new(display);
             match Self::init_thundr(&mut display) {
-                Ok(thundr) => match thundr.get_dpi() {
-                    Ok(dpi) => {
-                        log::error!("Using Direct to Display Platform Backend");
-                        return Ok((display, thundr, dpi));
-                    }
-                    Err(e) => log::error!("Failed to create SDL2 backend: {:?}", e),
-                },
-                Err(e) => log::error!("Failed to create Physical Display backend: {:?}", e),
+                Ok((thundr, dpi)) => return Ok((display, thundr, dpi)),
+                Err(e) => log::error!("Failed to create Direct2Display backend: {:?}", e),
             }
         }
 

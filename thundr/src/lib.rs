@@ -140,6 +140,8 @@ pub enum ThundrError {
     COULD_NOT_CREATE_IMAGE,
     #[error("Invalid format or no format found")]
     INVALID_FORMAT,
+    #[error("Could not get a valid display backend")]
+    NO_DISPLAY,
 }
 
 pub struct Thundr {
@@ -288,14 +290,13 @@ impl Viewport {
 }
 
 pub enum SurfaceType<'a> {
+    Headless,
     /// it exists to make the lifetime parameter play nice with rust.
     /// Since the Display variant doesn't have a lifetime, we need one that
     /// does incase xcb/macos aren't enabled.
     Display(PhantomData<&'a usize>),
     #[cfg(feature = "sdl")]
     SDL2(&'a sdl2::VideoSubsystem, &'a sdl2::video::Window),
-    #[cfg(feature = "wayland")]
-    Wayland(wc::Display, wc::protocol::wl_surface::WlSurface),
 }
 
 /// Parameters for Thundr creation.
