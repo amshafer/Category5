@@ -50,7 +50,7 @@ impl HeadlessSwapchain {
             let (image, view, mem) = self.h_dev.create_image(
                 &resolution,
                 vk::Format::B8G8R8A8_UNORM,
-                vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::COLOR_ATTACHMENT,
                 vk::ImageAspectFlags::COLOR,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL
                     | vk::MemoryPropertyFlags::HOST_COHERENT

@@ -512,6 +512,11 @@ impl Device {
     pub fn wait_for_latest_timeline(&self) {
         let mut internal = self.d_internal.write().unwrap();
 
+        // If we haven't subimitted a frame yet then exist
+        if internal.timeline_point == 0 {
+            return;
+        }
+
         let wait_semas = &[internal.timeline_sema, internal.copy_timeline_sema];
         let wait_values = &[internal.timeline_point, internal.copy_timeline_point];
         let wait_info = vk::SemaphoreWaitInfoKHR::builder()

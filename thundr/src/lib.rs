@@ -26,22 +26,43 @@
 //! ```
 //! use thundr as th;
 //!
-//! let thund: th::Thundr = Thundr::new();
+//! // specify surface type here, this example uses headless
+//! let info = th::CreateInfo::builder()
+//!     .surface_type(th::SurfaceType::Headless)
+//!     .build();
 //!
-//! // First load our texture into memory
-//! let img = image::open("images/cursor.png").unwrap().to_rgba();
-//! let pixels: Vec<u8> = img.into_vec();
-//! let mimg = MemImage::new(
-//!     pixels.as_slice().as_ptr() as *mut u8,
-//!     4,  // width of a pixel
-//!     64, // width of texture
-//!     64  // height of texture
-//! );
+//! let mut thund = th::Thundr::new(&info).unwrap();
+//! let res = thund.get_resolution();
 //!
+//! let pixels: Vec<u8> = std::iter::repeat(128).take(4 * 64 * 64).collect();
 //! // Create an image from our MemImage
-//! let image = thund.create_image_from_bits(&mimg, None).unwrap();
-//! // Now create a 16x16 surface at position (0, 0)
-//! let surf = thund.create_surface(0.0, 0.0, 16.0, 16.0);
+//! let image = thund
+//!     .create_image_from_bits(
+//!         pixels.as_slice(),
+//!         64, // width of texture
+//!         64, // height of texture
+//!         64, // stride
+//!         None,
+//!     )
+//!     .unwrap();
+//!
+//! // Begin recording drawing commands
+//! thund.begin_recording().unwrap();
+//!
+//! // Set the current drawing viewport. Drawing operations will take place
+//! // within this region.
+//! let viewport = th::Viewport::new(0, 0, res.0 as i32, res.1 as i32);
+//! thund.set_viewport(&viewport).unwrap();
+//!
+//! // Draw a 16x16 surface at position (0, 0) referencing our image
+//! let surf = th::Surface::new(th::Rect::new(0, 0, 16, 16), Some(image), None);
+//! thund.draw_surface(&surf).unwrap();
+//!
+//! // End recording this frame
+//! thund.end_recording().unwrap();
+//!
+//! // present the frame
+//! thund.present().unwrap();
 //! ```
 //! ## Requirements
 //!
@@ -72,6 +93,9 @@ mod instance;
 mod pipelines;
 mod platform;
 mod surface;
+
+#[cfg(test)]
+mod tests;
 
 #[cfg(feature = "sdl")]
 extern crate sdl2;

@@ -563,13 +563,18 @@ impl GeomPipeline {
             wait_semas.push(sema);
         }
 
+        let mut signal_semas = Vec::new();
+        if dstate.d_needs_present_sema {
+            signal_semas.push(dstate.d_frame_sema);
+        }
+
         // Submit the recorded cbuf to perform the draw calls
         self.g_dev.cbuf_submit_async(
             // submit the cbuf for the current image
             self.g_cbufs[dstate.d_current_image as usize],
             dstate.d_present_queue, // the graphics queue
             wait_semas.as_slice(),
-            &[dstate.d_frame_sema], // signal_semas
+            signal_semas.as_slice(),
         );
     }
 
