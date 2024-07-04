@@ -935,8 +935,8 @@ impl Device {
         width: u32,
         height: u32,
         stride: u32,
-    ) {
-        self.update_image_contents_from_damaged_data(image, data, width, height, stride, None);
+    ) -> Result<()> {
+        self.update_image_contents_from_damaged_data(image, data, width, height, stride, None)
     }
 
     /// Copies a list of regions from a buffer into an image.
@@ -952,7 +952,7 @@ impl Device {
         height: u32,
         stride: u32,
         damage: Option<Damage>,
-    ) {
+    ) -> Result<()> {
         log::debug!("Updating image with damage: {:?}", damage);
         log::debug!("Using {}x{} buffer with stride {}", width, height, stride);
 
@@ -962,6 +962,11 @@ impl Device {
             0 => width,
             s => s,
         };
+
+        // Verify our size does not overflow the data
+        if stride * height > data.len() as u32 {
+            return Err(ThundrError::INVALID_STRIDE);
+        }
 
         // If we have damage to use, then generate our copy regions. If not,
         // then just create
@@ -1100,6 +1105,8 @@ impl Device {
 
         // Do this without
         self.copy_cbuf_submit_async();
+
+        Ok(())
     }
 
     /// Returns an index into the array of memory types for the memory

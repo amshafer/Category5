@@ -9,7 +9,7 @@ extern crate nix;
 use super::device::Device;
 use crate::descpool::Descriptor;
 use crate::Thundr;
-use crate::{Damage, Droppable};
+use crate::{Damage, Droppable, Result, ThundrError};
 use utils::log;
 use utils::region::Rect;
 
@@ -21,7 +21,6 @@ use std::sync::{Arc, RwLock};
 
 use ash::vk;
 use nix::fcntl::{fcntl, FcntlArg};
-use nix::Error;
 
 // For now we only support one format.
 // According to the mesa source, this supports all modifiers.
@@ -274,7 +273,7 @@ impl Device {
         stride: u32,
         damage: Option<Damage>,
         release: Option<Box<dyn Droppable + Send + Sync>>,
-    ) {
+    ) -> Result<()> {
         self.wait_for_latest_timeline();
 
         {
@@ -288,10 +287,9 @@ impl Device {
                 // the Renderer Mutex, so nobody else should be updating this entry
                 let vkimage = self.d_image_vk.get_mut(&imgvk_id).unwrap().iv_image;
 
-                self.update_image_contents_from_damaged_data(
+                return self.update_image_contents_from_damaged_data(
                     vkimage, data, width, height, stride, damage,
                 );
-                return;
             }
 
             // If the new contents have a change in size, then we need to realloc our
@@ -318,8 +316,10 @@ impl Device {
                 ret
             };
 
-            self.update_image_from_data(image, data, width, height, stride);
+            self.update_image_from_data(image, data, width, height, stride)?;
         }
+
+        Ok(())
     }
 
     /// returns the index of the memory type to use
@@ -353,7 +353,7 @@ impl Device {
         &self,
         dmabuf: &Dmabuf,
         dmabuf_priv: &mut DmabufPrivate,
-    ) -> Result<(vk::Image, vk::ImageView, vk::DeviceMemory), Error> {
+    ) -> Result<(vk::Image, vk::ImageView, vk::DeviceMemory)> {
         // TODO: multiplanar support
         let plane = &dmabuf.db_planes[0];
 
@@ -437,7 +437,7 @@ impl Device {
             Ok(f) => f,
             Err(e) => {
                 log::debug!("could not dup fd {:?}", e);
-                return Err(e);
+                return Err(ThundrError::INVALID_FD);
             }
         };
         let mut import_fd_info = vk::ImportMemoryFdInfoKHR::builder()
@@ -507,7 +507,7 @@ impl Thundr {
         height: u32,
         stride: u32,
         release_info: Option<Box<dyn Droppable + Send + Sync>>,
-    ) -> Option<Image> {
+    ) -> Result<Image> {
         let tex_res = vk::Extent2D {
             width: width,
             height: height,
@@ -526,7 +526,7 @@ impl Thundr {
         let (image, view, img_mem) = self.th_dev.alloc_bgra8_image(&tex_res);
 
         self.th_dev
-            .update_image_from_data(image, data, width, height, stride);
+            .update_image_from_data(image, data, width, height, stride)?;
 
         return self.create_image_common(
             ImagePrivate::MemImage,
@@ -548,7 +548,7 @@ impl Thundr {
         &mut self,
         dmabuf: &Dmabuf,
         release_info: Option<Box<dyn Droppable + Send + Sync>>,
-    ) -> Option<Image> {
+    ) -> Result<Image> {
         log::debug!("Updating new image with dmabuf {:?}", dmabuf);
         // A lot of this is duplicated from Renderer::create_image
         // Check validity of dmabuf format and print info
@@ -645,7 +645,7 @@ impl Thundr {
                 Ok((i, v, im)) => (i, v, im),
                 Err(_e) => {
                     log::debug!("Could not update dmabuf image: {:?}", _e);
-                    return None;
+                    return Err(ThundrError::INVALID_DMABUF);
                 }
             };
 
@@ -680,7 +680,7 @@ impl Thundr {
         view: vk::ImageView,
         is_dmabuf: bool,
         release: Option<Box<dyn Droppable + Send + Sync>>,
-    ) -> Option<Image> {
+    ) -> Result<Image> {
         let descriptor = self.th_dev.create_new_image_descriptor(view);
 
         let image_vk = ImageVk {
@@ -704,7 +704,7 @@ impl Thundr {
         // Add our vulkan resources to the ECS
         self.th_dev.d_image_vk.set(&internal.i_id, image_vk);
 
-        return Some(Image {
+        return Ok(Image {
             i_internal: Arc::new(RwLock::new(internal)),
         });
     }

@@ -579,7 +579,7 @@ impl Dakota {
         let image = self
             .d_thund
             .create_image_from_bits(data, width, height, stride, None)
-            .ok_or(anyhow!("Could not create Thundr image"))?;
+            .context("Could not create Image resources")?;
 
         self.d_resource_thundr_image.set(res, image);
         Ok(())
@@ -610,7 +610,8 @@ impl Dakota {
         ))?;
 
         self.d_thund
-            .update_image_from_bits(&image, data, width, height, stride, damage, None);
+            .update_image_from_bits(&image, data, width, height, stride, damage, None)
+            .context("Could not update image with damaged region")?;
 
         Ok(())
     }
@@ -633,7 +634,7 @@ impl Dakota {
         let image = self
             .d_thund
             .create_image_from_dmabuf(dmabuf, release_info)
-            .ok_or(anyhow!("Could not create Thundr image from dmabuf"))?;
+            .context("Could not create Image resources")?;
 
         self.d_resource_thundr_image.set(res, image);
         Ok(())

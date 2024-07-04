@@ -158,6 +158,8 @@ pub enum ThundrError {
     RECORDING_NOT_IN_PROGRESS,
     #[error("Invalid Operation")]
     INVALID,
+    #[error("Invalid File Descriptor")]
+    INVALID_FD,
     #[error("Could not create the Vulkan swapchain")]
     COULD_NOT_CREATE_SWAPCHAIN,
     #[error("Failed to create Vulkan image")]
@@ -166,6 +168,10 @@ pub enum ThundrError {
     INVALID_FORMAT,
     #[error("Could not get a valid display backend")]
     NO_DISPLAY,
+    #[error("Could not import dmabuf")]
+    INVALID_DMABUF,
+    #[error("Stride does not match dimensions and size of image data")]
+    INVALID_STRIDE,
 }
 
 pub struct Thundr {
@@ -425,9 +431,9 @@ impl Thundr {
         stride: u32,
         damage: Option<Damage>,
         release: Option<Box<dyn Droppable + Send + Sync>>,
-    ) {
+    ) -> Result<()> {
         self.th_dev
-            .update_image_from_bits(image, data, width, height, stride, damage, release);
+            .update_image_from_bits(image, data, width, height, stride, damage, release)
     }
 
     /// This is a candidate for an out of date error. We should
