@@ -451,6 +451,7 @@ pub type Entity = Arc<EntityInternal>;
 /// This lets us do some type-agnostic operations on a table from
 /// the Instance without having to do a full downcast call. This
 /// prevents the Instance from having to keep track of type state.
+#[allow(dead_code)]
 trait ComponentTable {
     /// Set an entity value to None and throw away the value
     fn clear_entity(&self, id: usize);

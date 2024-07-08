@@ -224,6 +224,7 @@ impl fmt::Debug for Image {
 #[derive(Debug)]
 enum ImagePrivate {
     InvalidImage,
+    #[allow(dead_code)]
     Dmabuf(DmabufPrivate),
     MemImage,
 }
@@ -435,8 +436,8 @@ impl Device {
         // don't update the texture.
         let fd = match fcntl(plane.db_fd.as_raw_fd(), FcntlArg::F_DUPFD_CLOEXEC(0)) {
             Ok(f) => f,
-            Err(e) => {
-                log::debug!("could not dup fd {:?}", e);
+            Err(_e) => {
+                log::debug!("could not dup fd {:?}", _e);
                 return Err(ThundrError::INVALID_FD);
             }
         };

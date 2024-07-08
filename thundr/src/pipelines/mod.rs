@@ -27,11 +27,6 @@ use crate::{RecordParams, Result, Surface, Viewport};
 /// types. For now there is one: the traditional rendering pipeline
 /// (geometric).
 pub(crate) trait Pipeline {
-    /// This returns true if the pipeline is ready to be used.
-    /// False if it is still waiting on operations to complete before
-    /// it is ready.
-    fn is_ready(&self) -> bool;
-
     fn begin_record(&mut self, dstate: &DisplayState);
 
     /// Set the viewport
@@ -49,10 +44,6 @@ pub(crate) trait Pipeline {
     ) -> bool;
 
     fn end_record(&mut self, dstate: &DisplayState);
-
-    /// This helper prints out any per-frame statistics for debug
-    /// info, such as the window positions and the attached images.
-    fn debug_frame_print(&self);
 
     /// Handle swapchain out of date
     ///

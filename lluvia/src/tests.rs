@@ -10,7 +10,7 @@ fn basic_test() {
 
     // Now add our component. This will be a string, but
     // we don't have to specify that for now
-    let mut c = inst.add_component();
+    let c = inst.add_component();
 
     // Before querying the value, we first need to set a valid value
     // for this component. Afterwards, we can get it and check that
@@ -29,7 +29,7 @@ fn basic_non_sparse_test() {
 
     // Now add our component. This will be a string, but
     // we don't have to specify that for now
-    let mut c = inst.add_non_sparse_component(|| "");
+    let c = inst.add_non_sparse_component(|| "");
 
     // Before querying the value, we first need to set a valid value
     // for this component. Afterwards, we can get it and check that
@@ -64,8 +64,8 @@ impl Drop for Empty {
 #[test]
 fn entity_in_component_data() {
     let mut inst = ll::Instance::new();
-    let mut c = inst.add_component();
-    let mut c1 = inst.add_component();
+    let c = inst.add_component();
+    let c1 = inst.add_component();
 
     let container = Arc::new(Mutex::new(TestData { e: true, e1: true }));
     {
@@ -95,7 +95,7 @@ fn entity_in_component_data() {
 #[test]
 fn snapshot_test() {
     let mut inst = ll::Instance::new();
-    let mut c = inst.add_component();
+    let c = inst.add_component();
     let e1 = inst.add_entity();
     let e2 = inst.add_entity();
     let e3 = inst.add_entity();
@@ -196,7 +196,7 @@ fn test_eq() {
 #[test]
 fn get_set_opt() {
     let mut inst = ll::Instance::new();
-    let mut c = inst.add_component();
+    let c = inst.add_component();
     let e1 = inst.add_entity();
 
     c.set(&e1, 1);
@@ -215,7 +215,7 @@ fn set_drops_existing_without_deadlock() {
     let e2 = inst.add_entity();
     let e3 = inst.add_entity();
 
-    let mut c = inst.add_component();
+    let c = inst.add_component();
 
     c.set(&e1, e2);
     // Check that no deadlock occurs here

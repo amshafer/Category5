@@ -112,10 +112,6 @@ struct ShaderConstants {
 }
 
 impl Pipeline for GeomPipeline {
-    fn is_ready(&self) -> bool {
-        true
-    }
-
     /// Start recording a cbuf for one frame
     ///
     /// Each framebuffer has a set of resources, including command
@@ -312,12 +308,6 @@ impl Pipeline for GeomPipeline {
         }
         // now submit the cbuf
         self.submit_frame(dstate);
-    }
-
-    fn debug_frame_print(&self) {
-        log::debug!("Geometric Pipeline Debug Statistics:");
-        log::debug!("---------------------------------");
-        log::debug!("---------------------------------");
     }
 
     /// Recreate our swapchain resources which are now out of date
