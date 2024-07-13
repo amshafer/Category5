@@ -123,17 +123,17 @@ impl VkSwapchain {
 
         let mut image_views = Vec::new();
         for image in images.iter() {
-            let format_props = unsafe {
+            let _format_props = unsafe {
                 self.d_dev.inst.inst.get_physical_device_format_properties(
                     self.d_dev.pdev,
                     dstate.d_surface_format.format,
                 )
             };
-            log::info!("format props: {:#?}", format_props);
+            log::info!("format props: {:#?}", _format_props);
 
             // we want to interact with this image as a 2D
             // array of RGBA pixels (i.e. the "normal" way)
-            let mut create_info = vk::ImageViewCreateInfo::builder()
+            let create_info = vk::ImageViewCreateInfo::builder()
                 .view_type(vk::ImageViewType::TYPE_2D)
                 // see `create_swapchain` for why we don't use surface_format
                 .format(dstate.d_surface_format.format)
@@ -157,21 +157,6 @@ impl VkSwapchain {
                 })
                 .image(*image)
                 .build();
-
-            let ext_info = vk::ImageViewUsageCreateInfoKHR::builder()
-                .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
-                .build();
-
-            // if the format doesn't support storage (intel doesn't),
-            // then we need to attach an extra struct telling to to
-            // allow the storage format in the view even though the
-            // underlying format doesn't
-            if !format_props
-                .optimal_tiling_features
-                .contains(vk::FormatFeatureFlags::STORAGE_IMAGE)
-            {
-                create_info.p_next = &ext_info as *const _ as *mut std::ffi::c_void;
-            }
 
             unsafe {
                 image_views.push(
@@ -213,7 +198,7 @@ impl VkSwapchain {
         // Default to double buffering for minimal input lag.
         let mut desired_image_count = 2;
         if desired_image_count < dstate.d_surface_caps.min_image_count {
-            desired_image_count = dstate.d_surface_caps.max_image_count;
+            desired_image_count = dstate.d_surface_caps.min_image_count;
         }
 
         let transform = if dstate
@@ -225,9 +210,6 @@ impl VkSwapchain {
         } else {
             dstate.d_surface_caps.current_transform
         };
-
-        // see this for how to get storage swapchain on intel:
-        // https://github.com/doitsujin/dxvk/issues/504
 
         let create_info = vk::SwapchainCreateInfoKHR::builder()
             .flags(vk::SwapchainCreateFlagsKHR::empty())
@@ -243,7 +225,8 @@ impl VkSwapchain {
             .present_mode(self.d_present_mode)
             .clipped(true)
             .image_array_layers(1)
-            .old_swapchain(self.d_swapchain);
+            .old_swapchain(self.d_swapchain)
+            .build();
 
         // views for all of the swapchains images will be set up in
         // select_images_and_views
