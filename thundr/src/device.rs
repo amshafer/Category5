@@ -159,13 +159,13 @@ impl Device {
                 .build();
 
             devinfo_builder = devinfo_builder.push_next(&mut aftermath_info);
+            let dev_create_info = devinfo_builder.build();
             // do our call here so aftermath_info is still in scope
-            return inst.create_device(pdev, &dev_create_info, None).unwrap();
+            unsafe { return inst.create_device(pdev, &dev_create_info, None).unwrap() };
         }
 
-        let dev_create_info = devinfo_builder.build();
-
         // return a newly created device
+        let dev_create_info = devinfo_builder.build();
         unsafe { inst.create_device(pdev, &dev_create_info, None).unwrap() }
     }
 

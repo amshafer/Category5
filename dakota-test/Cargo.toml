@@ -15,3 +15,4 @@ renderdoc={version="0.10", optional=true}
 [features]
 renderdoc=["dep:renderdoc"]
 direct2display=["dakota/direct2display"]
+aftermath=["dakota/aftermath"]
