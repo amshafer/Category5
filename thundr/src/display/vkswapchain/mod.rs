@@ -92,21 +92,13 @@ impl VkSwapchain {
                 .or(Err(ThundrError::INVALID))?
         };
 
+        // TODO: For now force the use of a B8G8R8A8_UNORM. Without doing this we end up
+        // with mismatching colors because we assume UNORM everywhere
         formats
             .iter()
-            .map(|fmt| match fmt.format {
-                // if the surface does not specify a desired format
-                // then we can choose our own
-                vk::Format::UNDEFINED => vk::SurfaceFormatKHR {
-                    format: vk::Format::B8G8R8A8_UNORM,
-                    color_space: fmt.color_space,
-                },
-                // if the surface has a desired format we will just
-                // use that
-                _ => *fmt,
-            })
-            .nth(0)
+            .find(|fmt| fmt.format == vk::Format::B8G8R8A8_UNORM)
             .ok_or(ThundrError::INVALID_FORMAT)
+            .copied()
     }
 
     /// Get the vkImage's for the swapchain, and create vkImageViews for them
