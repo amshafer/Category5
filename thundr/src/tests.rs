@@ -2,19 +2,29 @@
 ///
 /// Austin Shafer - 2024
 use crate as th;
-use std::hash::{Hash, Hasher};
 
 /// our generic pixel result checker
 ///
 /// In this case we simply hash the raw pixel dump and compare
-/// it against the known gold hash for the test.
-fn check_pixels(data: &[u8], gold: u64) {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    data.hash(&mut hasher);
-    let hash = hasher.finish();
-    println!("thundr test: Got pixel hash {}", hash);
+/// it against the known gold image for the test.
+///
+/// We can't directly check the pixel values, or hash the results.
+/// Hashing might use different algorithms on other rust versions
+/// meaning it may mismatch for no reason on a machine. We use
+/// the perceptualdiff program to compare with the gold image as
+/// different vendors may subltly round float values differently,
+/// causing a mismatch. Perceptualdiff compares the two images
+/// adjusting for perceivable errors, returning 0 if there are none.
+fn check_pixels(thund: &mut th::Thundr, filename: &str) {
+    thund.th_display.dump_framebuffer(filename);
+    let goldfile = ["golds/", filename].join("");
 
-    assert!(hash == gold);
+    assert!(std::process::Command::new("perceptualdiff")
+        .arg(filename)
+        .arg(goldfile)
+        .status()
+        .expect("Could not execute peceptualdiff")
+        .success());
 }
 
 /// Initialize our thundr test
@@ -58,8 +68,7 @@ fn basic_image() {
     thund.present().unwrap();
 
     // ------------ check output -------------
-    let data = thund.th_display.dump_framebuffer();
-    check_pixels(data.mi_data.as_slice(), 8294581405726410945);
+    check_pixels(&mut thund, "basic_image.ppm");
 }
 
 #[test]
@@ -84,8 +93,7 @@ fn basic_color() {
     thund.present().unwrap();
 
     // ------------ check output -------------
-    let data = thund.th_display.dump_framebuffer();
-    check_pixels(data.mi_data.as_slice(), 2443430715398395358);
+    check_pixels(&mut thund, "basic_color.ppm");
 }
 
 #[test]
@@ -119,8 +127,7 @@ fn many_colors() {
     thund.present().unwrap();
 
     // ------------ check output -------------
-    let data = thund.th_display.dump_framebuffer();
-    check_pixels(data.mi_data.as_slice(), 9210199141164773571);
+    check_pixels(&mut thund, "many_colors.ppm");
 }
 
 #[test]
@@ -163,6 +170,5 @@ fn redraw() {
     thund.present().unwrap();
 
     // ------------ check output -------------
-    let data = thund.th_display.dump_framebuffer();
-    check_pixels(data.mi_data.as_slice(), 479963264719527796);
+    check_pixels(&mut thund, "redraw.ppm");
 }

@@ -317,7 +317,7 @@ impl Display {
     /// Keep in mind that this will be very expensive and synchronized. It
     /// also should be done before the next image is acquired.
     #[allow(dead_code)]
-    pub fn dump_framebuffer(&mut self) -> MappedImage {
+    pub fn dump_framebuffer(&mut self, filename: &str) -> MappedImage {
         // alloc a temp image
         let (image, view, mem) = self.d_dev.create_image(
             &self.d_state.d_resolution,
@@ -488,7 +488,7 @@ impl Display {
             {
                 use std::io::Write;
 
-                let mut f = std::fs::File::create("thundr_output.ppm").unwrap();
+                let mut f = std::fs::File::create(filename).unwrap();
                 // write ppm header
                 f.write(
                     format!(
