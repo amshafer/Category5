@@ -23,7 +23,7 @@ fn check_pixels(thund: &mut th::Thundr, filename: &str) {
         .arg(filename)
         .arg(goldfile)
         .status()
-        .expect("Could not execute peceptualdiff")
+        .expect("perceptualdiff error, probable mismatch")
         .success());
 }
 

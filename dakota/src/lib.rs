@@ -9,10 +9,8 @@ extern crate freetype as ft;
 extern crate image;
 extern crate lluvia as ll;
 extern crate thundr as th;
-pub use th::Damage;
-pub use th::Droppable;
 pub use th::ThundrError as DakotaError;
-pub use th::{Dmabuf, DmabufPlane};
+pub use th::{Damage, Dmabuf, DmabufPlane, Droppable, MappedImage};
 
 extern crate bitflags;
 
@@ -26,6 +24,8 @@ pub use utils::{
 
 pub mod dom;
 pub mod input;
+#[cfg(test)]
+mod tests;
 pub use crate::input::{Keycode, MouseButton};
 mod platform;
 use platform::Platform;
@@ -288,36 +288,37 @@ impl Dakota {
     /// given different configurations. DPI fails if SDL2 tries to initialize us on
     /// a physical display.
     fn initialize_platform() -> Result<(Box<dyn Platform>, th::Thundr, (i32, i32))> {
-        if std::env::var("DAKOTA_HEADLESS_BACKEND").is_ok() {
-            let headless = platform::HeadlessPlat::new();
-            let mut display: Box<dyn Platform> = Box::new(headless);
-            match Self::init_thundr(&mut display) {
-                Ok((thundr, dpi)) => return Ok((display, thundr, dpi)),
-                Err(e) => log::error!("Failed to create Headless backend: {:?}", e),
-            }
-        }
-
-        #[cfg(feature = "sdl")]
-        if std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok() {
-            match platform::SDL2Plat::new() {
-                Ok(sdl) => {
-                    let mut sdl: Box<dyn Platform> = Box::new(sdl);
-                    match Self::init_thundr(&mut sdl) {
-                        Ok((thundr, dpi)) => return Ok((sdl, thundr, dpi)),
-                        Err(e) => log::error!("Failed to create SDL2 backend: {:?}", e),
+        if std::env::var("DAKOTA_HEADLESS_BACKEND").is_err() {
+            // If we are not forcing headless mode, start by attempting sdl
+            #[cfg(feature = "sdl")]
+            if std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok() {
+                match platform::SDL2Plat::new() {
+                    Ok(sdl) => {
+                        let mut sdl: Box<dyn Platform> = Box::new(sdl);
+                        match Self::init_thundr(&mut sdl) {
+                            Ok((thundr, dpi)) => return Ok((sdl, thundr, dpi)),
+                            Err(e) => log::error!("Failed to create SDL2 backend: {:?}", e),
+                        }
                     }
+                    Err(e) => log::error!("Failed to create new SDL platform instance: {:?}", e),
+                };
+            }
+
+            #[cfg(feature = "direct2display")]
+            if let Ok(display) = platform::DisplayPlat::new() {
+                let mut display: Box<dyn Platform> = Box::new(display);
+                match Self::init_thundr(&mut display) {
+                    Ok((thundr, dpi)) => return Ok((display, thundr, dpi)),
+                    Err(e) => log::error!("Failed to create Direct2Display backend: {:?}", e),
                 }
-                Err(e) => log::error!("Failed to create new SDL platform instance: {:?}", e),
-            };
+            }
         }
 
-        #[cfg(feature = "direct2display")]
-        if let Ok(display) = platform::DisplayPlat::new() {
-            let mut display: Box<dyn Platform> = Box::new(display);
-            match Self::init_thundr(&mut display) {
-                Ok((thundr, dpi)) => return Ok((display, thundr, dpi)),
-                Err(e) => log::error!("Failed to create Direct2Display backend: {:?}", e),
-            }
+        let headless = platform::HeadlessPlat::new();
+        let mut display: Box<dyn Platform> = Box::new(headless);
+        match Self::init_thundr(&mut display) {
+            Ok((thundr, dpi)) => return Ok((display, thundr, dpi)),
+            Err(e) => log::error!("Failed to create Headless backend: {:?}", e),
         }
 
         return Err(anyhow!("Could not find available platform"));
@@ -1166,6 +1167,18 @@ impl Dakota {
         Ok(())
     }
 
+    /// Set the resolution of the current window
+    pub fn set_resolution(&mut self, dom_id: &DakotaId, width: u32, height: u32) -> Result<()> {
+        let dom = self
+            .d_dom
+            .get(dom_id)
+            .ok_or(anyhow!("Only DOM objects can be refreshed"))?;
+        self.d_plat
+            .set_output_params(&dom.window, (width, height))?;
+
+        Ok(())
+    }
+
     /// This refreshes the entire scene, and regenerates
     /// the Thundr surface list.
     pub fn refresh_elements(&mut self, dom_id: &DakotaId) -> Result<()> {
@@ -1757,5 +1770,13 @@ impl Dakota {
         }
 
         return Ok(());
+    }
+
+    /// Dump the current swapchain image to a file
+    ///
+    /// This dumps the image contents to a simple PPM file, used for automated testing
+    #[allow(dead_code)]
+    pub fn dump_framebuffer(&mut self, filename: &str) -> MappedImage {
+        self.d_thund.dump_framebuffer(filename)
     }
 }

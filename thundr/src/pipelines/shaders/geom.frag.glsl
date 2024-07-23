@@ -3,7 +3,7 @@
 #extension GL_EXT_nonuniform_qualifier : enable
 
 layout(location = 0) in vec2 coord;
-layout(location = 0) out ivec4 res;
+layout(location = 0) out vec4 res;
 
 layout(push_constant) uniform PushConstants {
  int width;

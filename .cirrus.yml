@@ -10,6 +10,7 @@ category5_freebsd_task:
         build_thundr_script: cd thundr && cargo build
         test_thundr_script: cd thundr && cargo test
         build_dakota_sdl2_script: cd dakota && cargo build --features=sdl
+        test_dakota_script: cd dakota && cargo test -- --test-threads=1
         build_dakota_direct_2_display_script: cd dakota && cargo build --features=direct2display --no-default-features
         build_category5_script: cargo build
 

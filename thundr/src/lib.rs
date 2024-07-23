@@ -373,6 +373,17 @@ impl<'a> CreateInfoBuilder<'a> {
 pub trait Droppable {}
 impl<T> Droppable for T {}
 
+/// A mapped VkImage
+///
+/// This is used to expose a CPU mapping of a VkImage. The main use
+/// case being for automated testing, we use this to dump the contents
+/// of a swapchain image to compare against a correct result.
+#[allow(dead_code)]
+pub struct MappedImage {
+    pub mi_data: Vec<u8>,
+}
+
+
 // This is the public facing thundr api. Don't change it
 impl Thundr {
     // TODO: make get_available_params and add customization
@@ -534,5 +545,13 @@ impl Thundr {
     // present
     pub fn present(&mut self) -> Result<()> {
         self.th_display.present()
+    }
+
+    /// Dump the current swapchain image to a file
+    ///
+    /// This dumps the image contents to a simple PPM file, used for automated testing
+    #[allow(dead_code)]
+    pub fn dump_framebuffer(&mut self, filename: &str) -> MappedImage {
+        self.th_display.dump_framebuffer(filename)
     }
 }

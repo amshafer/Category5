@@ -8,7 +8,7 @@ use ash::extensions::khr;
 use ash::vk;
 
 use crate::device::Device;
-use crate::{CreateInfo, Result as ThundrResult, SurfaceType, ThundrError};
+use crate::{MappedImage, CreateInfo, Result as ThundrResult, SurfaceType, ThundrError};
 
 use std::sync::Arc;
 
@@ -67,16 +67,6 @@ pub struct Display {
     d_swapchain: Box<dyn Swapchain>,
     /// State to share with Renderer
     pub(crate) d_state: DisplayState,
-}
-
-/// A mapped VkImage
-///
-/// This is used to expose a CPU mapping of a VkImage. The main use
-/// case being for automated testing, we use this to dump the contents
-/// of a swapchain image to compare against a correct result.
-#[allow(dead_code)]
-pub struct MappedImage {
-    pub mi_data: Vec<u8>,
 }
 
 /// Our Swapchain Backend
