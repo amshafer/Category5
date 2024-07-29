@@ -91,6 +91,12 @@ pub struct Content {
     pub el: DakotaId,
 }
 
+impl Content {
+    pub fn new(el: DakotaId) -> Self {
+        Self { el: el }
+    }
+}
+
 /// Represents a possibly relative value. This will
 /// either be a f32 scaling value or a constant size
 /// u32.

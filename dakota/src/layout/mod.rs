@@ -14,6 +14,9 @@ use crate::font::*;
 use crate::{dom, Dakota, DakotaId, Result};
 use utils::{anyhow, log, Context};
 
+#[cfg(test)]
+mod tests;
+
 fn regex_trim_excess_space(str: &String) -> String {
     let re = Regex::new(r"\s+").unwrap();
     let trimmed = re.replace_all(str, " ");
@@ -83,32 +86,6 @@ impl LayoutNode {
 
     fn add_child(&mut self, other: ll::Entity) {
         self.l_children.push(other);
-    }
-
-    /// Resize this element to contain all of its children.
-    ///
-    /// This can be used when the size of a box was not specified, and it
-    /// should be grown to be able to hold all of the child boxes.
-    ///
-    /// We don't need to worry about bounding by an available size, this is
-    /// to be used when there are no bounds (such as in a scrolling arena) and
-    /// we just want to grow this element to fit everything.
-    #[allow(dead_code)]
-    pub fn resize_to_children(&mut self, dakota: &Dakota) -> Result<()> {
-        self.l_size = dom::Size {
-            width: 0,
-            height: 0,
-        };
-
-        for child_id in self.l_children.iter() {
-            let other = &dakota.d_layout_nodes.get(child_id).unwrap();
-
-            // add any offsets to our size
-            self.l_size.width += other.l_offset.x + other.l_size.width;
-            self.l_size.height += other.l_offset.y + other.l_size.height;
-        }
-
-        return Ok(());
     }
 }
 

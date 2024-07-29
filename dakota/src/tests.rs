@@ -17,24 +17,30 @@ use std::io::BufReader;
 /// different vendors may subltly round float values differently,
 /// causing a mismatch. Perceptualdiff compares the two images
 /// adjusting for perceivable errors, returning 0 if there are none.
-fn check_pixels(dak: &mut dak::Dakota, testname: &str) {
+fn check_pixels(dak: &mut dak::Dakota, testname: &str, threshold: u32) {
     let filename = [testname, ".ppm"].join("");
     dak.dump_framebuffer(&filename);
     let goldfile = ["golds/", &filename].join("");
 
-    assert!(std::process::Command::new("perceptualdiff")
+    let mut cmd = std::process::Command::new("perceptualdiff");
+    if threshold > 0 {
+        // require n pixels of difference for failure
+        cmd.arg("--threshold").arg(threshold.to_string());
+    }
+
+    let result = cmd
         .arg(filename)
         .arg(goldfile)
         .status()
-        .expect("perceptualdiff error, probable mismatch")
-        .success());
+        .expect("perceptualdiff error, probable mismatch");
+    assert!(result.success());
 }
 
 /// Test one of the scenes
 ///
 /// This will render one frame with Dakota of the specified test
 /// scene from dakota-test
-fn test_file(testname: &str) {
+fn test_file(testname: &str, threshold: u32) {
     let mut dak = dak::Dakota::new().expect("Could not create Dakota");
 
     let filename = ["../dakota-test/data/", testname, ".xml"].join("");
@@ -49,40 +55,41 @@ fn test_file(testname: &str) {
     dak.dispatch(&dom, None).expect("Dakota rendering failed");
 
     // ------------ check output -------------
-    check_pixels(&mut dak, testname);
+    check_pixels(&mut dak, testname, threshold);
 }
 
 #[test]
 fn scene1() {
-    test_file("scene1")
+    test_file("scene1", 0)
 }
 
 #[test]
 fn color() {
-    test_file("color")
+    test_file("color", 0)
 }
 
 #[test]
 fn events() {
-    test_file("events")
+    test_file("events", 0)
 }
 
 #[test]
 fn relative() {
-    test_file("relative")
+    test_file("relative", 0)
 }
 
 #[test]
 fn scene2() {
-    test_file("scene2")
+    test_file("scene2", 0)
 }
 
 #[test]
 fn text() {
-    test_file("text")
+    // exception for hidpi laptop screen on linux
+    test_file("text", 400)
 }
 
 #[test]
 fn tiling() {
-    test_file("tiling")
+    test_file("tiling", 0)
 }
