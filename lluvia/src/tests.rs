@@ -141,31 +141,10 @@ fn snapshot_test() {
     snap.set(&e2, "e10");
     snap.set(&e3, "e11");
 
-    let mut child_snap = snap.snapshot();
-    child_snap.set(&e1, "e12");
-    assert_eq!(*snap.get(&e1).unwrap(), "e9");
-    assert_eq!(*child_snap.get(&e1).unwrap(), "e12");
-    assert_eq!(*child_snap.get(&e2).unwrap(), "e10");
-    assert_eq!(*child_snap.get(&e3).unwrap(), "e11");
-
     snap.commit();
     assert_eq!(*c.get(&e1).unwrap(), "e9");
     assert_eq!(*c.get(&e2).unwrap(), "e10");
     assert_eq!(*c.get(&e3).unwrap(), "e11");
-
-    child_snap.commit();
-    assert_eq!(*c.get(&e1).unwrap(), "e12");
-}
-
-#[test]
-#[should_panic]
-fn snapshot_child_fail_test() {
-    let mut inst = ll::Instance::new();
-    let c = inst.add_component();
-    let snap: ll::Snapshot<usize> = c.snapshot();
-    let mut child_snap = snap.snapshot();
-
-    child_snap.commit();
 }
 
 #[test]

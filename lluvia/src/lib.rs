@@ -963,7 +963,7 @@ impl<T: Clone + 'static> RawComponent<T, VecContainer<T>> {
     ///
     /// This can only be called on sparse components.
     pub fn snapshot(&self) -> Snapshot<T> {
-        Snapshot::new(Box::new(self.clone()), None)
+        Snapshot::new(Box::new(self.clone()))
     }
 
     /// Get a copy of the value for this entity
@@ -1068,18 +1068,10 @@ const DEFAULT_LLUVIA_SNAPSHOT_BLOCK_SIZE: usize = 4;
 /// A committed snapshot can be "reset" so that it starts recording changes
 /// again. This is useful to prevent having to reallocate internal snapshot
 /// resources during quick one-shot transactions.
-///
-/// Snapshots can be layered, creating a history of transactions. Ordering
-/// is not guaranteed, any changes in a child snapshot that are followed by
-/// and update and commit in the parent snapshot will be overwritten by the
-/// child when it is committed.
 #[derive(Clone)]
 pub struct Snapshot<T: Clone + 'static> {
     /// The parent component that we are applying changes on top of.
     s_parent: Box<Component<T>>,
-    /// If this snapshot was layered from an existing snapshot, this will
-    /// be the parent snapshot
-    s_parent_snapshot: Option<Box<Snapshot<T>>>,
     /// Has this snapshot been committed already. If so, all requests
     /// are passed through to the parent component table since they
     /// are now synced up.
@@ -1095,7 +1087,7 @@ pub struct Snapshot<T: Clone + 'static> {
 }
 
 impl<T: Clone + 'static> Snapshot<T> {
-    fn new(parent: Box<Component<T>>, parent_snapshot: Option<Box<Snapshot<T>>>) -> Self {
+    fn new(parent: Box<Component<T>>) -> Self {
         Self {
             s_data: RawComponent {
                 c_table: Table::new(VecContainer::new(DEFAULT_LLUVIA_SNAPSHOT_BLOCK_SIZE)),
@@ -1110,7 +1102,6 @@ impl<T: Clone + 'static> Snapshot<T> {
                 c_modified: Arc::new(AtomicBool::new(false)),
             },
             s_parent: parent,
-            s_parent_snapshot: parent_snapshot,
             s_committed: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -1136,12 +1127,7 @@ impl<T: Clone + 'static> Snapshot<T> {
 
             // If we have a parent snapshot use that, otherwise
             // get our original vaule from the parent component
-            let val = match self.s_parent_snapshot.as_ref() {
-                Some(snap) => snap.get(entity),
-                None => self.s_parent.get(entity),
-            };
-
-            if let Some(val) = val {
+            if let Some(val) = self.s_parent.get(entity) {
                 self.s_data.set(entity, val.clone());
             }
         }
@@ -1162,12 +1148,6 @@ impl<T: Clone + 'static> Snapshot<T> {
     /// This will merge all changes back into the parent component atomically.
     /// This snapshot must be reset after this before it can be used again.
     pub fn commit(&mut self) {
-        // First ensure the parent snapshot (if it exists) has already
-        // been committed
-        if let Some(parent_snap) = self.s_parent_snapshot.as_ref() {
-            assert!(parent_snap.is_committed());
-        }
-
         // for each entity in the snapshot
         // set the parent value to whatever's contained in the snapshot
         for i in self.s_ids.iter() {
@@ -1188,19 +1168,9 @@ impl<T: Clone + 'static> Snapshot<T> {
     /// Clear and reset the snapshot to a fresh unmodified layer on
     /// top of the parent component.
     pub fn reset(&mut self) {
-        self.s_parent_snapshot = None;
         self.set_committed(false);
         self.s_ids.clear();
         self.s_data.clear();
-    }
-
-    /// Create a snapshot layered on top of this one
-    ///
-    /// Child snapshots will overwrite any of their changes over the parent
-    /// snapshot, even if the parent has been updated after the child snapshot
-    /// has been created.
-    pub fn snapshot(&self) -> Snapshot<T> {
-        Snapshot::new(self.s_parent.clone(), Some(Box::new(self.clone())))
     }
 
     /// Get a reference to data corresponding to the (component, entity) pair
@@ -1211,10 +1181,7 @@ impl<T: Clone + 'static> Snapshot<T> {
             return self.s_data.get(entity);
         }
 
-        match self.s_parent_snapshot.as_ref() {
-            Some(snap) => snap.get(entity),
-            None => self.s_parent.get(entity),
-        }
+        self.s_parent.get(entity)
     }
 
     /// Get a mutable reference to data corresponding to the (component, entity) pair
