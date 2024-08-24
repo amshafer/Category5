@@ -586,10 +586,6 @@ impl IdTable {
         self.i_valid_ids[id] = false;
         self.i_total_num_ids -= 1;
     }
-
-    fn id_is_valid(&self, id: usize) -> bool {
-        id < self.i_valid_ids.len() && self.i_valid_ids[id]
-    }
 }
 
 pub struct InstanceInternal {
@@ -756,8 +752,11 @@ impl Instance {
         self.i_internal.write().unwrap().i_ids.release_id(id);
     }
 
-    fn id_is_valid(&self, id: &Entity) -> bool {
-        self.i_internal.read().unwrap().i_ids.id_is_valid(id.ecs_id)
+    // Verify that this id belongs to this Instance
+    // This will assert if false.
+    fn id_is_valid(&self, _id: &Entity) {
+        #[cfg(debug)]
+        assert!(*self == _id.ecs_inst);
     }
 }
 
@@ -839,9 +838,7 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     ///
     /// If this entity has not had a value set, None will be returned.
     pub fn get(&self, entity: &Entity) -> Option<TableRef<T, C>> {
-        if !self.c_inst.id_is_valid(entity) {
-            return None;
-        }
+        self.c_inst.id_is_valid(entity);
 
         let table_internal = self.c_table.t_internal.read().unwrap();
         if table_internal.t_entity.index(entity.ecs_id).is_none() {
@@ -865,9 +862,7 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     /// value of the entity for this property cannot be determined and None
     /// will be returned.
     pub fn get_mut(&self, entity: &Entity) -> Option<TableRefMut<T, C>> {
-        if !self.c_inst.id_is_valid(entity) {
-            return None;
-        }
+        self.c_inst.id_is_valid(entity);
 
         let table_internal = self.c_table.t_internal.write().unwrap();
         if table_internal.t_entity.index(entity.ecs_id).is_none() {
@@ -889,7 +884,7 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     /// the entity. This will set the initial value, which can then be modified
     /// with `get_mut`
     pub fn set(&self, entity: &Entity, val: T) {
-        assert!(self.c_inst.id_is_valid(entity));
+        self.c_inst.id_is_valid(entity);
 
         // First clear the existing value. We do this first to avoid having the
         // existing value get dropped while we own the table lock. Handling its
@@ -921,7 +916,7 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     /// entity and will return the value that was stored there. The component entry will
     /// be undefined after this.
     pub fn take(&self, entity: &Entity) -> Option<T> {
-        assert!(self.c_inst.id_is_valid(entity));
+        self.c_inst.id_is_valid(entity);
 
         self.c_modified
             .store(true, std::sync::atomic::Ordering::Release);
