@@ -962,8 +962,9 @@ impl<T: Clone + 'static> RawComponent<T, VecContainer<T>> {
     /// take place.
     ///
     /// This can only be called on sparse components.
-    pub fn snapshot(&self) -> Snapshot<T> {
-        Snapshot::new(Box::new(self.clone()))
+    pub fn snapshot<'a>(&'a self) -> Snapshot<'a, T> {
+        let self_copy = self.clone();
+        Snapshot::new(Box::new(self_copy), self.c_table.t_internal.read().unwrap())
     }
 
     /// Get a copy of the value for this entity
@@ -1053,25 +1054,6 @@ impl<'a, T: 'static, C: Container<T> + 'static> Iterator for ComponentIterator<'
 /// to be much more sparse since fewer ids will be getting updated in snapshots.
 const DEFAULT_LLUVIA_SNAPSHOT_BLOCK_SIZE: usize = 4;
 
-/// This type exists to avoid copies when we are getting values from the snapshot.
-/// It will either return the bare reference from our internal data container or
-/// the locked TableRef from the parent Component.
-#[derive(Debug)]
-pub enum SnapshotRef<'a, T: 'static, C: Container<T> + 'static> {
-    TableRef(TableRef<'a, T, C>),
-    Ref(&'a T),
-}
-
-impl<'a, T: 'static, C: Container<T> + 'static> Deref for SnapshotRef<'a, T, C> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::TableRef(tr) => tr.deref(),
-            Self::Ref(r) => r,
-        }
-    }
-}
-
 /// Snapshot Component
 ///
 /// Snapshot components are mutable snapshots of the ECS at a particular time.
@@ -1082,9 +1064,10 @@ impl<'a, T: 'static, C: Container<T> + 'static> Deref for SnapshotRef<'a, T, C> 
 /// When committed a snapshot is "reset" so that it starts recording changes
 /// again. This is useful to prevent having to reallocate internal snapshot
 /// resources during quick one-shot transactions.
-pub struct Snapshot<T: Clone + 'static> {
+pub struct Snapshot<'a, T: Clone + 'static> {
     /// The parent component that we are applying changes on top of.
     s_parent: Box<Component<T>>,
+    s_readlock: Option<RwLockReadGuard<'a, TableInternal<T, VecContainer<T>>>>,
     /// Does this snapshot have pending modifications to commit
     s_is_modified: bool,
     /// Lookup table to see if we have defined a value for a particular
@@ -1097,12 +1080,16 @@ pub struct Snapshot<T: Clone + 'static> {
     s_data: VecContainer<T>,
 }
 
-impl<T: Clone + 'static> Snapshot<T> {
-    fn new(parent: Box<Component<T>>) -> Self {
+impl<'a, T: Clone + 'static> Snapshot<'a, T> {
+    fn new(
+        parent: Box<Component<T>>,
+        readlock: RwLockReadGuard<'a, TableInternal<T, VecContainer<T>>>,
+    ) -> Self {
         Self {
             s_data: VecContainer::new(DEFAULT_LLUVIA_SNAPSHOT_BLOCK_SIZE),
             s_ids: VecContainer::new(DEFAULT_LLUVIA_SNAPSHOT_BLOCK_SIZE),
             s_parent: parent,
+            s_readlock: Some(readlock),
             s_is_modified: false,
         }
     }
@@ -1119,13 +1106,26 @@ impl<T: Clone + 'static> Snapshot<T> {
         // If we haven't yet set this id in this snapshot then
         // try to grab it from the parent
         if self.s_ids.index(entity.get_raw_id()).is_none() {
-            if self.s_parent.get(entity).is_some() {
+            if self
+                .s_readlock
+                .as_ref()
+                .unwrap()
+                .t_entity
+                .index(entity.get_raw_id())
+                .is_some()
+            {
                 self.mark_entity(entity);
             }
 
             // If we have a parent snapshot use that, otherwise
             // get our original value from the parent component
-            if let Some(val) = self.s_parent.get(entity) {
+            if let Some(val) = self
+                .s_readlock
+                .as_ref()
+                .unwrap()
+                .t_entity
+                .index(entity.get_raw_id())
+            {
                 self.s_data.set(entity.get_raw_id(), val.clone());
             }
         }
@@ -1137,17 +1137,22 @@ impl<T: Clone + 'static> Snapshot<T> {
     ///
     /// This resets the snapshot
     pub fn commit(&mut self) {
+        // First we need to drop our read lock
+        self.s_readlock = None;
+        // Now we can open a writer for this table
+        let mut writer = self.s_parent.c_table.t_internal.write().unwrap();
+
         // for each entity in the snapshot
         // set the parent value to whatever's contained in the snapshot
         for id in self.s_ids.iter() {
             // we clear our data container here, as every id modified in
             // the system will have its data set back to None
             if let Some(val) = self.s_data.take(id.get_raw_id()) {
-                self.s_parent.set(id, val);
+                writer.t_entity.set(id.get_raw_id(), val);
             } else {
                 // if the snapshot has this value cleared, do the same for
                 // the parent
-                self.s_parent.take(id);
+                writer.t_entity.take(id.get_raw_id());
             }
         }
 
@@ -1156,21 +1161,19 @@ impl<T: Clone + 'static> Snapshot<T> {
     }
 
     /// Get a reference to data corresponding to the (component, entity) pair
-    pub fn get(&self, entity: &Entity) -> Option<SnapshotRef<T, VecContainer<T>>> {
+    pub fn get(&self, entity: &Entity) -> Option<&T> {
+        // If this id has been modified in our internal container and has
+        // a value assigned then return it. If not, then this value has been
+        // taken and we need to return None.
         if self.is_id_in_snapshot(entity) {
-            // If this id has been modified in our internal container and has
-            // a value assigned then return it. If not, then this value has been
-            // taken and we need to return None.
-            if let Some(r) = self.s_data.index(entity.get_raw_id()) {
-                return Some(SnapshotRef::Ref(r));
-            } else {
-                return None;
-            }
+            return self.s_data.index(entity.get_raw_id());
         }
 
-        self.s_parent
-            .get(entity)
-            .map(|tr| SnapshotRef::TableRef(tr))
+        self.s_readlock
+            .as_ref()
+            .unwrap()
+            .t_entity
+            .index(entity.get_raw_id())
     }
 
     /// Get a mutable reference to data corresponding to the (component, entity) pair
