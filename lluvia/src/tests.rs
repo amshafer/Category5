@@ -125,7 +125,6 @@ fn snapshot_test() {
     assert_eq!(*c.get(&e3).unwrap(), "e5");
 
     // test resetting a snapshot
-    snap.reset();
     snap.set(&e1, "e6");
     snap.set(&e2, "e7");
     snap.set(&e3, "e8");
@@ -136,7 +135,6 @@ fn snapshot_test() {
     assert_eq!(*c.get(&e3).unwrap(), "e8");
 
     // test layered snapshots
-    snap.reset();
     snap.set(&e1, "e9");
     snap.set(&e2, "e10");
     snap.set(&e3, "e11");
@@ -148,8 +146,7 @@ fn snapshot_test() {
 }
 
 #[test]
-#[should_panic]
-fn snapshot_reset_fail_test() {
+fn snapshot_post_commit_set() {
     let mut inst = ll::Instance::new();
     let c = inst.add_component();
     let e1 = inst.add_entity();

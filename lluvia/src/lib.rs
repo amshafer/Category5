@@ -176,7 +176,7 @@ impl<T: 'static> VecContainer<T> {
         }
     }
 
-    fn _iter<'a>(&'a mut self) -> VecContainerIter<'a, T> {
+    fn iter<'a>(&'a mut self) -> VecContainerIter<'a, T> {
         VecContainerIter {
             vi_cont: self,
             vi_index: 0,
@@ -1053,6 +1053,25 @@ impl<'a, T: 'static, C: Container<T> + 'static> Iterator for ComponentIterator<'
 /// to be much more sparse since fewer ids will be getting updated in snapshots.
 const DEFAULT_LLUVIA_SNAPSHOT_BLOCK_SIZE: usize = 4;
 
+/// This type exists to avoid copies when we are getting values from the snapshot.
+/// It will either return the bare reference from our internal data container or
+/// the locked TableRef from the parent Component.
+#[derive(Debug)]
+pub enum SnapshotRef<'a, T: 'static, C: Container<T> + 'static> {
+    TableRef(TableRef<'a, T, C>),
+    Ref(&'a T),
+}
+
+impl<'a, T: 'static, C: Container<T> + 'static> Deref for SnapshotRef<'a, T, C> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::TableRef(tr) => tr.deref(),
+            Self::Ref(r) => r,
+        }
+    }
+}
+
 /// Snapshot Component
 ///
 /// Snapshot components are mutable snapshots of the ECS at a particular time.
@@ -1060,156 +1079,122 @@ const DEFAULT_LLUVIA_SNAPSHOT_BLOCK_SIZE: usize = 4;
 /// to the "parent" ECS until the snapshot is committed, at which point all changes
 /// are atomically applied.
 ///
-/// Once committed a snapshot is considered "inert" and will panic upon any
-/// usage.  Any child snapshots will see that this snapshot is committed and
-/// reparent themselves under the root component, allowing this snapshot
-/// to be dropped.
-///
-/// A committed snapshot can be "reset" so that it starts recording changes
+/// When committed a snapshot is "reset" so that it starts recording changes
 /// again. This is useful to prevent having to reallocate internal snapshot
 /// resources during quick one-shot transactions.
-#[derive(Clone)]
 pub struct Snapshot<T: Clone + 'static> {
     /// The parent component that we are applying changes on top of.
     s_parent: Box<Component<T>>,
-    /// Has this snapshot been committed already. If so, all requests
-    /// are passed through to the parent component table since they
-    /// are now synced up.
-    s_committed: Arc<AtomicBool>,
+    /// Does this snapshot have pending modifications to commit
+    s_is_modified: bool,
     /// Lookup table to see if we have defined a value for a particular
     /// id in this diff. If so, s_data will contain an updated snapshot
     /// value.
     /// This needs to hold the `Entity`s so that we can use the entity
     /// ids to replay changes on the parent component.
-    s_ids: Component<Entity>,
+    s_ids: VecContainer<Entity>,
     /// sparse blocks holding updated values.
-    s_data: Component<T>,
+    s_data: VecContainer<T>,
 }
 
 impl<T: Clone + 'static> Snapshot<T> {
     fn new(parent: Box<Component<T>>) -> Self {
         Self {
-            s_data: RawComponent {
-                c_table: Table::new(VecContainer::new(DEFAULT_LLUVIA_SNAPSHOT_BLOCK_SIZE)),
-                c_inst: parent.c_inst.clone(),
-                _c_phantom: PhantomData,
-                c_modified: Arc::new(AtomicBool::new(false)),
-            },
-            s_ids: RawComponent {
-                c_table: Table::new(VecContainer::new(DEFAULT_LLUVIA_SNAPSHOT_BLOCK_SIZE)),
-                c_inst: parent.c_inst.clone(),
-                _c_phantom: PhantomData,
-                c_modified: Arc::new(AtomicBool::new(false)),
-            },
+            s_data: VecContainer::new(DEFAULT_LLUVIA_SNAPSHOT_BLOCK_SIZE),
+            s_ids: VecContainer::new(DEFAULT_LLUVIA_SNAPSHOT_BLOCK_SIZE),
             s_parent: parent,
-            s_committed: Arc::new(AtomicBool::new(false)),
+            s_is_modified: false,
         }
-    }
-
-    fn assert_alive(&self) {
-        assert!(!self.is_committed());
     }
 
     fn is_id_in_snapshot(&self, entity: &Entity) -> bool {
-        self.s_ids.get(entity).is_some()
+        self.s_ids.index(entity.get_raw_id()).is_some()
     }
     /// record that we updated this entity in the snapshot
-    fn mark_entity(&self, entity: &Entity) {
-        self.assert_alive();
-        self.s_ids.set(&entity, entity.clone());
+    fn mark_entity(&mut self, entity: &Entity) {
+        self.s_ids.set(entity.get_raw_id(), entity.clone());
     }
 
-    fn ensure_value(&self, entity: &Entity) {
+    fn ensure_value(&mut self, entity: &Entity) {
         // If we haven't yet set this id in this snapshot then
         // try to grab it from the parent
-        if self.s_ids.get(entity).is_none() {
-            self.mark_entity(entity);
+        if self.s_ids.index(entity.get_raw_id()).is_none() {
+            if self.s_parent.get(entity).is_some() {
+                self.mark_entity(entity);
+            }
 
             // If we have a parent snapshot use that, otherwise
-            // get our original vaule from the parent component
+            // get our original value from the parent component
             if let Some(val) = self.s_parent.get(entity) {
-                self.s_data.set(entity, val.clone());
+                self.s_data.set(entity.get_raw_id(), val.clone());
             }
         }
-    }
-
-    fn is_committed(&self) -> bool {
-        self.s_committed.load(std::sync::atomic::Ordering::Acquire)
-    }
-
-    /// Reset the modified tracker
-    fn set_committed(&mut self, val: bool) {
-        self.s_committed
-            .store(val, std::sync::atomic::Ordering::Release);
     }
 
     /// Commit this snapshot
     ///
     /// This will merge all changes back into the parent component atomically.
-    /// This snapshot must be reset after this before it can be used again.
+    ///
+    /// This resets the snapshot
     pub fn commit(&mut self) {
         // for each entity in the snapshot
         // set the parent value to whatever's contained in the snapshot
-        for i in self.s_ids.iter() {
-            if let Some(id) = &i {
-                if let Some(val) = self.s_data.take(id) {
-                    self.s_parent.set(id, val);
-                } else {
-                    // if the snapshot has this value cleared, do the same for
-                    // the parent
-                    self.s_parent.take(id);
-                }
+        for id in self.s_ids.iter() {
+            // we clear our data container here, as every id modified in
+            // the system will have its data set back to None
+            if let Some(val) = self.s_data.take(id.get_raw_id()) {
+                self.s_parent.set(id, val);
+            } else {
+                // if the snapshot has this value cleared, do the same for
+                // the parent
+                self.s_parent.take(id);
             }
         }
 
-        self.set_committed(true);
-    }
-
-    /// Clear and reset the snapshot to a fresh unmodified layer on
-    /// top of the parent component.
-    pub fn reset(&mut self) {
-        self.set_committed(false);
+        self.s_is_modified = false;
         self.s_ids.clear();
-        self.s_data.clear();
     }
 
     /// Get a reference to data corresponding to the (component, entity) pair
-    pub fn get(&self, entity: &Entity) -> Option<TableRef<T, VecContainer<T>>> {
-        self.assert_alive();
-
+    pub fn get(&self, entity: &Entity) -> Option<SnapshotRef<T, VecContainer<T>>> {
         if self.is_id_in_snapshot(entity) {
-            return self.s_data.get(entity);
+            // If this id has been modified in our internal container and has
+            // a value assigned then return it. If not, then this value has been
+            // taken and we need to return None.
+            if let Some(r) = self.s_data.index(entity.get_raw_id()) {
+                return Some(SnapshotRef::Ref(r));
+            } else {
+                return None;
+            }
         }
 
-        self.s_parent.get(entity)
+        self.s_parent
+            .get(entity)
+            .map(|tr| SnapshotRef::TableRef(tr))
     }
 
     /// Get a mutable reference to data corresponding to the (component, entity) pair
-    pub fn get_mut(&self, entity: &Entity) -> Option<TableRefMut<T, VecContainer<T>>> {
+    pub fn get_mut(&mut self, entity: &Entity) -> Option<&mut T> {
         self.ensure_value(entity);
 
-        self.s_data.get_mut(entity)
+        self.s_data.index_mut(entity.get_raw_id())
     }
 
     /// Set the value of an entity for the component corresponding to this session
-    pub fn set(&self, entity: &Entity, val: T) {
+    pub fn set(&mut self, entity: &Entity, val: T) {
         self.mark_entity(entity);
 
-        self.s_data.set(entity, val);
+        self.s_data.set(entity.get_raw_id(), val);
     }
 
     /// Take a value out of the component table
-    pub fn take(&self, entity: &Entity) -> Option<T> {
+    pub fn take(&mut self, entity: &Entity) -> Option<T> {
         self.ensure_value(entity);
 
-        self.s_data.take(entity)
+        self.s_data.take(entity.get_raw_id())
     }
 
     pub fn is_modified(&self) -> bool {
-        self.s_data.is_modified()
-    }
-
-    pub fn clear_modified(&mut self) {
-        self.s_data.clear_modified()
+        self.s_is_modified
     }
 }
