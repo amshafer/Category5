@@ -837,6 +837,7 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     /// while this ref is in scope.
     ///
     /// If this entity has not had a value set, None will be returned.
+    #[inline]
     pub fn get(&self, entity: &Entity) -> Option<TableRef<T, C>> {
         self.c_inst.id_is_valid(entity);
 
@@ -861,6 +862,7 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     /// The `set` method must be called before this can be used, or else the
     /// value of the entity for this property cannot be determined and None
     /// will be returned.
+    #[inline]
     pub fn get_mut(&self, entity: &Entity) -> Option<TableRefMut<T, C>> {
         self.c_inst.id_is_valid(entity);
 
@@ -883,6 +885,7 @@ impl<T: 'static, C: Container<T> + 'static> RawComponent<T, C> {
     /// This is the first thing that should be called when populating a value for
     /// the entity. This will set the initial value, which can then be modified
     /// with `get_mut`
+    #[inline]
     pub fn set(&self, entity: &Entity, val: T) {
         self.c_inst.id_is_valid(entity);
 
@@ -1156,6 +1159,7 @@ impl<'a, T: Clone + 'static> Snapshot<'a, T> {
     }
 
     /// Get a reference to data corresponding to the (component, entity) pair
+    #[inline]
     pub fn get(&self, entity: &Entity) -> Option<&T> {
         // If this id has been modified in our internal container and has
         // a value assigned then return it. If not, then this value has been
@@ -1172,6 +1176,7 @@ impl<'a, T: Clone + 'static> Snapshot<'a, T> {
     }
 
     /// Get a mutable reference to data corresponding to the (component, entity) pair
+    #[inline]
     pub fn get_mut(&mut self, entity: &Entity) -> Option<&mut T> {
         self.ensure_value(entity);
 
@@ -1179,6 +1184,7 @@ impl<'a, T: Clone + 'static> Snapshot<'a, T> {
     }
 
     /// Set the value of an entity for the component corresponding to this session
+    #[inline]
     pub fn set(&mut self, entity: &Entity, val: T) {
         self.mark_entity(entity);
 
@@ -1186,6 +1192,7 @@ impl<'a, T: Clone + 'static> Snapshot<'a, T> {
     }
 
     /// Take a value out of the component table
+    #[inline]
     pub fn take(&mut self, entity: &Entity) -> Option<T> {
         self.ensure_value(entity);
 
