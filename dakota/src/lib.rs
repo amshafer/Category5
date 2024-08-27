@@ -116,6 +116,7 @@ pub struct Dakota {
     d_heights: ll::Component<dom::Value>,
     d_fonts: ll::Component<dom::Font>,
     d_texts: ll::Component<dom::Text>,
+    d_glyphs: ll::Component<Glyph>,
     /// points to an id with font instance
     d_text_font: ll::Component<DakotaId>,
     d_contents: ll::Component<dom::Content>,
@@ -245,6 +246,7 @@ impl Dakota {
         create_component_and_table!(layout_ecs, dom::Value, height_table);
         create_component_and_table!(layout_ecs, dom::Text, texts_table);
         create_component_and_table!(layout_ecs, dom::Font, font_table);
+        create_component_and_table!(layout_ecs, Glyph, glyph_table);
         create_component_and_table!(layout_ecs, DakotaId, text_font_table);
         create_component_and_table!(layout_ecs, dom::Content, content_table);
         create_component_and_table!(layout_ecs, dom::Edges, bounds_table);
@@ -272,6 +274,7 @@ impl Dakota {
             d_fonts: font_table,
             d_texts: texts_table,
             d_text_font: text_font_table,
+            d_glyphs: glyph_table,
             d_contents: content_table,
             d_bounds: bounds_table,
             d_children: children_table,
@@ -387,7 +390,7 @@ impl Dakota {
         {
             self.d_font_instances.push((
                 font.clone(),
-                FontInstance::new(&self.d_freetype, &font.path, font.pixel_size, font.color),
+                FontInstance::new(&self.d_freetype, &font.path, font.pixel_size),
             ));
         }
 

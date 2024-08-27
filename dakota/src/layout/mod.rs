@@ -48,11 +48,11 @@ pub struct LayoutSpace {
 
 /// The elements of the layout tree.
 /// This will be constructed from the Elements in the DOM
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct LayoutNode {
     /// Is this element a glyph subsurface. If so it is one character
     /// in a block of text. This is really an index into the font.
-    pub l_glyph_id: Option<u16>,
+    pub l_glyph_id: Option<DakotaId>,
     /// True if the dakota file specified an offset for this el
     pub l_offset_specified: bool,
     pub l_offset: dom::Offset<i32>,
@@ -74,7 +74,7 @@ impl Default for LayoutNode {
 }
 
 impl LayoutNode {
-    fn new(glyph_id: Option<u16>, off: dom::Offset<i32>, size: dom::Size<i32>) -> Self {
+    fn new(glyph_id: Option<DakotaId>, off: dom::Offset<i32>, size: dom::Size<i32>) -> Self {
         Self {
             l_glyph_id: glyph_id,
             l_offset_specified: false,
@@ -287,12 +287,6 @@ impl Dakota {
         for item in text.items.iter_mut() {
             match item {
                 dom::TextItem::p(run) | dom::TextItem::b(run) => {
-                    // We need to take references to everything at once before the closure
-                    // so that the borrow checker can see we aren't trying to reference all
-                    // of self
-                    let layouts = &mut self.d_layout_nodes;
-                    let text_fonts = &mut self.d_text_font;
-
                     if run.cache.is_none() {
                         // TODO: we can get the available height from above, pass it to a font instance
                         // and create layout nodes for all character surfaces.
@@ -300,12 +294,22 @@ impl Dakota {
                         // TODO: Find a better way of adding space around itemized runs
                         trim.push_str(" ");
 
+                        // This must be called to initialize the glyphs before we do
+                        // the layout and line splitting.
                         run.cache = Some(font_inst.initialize_cached_chars(
                             &mut self.d_thund,
                             &mut self.d_ecs_inst,
+                            &mut self.d_glyphs,
                             &trim,
                         ));
                     }
+
+                    // We need to take references to everything at once before the closure
+                    // so that the borrow checker can see we aren't trying to reference all
+                    // of self
+                    let layouts = &mut self.d_layout_nodes;
+                    let text_fonts = &mut self.d_text_font;
+                    let glyphs = &mut self.d_glyphs;
 
                     // Record text locations
                     // We will create a whole bunch of sub-nodes which will be assigned
@@ -314,12 +318,12 @@ impl Dakota {
                         &mut self.d_thund,
                         &mut cursor,
                         run.cache.as_ref().unwrap(),
-                        &mut |inst: &mut FontInstance, thund, curse, ch| {
+                        &mut |_inst: &mut FontInstance, _thund, curse, ch| {
                             // --- calculate sizes for the character surfaces ---
-                            let size = inst.get_glyph_thundr_size(thund, ch.glyph_id);
+                            let size = glyphs.get(&ch.glyph_id).unwrap().g_bitmap_size;
 
                             let child_size = LayoutNode::new(
-                                Some(ch.glyph_id),
+                                Some(ch.glyph_id.clone()),
                                 dom::Offset {
                                     x: curse.c_x + ch.offset.0,
                                     y: curse.c_y + ch.offset.1,
@@ -338,7 +342,6 @@ impl Dakota {
                                 node.add_child(ch.node.clone());
                             }
 
-                            layouts.take(&ch.node);
                             layouts.set(&ch.node, child_size);
                             // We need to assign a font here or else later when we
                             // create thundr surfaces for these glyphs we will index

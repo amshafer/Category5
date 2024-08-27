@@ -3,7 +3,7 @@ extern crate harfbuzz as hb;
 extern crate harfbuzz_sys as hb_sys;
 
 use crate::th::Thundr;
-use crate::{dom, DakotaId};
+use crate::DakotaId;
 use lluvia as ll;
 
 // Define this ourselves since hb crate doesn't do it
@@ -27,14 +27,15 @@ pub struct Cursor {
     pub c_max: i32,
 }
 
-struct Glyph {
+#[derive(Clone)]
+pub struct Glyph {
     /// The thundr image backing this glyph.
     /// This will be none if the glyph does not have an outline
     /// which happens if it's a space.
-    g_image: Option<th::Image>,
-    g_bitmap_size: (i32, i32),
-    g_bitmap_left: i32,
-    g_bitmap_top: i32,
+    pub g_image: Option<th::Image>,
+    pub g_bitmap_size: (i32, i32),
+    pub g_bitmap_left: i32,
+    pub g_bitmap_top: i32,
     _g_metrics: ft::GlyphMetrics,
 }
 
@@ -59,7 +60,9 @@ pub struct CachedChar {
     /// The layout node that represents this character
     pub node: DakotaId,
     /// The glyph id to be used to test which character this is
-    pub glyph_id: u16,
+    pub glyph_id: DakotaId,
+    /// The raw freetype glyph index
+    pub raw_glyph_id: u16,
     /// The final offset calculated by freetype/harfbuzz that we will add to the
     /// cursor when laying out text.
     pub cursor_advance: (i32, i32),
@@ -88,8 +91,7 @@ pub struct FontInstance {
     /// Map of glyphs to look up to find the thundr resources
     /// The ab::GlyphId is really just an index into this. That's all
     /// glyph ids are, is the index of the glyph in the font.
-    f_glyphs: Vec<Option<Glyph>>,
-    pub f_color: Option<dom::Color>,
+    f_glyphs: Vec<Option<DakotaId>>,
 }
 
 impl FontInstance {
@@ -97,12 +99,7 @@ impl FontInstance {
     ///
     /// This is a particular font from a typeface at a
     /// particular size. Size is specified in points.
-    pub fn new(
-        ft_lib: &ft::Library,
-        font_path: &str,
-        pixel_size: u32,
-        color: Option<dom::Color>,
-    ) -> Self {
+    pub fn new(ft_lib: &ft::Library, font_path: &str, pixel_size: u32) -> Self {
         let mut ft_face: ft::Face = ft_lib.new_face(font_path, 0).unwrap();
         let raw_font =
             unsafe { hb_ft_font_create_referenced(ft_face.raw_mut() as *mut ft::ffi::FT_FaceRec) };
@@ -116,11 +113,16 @@ impl FontInstance {
             f_ft_face: ft_face,
             f_hb_raw_font: raw_font,
             f_glyphs: Vec::new(),
-            f_color: color,
         }
     }
 
-    fn create_glyph(&mut self, thund: &mut Thundr, id: u16) -> Glyph {
+    fn create_glyph(
+        &mut self,
+        thund: &mut Thundr,
+        inst: &mut ll::Instance,
+        glyphs: &mut ll::Component<Glyph>,
+        id: u16,
+    ) -> DakotaId {
         let flags = match self.f_ft_face.has_color() {
             true => ft::face::LoadFlag::COLOR,
             false => ft::face::LoadFlag::DEFAULT,
@@ -194,65 +196,37 @@ impl FontInstance {
         };
 
         // Create a new glyph for this UTF-8 character
-        Glyph {
-            g_image: th_image,
-            g_bitmap_size: (bitmap.width(), bitmap.rows()),
-            g_bitmap_left: glyph.bitmap_left(),
-            g_bitmap_top: glyph.bitmap_top(),
-            _g_metrics: glyph.metrics(),
-        }
+        let id = inst.add_entity();
+        glyphs.set(
+            &id,
+            Glyph {
+                g_image: th_image,
+                g_bitmap_size: (bitmap.width(), bitmap.rows()),
+                g_bitmap_left: glyph.bitmap_left(),
+                g_bitmap_top: glyph.bitmap_top(),
+                _g_metrics: glyph.metrics(),
+            },
+        );
+
+        return id;
     }
 
     /// Go ahead and create the Glyph for an id in our map
-    fn ensure_glyph_exists(&mut self, thund: &mut Thundr, id: u16) {
+    fn ensure_glyph_exists(
+        &mut self,
+        thund: &mut Thundr,
+        inst: &mut ll::Instance,
+        glyphs: &mut ll::Component<Glyph>,
+        id: u16,
+    ) {
         // If we have not imported this glyph, make it now
         while id as usize >= self.f_glyphs.len() {
             self.f_glyphs.push(None);
         }
 
         if self.f_glyphs[id as usize].is_none() {
-            self.f_glyphs[id as usize] = Some(self.create_glyph(thund, id));
+            self.f_glyphs[id as usize] = Some(self.create_glyph(thund, inst, glyphs, id));
         }
-    }
-
-    /// Helper to get the size of a surface. Used to fill in the LayoutNode
-    /// size in Dakota.
-    pub fn get_glyph_thundr_size(&mut self, thund: &mut Thundr, id: u16) -> (i32, i32) {
-        self.ensure_glyph_exists(thund, id);
-        let glyph = self.f_glyphs[id as usize]
-            .as_ref()
-            .expect("Bug: Glyph not created for this character");
-
-        glyph.g_bitmap_size
-    }
-
-    /// Helper to get a thundr surface for a glyph. This involves looking it up
-    /// in the cache of glyph images, creating a surface of the right size/offset,
-    /// and binding the image from freetype to it.
-    pub fn get_thundr_surf_for_glyph(
-        &mut self,
-        thund: &mut Thundr,
-        id: u16,
-        pos: &(i32, i32),
-    ) -> th::Surface {
-        self.ensure_glyph_exists(thund, id);
-        let glyph = self.f_glyphs[id as usize].as_ref().unwrap();
-
-        let mut surf = th::Surface::new(
-            th::Rect::new(pos.0, pos.1, glyph.g_bitmap_size.0, glyph.g_bitmap_size.1),
-            None,
-            None,
-        );
-
-        if let Some(image) = glyph.g_image.as_ref() {
-            surf.bind_image(image.clone());
-        }
-
-        if let Some(color) = self.f_color {
-            surf.set_color((color.r, color.g, color.b, color.a));
-        }
-
-        return surf;
     }
 
     /// Handle one line of text
@@ -281,7 +255,7 @@ impl FontInstance {
 
         // First find the last glyph we should include on this line
         for i in cursor.c_i..text.len() {
-            let glyph_id = text[i].glyph_id;
+            let glyph_id = text[i].raw_glyph_id;
 
             // Move the cursor
             line_pos += text[i].cursor_advance.0;
@@ -290,13 +264,23 @@ impl FontInstance {
             // check for word breaks
             // For now this is just checking for spaces
             // TODO: use something smarter
-            if self.f_ft_face.get_char_index(' ' as u32 as usize).unwrap_or(0) == glyph_id as u32 {
+            if self
+                .f_ft_face
+                .get_char_index(' ' as u32 as usize)
+                .unwrap_or(0)
+                == glyph_id as u32
+            {
                 last_word = end_index;
             }
 
             // Check for newlines
             // gross, we have to convert to usize through u32 :(
-            if self.f_ft_face.get_char_index('\n' as u32 as usize).unwrap_or(0) == glyph_id as u32 {
+            if self
+                .f_ft_face
+                .get_char_index('\n' as u32 as usize)
+                .unwrap_or(0)
+                == glyph_id as u32
+            {
                 last_word = end_index;
                 ret = true;
                 break;
@@ -321,7 +305,6 @@ impl FontInstance {
         for i in cursor.c_i..end_of_line {
             // move to the next char
             cursor.c_i += 1;
-            self.ensure_glyph_exists(thund, text[i].glyph_id);
 
             glyph_callback(self, thund, cursor, &text[i]);
 
@@ -405,6 +388,7 @@ impl FontInstance {
         &mut self,
         thund: &mut Thundr,
         inst: &mut ll::Instance,
+        glyphs: &mut ll::Component<Glyph>,
         text: &str,
     ) -> Vec<CachedChar> {
         // Set up our HarfBuzz buffers
@@ -427,17 +411,19 @@ impl FontInstance {
         };
 
         for i in 0..infos.len() {
-            let glyph_id = infos[i].codepoint as u16;
-            self.ensure_glyph_exists(thund, glyph_id);
-            let glyph = self.f_glyphs[glyph_id as usize]
+            let raw_glyph_id = infos[i].codepoint as u16;
+            self.ensure_glyph_exists(thund, inst, glyphs, raw_glyph_id);
+            let glyph_id = self.f_glyphs[raw_glyph_id as usize]
                 .as_ref()
                 .expect("Bug: No Glyph created for this character");
+            let glyph = glyphs.get(&glyph_id).unwrap();
 
             let (x_offset, y_offset, x_advance, y_advance) = scale_hb_positions(&positions[i]);
 
             ret.push(CachedChar {
                 node: inst.add_entity(),
-                glyph_id: glyph_id,
+                glyph_id: glyph_id.clone(),
+                raw_glyph_id: raw_glyph_id,
                 cursor_advance: (x_advance, y_advance),
                 offset: (
                     x_offset + glyph.g_bitmap_left,

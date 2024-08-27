@@ -1,3 +1,5 @@
+use crate::font::Glyph;
+use crate::{dom, Dakota, DakotaId, LayoutNode};
 /// Dakota Drawing logic
 ///
 /// This splits out the rendering layouut of Dakota, which uses
@@ -6,41 +8,97 @@
 /// Thundr to draw 2D elements on the surface. This consumes the
 /// LayoutNode tree computed by the layout layer and turns it
 /// into Thundr Surfaces, dispatching the draw calls.
-use crate::{dom, Dakota, DakotaId};
+use thundr as th;
 
-impl Dakota {
+/// RenderTransaction
+///
+/// This transaction allows the rendering part of the code to have a consistent,
+/// read-only view of the state while it is performing drawing commands.
+///
+/// These fields correspond to the identically named variants in Dakota.
+pub(crate) struct RenderTransaction<'a> {
+    rt_resources: ll::Snapshot<'a, DakotaId>,
+    rt_resource_thundr_image: ll::Snapshot<'a, th::Image>,
+    rt_resource_color: ll::Snapshot<'a, dom::Color>,
+    rt_fonts: ll::Snapshot<'a, dom::Font>,
+    rt_text_font: ll::Snapshot<'a, DakotaId>,
+    rt_default_font_inst: DakotaId,
+    rt_glyphs: ll::Snapshot<'a, Glyph>,
+    rt_viewports: ll::Snapshot<'a, th::Viewport>,
+    rt_layout_nodes: ll::Snapshot<'a, LayoutNode>,
+}
+
+impl<'a> RenderTransaction<'a> {
+    /// Commit this transaction
+    fn commit(&mut self) {
+        self.rt_resources.commit();
+        self.rt_resource_thundr_image.commit();
+        self.rt_resource_color.commit();
+        self.rt_fonts.commit();
+        self.rt_text_font.commit();
+        self.rt_glyphs.commit();
+        self.rt_viewports.commit();
+        self.rt_layout_nodes.commit();
+    }
+
+    /// Helper to get the Font Instance for a particular element
+    ///
+    /// This will choose the default font (including size) if none
+    /// has been assigned.
+    pub(crate) fn get_font_id_for_el(&self, el: &DakotaId) -> DakotaId {
+        match self.rt_text_font.get(el) {
+            Some(f) => f.clone(),
+            None => self.rt_default_font_inst.clone(),
+        }
+    }
+
+    /// Helper to get a thundr surface for a glyph.
+    pub fn get_thundr_surf_for_glyph(
+        &self,
+        node: &DakotaId,
+        glyph: &Glyph,
+        pos: &(i32, i32),
+    ) -> th::Surface {
+        let mut surf = th::Surface::new(
+            th::Rect::new(pos.0, pos.1, glyph.g_bitmap_size.0, glyph.g_bitmap_size.1),
+            None,
+            None,
+        );
+
+        if let Some(image) = glyph.g_image.as_ref() {
+            surf.bind_image(image.clone());
+        }
+
+        let font_id = self.get_font_id_for_el(node);
+        let font = self.rt_fonts.get(&font_id).unwrap();
+        if let Some(color) = font.color.as_ref() {
+            surf.set_color((color.r, color.g, color.b, color.a));
+        }
+
+        return surf;
+    }
+
     /// Populate a thundr surface with this nodes dimensions and content
     ///
     /// This accepts a base offset to handle child element positioning
-    fn get_thundr_surf_for_el(
-        &mut self,
-        node: &DakotaId,
-        base: (i32, i32),
-    ) -> th::Result<th::Surface> {
-        let layout = self.d_layout_nodes.get(node).unwrap();
+    fn get_thundr_surf_for_el(&self, node: &DakotaId, base: (i32, i32)) -> th::Result<th::Surface> {
+        let layout = self.rt_layout_nodes.get(node).unwrap();
 
         // If this node is a viewport then ignore its offset, setting the viewport
         // will take care of positioning it.
-        let offset = match self.d_viewports.get(node).is_some() {
+        let offset = match self.rt_viewports.get(node).is_some() {
             true => (0, 0),
             false => (base.0 + layout.l_offset.x, base.1 + layout.l_offset.y),
         };
 
         // Image/color content will be set later
-        let mut surf = if let Some(glyph_id) = layout.l_glyph_id {
-            let font_id = self.get_font_id_for_el(node);
-            let font = self.d_fonts.get(&font_id).unwrap();
-            let font_inst = &mut self
-                .d_font_instances
-                .iter_mut()
-                .find(|(f, _)| *f == *font)
-                .expect("Could not find FontInstance")
-                .1;
+        let mut surf = if let Some(glyph_id) = layout.l_glyph_id.as_ref() {
             // If this path is hit, then this layout node is really a glyph in a
             // larger block of text. It has been created as a child, and isn't
             // a real element. We ask the font code to give us a surface for
             // it that we can display.
-            font_inst.get_thundr_surf_for_glyph(&mut self.d_thund, glyph_id, &offset)
+            let glyph = self.rt_glyphs.get(glyph_id).unwrap();
+            self.get_thundr_surf_for_glyph(node, glyph, &offset)
         } else {
             th::Surface::new(
                 th::Rect::new(
@@ -57,15 +115,15 @@ impl Dakota {
         // Handle binding images
         // We need to get the resource's content from our resource map, get
         // the thundr image for it, and bind it to our new surface.
-        if let Some(resource_id) = self.d_resources.get(node) {
+        if let Some(resource_id) = self.rt_resources.get(node) {
             // Assert that only one content type is set
             let mut content_num = 0;
 
-            if let Some(image) = self.d_resource_thundr_image.get(&resource_id) {
+            if let Some(image) = self.rt_resource_thundr_image.get(&resource_id) {
                 surf.bind_image(image.clone());
                 content_num += 1;
             }
-            if let Some(color) = self.d_resource_color.get(&resource_id) {
+            if let Some(color) = self.rt_resource_color.get(&resource_id) {
                 surf.set_color((color.r, color.g, color.b, color.a));
                 content_num += 1;
             }
@@ -87,8 +145,8 @@ impl Dakota {
         node: &DakotaId, // child viewport
         base: (i32, i32),
     ) -> Option<th::Viewport> {
-        let layout = self.d_layout_nodes.get(node)?;
-        let viewport = self.d_viewports.get(node)?;
+        let layout = self.rt_layout_nodes.get(node)?;
+        let viewport = self.rt_viewports.get(node)?;
 
         // We will copy the viewport, and then return a clamped version of it to
         // draw with.
@@ -146,13 +204,14 @@ impl Dakota {
     /// This does not recurse. Will skip drawing this node if it is out of the bounds of
     /// its viewport.
     fn draw_node(
-        &mut self,
+        &self,
+        thund: &mut th::Thundr,
         viewport: &th::Viewport,
         node: &DakotaId,
         base: (i32, i32),
     ) -> th::Result<()> {
         {
-            let layout = self.d_layout_nodes.get(node).unwrap();
+            let layout = self.rt_layout_nodes.get(node).unwrap();
 
             // Test that this child is visible before drawing it
             let offset = dom::Offset::new(base.0 + layout.l_offset.x, base.1 + layout.l_offset.y);
@@ -169,46 +228,44 @@ impl Dakota {
 
         let surf = self.get_thundr_surf_for_el(node, base)?;
 
-        self.d_thund.draw_surface(&surf)
+        thund.draw_surface(&surf)
     }
 
     /// Recursively draw node and all of its children
     ///
     /// This does not cross viewport boundaries
     fn draw_node_recurse(
-        &mut self,
+        &self,
+        thund: &mut th::Thundr,
         viewport: &th::Viewport,
         node: &DakotaId,
         base: (i32, i32),
     ) -> th::Result<()> {
         // If this node is a viewport then update our thundr viewport
-        let new_th_viewport = match self.d_viewports.get(node).is_some() {
+        let new_th_viewport = match self.rt_viewports.get(node).is_some() {
             true => {
                 // Set Thundr's currently in use viewport
                 let th_viewport = self.get_thundr_viewport(viewport, node, base).unwrap();
-                self.d_thund.set_viewport(&th_viewport)?;
+                thund.set_viewport(&th_viewport)?;
 
                 Some(th_viewport)
             }
             false => None,
         };
 
-        let new_viewport = match self.d_viewports.get(node).is_some() {
+        let new_viewport = match self.rt_viewports.get(node).is_some() {
             true => new_th_viewport.as_ref().unwrap(),
             false => viewport,
         };
 
         // Start by drawing ourselves
-        self.draw_node(new_viewport, node, base)?;
+        self.draw_node(thund, new_viewport, node, base)?;
 
-        // Help borrow checker. We don't do any modification to this while
-        // drawing so it's fine.
-        let layout_nodes = self.d_layout_nodes.clone();
-        let layout = layout_nodes.get(node).unwrap();
+        let layout = self.rt_layout_nodes.get(node).unwrap();
 
         // Update our subsurf offset
         // If this node is a viewport then the base offset needs to be reset
-        let new_base = match self.d_viewports.get(node) {
+        let new_base = match self.rt_viewports.get(node) {
             // do scrolling here to allow us to test things that are off screen?
             // By putting the offset here all children will be offset by it
             Some(vp) => (vp.scroll_offset.0, vp.scroll_offset.1),
@@ -217,17 +274,31 @@ impl Dakota {
 
         // Now draw each of our children
         for child in layout.l_children.iter() {
-            self.draw_node_recurse(new_viewport, child, new_base)?;
+            self.draw_node_recurse(thund, new_viewport, child, new_base)?;
         }
 
         // If this node was a viewport then restore our old viewport
         if new_th_viewport.is_some() {
-            self.d_thund.set_viewport(viewport)?;
+            thund.set_viewport(viewport)?;
         }
 
         Ok(())
     }
 
+    /// Draw a scene using the provided renderer and transaction view.
+    pub(crate) fn draw_surfacelists(
+        &mut self,
+        thund: &mut th::Thundr,
+        root_viewport: &th::Viewport,
+        root_node: DakotaId,
+    ) -> th::Result<()> {
+        thund.begin_recording()?;
+        self.draw_node_recurse(thund, &root_viewport, &root_node, (0, 0))?;
+        thund.end_recording()
+    }
+}
+
+impl Dakota {
     /// Draw the entire scene
     ///
     /// This starts at the root viewport and draws all child viewports
@@ -235,9 +306,19 @@ impl Dakota {
         let root_node = self.d_layout_tree_root.clone().unwrap();
         let root_viewport = self.d_viewports.get_clone(&root_node).unwrap();
 
-        self.d_thund.begin_recording()?;
-        self.draw_node_recurse(&root_viewport, &root_node, (0, 0))?;
-        self.d_thund.end_recording()?;
+        let mut trans = RenderTransaction {
+            rt_resources: self.d_resources.snapshot(),
+            rt_resource_thundr_image: self.d_resource_thundr_image.snapshot(),
+            rt_resource_color: self.d_resource_color.snapshot(),
+            rt_fonts: self.d_fonts.snapshot(),
+            rt_text_font: self.d_text_font.snapshot(),
+            rt_default_font_inst: self.d_default_font_inst.clone(),
+            rt_glyphs: self.d_glyphs.snapshot(),
+            rt_viewports: self.d_viewports.snapshot(),
+            rt_layout_nodes: self.d_layout_nodes.snapshot(),
+        };
+        trans.draw_surfacelists(&mut self.d_thund, &root_viewport, root_node)?;
+        trans.commit();
 
         Ok(())
     }
