@@ -35,7 +35,7 @@ pub mod event;
 use event::EventSystem;
 pub use event::{AxisSource, Event, RawKeycode};
 mod layout;
-use layout::{LayoutNode, LayoutSpace};
+use layout::LayoutNode;
 mod render;
 
 mod font;
@@ -797,14 +797,7 @@ impl Dakota {
         self.d_layout_tree_root = None;
 
         // construct layout tree with sizes of all boxes
-        self.calculate_sizes(
-            &root_node_id,
-            None, // no parent since we are the root node
-            &LayoutSpace {
-                avail_width: self.d_window_dims.unwrap().0 as i32, // available width
-                avail_height: self.d_window_dims.unwrap().1 as i32, // available height
-            },
-        )?;
+        self.layout(&root_node_id)?;
         // Manually mark the root node as a viewport node. It always is, and it will
         // always have the root viewport.
         self.set_viewport(&root_node_id);

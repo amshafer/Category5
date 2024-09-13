@@ -120,7 +120,7 @@ impl FontInstance {
         &mut self,
         thund: &mut Thundr,
         inst: &mut ll::Instance,
-        glyphs: &mut ll::Component<Glyph>,
+        glyphs: &mut ll::Snapshot<Glyph>,
         id: u16,
     ) -> DakotaId {
         let flags = match self.f_ft_face.has_color() {
@@ -216,7 +216,7 @@ impl FontInstance {
         &mut self,
         thund: &mut Thundr,
         inst: &mut ll::Instance,
-        glyphs: &mut ll::Component<Glyph>,
+        glyphs: &mut ll::Snapshot<Glyph>,
         id: u16,
     ) {
         // If we have not imported this glyph, make it now
@@ -388,7 +388,7 @@ impl FontInstance {
         &mut self,
         thund: &mut Thundr,
         inst: &mut ll::Instance,
-        glyphs: &mut ll::Component<Glyph>,
+        glyphs: &mut ll::Snapshot<Glyph>,
         text: &str,
     ) -> Vec<CachedChar> {
         // Set up our HarfBuzz buffers

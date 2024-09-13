@@ -89,7 +89,215 @@ impl LayoutNode {
     }
 }
 
-impl Dakota {
+/// LayoutTransaction
+///
+/// This transaction allows the layout engine to have a consistent,
+/// read-only view of the state while it is recalculating the sizes of
+/// the LayoutNodes
+///
+/// These fields correspond to the identically named variants in Dakota.
+pub(crate) struct LayoutTransaction<'a> {
+    lt_ecs_inst: ll::Instance,
+    lt_resources: ll::Snapshot<'a, DakotaId>,
+    lt_resource_thundr_image: ll::Snapshot<'a, th::Image>,
+    lt_resource_color: ll::Snapshot<'a, dom::Color>,
+    lt_fonts: ll::Snapshot<'a, dom::Font>,
+    lt_text_font: ll::Snapshot<'a, DakotaId>,
+    lt_texts: ll::Snapshot<'a, dom::Text>,
+    lt_default_font_inst: DakotaId,
+    lt_glyphs: ll::Snapshot<'a, Glyph>,
+    lt_viewports: ll::Snapshot<'a, th::Viewport>,
+    lt_layout_nodes: ll::Snapshot<'a, LayoutNode>,
+    lt_contents: ll::Snapshot<'a, dom::Content>,
+    lt_offsets: ll::Snapshot<'a, dom::RelativeOffset>,
+    lt_widths: ll::Snapshot<'a, dom::Value>,
+    lt_heights: ll::Snapshot<'a, dom::Value>,
+    lt_children: ll::Snapshot<'a, Vec<DakotaId>>,
+    lt_font_instances: &'a mut Vec<(dom::Font, FontInstance)>,
+    lt_thund: &'a mut th::Thundr,
+}
+
+impl<'a> LayoutTransaction<'a> {
+    /// Commit this transaction
+    fn commit(&mut self) {
+        self.lt_resources.commit();
+        self.lt_resource_thundr_image.commit();
+        self.lt_resource_color.commit();
+        self.lt_fonts.commit();
+        self.lt_text_font.commit();
+        self.lt_texts.commit();
+        self.lt_glyphs.commit();
+        self.lt_viewports.commit();
+        self.lt_layout_nodes.commit();
+        self.lt_contents.commit();
+        self.lt_widths.commit();
+        self.lt_heights.commit();
+        self.lt_offsets.commit();
+        self.lt_children.commit();
+    }
+
+    /// Helper to get the Font Instance for a particular element
+    ///
+    /// This will choose the default font (including size) if none
+    /// has been assigned.
+    pub(crate) fn get_font_id_for_el(&self, el: &DakotaId) -> DakotaId {
+        match self.lt_text_font.get(el) {
+            Some(f) => f.clone(),
+            None => self.lt_default_font_inst.clone(),
+        }
+    }
+
+    /// Get the final size to use as an offset into the
+    /// parent space. This takes care of handling the relative
+    /// proportional offset size
+    pub fn get_final_offset(&self, el: &DakotaId, space: &LayoutSpace) -> Result<dom::Offset<i32>> {
+        if let Some(offset) = self.lt_offsets.get(el) {
+            Ok(dom::Offset::new(
+                offset.x.get_value(space.avail_width)?,
+                offset.y.get_value(space.avail_height)?,
+            ))
+        } else {
+            // If no offset was specified use (0, 0)
+            let default_offset = dom::Offset {
+                x: dom::Value::Constant(0),
+                y: dom::Value::Constant(0),
+            };
+
+            Ok(dom::Offset::new(
+                default_offset.x.get_value(space.avail_width)?,
+                default_offset.y.get_value(space.avail_height)?,
+            ))
+        }
+    }
+
+    pub fn get_default_size_val(
+        &self,
+        avail_space: i32,
+        resource_size: Option<u32>,
+        val: Option<dom::Value>,
+    ) -> Result<u32> {
+        if let Some(size) = val {
+            Ok(size.get_value(avail_space)? as u32)
+        } else {
+            // If no size was provided but an image resource has been assigned, then
+            // size this element to the resource. Text resource sizing will be
+            // handled in calculate_sizes_text.
+            //
+            // If there are children and no resource was provided, then we will
+            // limit this node to the size of the children later after processing
+            // all of them.
+            //
+            // TODO: use LayoutSpace for all sizing decisions, then calculate the
+            // final element size here, sizing to children if needed?
+            if let Some(size) = resource_size {
+                return Ok(size);
+            }
+
+            // If no size was specified then this defaults to the size of its container
+            Ok(avail_space as u32)
+        }
+    }
+
+    /// Get the default starting size to use within the parent space.
+    ///
+    /// This either returns the size set by the user, otherwise the size of the image
+    /// resource assigned, otherwise the size of the parent space.
+    pub fn get_default_size(&self, el: &DakotaId, space: &LayoutSpace) -> Result<dom::Size<u32>> {
+        let get_image_size = |is_width| match self.lt_resources.get(el).as_deref().clone() {
+            Some(res) => self
+                .lt_resource_thundr_image
+                .get(&res)
+                .map(|image| match is_width {
+                    true => image.get_size().0,
+                    false => image.get_size().1,
+                }),
+            None => None,
+        };
+
+        let width = self.get_default_size_val(
+            space.avail_width,
+            get_image_size(true),
+            self.lt_widths.get(el).map(|val| *val),
+        )?;
+        let height = self.get_default_size_val(
+            space.avail_height,
+            get_image_size(false),
+            self.lt_heights.get(el).map(|val| *val),
+        )?;
+
+        Ok(dom::Size::new(width, height))
+    }
+
+    fn get_child_size(&self, el: &DakotaId, is_width: bool, size: u32) -> u32 {
+        // First adjust by the size of this element
+        let el_size = self.lt_layout_nodes.get(&el).unwrap();
+        size.max(match is_width {
+            true => el_size.l_offset.x as u32 + el_size.l_size.width as u32,
+            false => el_size.l_offset.y as u32 + el_size.l_size.height as u32,
+        })
+    }
+
+    /// Get the final size to use within the parent space.
+    ///
+    /// This is the same as the (original) default size, unless the following conditions are
+    /// met:
+    /// - no size was set by the user
+    /// - no image resource is assigned
+    /// - element does not have any positioned content
+    ///
+    /// The above criterea are evaluated per-dimension with respect to width/height. It is
+    /// possible that one dimension is grown and the other is not.
+    ///
+    /// If those conditions are met, then the element will be shrunk/grown to contain all
+    /// child elements.
+    pub fn get_final_size(&self, el: &DakotaId, space: &LayoutSpace) -> Result<dom::Size<u32>> {
+        let mut ret = self.get_default_size(el, space)?;
+        let mut is_image_resource = false;
+        if let Some(res) = self.lt_resources.get(el) {
+            if self.lt_resource_thundr_image.get(&res).is_some() {
+                is_image_resource = true;
+            }
+        }
+
+        let needs_size_to_child = !self.lt_viewports.get(el).is_some()
+            && !is_image_resource
+            && self.lt_layout_nodes.get(el).unwrap().l_children.len() > 0;
+
+        // Does the content have a width/height assigned
+        //
+        // If one of these dimensions was assigned, then we do not want to shrink this element
+        // by that amount since the alignment was based on the original size.
+        let (content_has_width, content_has_height) = match self.lt_contents.get(el) {
+            Some(cont) => (
+                self.lt_widths.get(&cont.el).is_some(),
+                self.lt_heights.get(&cont.el).is_some(),
+            ),
+            None => (false, false),
+        };
+
+        // If no size was specified by the user and no image has been assigned then we
+        // will limit this element to the size of its children if there are any
+        if self.lt_widths.get(el).is_none() && needs_size_to_child && !content_has_width {
+            ret.width = 0;
+            for i in 0..self.lt_layout_nodes.get(el).unwrap().l_children.len() {
+                let child_id = self.lt_layout_nodes.get(el).unwrap().l_children[i].clone();
+
+                ret.width = self.get_child_size(&child_id, true, ret.width);
+            }
+        }
+
+        if self.lt_heights.get(el).is_none() && needs_size_to_child && !content_has_height {
+            ret.height = 0;
+            for i in 0..self.lt_layout_nodes.get(el).unwrap().l_children.len() {
+                let child_id = self.lt_layout_nodes.get(el).unwrap().l_children[i].clone();
+
+                ret.height = self.get_child_size(&child_id, false, ret.height);
+            }
+        }
+
+        return Ok(ret);
+    }
+
     /// Calculate size and position of centered content.
     ///
     ///
@@ -98,13 +306,13 @@ impl Dakota {
     /// size based on the centered resource.
     fn calculate_sizes_content(&mut self, el: &DakotaId, space: &LayoutSpace) -> Result<()> {
         log::debug!("Calculating content size");
-        let child_id = self.d_contents.get(el).unwrap().el.clone();
+        let child_id = self.lt_contents.get(el).unwrap().el.clone();
 
         self.calculate_sizes(&child_id, Some(el), &space)?;
-        let parent_size = self.d_layout_nodes.get(el).unwrap().l_size;
+        let parent_size = self.lt_layout_nodes.get(el).unwrap().l_size;
 
         {
-            let mut child_size_raw = self.d_layout_nodes.get_mut(&child_id).unwrap();
+            let mut child_size_raw = self.lt_layout_nodes.get_mut(&child_id).unwrap();
             let child_size = child_size_raw.deref_mut();
             // At this point the size of the is calculated
             // and we can determine the offset. We want to center the
@@ -118,7 +326,7 @@ impl Dakota {
                 utils::partial_max((parent_size.height / 2) - (child_size.l_size.height / 2), 0);
         }
 
-        let mut node = self.d_layout_nodes.get_mut(el).unwrap();
+        let node = self.lt_layout_nodes.get_mut(el).unwrap();
         node.add_child(child_id.clone());
         Ok(())
     }
@@ -143,14 +351,14 @@ impl Dakota {
         };
 
         let child_count = self
-            .d_children
+            .lt_children
             .get(el)
             .ok_or(anyhow!("Expected children"))?
             .len();
 
         for i in 0..child_count {
             let child_id = self
-                .d_children
+                .lt_children
                 .get(el)
                 .ok_or(anyhow!("Expected children"))?[i]
                 .clone();
@@ -158,7 +366,7 @@ impl Dakota {
 
             // ----- adjust child position ----
             {
-                let mut child_size = self.d_layout_nodes.get_mut(&child_id).unwrap();
+                let child_size = self.lt_layout_nodes.get_mut(&child_id).unwrap();
 
                 // now the child size has been made, but it still needs to find
                 // the proper position inside the parent container. If the child
@@ -191,7 +399,7 @@ impl Dakota {
                 }
             }
 
-            self.d_layout_nodes
+            self.lt_layout_nodes
                 .get_mut(el)
                 .unwrap()
                 .add_child(child_id.clone());
@@ -219,7 +427,7 @@ impl Dakota {
     ) -> Result<()> {
         let mut node = LayoutNode::new(None, dom::Offset::new(0, 0), dom::Size::new(0, 0));
 
-        node.l_offset_specified = self.d_offsets.get(el).is_some();
+        node.l_offset_specified = self.lt_offsets.get(el).is_some();
         node.l_offset = self
             .get_final_offset(el, &space)
             .context("Failed to calculate offset size of Element")?
@@ -231,20 +439,9 @@ impl Dakota {
 
         log::debug!("Offset of element is {:?}", node.l_offset);
         log::debug!("Size of element is {:?}", node.l_size);
-        self.d_layout_nodes.take(el);
-        self.d_layout_nodes.set(el, node);
+        self.lt_layout_nodes.take(el);
+        self.lt_layout_nodes.set(el, node);
         Ok(())
-    }
-
-    /// Helper to get the Font Instance for a particular element
-    ///
-    /// This will choose the default font (including size) if none
-    /// has been assigned.
-    pub(crate) fn get_font_id_for_el(&self, el: &DakotaId) -> DakotaId {
-        match self.d_text_font.get(el) {
-            Some(f) => f.clone(),
-            None => self.d_default_font_inst.clone(),
-        }
     }
 
     /// Handles creating LayoutNodes for every glyph in a passage
@@ -252,15 +449,15 @@ impl Dakota {
     /// This is the handler for the text field in the dakota file
     fn calculate_sizes_text(&mut self, el: &DakotaId) -> Result<()> {
         let font_id = self.get_font_id_for_el(el);
-        let font = self.d_fonts.get(&font_id).unwrap();
+        let font = self.lt_fonts.get(&font_id).unwrap();
         let font_inst = &mut self
-            .d_font_instances
+            .lt_font_instances
             .iter_mut()
             .find(|(f, _)| *f == *font)
             .expect("Could not find FontInstance")
             .1;
 
-        let mut text = self.d_texts.get_mut(el).unwrap();
+        let text = self.lt_texts.get_mut(el).unwrap();
         let line_space = font_inst.get_vertical_line_spacing();
 
         // This is how far we have advanced on a line
@@ -269,7 +466,7 @@ impl Dakota {
         // and all my stuff wants to index from the top left corner. Without this
         // text starts being written "above" the element it is assigned to.
         let mut cursor = {
-            let node = self.d_layout_nodes.get(el).unwrap();
+            let node = self.lt_layout_nodes.get(el).unwrap();
             Cursor {
                 c_i: 0,
                 c_x: 0,
@@ -297,9 +494,9 @@ impl Dakota {
                         // This must be called to initialize the glyphs before we do
                         // the layout and line splitting.
                         run.cache = Some(font_inst.initialize_cached_chars(
-                            &mut self.d_thund,
-                            &mut self.d_ecs_inst,
-                            &mut self.d_glyphs,
+                            &mut self.lt_thund,
+                            &mut self.lt_ecs_inst,
+                            &mut self.lt_glyphs,
                             &trim,
                         ));
                     }
@@ -307,15 +504,15 @@ impl Dakota {
                     // We need to take references to everything at once before the closure
                     // so that the borrow checker can see we aren't trying to reference all
                     // of self
-                    let layouts = &mut self.d_layout_nodes;
-                    let text_fonts = &mut self.d_text_font;
-                    let glyphs = &mut self.d_glyphs;
+                    let layouts = &mut self.lt_layout_nodes;
+                    let text_fonts = &mut self.lt_text_font;
+                    let glyphs = &mut self.lt_glyphs;
 
                     // Record text locations
                     // We will create a whole bunch of sub-nodes which will be assigned
                     // glyph ids. These ids will later be used to get surfaces for.
                     font_inst.layout_text(
-                        &mut self.d_thund,
+                        &mut self.lt_thund,
                         &mut cursor,
                         run.cache.as_ref().unwrap(),
                         &mut |_inst: &mut FontInstance, _thund, curse, ch| {
@@ -336,7 +533,7 @@ impl Dakota {
                             log::info!("Character size is {:?}", size);
 
                             {
-                                let mut node = layouts.get_mut(el).unwrap();
+                                let node = layouts.get_mut(el).unwrap();
                                 // What we have done here is create a "fake" element (fake since
                                 // the user didn't specify it) that represents a glyph.
                                 node.add_child(ch.node.clone());
@@ -383,7 +580,7 @@ impl Dakota {
         // This space is what the children/content will use
         // it is restricted in size to this element (their parent)
         let mut child_space = {
-            let node = self.d_layout_nodes.get(el).unwrap();
+            let node = self.lt_layout_nodes.get(el).unwrap();
             LayoutSpace {
                 avail_width: node.l_size.width,
                 avail_height: node.l_size.height,
@@ -395,13 +592,13 @@ impl Dakota {
         // ------------------------------------------
         // We do this after handling the size of the current element so that we
         // can know what width we have available to fill in with text.
-        if self.d_texts.get(el).is_some() {
+        if self.lt_texts.get(el).is_some() {
             self.calculate_sizes_text(el)?;
         }
 
         // if the box has children, then recurse through them and calculate our
         // box size based on the fill type.
-        if self.d_children.get(el).is_some() && self.d_children.get(el).unwrap().len() > 0 {
+        if self.lt_children.get(el).is_some() && self.lt_children.get(el).unwrap().len() > 0 {
             // ------------------------------------------
             // CHILDREN
             // ------------------------------------------
@@ -411,7 +608,7 @@ impl Dakota {
                 .context("Layout Tree Calculation: processing children of element")?;
         }
 
-        if self.d_contents.get(el).is_some() {
+        if self.lt_contents.get(el).is_some() {
             // ------------------------------------------
             // CENTERED CONTENT
             // ------------------------------------------
@@ -421,8 +618,48 @@ impl Dakota {
 
         // Update the size of this element after calculating the content
         let final_size = self.get_final_size(el, space)?.into();
-        self.d_layout_nodes.get_mut(el).unwrap().l_size = final_size;
+        self.lt_layout_nodes.get_mut(el).unwrap().l_size = final_size;
 
         return Ok(());
+    }
+}
+
+impl Dakota {
+    /// Draw the entire scene
+    ///
+    /// This starts at the root viewport and draws all child viewports
+    pub(crate) fn layout(&mut self, root_node: &DakotaId) -> Result<()> {
+        let mut trans = LayoutTransaction {
+            lt_ecs_inst: self.d_ecs_inst.clone(),
+            lt_resources: self.d_resources.snapshot(),
+            lt_resource_thundr_image: self.d_resource_thundr_image.snapshot(),
+            lt_resource_color: self.d_resource_color.snapshot(),
+            lt_fonts: self.d_fonts.snapshot(),
+            lt_text_font: self.d_text_font.snapshot(),
+            lt_texts: self.d_texts.snapshot(),
+            lt_default_font_inst: self.d_default_font_inst.clone(),
+            lt_glyphs: self.d_glyphs.snapshot(),
+            lt_viewports: self.d_viewports.snapshot(),
+            lt_layout_nodes: self.d_layout_nodes.snapshot(),
+            lt_contents: self.d_contents.snapshot(),
+            lt_widths: self.d_widths.snapshot(),
+            lt_heights: self.d_heights.snapshot(),
+            lt_offsets: self.d_offsets.snapshot(),
+            lt_children: self.d_children.snapshot(),
+            lt_font_instances: &mut self.d_font_instances,
+            lt_thund: &mut self.d_thund,
+        };
+
+        trans.calculate_sizes(
+            root_node,
+            None, // no parent since we are the root node
+            &LayoutSpace {
+                avail_width: self.d_window_dims.unwrap().0 as i32, // available width
+                avail_height: self.d_window_dims.unwrap().1 as i32, // available height
+            },
+        )?;
+        trans.commit();
+
+        Ok(())
     }
 }
