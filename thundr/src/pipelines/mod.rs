@@ -16,8 +16,8 @@ pub mod geometric;
 
 pub use geometric::GeomPipeline;
 
-use crate::display::DisplayState;
-use crate::{RecordParams, Result, Surface, Viewport};
+use crate::display::{DisplayState, RecordParams};
+use crate::{Result, Surface, Viewport};
 
 // The pipeline trait is essentially a mini-backend for the
 // renderer. It determines what draw calls we generate for the
@@ -50,9 +50,4 @@ pub(crate) trait Pipeline {
     /// This call tells the pipeline to recreate any resources that
     /// depend on the swapchain/screen size. i.e. VkFramebuffers
     fn handle_ood(&mut self, dstate: &DisplayState);
-}
-
-#[derive(Eq, PartialEq, Copy, Clone, Debug)]
-pub enum PipelineType {
-    GEOMETRIC,
 }

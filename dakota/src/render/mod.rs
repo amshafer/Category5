@@ -18,7 +18,7 @@ use thundr as th;
 /// These fields correspond to the identically named variants in Dakota.
 pub(crate) struct RenderTransaction<'a> {
     rt_resources: ll::Snapshot<'a, DakotaId>,
-    rt_resource_thundr_image: ll::Snapshot<'a, th::Image>,
+    rt_resource_displayr_image: ll::Snapshot<'a, th::Image>,
     rt_resource_color: ll::Snapshot<'a, dom::Color>,
     rt_fonts: ll::Snapshot<'a, dom::Font>,
     rt_text_font: ll::Snapshot<'a, DakotaId>,
@@ -32,7 +32,7 @@ impl<'a> RenderTransaction<'a> {
     /// Commit this transaction
     fn commit(&mut self) {
         self.rt_resources.commit();
-        self.rt_resource_thundr_image.commit();
+        self.rt_resource_displayr_image.commit();
         self.rt_resource_color.commit();
         self.rt_fonts.commit();
         self.rt_text_font.commit();
@@ -52,8 +52,8 @@ impl<'a> RenderTransaction<'a> {
         }
     }
 
-    /// Helper to get a thundr surface for a glyph.
-    pub fn get_thundr_surf_for_glyph(
+    /// Helper to get a displayr surface for a glyph.
+    pub fn get_displayr_surf_for_glyph(
         &self,
         node: &DakotaId,
         glyph: &Glyph,
@@ -78,10 +78,14 @@ impl<'a> RenderTransaction<'a> {
         return surf;
     }
 
-    /// Populate a thundr surface with this nodes dimensions and content
+    /// Populate a displayr surface with this nodes dimensions and content
     ///
     /// This accepts a base offset to handle child element positioning
-    fn get_thundr_surf_for_el(&self, node: &DakotaId, base: (i32, i32)) -> th::Result<th::Surface> {
+    fn get_displayr_surf_for_el(
+        &self,
+        node: &DakotaId,
+        base: (i32, i32),
+    ) -> th::Result<th::Surface> {
         let layout = self.rt_layout_nodes.get(node).unwrap();
 
         // If this node is a viewport then ignore its offset, setting the viewport
@@ -98,7 +102,7 @@ impl<'a> RenderTransaction<'a> {
             // a real element. We ask the font code to give us a surface for
             // it that we can display.
             let glyph = self.rt_glyphs.get(glyph_id).unwrap();
-            self.get_thundr_surf_for_glyph(node, glyph, &offset)
+            self.get_displayr_surf_for_glyph(node, glyph, &offset)
         } else {
             th::Surface::new(
                 th::Rect::new(
@@ -114,12 +118,12 @@ impl<'a> RenderTransaction<'a> {
 
         // Handle binding images
         // We need to get the resource's content from our resource map, get
-        // the thundr image for it, and bind it to our new surface.
+        // the displayr image for it, and bind it to our new surface.
         if let Some(resource_id) = self.rt_resources.get(node) {
             // Assert that only one content type is set
             let mut content_num = 0;
 
-            if let Some(image) = self.rt_resource_thundr_image.get(&resource_id) {
+            if let Some(image) = self.rt_resource_displayr_image.get(&resource_id) {
                 surf.bind_image(image.clone());
                 content_num += 1;
             }
@@ -139,7 +143,7 @@ impl<'a> RenderTransaction<'a> {
     /// This would be straightforward except that we have to clip our viewport
     /// to the size of the parent viewport. This keeps child elements within the
     /// bounds of the parent.
-    fn get_thundr_viewport(
+    fn get_displayr_viewport(
         &self,
         parent: &th::Viewport,
         node: &DakotaId, // child viewport
@@ -205,7 +209,7 @@ impl<'a> RenderTransaction<'a> {
     /// its viewport.
     fn draw_node(
         &self,
-        thund: &mut th::Thundr,
+        display: &mut th::Display,
         viewport: &th::Viewport,
         node: &DakotaId,
         base: (i32, i32),
@@ -226,9 +230,9 @@ impl<'a> RenderTransaction<'a> {
             }
         }
 
-        let surf = self.get_thundr_surf_for_el(node, base)?;
+        let surf = self.get_displayr_surf_for_el(node, base)?;
 
-        thund.draw_surface(&surf)
+        display.draw_surface(&surf)
     }
 
     /// Recursively draw node and all of its children
@@ -236,17 +240,17 @@ impl<'a> RenderTransaction<'a> {
     /// This does not cross viewport boundaries
     fn draw_node_recurse(
         &self,
-        thund: &mut th::Thundr,
+        display: &mut th::Display,
         viewport: &th::Viewport,
         node: &DakotaId,
         base: (i32, i32),
     ) -> th::Result<()> {
-        // If this node is a viewport then update our thundr viewport
+        // If this node is a viewport then update our displayr viewport
         let new_th_viewport = match self.rt_viewports.get(node).is_some() {
             true => {
                 // Set Thundr's currently in use viewport
-                let th_viewport = self.get_thundr_viewport(viewport, node, base).unwrap();
-                thund.set_viewport(&th_viewport)?;
+                let th_viewport = self.get_displayr_viewport(viewport, node, base).unwrap();
+                display.set_viewport(&th_viewport)?;
 
                 Some(th_viewport)
             }
@@ -259,7 +263,7 @@ impl<'a> RenderTransaction<'a> {
         };
 
         // Start by drawing ourselves
-        self.draw_node(thund, new_viewport, node, base)?;
+        self.draw_node(display, new_viewport, node, base)?;
 
         let layout = self.rt_layout_nodes.get(node).unwrap();
 
@@ -274,12 +278,12 @@ impl<'a> RenderTransaction<'a> {
 
         // Now draw each of our children
         for child in layout.l_children.iter() {
-            self.draw_node_recurse(thund, new_viewport, child, new_base)?;
+            self.draw_node_recurse(display, new_viewport, child, new_base)?;
         }
 
         // If this node was a viewport then restore our old viewport
         if new_th_viewport.is_some() {
-            thund.set_viewport(viewport)?;
+            display.set_viewport(viewport)?;
         }
 
         Ok(())
@@ -288,13 +292,13 @@ impl<'a> RenderTransaction<'a> {
     /// Draw a scene using the provided renderer and transaction view.
     pub(crate) fn draw_surfacelists(
         &mut self,
-        thund: &mut th::Thundr,
+        display: &mut th::Display,
         root_viewport: &th::Viewport,
         root_node: DakotaId,
     ) -> th::Result<()> {
-        thund.begin_recording()?;
-        self.draw_node_recurse(thund, &root_viewport, &root_node, (0, 0))?;
-        thund.end_recording()
+        display.begin_recording()?;
+        self.draw_node_recurse(display, &root_viewport, &root_node, (0, 0))?;
+        display.end_recording()
     }
 }
 
@@ -308,7 +312,7 @@ impl Dakota {
 
         let mut trans = RenderTransaction {
             rt_resources: self.d_resources.snapshot(),
-            rt_resource_thundr_image: self.d_resource_thundr_image.snapshot(),
+            rt_resource_displayr_image: self.d_resource_thundr_image.snapshot(),
             rt_resource_color: self.d_resource_color.snapshot(),
             rt_fonts: self.d_fonts.snapshot(),
             rt_text_font: self.d_text_font.snapshot(),
@@ -317,7 +321,7 @@ impl Dakota {
             rt_viewports: self.d_viewports.snapshot(),
             rt_layout_nodes: self.d_layout_nodes.snapshot(),
         };
-        trans.draw_surfacelists(&mut self.d_thund, &root_viewport, root_node)?;
+        trans.draw_surfacelists(&mut self.d_display, &root_viewport, root_node)?;
         trans.commit();
 
         Ok(())

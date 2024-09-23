@@ -8,7 +8,8 @@ use ash::extensions::khr;
 use ash::vk;
 
 use crate::device::Device;
-use crate::{MappedImage, CreateInfo, Result as ThundrResult, SurfaceType, ThundrError};
+use crate::pipelines::*;
+use crate::*;
 
 use std::sync::Arc;
 
@@ -16,6 +17,55 @@ mod vkswapchain;
 use vkswapchain::VkSwapchain;
 mod headless;
 use headless::HeadlessSwapchain;
+
+/// Shader push constants
+///
+/// These will be updated when we record the per-viewport draw commands
+/// and will contain the scrolling model transformation of all content
+/// within a viewport.
+///
+/// This is also where we pass in the Surface's data.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct PushConstants {
+    pub width: u32,
+    pub height: u32,
+    /// The id of the image. This is the offset into the unbounded sampler array.
+    /// id that's the offset into the unbound sampler array
+    pub image_id: i32,
+    /// if we should use color instead of texturing
+    pub use_color: i32,
+    /// Opaque color
+    pub color: (f32, f32, f32, f32),
+    /// The complete dimensions of the window.
+    pub dims: Rect<i32>,
+}
+
+/// Recording parameters
+///
+/// Layers above this one will need to call recording
+/// operations. They need a private structure to pass
+/// to begin/end recording operations
+/// This is that structure.
+pub(crate) struct RecordParams {
+    /// our cached pushbuffer constants
+    pub(crate) push: PushConstants,
+}
+
+impl RecordParams {
+    pub fn new() -> Self {
+        Self {
+            push: PushConstants {
+                width: 0,
+                height: 0,
+                image_id: -1,
+                use_color: -1,
+                color: (0.0, 0.0, 0.0, 0.0),
+                dims: Rect::new(0, 0, 0, 0),
+            },
+        }
+    }
+}
 
 /// Shared state that subsystems consume. We need this
 /// since Display holds rendering objects, but also has
@@ -48,6 +98,8 @@ pub struct DisplayState {
     pub(crate) d_available_present_semas: Vec<vk::Semaphore>,
     /// processes things to be physically displayed
     pub(crate) d_present_queue: vk::Queue,
+    /// The cached graphics queue family index we prefer
+    pub(crate) d_graphics_queue_family: u32,
     /// Frame end semaphore
     pub(crate) d_frame_sema: vk::Semaphore,
 }
@@ -67,6 +119,11 @@ pub struct Display {
     d_swapchain: Box<dyn Swapchain>,
     /// State to share with Renderer
     pub(crate) d_state: DisplayState,
+    /// Application specific stuff that will be set up after
+    /// the original initialization
+    pub(crate) d_pipe: Box<dyn Pipeline>,
+    /// The current draw calls parameters
+    d_params: Option<RecordParams>,
 }
 
 /// Our Swapchain Backend
@@ -81,14 +138,14 @@ pub(crate) trait Swapchain {
     /// provide the surface PFN loader and the surface so
     /// that we can ensure the pdev/queue combination can
     /// present the surface
-    fn select_queue_family(&self) -> ThundrResult<u32>;
+    fn select_queue_family(&self) -> Result<u32>;
 
     /// Get the surface information
     ///
     /// These capabilities are used elsewhere to identify swapchain
     /// surface capabilities. Even if the swapchain doesn't actually
     /// use VkSurfaceKHR these will still be filled in.
-    fn get_surface_info(&self) -> ThundrResult<(vk::SurfaceCapabilitiesKHR, vk::SurfaceFormatKHR)>;
+    fn get_surface_info(&self) -> Result<(vk::SurfaceCapabilitiesKHR, vk::SurfaceFormatKHR)>;
 
     /// Recreate our swapchain.
     ///
@@ -96,13 +153,13 @@ pub(crate) trait Swapchain {
     /// the window is being resized and we have to regenerate accordingly.
     /// Keep in mind the Pipeline in Thundr will also have to be recreated
     /// separately.
-    fn recreate_swapchain(&mut self, dstate: &mut DisplayState) -> ThundrResult<()>;
+    fn recreate_swapchain(&mut self, dstate: &mut DisplayState) -> Result<()>;
 
     /// Get the Dots Per Inch for this display.
     ///
     /// For VK_KHR_display we will calculate it ourselves, and for
     /// SDL we will ask SDL to tell us it.
-    fn get_dpi(&self) -> ThundrResult<(i32, i32)>;
+    fn get_dpi(&self) -> Result<(i32, i32)>;
 
     /// Update self.current_image with the swapchain image to render to
     ///
@@ -110,22 +167,19 @@ pub(crate) trait Swapchain {
     /// TIMEOUT), then this will loop on calling `vkAcquireNextImageKHR` until
     /// it gets a valid image. This has to be done on AMD hw or else the TIMEOUT
     /// error will get passed up the callstack and fail.
-    fn get_next_swapchain_image(&mut self, dstate: &mut DisplayState) -> ThundrResult<()>;
+    fn get_next_swapchain_image(&mut self, dstate: &mut DisplayState) -> Result<()>;
 
     /// Present the current swapchain image to the screen.
     ///
     /// Finally we can actually flip the buffers and present
     /// this image.
-    fn present(&mut self, dstate: &DisplayState) -> ThundrResult<()>;
+    fn present(&mut self, dstate: &DisplayState) -> Result<()>;
 }
 
 impl Display {
     /// Figure out what the requested surface type is and call the appropriate
     /// swapchain backend new function.
-    fn initialize_swapchain(
-        info: &CreateInfo,
-        dev: Arc<Device>,
-    ) -> ThundrResult<Box<dyn Swapchain>> {
+    fn initialize_swapchain(info: &CreateInfo, dev: Arc<Device>) -> Result<Box<dyn Swapchain>> {
         let mut vkswap = false;
         let mut headless = true;
 
@@ -147,19 +201,10 @@ impl Display {
         return Err(ThundrError::NO_DISPLAY);
     }
 
-    /// Choose a queue family
-    ///
-    /// returns an index into the array of queue types.
-    /// provide the surface PFN loader and the surface so
-    /// that we can ensure the pdev/queue combination can
-    /// present the surface
-    pub(crate) fn select_queue_family(&self) -> ThundrResult<u32> {
-        self.d_swapchain.select_queue_family()
-    }
-
-    pub fn new(info: &CreateInfo, dev: Arc<Device>) -> ThundrResult<Display> {
+    pub fn new(info: &CreateInfo, dev: Arc<Device>) -> Result<Display> {
         unsafe {
             let swapchain = Self::initialize_swapchain(info, dev.clone())?;
+            let queue_family = swapchain.select_queue_family()?;
 
             // Ensure that there is a valid queue, validation layer checks for this
             let graphics_queue_family = swapchain.select_queue_family()?;
@@ -169,32 +214,42 @@ impl Display {
             let frame_sema = dev.dev.create_semaphore(&sema_create_info, None).unwrap();
 
             let (surface_caps, surface_format) = swapchain.get_surface_info()?;
+            let dstate = DisplayState {
+                d_surface_caps: surface_caps,
+                d_surface_format: surface_format,
+                d_resolution: vk::Extent2D {
+                    width: 0,
+                    height: 0,
+                },
+                d_views: Vec::with_capacity(0),
+                d_current_image: 0,
+                d_needs_present_sema: match info.surface_type {
+                    SurfaceType::Headless => false,
+                    _ => true,
+                },
+                d_present_semas: Vec::new(),
+                d_available_present_semas: Vec::new(),
+                d_present_queue: present_queue,
+                d_frame_sema: frame_sema,
+                d_graphics_queue_family: queue_family,
+                d_images: Vec::with_capacity(0),
+            };
+
+            // Create the pipeline(s) requested
+            // Record the type we are using so that we know which type to regenerate
+            // on window resizing
+            let pipe = Box::new(GeomPipeline::new(dev.clone(), &dstate)?);
 
             let mut ret = Self {
                 d_dev: dev,
                 d_swapchain: swapchain,
-                d_state: DisplayState {
-                    d_surface_caps: surface_caps,
-                    d_surface_format: surface_format,
-                    d_resolution: vk::Extent2D {
-                        width: 0,
-                        height: 0,
-                    },
-                    d_views: Vec::with_capacity(0),
-                    d_current_image: 0,
-                    d_needs_present_sema: match info.surface_type {
-                        SurfaceType::Headless => false,
-                        _ => true,
-                    },
-                    d_present_semas: Vec::new(),
-                    d_available_present_semas: Vec::new(),
-                    d_present_queue: present_queue,
-                    d_frame_sema: frame_sema,
-                    d_images: Vec::with_capacity(0),
-                },
+                d_state: dstate,
+                d_pipe: pipe,
+                d_params: None,
             };
 
-            ret.recreate_swapchain()?;
+            // Trigger the creation of our swapchain images and pipeline framebuffers
+            ret.handle_ood()?;
 
             Ok(ret)
         }
@@ -229,7 +284,7 @@ impl Display {
     /// the window is being resized and we have to regenerate accordingly.
     /// Keep in mind the Pipeline in Thundr will also have to be recreated
     /// separately.
-    pub fn recreate_swapchain(&mut self) -> ThundrResult<()> {
+    pub fn recreate_swapchain(&mut self) -> Result<()> {
         self.destroy_swapchain_resources();
 
         self.d_swapchain.recreate_swapchain(&mut self.d_state)?;
@@ -257,14 +312,44 @@ impl Display {
         Ok(())
     }
 
+    /// This is a candidate for an out of date error. We should
+    /// let the application know about this so it can recalculate anything
+    /// that depends on the window size, so we exit returning OOD.
+    ///
+    /// We have to destroy and recreate our pipeline along the way since
+    /// it depends on the swapchain.
+    pub fn handle_ood(&mut self) -> Result<()> {
+        self.recreate_swapchain()?;
+        self.d_pipe.handle_ood(&mut self.d_state);
+
+        Ok(())
+    }
+
+    /// Get the DRM device major/minor in use by this Display's Device
+    pub fn get_drm_dev(&self) -> (i64, i64) {
+        self.d_dev.get_drm_dev()
+    }
+
     /// Get the Dots Per Inch for this display.
     ///
     /// For VK_KHR_display we will calculate it ourselves, and for
     /// SDL we will ask SDL to tell us it.
-    pub fn get_dpi(&self) -> ThundrResult<(i32, i32)> {
+    pub fn get_dpi(&self) -> Result<(i32, i32)> {
         self.d_swapchain.get_dpi()
     }
 
+    /// Get the resolution of this display
+    ///
+    /// This returns the extent as used by Vulkan
+    pub fn get_resolution(&self) -> (u32, u32) {
+        (
+            self.d_state.d_resolution.width,
+            self.d_state.d_resolution.height,
+        )
+    }
+
+    /// Get a list of any extension names needed by the Vulkan
+    /// extensions in use by this Display.
     pub fn extension_names(info: &CreateInfo) -> Vec<*const i8> {
         match info.surface_type {
             SurfaceType::Headless => Vec::with_capacity(0),
@@ -290,15 +375,92 @@ impl Display {
     /// TIMEOUT), then this will loop on calling `vkAcquireNextImageKHR` until
     /// it gets a valid image. This has to be done on AMD hw or else the TIMEOUT
     /// error will get passed up the callstack and fail.
-    pub fn get_next_swapchain_image(&mut self) -> ThundrResult<()> {
+    pub fn get_next_swapchain_image(&mut self) -> Result<()> {
         self.d_swapchain.get_next_swapchain_image(&mut self.d_state)
+    }
+
+    /// Begin recording a frame
+    ///
+    /// This is first called when trying to draw a frame. It will set
+    /// up the command buffers and resources that Thundr will use while
+    /// recording draw commands.
+    pub fn begin_recording(&mut self) -> Result<()> {
+        if self.d_params.is_some() {
+            return Err(ThundrError::RECORDING_ALREADY_IN_PROGRESS);
+        }
+
+        // Before waiting for the latest frame, free the previous
+        // frame's release data
+        self.d_dev.flush_deletion_queue();
+
+        // Get our next swapchain image
+        match self.get_next_swapchain_image() {
+            Ok(()) => (),
+            Err(ThundrError::OUT_OF_DATE) => {
+                self.handle_ood()?;
+                return Err(ThundrError::OUT_OF_DATE);
+            }
+            Err(e) => return Err(e),
+        };
+
+        // Wait for the previous frame to finish, preventing us from having the
+        // CPU run ahead more than one frame.
+        //
+        // This throttling helps reduce latency, as we don't queue up more than
+        // one frame at a time. With this we get one frame (16ms) latency.
+        //
+        // TODO: pace our frames better to reduce latency futher?
+        self.d_dev.wait_for_latest_timeline();
+
+        // record rendering commands
+        let mut params = RecordParams::new();
+        let res = self.get_resolution();
+        params.push.width = res.0;
+        params.push.height = res.1;
+
+        self.d_pipe.begin_record(&self.d_state);
+        self.d_params = Some(params);
+
+        Ok(())
+    }
+
+    /// Set the viewport
+    ///
+    /// This restricts the draw operations to within the specified region
+    pub fn set_viewport(&mut self, viewport: &Viewport) -> Result<()> {
+        self.d_pipe.set_viewport(&self.d_state, viewport)
+    }
+
+    /// Draw a set of surfaces within a viewport
+    ///
+    /// This is the function for recording drawing of a set of surfaces. The surfaces
+    /// in the list will be rendered withing the region specified by viewport.
+    pub fn draw_surface(&mut self, surface: &Surface) -> Result<()> {
+        let params = self
+            .d_params
+            .as_mut()
+            .ok_or(ThundrError::RECORDING_NOT_IN_PROGRESS)?;
+
+        self.d_pipe.draw(params, &self.d_state, surface);
+
+        Ok(())
+    }
+
+    /// This finishes all recording operations and submits the work to the GPU.
+    ///
+    /// This should only be called after a proper begin_recording + draw_surfaces sequence.
+    pub fn end_recording(&mut self) -> Result<()> {
+        self.d_pipe.end_record(&self.d_state);
+        self.d_params = None;
+
+        Ok(())
     }
 
     /// Present the current swapchain image to the screen.
     ///
     /// Finally we can actually flip the buffers and present
     /// this image.
-    pub fn present(&mut self) -> ThundrResult<()> {
+    pub fn present(&mut self) -> Result<()> {
         self.d_swapchain.present(&self.d_state)
     }
 

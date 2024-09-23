@@ -15,8 +15,8 @@ use crate as th;
 /// different vendors may subltly round float values differently,
 /// causing a mismatch. Perceptualdiff compares the two images
 /// adjusting for perceivable errors, returning 0 if there are none.
-fn check_pixels(thund: &mut th::Thundr, filename: &str) {
-    thund.th_display.dump_framebuffer(filename);
+fn check_pixels(display: &mut th::Display, filename: &str) {
+    display.dump_framebuffer(filename);
     let goldfile = ["golds/", filename].join("");
 
     assert!(std::process::Command::new("perceptualdiff")
@@ -28,18 +28,21 @@ fn check_pixels(thund: &mut th::Thundr, filename: &str) {
 }
 
 /// Initialize our thundr test
-fn init_thundr() -> th::Thundr {
+fn init_thundr() -> (th::Thundr, th::Display) {
     let info = th::CreateInfo::builder()
         .surface_type(th::SurfaceType::Headless)
         .build();
 
-    th::Thundr::new(&info).unwrap()
+    let mut thund = th::Thundr::new(&info).unwrap();
+    let display = thund.get_display(&info).unwrap();
+
+    (thund, display)
 }
 
 #[test]
 fn basic_image() {
-    let mut thund = init_thundr();
-    let res = thund.get_resolution();
+    let (mut thund, mut display) = init_thundr();
+    let res = display.get_resolution();
     let viewport = th::Viewport::new(0, 0, res.0 as i32, res.1 as i32);
 
     // ------------ init an image -------------
@@ -60,21 +63,21 @@ fn basic_image() {
     let surf = th::Surface::new(th::Rect::new(0, 0, 16, 16), Some(image), None);
 
     // ------------ draw a frame -------------
-    thund.begin_recording().unwrap();
-    thund.set_viewport(&viewport).unwrap();
-    thund.draw_surface(&surf).unwrap();
-    thund.end_recording().unwrap();
+    display.begin_recording().unwrap();
+    display.set_viewport(&viewport).unwrap();
+    display.draw_surface(&surf).unwrap();
+    display.end_recording().unwrap();
 
-    thund.present().unwrap();
+    display.present().unwrap();
 
     // ------------ check output -------------
-    check_pixels(&mut thund, "basic_image.ppm");
+    check_pixels(&mut display, "basic_image.ppm");
 }
 
 #[test]
 fn basic_color() {
-    let mut thund = init_thundr();
-    let res = thund.get_resolution();
+    let (_thund, mut display) = init_thundr();
+    let res = display.get_resolution();
     let viewport = th::Viewport::new(0, 0, res.0 as i32, res.1 as i32);
 
     // Now create a 16x16 red square at position (32, 32)
@@ -85,26 +88,26 @@ fn basic_color() {
     );
 
     // ------------ draw a frame -------------
-    thund.begin_recording().unwrap();
-    thund.set_viewport(&viewport).unwrap();
-    thund.draw_surface(&surf).unwrap();
-    thund.end_recording().unwrap();
+    display.begin_recording().unwrap();
+    display.set_viewport(&viewport).unwrap();
+    display.draw_surface(&surf).unwrap();
+    display.end_recording().unwrap();
 
-    thund.present().unwrap();
+    display.present().unwrap();
 
     // ------------ check output -------------
-    check_pixels(&mut thund, "basic_color.ppm");
+    check_pixels(&mut display, "basic_color.ppm");
 }
 
 #[test]
 fn many_colors() {
-    let mut thund = init_thundr();
-    let res = thund.get_resolution();
+    let (_thundr, mut display) = init_thundr();
+    let res = display.get_resolution();
     let viewport = th::Viewport::new(0, 0, res.0 as i32, res.1 as i32);
 
     // ------------ draw a frame -------------
-    thund.begin_recording().unwrap();
-    thund.set_viewport(&viewport).unwrap();
+    display.begin_recording().unwrap();
+    display.set_viewport(&viewport).unwrap();
 
     // Draw 100 overlapping colored squares
     for i in 0..10 {
@@ -119,21 +122,21 @@ fn many_colors() {
                     1.0,
                 )),
             );
-            thund.draw_surface(&surf).unwrap();
+            display.draw_surface(&surf).unwrap();
         }
     }
 
-    thund.end_recording().unwrap();
-    thund.present().unwrap();
+    display.end_recording().unwrap();
+    display.present().unwrap();
 
     // ------------ check output -------------
-    check_pixels(&mut thund, "many_colors.ppm");
+    check_pixels(&mut display, "many_colors.ppm");
 }
 
 #[test]
 fn redraw() {
-    let mut thund = init_thundr();
-    let res = thund.get_resolution();
+    let (mut thund, mut display) = init_thundr();
+    let res = display.get_resolution();
     let viewport = th::Viewport::new(0, 0, res.0 as i32, res.1 as i32);
 
     // ------------ init an image -------------
@@ -152,23 +155,23 @@ fn redraw() {
         .unwrap();
 
     // ------------ draw a frame -------------
-    thund.begin_recording().unwrap();
-    thund.set_viewport(&viewport).unwrap();
+    display.begin_recording().unwrap();
+    display.set_viewport(&viewport).unwrap();
     let surf = th::Surface::new(th::Rect::new(0, 0, 16, 16), Some(image.clone()), None);
-    thund.draw_surface(&surf).unwrap();
-    thund.end_recording().unwrap();
+    display.draw_surface(&surf).unwrap();
+    display.end_recording().unwrap();
 
-    thund.present().unwrap();
+    display.present().unwrap();
 
     // ------------ draw a second frame -------------
-    thund.begin_recording().unwrap();
-    thund.set_viewport(&viewport).unwrap();
+    display.begin_recording().unwrap();
+    display.set_viewport(&viewport).unwrap();
     let surf = th::Surface::new(th::Rect::new(32, 32, 16, 16), Some(image), None);
-    thund.draw_surface(&surf).unwrap();
-    thund.end_recording().unwrap();
+    display.draw_surface(&surf).unwrap();
+    display.end_recording().unwrap();
 
-    thund.present().unwrap();
+    display.present().unwrap();
 
     // ------------ check output -------------
-    check_pixels(&mut thund, "redraw.ppm");
+    check_pixels(&mut display, "redraw.ppm");
 }

@@ -84,6 +84,8 @@ pub struct Dakota {
     // It might reference the window inside plat, and will segfault if
     // dropped after it.
     d_thund: th::Thundr,
+    /// Our thundr output object
+    d_display: th::Display,
     /// The current window system backend.
     ///
     /// This may be SDL2 for windowed systems, or direct2display. This handles platform-specific
@@ -170,18 +172,21 @@ macro_rules! create_component_and_table {
 
 impl Dakota {
     /// Helper for initializing Thundr for a given platform.
-    fn init_thundr(plat: &mut Box<dyn Platform>) -> Result<(th::Thundr, (i32, i32))> {
+    fn init_thundr(plat: &mut Box<dyn Platform>) -> Result<(th::Thundr, th::Display, (i32, i32))> {
         let info = th::CreateInfo::builder()
             .surface_type(plat.get_th_surf_type()?)
             .build();
 
-        let thundr = th::Thundr::new(&info).context("Failed to initialize Thundr")?;
+        let mut thundr = th::Thundr::new(&info).context("Failed to initialize Thundr")?;
+        let display = thundr
+            .get_display(&info)
+            .context("Failed to get Thundr Display")?;
 
-        let dpi = thundr
+        let dpi = display
             .get_dpi()
             .context("Failed to get DPI during platform init")?;
 
-        Ok((thundr, dpi))
+        Ok((thundr, display, dpi))
     }
 
     /// Try initializing the different plaform backends until we find one that works
@@ -190,7 +195,7 @@ impl Dakota {
     /// get the DPI of the display. These three are tested since they all may fail
     /// given different configurations. DPI fails if SDL2 tries to initialize us on
     /// a physical display.
-    fn initialize_platform() -> Result<(Box<dyn Platform>, th::Thundr, (i32, i32))> {
+    fn initialize_platform() -> Result<(Box<dyn Platform>, th::Thundr, th::Display, (i32, i32))> {
         if std::env::var("DAKOTA_HEADLESS_BACKEND").is_err() {
             // If we are not forcing headless mode, start by attempting sdl
             #[cfg(feature = "sdl")]
@@ -199,7 +204,7 @@ impl Dakota {
                     Ok(sdl) => {
                         let mut sdl: Box<dyn Platform> = Box::new(sdl);
                         match Self::init_thundr(&mut sdl) {
-                            Ok((thundr, dpi)) => return Ok((sdl, thundr, dpi)),
+                            Ok((thundr, th_disp, dpi)) => return Ok((sdl, thundr, th_disp, dpi)),
                             Err(e) => log::error!("Failed to create SDL2 backend: {:?}", e),
                         }
                     }
@@ -208,19 +213,19 @@ impl Dakota {
             }
 
             #[cfg(feature = "direct2display")]
-            if let Ok(display) = platform::DisplayPlat::new() {
-                let mut display: Box<dyn Platform> = Box::new(display);
-                match Self::init_thundr(&mut display) {
-                    Ok((thundr, dpi)) => return Ok((display, thundr, dpi)),
+            if let Ok(d2d) = platform::DisplayPlat::new() {
+                let mut platform: Box<dyn Platform> = Box::new(d2d);
+                match Self::init_thundr(&mut platform) {
+                    Ok((thundr, th_disp, dpi)) => return Ok((platform, thundr, th_disp, dpi)),
                     Err(e) => log::error!("Failed to create Direct2Display backend: {:?}", e),
                 }
             }
         }
 
         let headless = platform::HeadlessPlat::new();
-        let mut display: Box<dyn Platform> = Box::new(headless);
-        match Self::init_thundr(&mut display) {
-            Ok((thundr, dpi)) => return Ok((display, thundr, dpi)),
+        let mut platform: Box<dyn Platform> = Box::new(headless);
+        match Self::init_thundr(&mut platform) {
+            Ok((thundr, th_disp, dpi)) => return Ok((platform, thundr, th_disp, dpi)),
             Err(e) => log::error!("Failed to create Headless backend: {:?}", e),
         }
 
@@ -232,7 +237,7 @@ impl Dakota {
     /// This will initialize the window system platform layer, create a thundr
     /// instance from it, and wrap it in Dakota.
     pub fn new() -> Result<Self> {
-        let (plat, thundr, _dpi) = Self::initialize_platform()?;
+        let (plat, thundr, display, _dpi) = Self::initialize_platform()?;
 
         let mut layout_ecs = ll::Instance::new();
         create_component_and_table!(layout_ecs, LayoutNode, layout_table);
@@ -261,6 +266,7 @@ impl Dakota {
         let mut ret = Self {
             d_plat: plat,
             d_thund: thundr,
+            d_display: display,
             d_ecs_inst: layout_ecs,
             d_layout_nodes: layout_table,
             d_node_types: types_table,
@@ -563,12 +569,12 @@ impl Dakota {
 
     /// Get the current size of the drawing region for this display
     pub fn get_resolution(&self) -> (u32, u32) {
-        self.d_thund.get_resolution()
+        self.d_display.get_resolution()
     }
 
     /// Get the major, minor of the DRM device currently in use
     pub fn get_drm_dev(&self) -> (i64, i64) {
-        self.d_thund.get_drm_dev()
+        self.d_display.get_drm_dev()
     }
 
     /// Get the total internal size for this layout node. This is used to calculate
@@ -773,7 +779,7 @@ impl Dakota {
                 if let Some(size) = dom.window.size.as_ref() {
                     self.d_window_dims = Some((size.0, size.1));
                 } else {
-                    self.d_window_dims = Some(self.d_thund.get_resolution());
+                    self.d_window_dims = Some(self.d_display.get_resolution());
                 }
 
                 // we need to update the window dimensions if possible,
@@ -821,7 +827,7 @@ impl Dakota {
     /// window's size has changed. This will requery the window size and
     /// refresh the layout tree.
     fn handle_ood(&mut self, dom_id: &DakotaId) -> Result<()> {
-        let new_res = self.d_thund.get_resolution();
+        let new_res = self.d_display.get_resolution();
         let dom = self
             .d_dom
             .get(dom_id)
@@ -1031,7 +1037,7 @@ impl Dakota {
                 // can expect it will handle OOD itself. But here we have
                 // OUT_OF_DATE returned from our SDL2 backend, so we need
                 // to tell Thundr to do OOD itself
-                self.d_thund.handle_ood()?;
+                self.d_display.handle_ood()?;
                 self.handle_ood(dom)?;
                 return Err(th::ThundrError::OUT_OF_DATE.into());
             }
@@ -1077,7 +1083,7 @@ impl Dakota {
                 }
                 Err(e) => return Err(Error::from(e).context("Thundr: drawing failed with error")),
             };
-            match self.d_thund.present() {
+            match self.d_display.present() {
                 Ok(()) => {}
                 Err(th::ThundrError::OUT_OF_DATE) => {
                     self.handle_ood(dom)?;
@@ -1109,6 +1115,6 @@ impl Dakota {
     /// This dumps the image contents to a simple PPM file, used for automated testing
     #[allow(dead_code)]
     pub fn dump_framebuffer(&mut self, filename: &str) -> MappedImage {
-        self.d_thund.dump_framebuffer(filename)
+        self.d_display.dump_framebuffer(filename)
     }
 }

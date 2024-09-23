@@ -15,9 +15,9 @@ use std::sync::Arc;
 use ash::{util, vk};
 
 use super::Pipeline;
-use crate::display::{Display, DisplayState};
+use crate::display::DisplayState;
+use crate::display::{PushConstants, RecordParams};
 use crate::{Device, Result, Surface, Viewport};
-use crate::{PushConstants, RecordParams};
 use utils::{log, region::Rect};
 
 // This is the reference data for a normal quad
@@ -432,8 +432,7 @@ impl GeomPipeline {
     /// shaders, geometry, and the like.
     ///
     /// This fills in the GeomPipeline struct in the Renderer
-    pub fn new(dev: Arc<Device>, display: &Display) -> Result<GeomPipeline> {
-        let dstate = &display.d_state;
+    pub fn new(dev: Arc<Device>, dstate: &DisplayState) -> Result<GeomPipeline> {
         unsafe {
             let pass = GeomPipeline::create_pass(dstate.d_surface_format.format, &dev);
 
@@ -505,7 +504,7 @@ impl GeomPipeline {
             // Allocate buffers for all geometry to be used
             let (vbuf, vmem, ibuf, imem) = GeomPipeline::create_default_geom_bufs(&dev);
 
-            let graphics_queue_family = display.select_queue_family()?;
+            let graphics_queue_family = dstate.d_graphics_queue_family;
             dev.register_graphics_queue_family(graphics_queue_family);
 
             let pool = dev.create_command_pool(graphics_queue_family);

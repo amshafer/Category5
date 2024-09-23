@@ -32,7 +32,8 @@
 //!     .build();
 //!
 //! let mut thund = th::Thundr::new(&info).unwrap();
-//! let res = thund.get_resolution();
+//! let mut display = thund.get_display(&info).unwrap();
+//! let res = display.get_resolution();
 //!
 //! let pixels: Vec<u8> = std::iter::repeat(128).take(4 * 64 * 64).collect();
 //! // Create an image from our MemImage
@@ -47,22 +48,22 @@
 //!     .unwrap();
 //!
 //! // Begin recording drawing commands
-//! thund.begin_recording().unwrap();
+//! display.begin_recording().unwrap();
 //!
 //! // Set the current drawing viewport. Drawing operations will take place
 //! // within this region.
 //! let viewport = th::Viewport::new(0, 0, res.0 as i32, res.1 as i32);
-//! thund.set_viewport(&viewport).unwrap();
+//! display.set_viewport(&viewport).unwrap();
 //!
 //! // Draw a 16x16 surface at position (0, 0) referencing our image
 //! let surf = th::Surface::new(th::Rect::new(0, 0, 16, 16), Some(image), None);
-//! thund.draw_surface(&surf).unwrap();
+//! display.draw_surface(&surf).unwrap();
 //!
 //! // End recording this frame
-//! thund.end_recording().unwrap();
+//! display.end_recording().unwrap();
 //!
 //! // present the frame
-//! thund.present().unwrap();
+//! display.present().unwrap();
 //! ```
 //! ## Requirements
 //!
@@ -105,7 +106,7 @@ pub use self::image::{Dmabuf, DmabufPlane};
 pub use damage::Damage;
 pub(crate) use deletion_queue::DeletionQueue;
 pub use device::Device;
-use display::Display;
+pub use display::Display;
 use instance::Instance;
 pub use surface::Surface;
 
@@ -122,7 +123,6 @@ extern crate wayland_client as wc;
 
 #[macro_use]
 extern crate memoffset;
-use pipelines::*;
 
 extern crate thiserror;
 use thiserror::Error;
@@ -179,69 +179,9 @@ pub struct Thundr {
     th_inst: Arc<Instance>,
     /// Our primary device
     th_dev: Arc<Device>,
-    /// vk_khr_display and vk_khr_surface wrapper.
-    th_display: Display,
-
-    /// Application specific stuff that will be set up after
-    /// the original initialization
-    pub(crate) _th_pipe_type: PipelineType,
-    pub(crate) th_pipe: Box<dyn Pipeline>,
-
-    /// The current draw calls parameters
-    th_params: Option<RecordParams>,
-
     /// We keep a list of all the images allocated by this context
     /// so that Pipeline::draw doesn't have to dedup the surfacelist's images
     pub th_image_ecs: ll::Instance,
-}
-
-/// Recording parameters
-///
-/// Layers above this one will need to call recording
-/// operations. They need a private structure to pass
-/// to begin/end recording operations
-/// This is that structure.
-pub(crate) struct RecordParams {
-    /// our cached pushbuffer constants
-    pub(crate) push: PushConstants,
-}
-
-impl RecordParams {
-    pub fn new() -> Self {
-        Self {
-            push: PushConstants {
-                width: 0,
-                height: 0,
-                image_id: -1,
-                use_color: -1,
-                color: (0.0, 0.0, 0.0, 0.0),
-                dims: Rect::new(0, 0, 0, 0),
-            },
-        }
-    }
-}
-
-/// Shader push constants
-///
-/// These will be updated when we record the per-viewport draw commands
-/// and will contain the scrolling model transformation of all content
-/// within a viewport.
-///
-/// This is also where we pass in the Surface's data.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct PushConstants {
-    pub width: u32,
-    pub height: u32,
-    /// The id of the image. This is the offset into the unbounded sampler array.
-    /// id that's the offset into the unbound sampler array
-    pub image_id: i32,
-    /// if we should use color instead of texturing
-    pub use_color: i32,
-    /// Opaque color
-    pub color: (f32, f32, f32, f32),
-    /// The complete dimensions of the window.
-    pub dims: Rect<i32>,
 }
 
 /// A region to display to
@@ -383,7 +323,6 @@ pub struct MappedImage {
     pub mi_data: Vec<u8>,
 }
 
-
 // This is the public facing thundr api. Don't change it
 impl Thundr {
     // TODO: make get_available_params and add customization
@@ -394,42 +333,20 @@ impl Thundr {
         let inst = Arc::new(Instance::new(&info));
         let dev = Arc::new(Device::new(inst.clone(), &mut img_ecs, info)?);
 
-        // Our display is in charge of choosing a medium to draw on,
-        // and will create a surface on that medium
-        let display = Display::new(info, dev.clone())?;
-
-        // Create the pipeline(s) requested
-        // Record the type we are using so that we know which type to regenerate
-        // on window resizing
-        let (pipe, ty): (Box<dyn Pipeline>, PipelineType) = (
-            Box::new(GeomPipeline::new(dev.clone(), &display)?),
-            PipelineType::GEOMETRIC,
-        );
-
         Ok(Thundr {
             th_inst: inst,
             th_dev: dev,
-            th_display: display,
-            _th_pipe_type: ty,
-            th_pipe: pipe,
-            th_params: None,
             th_image_ecs: img_ecs,
         })
     }
 
-    /// Get the Dots Per Inch for this display.
+    /// Get a display object to draw with
     ///
-    /// For VK_KHR_display we will calculate it ourselves, and for
-    /// SDL we will ask SDL to tell us it.
-    pub fn get_dpi(&self) -> Result<(i32, i32)> {
-        self.th_display.get_dpi()
-    }
-
-    pub fn get_resolution(&self) -> (u32, u32) {
-        (
-            self.th_display.d_state.d_resolution.width,
-            self.th_display.d_state.d_resolution.height,
-        )
+    /// Display objects represent a particular output, either a window in a desktop
+    /// system or a physical display. Display abstracts away the swapchain platform
+    /// and holds the drawing commands.
+    pub fn get_display(&mut self, info: &CreateInfo) -> Result<Display> {
+        Display::new(info, self.th_dev.clone())
     }
 
     /// Update an existing image from a shm buffer
@@ -445,113 +362,5 @@ impl Thundr {
     ) -> Result<()> {
         self.th_dev
             .update_image_from_bits(image, data, width, height, stride, damage, release)
-    }
-
-    /// This is a candidate for an out of date error. We should
-    /// let the application know about this so it can recalculate anything
-    /// that depends on the window size, so we exit returning OOD.
-    ///
-    /// We have to destroy and recreate our pipeline along the way since
-    /// it depends on the swapchain.
-    pub fn handle_ood(&mut self) -> Result<()> {
-        self.th_display.recreate_swapchain()?;
-        self.th_pipe.handle_ood(&mut self.th_display.d_state);
-
-        Ok(())
-    }
-
-    pub fn get_drm_dev(&self) -> (i64, i64) {
-        self.th_dev.get_drm_dev()
-    }
-
-    /// Begin recording a frame
-    ///
-    /// This is first called when trying to draw a frame. It will set
-    /// up the command buffers and resources that Thundr will use while
-    /// recording draw commands.
-    pub fn begin_recording(&mut self) -> Result<()> {
-        if self.th_params.is_some() {
-            return Err(ThundrError::RECORDING_ALREADY_IN_PROGRESS);
-        }
-
-        // Before waiting for the latest frame, free the previous
-        // frame's release data
-        self.th_dev.flush_deletion_queue();
-
-        // Get our next swapchain image
-        match self.th_display.get_next_swapchain_image() {
-            Ok(()) => (),
-            Err(ThundrError::OUT_OF_DATE) => {
-                self.handle_ood()?;
-                return Err(ThundrError::OUT_OF_DATE);
-            }
-            Err(e) => return Err(e),
-        };
-
-        // Wait for the previous frame to finish, preventing us from having the
-        // CPU run ahead more than one frame.
-        //
-        // This throttling helps reduce latency, as we don't queue up more than
-        // one frame at a time. With this we get one frame (16ms) latency.
-        //
-        // TODO: pace our frames better to reduce latency futher?
-        self.th_dev.wait_for_latest_timeline();
-
-        // record rendering commands
-        let mut params = RecordParams::new();
-        let res = self.get_resolution();
-        params.push.width = res.0;
-        params.push.height = res.1;
-
-        self.th_pipe.begin_record(&self.th_display.d_state);
-        self.th_params = Some(params);
-
-        Ok(())
-    }
-
-    /// Set the viewport
-    ///
-    /// This restricts the draw operations to within the specified region
-    pub fn set_viewport(&mut self, viewport: &Viewport) -> Result<()> {
-        self.th_pipe
-            .set_viewport(&self.th_display.d_state, viewport)
-    }
-
-    /// Draw a set of surfaces within a viewport
-    ///
-    /// This is the function for recording drawing of a set of surfaces. The surfaces
-    /// in the list will be rendered withing the region specified by viewport.
-    pub fn draw_surface(&mut self, surface: &Surface) -> Result<()> {
-        let params = self
-            .th_params
-            .as_mut()
-            .ok_or(ThundrError::RECORDING_NOT_IN_PROGRESS)?;
-
-        self.th_pipe.draw(params, &self.th_display.d_state, surface);
-
-        Ok(())
-    }
-
-    /// This finishes all recording operations and submits the work to the GPU.
-    ///
-    /// This should only be called after a proper begin_recording + draw_surfaces sequence.
-    pub fn end_recording(&mut self) -> Result<()> {
-        self.th_pipe.end_record(&self.th_display.d_state);
-        self.th_params = None;
-
-        Ok(())
-    }
-
-    // present
-    pub fn present(&mut self) -> Result<()> {
-        self.th_display.present()
-    }
-
-    /// Dump the current swapchain image to a file
-    ///
-    /// This dumps the image contents to a simple PPM file, used for automated testing
-    #[allow(dead_code)]
-    pub fn dump_framebuffer(&mut self, filename: &str) -> MappedImage {
-        self.th_display.dump_framebuffer(filename)
     }
 }
