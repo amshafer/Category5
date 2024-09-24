@@ -1083,14 +1083,6 @@ impl Dakota {
                 }
                 Err(e) => return Err(Error::from(e).context("Thundr: drawing failed with error")),
             };
-            match self.d_display.present() {
-                Ok(()) => {}
-                Err(th::ThundrError::OUT_OF_DATE) => {
-                    self.handle_ood(dom)?;
-                    return Err(th::ThundrError::OUT_OF_DATE.into());
-                }
-                Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
-            };
             self.d_needs_redraw = false;
 
             // Notify the app that we just drew a frame and it should prepare the next one

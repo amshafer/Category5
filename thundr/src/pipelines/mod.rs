@@ -16,7 +16,7 @@ pub mod geometric;
 
 pub use geometric::GeomPipeline;
 
-use crate::display::{DisplayState, RecordParams};
+use crate::display::{frame::RecordParams, DisplayState};
 use crate::{Result, Surface, Viewport};
 
 // The pipeline trait is essentially a mini-backend for the

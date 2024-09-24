@@ -284,12 +284,20 @@ impl Device {
 
             // If the sizes match then we can update according to the damage provided
             if width == resolution.width && height == resolution.height {
-                // Get our vk image here, we can copy it since we know we are in
-                // the Renderer Mutex, so nobody else should be updating this entry
-                let vkimage = self.d_image_vk.get_mut(&imgvk_id).unwrap().iv_image;
+                // Get our vk image here, we can copy it since we know we are holding
+                // the vk_image mutex mutably, so no other rendering is currently taking
+                // place. We then wait for the latest timeline point to ensure there is
+                // no pending work.
+                let vk_image = self.d_image_vk.get_mut(&imgvk_id).unwrap();
+                self.wait_for_latest_timeline();
 
                 return self.update_image_contents_from_damaged_data(
-                    vkimage, data, width, height, stride, damage,
+                    vk_image.iv_image,
+                    data,
+                    width,
+                    height,
+                    stride,
+                    damage,
                 );
             }
 
@@ -302,19 +310,25 @@ impl Device {
 
             let (image, view, img_mem) = self.alloc_bgra8_image(&new_size);
             let _old_release = {
-                let mut image_vk = self.d_image_vk.get_mut(&imgvk_id).unwrap();
-                image_vk.clear();
+                let old_image_vk = self.d_image_vk.take(&imgvk_id).unwrap();
 
-                image_vk.iv_image = image;
-                image_vk.iv_is_dmabuf = false;
-                image_vk.iv_image_view = view;
-                image_vk.iv_image_mem = img_mem;
-                image_vk.iv_image_resolution = new_size;
+                // Update our cached resolution and create a new ImageVK
+                self.d_image_vk.set(
+                    &imgvk_id,
+                    Arc::new(ImageVk {
+                        iv_dev: old_image_vk.iv_dev.clone(),
+                        iv_image: image,
+                        iv_is_dmabuf: false,
+                        iv_image_view: view,
+                        iv_image_mem: img_mem,
+                        iv_image_resolution: new_size,
+                        iv_release_info: release,
+                        iv_desc: self.create_new_image_descriptor(view),
+                    }),
+                );
                 image_internal.i_resolution = new_size;
-                let ret = image_vk.iv_release_info.take();
-                image_vk.iv_release_info = release;
-                image_vk.iv_desc = self.create_new_image_descriptor(view);
-                ret
+
+                old_image_vk
             };
 
             self.update_image_from_data(image, data, width, height, stride)?;
@@ -684,7 +698,7 @@ impl Thundr {
     ) -> Result<Image> {
         let descriptor = self.th_dev.create_new_image_descriptor(view);
 
-        let image_vk = ImageVk {
+        let image_vk = Arc::new(ImageVk {
             iv_dev: self.th_dev.clone(),
             iv_is_dmabuf: is_dmabuf,
             iv_image: image,
@@ -693,7 +707,7 @@ impl Thundr {
             iv_image_resolution: *res,
             iv_release_info: release,
             iv_desc: descriptor,
-        };
+        });
 
         let internal = ImageInternal {
             i_id: self.th_image_ecs.add_entity(),

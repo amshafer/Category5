@@ -63,12 +63,12 @@ fn basic_image() {
     let surf = th::Surface::new(th::Rect::new(0, 0, 16, 16), Some(image), None);
 
     // ------------ draw a frame -------------
-    display.begin_recording().unwrap();
-    display.set_viewport(&viewport).unwrap();
-    display.draw_surface(&surf).unwrap();
-    display.end_recording().unwrap();
-
-    display.present().unwrap();
+    {
+        let mut frame = display.acquire_next_frame().unwrap();
+        frame.set_viewport(&viewport).unwrap();
+        frame.draw_surface(&surf).unwrap();
+        frame.present().unwrap();
+    }
 
     // ------------ check output -------------
     check_pixels(&mut display, "basic_image.ppm");
@@ -88,12 +88,12 @@ fn basic_color() {
     );
 
     // ------------ draw a frame -------------
-    display.begin_recording().unwrap();
-    display.set_viewport(&viewport).unwrap();
-    display.draw_surface(&surf).unwrap();
-    display.end_recording().unwrap();
-
-    display.present().unwrap();
+    {
+        let mut frame = display.acquire_next_frame().unwrap();
+        frame.set_viewport(&viewport).unwrap();
+        frame.draw_surface(&surf).unwrap();
+        frame.present().unwrap();
+    }
 
     // ------------ check output -------------
     check_pixels(&mut display, "basic_color.ppm");
@@ -106,28 +106,29 @@ fn many_colors() {
     let viewport = th::Viewport::new(0, 0, res.0 as i32, res.1 as i32);
 
     // ------------ draw a frame -------------
-    display.begin_recording().unwrap();
-    display.set_viewport(&viewport).unwrap();
+    {
+        let mut frame = display.acquire_next_frame().unwrap();
+        frame.set_viewport(&viewport).unwrap();
 
-    // Draw 100 overlapping colored squares
-    for i in 0..10 {
-        for j in 0..10 {
-            let surf = th::Surface::new(
-                th::Rect::new(128 + i * 20, 128 + j * 20, 16, 16),
-                None,
-                Some((
-                    j as f32 / 10.0,
-                    0.5 + (i as f32 * 0.02),
-                    0.1 + (j as f32 * 0.03),
-                    1.0,
-                )),
-            );
-            display.draw_surface(&surf).unwrap();
+        // Draw 100 overlapping colored squares
+        for i in 0..10 {
+            for j in 0..10 {
+                let surf = th::Surface::new(
+                    th::Rect::new(128 + i * 20, 128 + j * 20, 16, 16),
+                    None,
+                    Some((
+                        j as f32 / 10.0,
+                        0.5 + (i as f32 * 0.02),
+                        0.1 + (j as f32 * 0.03),
+                        1.0,
+                    )),
+                );
+                frame.draw_surface(&surf).unwrap();
+            }
         }
-    }
 
-    display.end_recording().unwrap();
-    display.present().unwrap();
+        frame.present().unwrap();
+    }
 
     // ------------ check output -------------
     check_pixels(&mut display, "many_colors.ppm");
@@ -155,22 +156,24 @@ fn redraw() {
         .unwrap();
 
     // ------------ draw a frame -------------
-    display.begin_recording().unwrap();
-    display.set_viewport(&viewport).unwrap();
-    let surf = th::Surface::new(th::Rect::new(0, 0, 16, 16), Some(image.clone()), None);
-    display.draw_surface(&surf).unwrap();
-    display.end_recording().unwrap();
-
-    display.present().unwrap();
+    {
+        let mut frame = display.acquire_next_frame().unwrap();
+        frame.set_viewport(&viewport).unwrap();
+        let surf = th::Surface::new(th::Rect::new(0, 0, 16, 16), Some(image.clone()), None);
+        frame.draw_surface(&surf).unwrap();
+        frame.present().unwrap();
+    }
 
     // ------------ draw a second frame -------------
-    display.begin_recording().unwrap();
-    display.set_viewport(&viewport).unwrap();
-    let surf = th::Surface::new(th::Rect::new(32, 32, 16, 16), Some(image), None);
-    display.draw_surface(&surf).unwrap();
-    display.end_recording().unwrap();
-
-    display.present().unwrap();
+    {
+        let mut frame = display.acquire_next_frame().unwrap();
+        frame.set_viewport(&viewport).unwrap();
+        // have to clone image here so it doesn't try to free itself while we are in a
+        // FrameRenderer cycle
+        let surf = th::Surface::new(th::Rect::new(32, 32, 16, 16), Some(image.clone()), None);
+        frame.draw_surface(&surf).unwrap();
+        frame.present().unwrap();
+    }
 
     // ------------ check output -------------
     check_pixels(&mut display, "redraw.ppm");

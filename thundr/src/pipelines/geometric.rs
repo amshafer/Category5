@@ -15,8 +15,8 @@ use std::sync::Arc;
 use ash::{util, vk};
 
 use super::Pipeline;
+use crate::display::frame::{PushConstants, RecordParams};
 use crate::display::DisplayState;
-use crate::display::{PushConstants, RecordParams};
 use crate::{Device, Result, Surface, Viewport};
 use utils::{log, region::Rect};
 
@@ -242,9 +242,8 @@ impl Pipeline for GeomPipeline {
         let image_desc = match surface.s_image.as_ref() {
             Some(img) => {
                 let id = img.get_id();
-                let imagevk = self
-                    .g_dev
-                    .d_image_vk
+                let imagevk = params
+                    .image_vk
                     .get(&id)
                     .expect("Image does not have ImageVK");
 
@@ -322,9 +321,11 @@ impl Pipeline for GeomPipeline {
                 .update_memory(self.uniform_buffers_memory, 0, &[consts]);
 
             self.framebuffers = GeomPipeline::create_framebuffers(&self.g_dev, self.pass, dstate);
-            self.g_dev
-                .dev
-                .free_command_buffers(self.g_pool, self.g_cbufs.as_slice());
+            if self.g_cbufs.len() > 0 {
+                self.g_dev
+                    .dev
+                    .free_command_buffers(self.g_pool, self.g_cbufs.as_slice());
+            }
             self.g_cbufs.clear();
 
             self.g_cbufs = self
@@ -478,8 +479,6 @@ impl GeomPipeline {
             let pipeline =
                 GeomPipeline::create_pipeline(dstate, &dev, layout, pass, &*shader_stages);
 
-            let framebuffers = GeomPipeline::create_framebuffers(&dev, pass, dstate);
-
             // Allocate a pool only for the ubo descriptors
             let g_desc_pool = Self::create_descriptor_pool(&dev);
             let layouts = [ubo_layout];
@@ -508,7 +507,6 @@ impl GeomPipeline {
             dev.register_graphics_queue_family(graphics_queue_family);
 
             let pool = dev.create_command_pool(graphics_queue_family);
-            let buffers = dev.create_command_buffers(pool, dstate.d_views.len() as u32);
 
             // The app context contains the scene specific data
             let mut ctx = GeomPipeline {
@@ -517,11 +515,11 @@ impl GeomPipeline {
                 pipeline: pipeline,
                 pipeline_layout: layout,
                 g_desc_layout: ubo_layout,
-                framebuffers: framebuffers,
+                framebuffers: Vec::with_capacity(0),
                 uniform_buffer: buf,
                 uniform_buffers_memory: mem,
                 g_pool: pool,
-                g_cbufs: buffers,
+                g_cbufs: Vec::with_capacity(0),
                 g_desc_pool: g_desc_pool,
                 g_desc: ubo,
                 shader_modules: shader_stages.iter().map(|info| info.module).collect(),

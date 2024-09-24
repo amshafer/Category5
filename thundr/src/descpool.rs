@@ -18,6 +18,7 @@ static POOL_SIZE: u32 = 4;
 ///
 /// This tracks the lifetime of one texture descriptor. When this
 /// is destroyed the descriptor will be freed and returned to the pool.
+#[derive(Clone)]
 pub struct Descriptor {
     /// The owning pool
     d_pool: Arc<Mutex<DescSingleVKPool>>,

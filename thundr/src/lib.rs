@@ -48,22 +48,19 @@
 //!     .unwrap();
 //!
 //! // Begin recording drawing commands
-//! display.begin_recording().unwrap();
+//! let mut frame = display.acquire_next_frame().unwrap();
 //!
 //! // Set the current drawing viewport. Drawing operations will take place
 //! // within this region.
 //! let viewport = th::Viewport::new(0, 0, res.0 as i32, res.1 as i32);
-//! display.set_viewport(&viewport).unwrap();
+//! frame.set_viewport(&viewport).unwrap();
 //!
 //! // Draw a 16x16 surface at position (0, 0) referencing our image
-//! let surf = th::Surface::new(th::Rect::new(0, 0, 16, 16), Some(image), None);
-//! display.draw_surface(&surf).unwrap();
-//!
-//! // End recording this frame
-//! display.end_recording().unwrap();
+//! let surf = th::Surface::new(th::Rect::new(0, 0, 16, 16), Some(image.clone()), None);
+//! frame.draw_surface(&surf).unwrap();
 //!
 //! // present the frame
-//! display.present().unwrap();
+//! frame.present().unwrap();
 //! ```
 //! ## Requirements
 //!
@@ -106,7 +103,7 @@ pub use self::image::{Dmabuf, DmabufPlane};
 pub use damage::Damage;
 pub(crate) use deletion_queue::DeletionQueue;
 pub use device::Device;
-pub use display::Display;
+pub use display::{frame::FrameRenderer, Display};
 use instance::Instance;
 pub use surface::Surface;
 

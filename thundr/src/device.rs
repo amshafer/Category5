@@ -36,7 +36,7 @@ pub struct Device {
     /// Externally synchronized and mutable state
     pub(crate) d_internal: Arc<RwLock<DeviceInternal>>,
     /// This is a per-image backing resource that is resident on this Device
-    pub d_image_vk: ll::Component<ImageVk>,
+    pub d_image_vk: ll::Component<Arc<ImageVk>>,
 }
 
 /// This is the set of per-device data that needs to be "externally synchronized"

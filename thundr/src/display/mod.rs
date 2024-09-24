@@ -17,55 +17,8 @@ mod vkswapchain;
 use vkswapchain::VkSwapchain;
 mod headless;
 use headless::HeadlessSwapchain;
-
-/// Shader push constants
-///
-/// These will be updated when we record the per-viewport draw commands
-/// and will contain the scrolling model transformation of all content
-/// within a viewport.
-///
-/// This is also where we pass in the Surface's data.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct PushConstants {
-    pub width: u32,
-    pub height: u32,
-    /// The id of the image. This is the offset into the unbounded sampler array.
-    /// id that's the offset into the unbound sampler array
-    pub image_id: i32,
-    /// if we should use color instead of texturing
-    pub use_color: i32,
-    /// Opaque color
-    pub color: (f32, f32, f32, f32),
-    /// The complete dimensions of the window.
-    pub dims: Rect<i32>,
-}
-
-/// Recording parameters
-///
-/// Layers above this one will need to call recording
-/// operations. They need a private structure to pass
-/// to begin/end recording operations
-/// This is that structure.
-pub(crate) struct RecordParams {
-    /// our cached pushbuffer constants
-    pub(crate) push: PushConstants,
-}
-
-impl RecordParams {
-    pub fn new() -> Self {
-        Self {
-            push: PushConstants {
-                width: 0,
-                height: 0,
-                image_id: -1,
-                use_color: -1,
-                color: (0.0, 0.0, 0.0, 0.0),
-                dims: Rect::new(0, 0, 0, 0),
-            },
-        }
-    }
-}
+pub mod frame;
+use frame::{FrameRenderer, RecordParams};
 
 /// Shared state that subsystems consume. We need this
 /// since Display holds rendering objects, but also has
@@ -122,8 +75,6 @@ pub struct Display {
     /// Application specific stuff that will be set up after
     /// the original initialization
     pub(crate) d_pipe: Box<dyn Pipeline>,
-    /// The current draw calls parameters
-    d_params: Option<RecordParams>,
 }
 
 /// Our Swapchain Backend
@@ -245,7 +196,6 @@ impl Display {
                 d_swapchain: swapchain,
                 d_state: dstate,
                 d_pipe: pipe,
-                d_params: None,
             };
 
             // Trigger the creation of our swapchain images and pipeline framebuffers
@@ -384,11 +334,7 @@ impl Display {
     /// This is first called when trying to draw a frame. It will set
     /// up the command buffers and resources that Thundr will use while
     /// recording draw commands.
-    pub fn begin_recording(&mut self) -> Result<()> {
-        if self.d_params.is_some() {
-            return Err(ThundrError::RECORDING_ALREADY_IN_PROGRESS);
-        }
-
+    pub fn acquire_next_frame<'a>(&'a mut self) -> Result<FrameRenderer<'a>> {
         // Before waiting for the latest frame, free the previous
         // frame's release data
         self.d_dev.flush_deletion_queue();
@@ -412,56 +358,24 @@ impl Display {
         // TODO: pace our frames better to reduce latency futher?
         self.d_dev.wait_for_latest_timeline();
 
-        // record rendering commands
-        let mut params = RecordParams::new();
+        // Now construct our FrameRenderer
+        // This allows the caller to have
         let res = self.get_resolution();
+        let mut params = RecordParams::new(&self.d_dev);
         params.push.width = res.0;
         params.push.height = res.1;
 
+        // Kick off our new frame
         self.d_pipe.begin_record(&self.d_state);
-        self.d_params = Some(params);
 
-        Ok(())
-    }
+        let frame = FrameRenderer {
+            fr_swapchain: &mut self.d_swapchain,
+            fr_dstate: &self.d_state,
+            fr_pipe: &mut self.d_pipe,
+            fr_params: params,
+        };
 
-    /// Set the viewport
-    ///
-    /// This restricts the draw operations to within the specified region
-    pub fn set_viewport(&mut self, viewport: &Viewport) -> Result<()> {
-        self.d_pipe.set_viewport(&self.d_state, viewport)
-    }
-
-    /// Draw a set of surfaces within a viewport
-    ///
-    /// This is the function for recording drawing of a set of surfaces. The surfaces
-    /// in the list will be rendered withing the region specified by viewport.
-    pub fn draw_surface(&mut self, surface: &Surface) -> Result<()> {
-        let params = self
-            .d_params
-            .as_mut()
-            .ok_or(ThundrError::RECORDING_NOT_IN_PROGRESS)?;
-
-        self.d_pipe.draw(params, &self.d_state, surface);
-
-        Ok(())
-    }
-
-    /// This finishes all recording operations and submits the work to the GPU.
-    ///
-    /// This should only be called after a proper begin_recording + draw_surfaces sequence.
-    pub fn end_recording(&mut self) -> Result<()> {
-        self.d_pipe.end_record(&self.d_state);
-        self.d_params = None;
-
-        Ok(())
-    }
-
-    /// Present the current swapchain image to the screen.
-    ///
-    /// Finally we can actually flip the buffers and present
-    /// this image.
-    pub fn present(&mut self) -> Result<()> {
-        self.d_swapchain.present(&self.d_state)
+        Ok(frame)
     }
 
     /// Get the content of the current swapchain image

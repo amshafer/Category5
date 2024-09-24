@@ -209,7 +209,7 @@ impl<'a> RenderTransaction<'a> {
     /// its viewport.
     fn draw_node(
         &self,
-        display: &mut th::Display,
+        frame: &mut th::FrameRenderer<'a>,
         viewport: &th::Viewport,
         node: &DakotaId,
         base: (i32, i32),
@@ -232,7 +232,7 @@ impl<'a> RenderTransaction<'a> {
 
         let surf = self.get_displayr_surf_for_el(node, base)?;
 
-        display.draw_surface(&surf)
+        frame.draw_surface(&surf)
     }
 
     /// Recursively draw node and all of its children
@@ -240,7 +240,7 @@ impl<'a> RenderTransaction<'a> {
     /// This does not cross viewport boundaries
     fn draw_node_recurse(
         &self,
-        display: &mut th::Display,
+        frame: &mut th::FrameRenderer<'a>,
         viewport: &th::Viewport,
         node: &DakotaId,
         base: (i32, i32),
@@ -250,7 +250,7 @@ impl<'a> RenderTransaction<'a> {
             true => {
                 // Set Thundr's currently in use viewport
                 let th_viewport = self.get_displayr_viewport(viewport, node, base).unwrap();
-                display.set_viewport(&th_viewport)?;
+                frame.set_viewport(&th_viewport)?;
 
                 Some(th_viewport)
             }
@@ -263,7 +263,7 @@ impl<'a> RenderTransaction<'a> {
         };
 
         // Start by drawing ourselves
-        self.draw_node(display, new_viewport, node, base)?;
+        self.draw_node(frame, new_viewport, node, base)?;
 
         let layout = self.rt_layout_nodes.get(node).unwrap();
 
@@ -278,12 +278,12 @@ impl<'a> RenderTransaction<'a> {
 
         // Now draw each of our children
         for child in layout.l_children.iter() {
-            self.draw_node_recurse(display, new_viewport, child, new_base)?;
+            self.draw_node_recurse(frame, new_viewport, child, new_base)?;
         }
 
         // If this node was a viewport then restore our old viewport
         if new_th_viewport.is_some() {
-            display.set_viewport(viewport)?;
+            frame.set_viewport(viewport)?;
         }
 
         Ok(())
@@ -291,14 +291,12 @@ impl<'a> RenderTransaction<'a> {
 
     /// Draw a scene using the provided renderer and transaction view.
     pub(crate) fn draw_surfacelists(
-        &mut self,
-        display: &mut th::Display,
+        &self,
+        frame: &mut th::FrameRenderer<'a>,
         root_viewport: &th::Viewport,
         root_node: DakotaId,
     ) -> th::Result<()> {
-        display.begin_recording()?;
-        self.draw_node_recurse(display, &root_viewport, &root_node, (0, 0))?;
-        display.end_recording()
+        self.draw_node_recurse(frame, &root_viewport, &root_node, (0, 0))
     }
 }
 
@@ -310,6 +308,7 @@ impl Dakota {
         let root_node = self.d_layout_tree_root.clone().unwrap();
         let root_viewport = self.d_viewports.get_clone(&root_node).unwrap();
 
+        let mut frame = self.d_display.acquire_next_frame()?;
         let mut trans = RenderTransaction {
             rt_resources: self.d_resources.snapshot(),
             rt_resource_displayr_image: self.d_resource_thundr_image.snapshot(),
@@ -321,9 +320,8 @@ impl Dakota {
             rt_viewports: self.d_viewports.snapshot(),
             rt_layout_nodes: self.d_layout_nodes.snapshot(),
         };
-        trans.draw_surfacelists(&mut self.d_display, &root_viewport, root_node)?;
+        trans.draw_surfacelists(&mut frame, &root_viewport, root_node)?;
         trans.commit();
-
-        Ok(())
+        frame.present()
     }
 }
