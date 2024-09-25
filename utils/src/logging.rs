@@ -96,6 +96,11 @@ macro_rules! log_internal{
                 },
                 Err(_) => *DEFAULT_LEVEL,
             };
+
+            static ref LOG_MATCH_STRING: Option<String> = match std::env::var("CATEGORY5_LOG_MATCH") {
+                Ok(val) => Some(val),
+                Err(_) => None,
+            };
         }
 
         // !! NOTE: current log level set here !!
@@ -111,8 +116,8 @@ macro_rules! log_internal{
 
             // If this variable is defined check that our log statements
             // come from files that contain this string
-            if let Ok(m) = std::env::var("CATEGORY5_LOG_MATCH") {
-                should_log = file!().contains(m.as_str()) || format_string.contains(m.as_str());
+            if let Some(m) = LOG_MATCH_STRING.as_ref() {
+                should_log = file!().contains(m) || format_string.contains(m);
             }
 
             // If it is an error or our conditions are met then log it
