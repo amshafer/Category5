@@ -858,25 +858,29 @@ impl Dakota {
 
     fn viewport_at_pos_recursive(
         &self,
+        layout_nodes: &ll::Snapshot<LayoutNode>,
+        viewports: &ll::Snapshot<th::Viewport>,
         id: &DakotaId,
         base: (i32, i32),
         x: i32,
         y: i32,
     ) -> Option<DakotaId> {
-        let layout = self.d_layout_nodes.get(id).unwrap();
+        let layout = layout_nodes.get(id).unwrap();
         let offset = (base.0 + layout.l_offset.x, base.1 + layout.l_offset.y);
 
         // Since the tree is back to front, process the children first. If one of them is a match,
         // it is the top-most viewport and we should return it. Otherwise we can test if this
         // node matches
         for child in layout.l_children.iter() {
-            if let Some(ret) = self.viewport_at_pos_recursive(child, offset, x, y) {
+            if let Some(ret) =
+                self.viewport_at_pos_recursive(layout_nodes, viewports, child, offset, x, y)
+            {
                 return Some(ret);
             }
         }
 
         // If this node is not a viewport return nothing
-        if self.d_viewports.get(id).is_none() {
+        if viewports.get(id).is_none() {
             return None;
         }
 
@@ -896,9 +900,13 @@ impl Dakota {
     fn viewport_at_pos(&self, x: i32, y: i32) -> DakotaId {
         assert!(self.d_layout_tree_root.is_some());
         let root_node = self.d_layout_tree_root.as_ref().unwrap();
-        assert!(self.d_viewports.get(root_node).is_some());
 
-        self.viewport_at_pos_recursive(root_node, (0, 0), x, y)
+        // use some snapshots here to hold the read locks open
+        let layout_nodes = self.d_layout_nodes.snapshot();
+        let viewports = self.d_viewports.snapshot();
+        assert!(viewports.get(root_node).is_some());
+
+        self.viewport_at_pos_recursive(&layout_nodes, &viewports, root_node, (0, 0), x, y)
             .unwrap()
     }
 
