@@ -319,6 +319,14 @@ impl Dakota {
         })
     }
 
+    /// Returns true if the node is of a type that guarantees it cannot have
+    /// child elements.
+    ///
+    /// This most notably happens with text elements.
+    pub(crate) fn node_can_have_children(&self, id: &DakotaId) -> bool {
+        !self.d_texts.get(id).is_some()
+    }
+
     /// We need to check that all required fields were specified in the
     /// node we are finishing, otherwise we need to throw a parsing error.
     ///
@@ -348,74 +356,86 @@ impl Dakota {
                 y,
                 width,
                 height,
-            } => match old_node {
-                Element::Resource(name) => {
-                    let resource_id = self
-                        .get_id_for_name(
-                            &mut parse.name_to_id_map,
-                            name.as_ref()
-                                .ok_or(anyhow!("Element was not assigned a resource"))?,
-                        )
-                        .context("Getting resource reference for element")?;
-                    self.d_resources.set(id, resource_id)
-                }
-                Element::UnboundedSubsurface => self.d_unbounded_subsurf.set(id, true),
-                Element::El {
-                    x: _,
-                    y: _,
-                    width: _,
-                    height: _,
-                } => self.add_child_to_element(id, old_id.clone()),
-                Element::X(val) => *x = *val,
-                Element::Y(val) => *y = *val,
-                Element::Width(val) => *width = *val,
-                Element::Height(val) => *height = *val,
-                Element::Text(data, font) => {
-                    self.d_texts.set(
-                        id,
-                        dom::Text {
-                            items: data.clone(),
-                        },
-                    );
-                    // font is optional
-                    if let Some(name) = font {
+            } => {
+                match old_node {
+                    Element::Resource(name) => {
                         let resource_id = self
-                            .get_id_for_name(&mut parse.font_name_to_id_map, name)
+                            .get_id_for_name(
+                                &mut parse.name_to_id_map,
+                                name.as_ref()
+                                    .ok_or(anyhow!("Element was not assigned a resource"))?,
+                            )
                             .context("Getting resource reference for element")?;
-                        self.d_text_font.set(id, resource_id);
+                        self.d_resources.set(id, resource_id)
+                    }
+                    Element::UnboundedSubsurface => self.d_unbounded_subsurf.set(id, true),
+                    Element::El {
+                        x: _,
+                        y: _,
+                        width: _,
+                        height: _,
+                    } => {
+                        if !self.node_can_have_children(id) {
+                            return Err(anyhow!("Element cannot have children due to other properties defined for it"));
+                        }
+
+                        self.add_child_to_element(id, old_id.clone())
+                    }
+                    Element::X(val) => *x = *val,
+                    Element::Y(val) => *y = *val,
+                    Element::Width(val) => *width = *val,
+                    Element::Height(val) => *height = *val,
+                    Element::Text(data, font) => {
+                        if self.d_children.get(id).is_some() {
+                            return Err(anyhow!("Text Elements cannot have children"));
+                        }
+
+                        self.d_texts.set(
+                            id,
+                            dom::Text {
+                                items: data.clone(),
+                            },
+                        );
+                        // font is optional
+                        if let Some(name) = font {
+                            let resource_id = self
+                                .get_id_for_name(&mut parse.font_name_to_id_map, name)
+                                .context("Getting resource reference for element")?;
+                            self.d_text_font.set(id, resource_id);
+                        }
+                    }
+                    Element::Content(data) => self.d_contents.set(
+                        id,
+                        dom::Content {
+                            el: data
+                                .clone()
+                                .ok_or(anyhow!("Content does not contain an element"))?,
+                        },
+                    ),
+                    Element::Size(width, height) => {
+                        // Widths and heights are optional
+                        if let Some(width) = width {
+                            self.d_widths.set(id, *width);
+                        }
+                        if let Some(height) = height {
+                            self.d_heights.set(id, *height);
+                        }
+                    }
+                    Element::Offset(x, y) => self.d_offsets.set(
+                        id,
+                        dom::RelativeOffset {
+                            x: x.clone()
+                                .ok_or(anyhow!("Content does not contain an element"))?,
+                            y: y.clone()
+                                .ok_or(anyhow!("Content does not contain an element"))?,
+                        },
+                    ),
+                    e => {
+                        return Err(anyhow!("Unexpected child element: {:?}", e)
+                            .context("While processing children for Dakota Element"))
                     }
                 }
-                Element::Content(data) => self.d_contents.set(
-                    id,
-                    dom::Content {
-                        el: data
-                            .clone()
-                            .ok_or(anyhow!("Content does not contain an element"))?,
-                    },
-                ),
-                Element::Size(width, height) => {
-                    // Widths and heights are optional
-                    if let Some(width) = width {
-                        self.d_widths.set(id, *width);
-                    }
-                    if let Some(height) = height {
-                        self.d_heights.set(id, *height);
-                    }
-                }
-                Element::Offset(x, y) => self.d_offsets.set(
-                    id,
-                    dom::RelativeOffset {
-                        x: x.clone()
-                            .ok_or(anyhow!("Content does not contain an element"))?,
-                        y: y.clone()
-                            .ok_or(anyhow!("Content does not contain an element"))?,
-                    },
-                ),
-                e => {
-                    return Err(anyhow!("Unexpected child element: {:?}", e)
-                        .context("While processing children for Dakota Element"))
-                }
-            },
+            }
             // -------------------------------------------------------
             Element::Window {
                 title,

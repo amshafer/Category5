@@ -868,6 +868,13 @@ impl Dakota {
         let layout = layout_nodes.get(id).unwrap();
         let offset = (base.0 + layout.l_offset.x, base.1 + layout.l_offset.y);
 
+        // If this node is of a type where we know it has a lot of children but none of them
+        // could possibly be a viewport, take an early exit.
+        // This most notably happens in the case of text nodes, which
+        if !self.node_can_have_children(id) && viewports.get(id).is_none() {
+            return None;
+        }
+
         // Since the tree is back to front, process the children first. If one of them is a match,
         // it is the top-most viewport and we should return it. Otherwise we can test if this
         // node matches
