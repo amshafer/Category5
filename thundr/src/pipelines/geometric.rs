@@ -242,10 +242,9 @@ impl Pipeline for GeomPipeline {
         // imagevk. If not, then use the default tmp image
         let image_desc = match image {
             Some(img) => {
-                let id = img.get_id();
                 let imagevk = params
                     .image_vk
-                    .get(&id)
+                    .get(&img.i_id)
                     .expect("Image does not have ImageVK");
 
                 assert!(imagevk.iv_desc.d_set != vk::DescriptorSet::null());
@@ -390,7 +389,7 @@ impl GeomPipeline {
         params: &mut RecordParams,
     ) {
         // transform from blender's coordinate system to vulkan
-        params.push.image_id = image.map(|i| i.get_id().get_raw_id() as i32).unwrap_or(-1);
+        params.push.image_id = image.map(|i| i.i_id.get_raw_id() as i32).unwrap_or(-1);
         params.push.use_color = surf.s_color.is_some() as i32;
         params.push.color = match surf.s_color {
             Some((r, g, b, a)) => (r, g, b, a),

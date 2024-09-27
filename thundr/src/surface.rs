@@ -21,6 +21,7 @@ pub struct Surface {
 }
 
 impl Surface {
+    #[inline]
     pub fn new(geometry: Rect<i32>, color: Option<(f32, f32, f32, f32)>) -> Self {
         Self {
             s_rect: geometry,

@@ -41,17 +41,6 @@ impl<'a> RenderTransaction<'a> {
         self.rt_layout_nodes.commit();
     }
 
-    /// Helper to get the Font Instance for a particular element
-    ///
-    /// This will choose the default font (including size) if none
-    /// has been assigned.
-    pub(crate) fn get_font_id_for_el(&self, el: &DakotaId) -> DakotaId {
-        match self.rt_text_font.get(el) {
-            Some(f) => f.clone(),
-            None => self.rt_default_font_inst.clone(),
-        }
-    }
-
     /// Helper to get a display surface for a glyph.
     pub fn get_thundr_surf_for_glyph(
         &self,
@@ -64,7 +53,10 @@ impl<'a> RenderTransaction<'a> {
             None,
         );
 
-        let font_id = self.get_font_id_for_el(node);
+        let font_id = match self.rt_text_font.get(node) {
+            Some(f) => f,
+            None => &self.rt_default_font_inst,
+        };
         let font = self.rt_fonts.get(&font_id).unwrap();
         if let Some(color) = font.color.as_ref() {
             surf.set_color((color.r, color.g, color.b, color.a));

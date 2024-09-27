@@ -163,8 +163,6 @@ impl Drop for ImageVk {
 /// Images must be created from the global thundr instance. All
 /// images must be destroyed before the instance can be.
 pub(crate) struct ImageInternal {
-    /// This id is the index of this image in Thundr's image list (th_image_list).
-    pub i_id: ll::Entity,
     /// specific to the type of image
     i_priv: ImagePrivate,
     pub i_opaque: Option<Rect<i32>>,
@@ -182,17 +180,12 @@ impl Image {
     pub fn set_opaque(&mut self, opaque: Option<Rect<i32>>) {
         self.i_internal.write().unwrap().i_opaque = opaque;
     }
-
-    /// Get the id. This is consumed by the pipelines that need to contruct the descriptor
-    /// indexing array.
-    pub(crate) fn get_id(&self) -> ll::Entity {
-        // TODO: get rid of this nasty locking
-        self.i_internal.read().unwrap().i_id.clone()
-    }
 }
 
 #[derive(Clone)]
 pub struct Image {
+    /// This id is the index of this image in Thundr's image list (th_image_list).
+    pub i_id: ll::Entity,
     pub(crate) i_internal: Arc<RwLock<ImageInternal>>,
 }
 
@@ -280,7 +273,7 @@ impl Device {
 
         {
             let mut image_internal = image.i_internal.write().unwrap();
-            let imgvk_id = &image_internal.i_id;
+            let imgvk_id = &image.i_id;
             let resolution = image_internal.i_resolution;
 
             // If the sizes match then we can update according to the damage provided
@@ -710,17 +703,18 @@ impl Thundr {
             iv_desc: descriptor,
         });
 
+        let id = self.th_image_ecs.add_entity();
         let internal = ImageInternal {
-            i_id: self.th_image_ecs.add_entity(),
             i_priv: private,
             i_opaque: None,
             i_resolution: *res,
         };
 
         // Add our vulkan resources to the ECS
-        self.th_dev.d_image_vk.set(&internal.i_id, image_vk);
+        self.th_dev.d_image_vk.set(&id, image_vk);
 
         return Ok(Image {
+            i_id: id,
             i_internal: Arc::new(RwLock::new(internal)),
         });
     }

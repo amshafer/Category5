@@ -422,6 +422,7 @@ impl fmt::Debug for EntityInternal {
 
 impl EntityInternal {
     /// Gets the raw index offset for this entity
+    #[inline]
     pub fn get_raw_id(&self) -> usize {
         self.ecs_id
     }
