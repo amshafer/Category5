@@ -186,6 +186,7 @@ impl Image {
     /// Get the id. This is consumed by the pipelines that need to contruct the descriptor
     /// indexing array.
     pub(crate) fn get_id(&self) -> ll::Entity {
+        // TODO: get rid of this nasty locking
         self.i_internal.read().unwrap().i_id.clone()
     }
 }

@@ -17,7 +17,7 @@ use ash::{util, vk};
 use super::Pipeline;
 use crate::display::frame::{PushConstants, RecordParams};
 use crate::display::DisplayState;
-use crate::{Device, Result, Surface, Viewport};
+use crate::{Device, Image, Result, Surface, Viewport};
 use utils::{log, region::Rect};
 
 // This is the reference data for a normal quad
@@ -223,12 +223,13 @@ impl Pipeline for GeomPipeline {
         params: &mut RecordParams,
         dstate: &DisplayState,
         surface: &Surface,
+        image: Option<&Image>,
     ) -> bool {
         let cbuf = self.g_cbufs[dstate.d_current_image as usize];
 
         // update our cbuf constants. This is how we pass in
         // the viewport information
-        self.update_surf_push_constants(surface, params);
+        self.update_surf_push_constants(surface, image, params);
 
         // If this surface has no content then skip drawing it
         let mut num_contents = (params.push.image_id >= 0) as i32;
@@ -239,7 +240,7 @@ impl Pipeline for GeomPipeline {
 
         // if we have an image bound to this surface grab its descriptor from the
         // imagevk. If not, then use the default tmp image
-        let image_desc = match surface.s_image.as_ref() {
+        let image_desc = match image {
             Some(img) => {
                 let id = img.get_id();
                 let imagevk = params
@@ -382,13 +383,14 @@ impl GeomPipeline {
     /// Helper for getting the push constants
     ///
     /// This will be where we calculate the viewport scroll amount
-    fn update_surf_push_constants(&mut self, surf: &Surface, params: &mut RecordParams) {
+    fn update_surf_push_constants(
+        &mut self,
+        surf: &Surface,
+        image: Option<&Image>,
+        params: &mut RecordParams,
+    ) {
         // transform from blender's coordinate system to vulkan
-        params.push.image_id = surf
-            .s_image
-            .as_ref()
-            .map(|i| i.get_id().get_raw_id() as i32)
-            .unwrap_or(-1);
+        params.push.image_id = image.map(|i| i.get_id().get_raw_id() as i32).unwrap_or(-1);
         params.push.use_color = surf.s_color.is_some() as i32;
         params.push.color = match surf.s_color {
             Some((r, g, b, a)) => (r, g, b, a),

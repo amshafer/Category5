@@ -60,13 +60,13 @@ fn basic_image() {
         )
         .unwrap();
     // Now create a 16x16 surface at position (0, 0)
-    let surf = th::Surface::new(th::Rect::new(0, 0, 16, 16), Some(image), None);
+    let surf = th::Surface::new(th::Rect::new(0, 0, 16, 16), None);
 
     // ------------ draw a frame -------------
     {
         let mut frame = display.acquire_next_frame().unwrap();
         frame.set_viewport(&viewport).unwrap();
-        frame.draw_surface(&surf).unwrap();
+        frame.draw_surface(&surf, Some(&image)).unwrap();
         frame.present().unwrap();
     }
 
@@ -83,7 +83,6 @@ fn basic_color() {
     // Now create a 16x16 red square at position (32, 32)
     let surf = th::Surface::new(
         th::Rect::new(128, 128, 128, 128),
-        None,
         Some((256.0, 0.0, 0.0, 1.0)),
     );
 
@@ -91,7 +90,7 @@ fn basic_color() {
     {
         let mut frame = display.acquire_next_frame().unwrap();
         frame.set_viewport(&viewport).unwrap();
-        frame.draw_surface(&surf).unwrap();
+        frame.draw_surface(&surf, None).unwrap();
         frame.present().unwrap();
     }
 
@@ -115,7 +114,6 @@ fn many_colors() {
             for j in 0..10 {
                 let surf = th::Surface::new(
                     th::Rect::new(128 + i * 20, 128 + j * 20, 16, 16),
-                    None,
                     Some((
                         j as f32 / 10.0,
                         0.5 + (i as f32 * 0.02),
@@ -123,7 +121,7 @@ fn many_colors() {
                         1.0,
                     )),
                 );
-                frame.draw_surface(&surf).unwrap();
+                frame.draw_surface(&surf, None).unwrap();
             }
         }
 
@@ -159,8 +157,8 @@ fn redraw() {
     {
         let mut frame = display.acquire_next_frame().unwrap();
         frame.set_viewport(&viewport).unwrap();
-        let surf = th::Surface::new(th::Rect::new(0, 0, 16, 16), Some(image.clone()), None);
-        frame.draw_surface(&surf).unwrap();
+        let surf = th::Surface::new(th::Rect::new(0, 0, 16, 16), None);
+        frame.draw_surface(&surf, Some(&image)).unwrap();
         frame.present().unwrap();
     }
 
@@ -168,10 +166,8 @@ fn redraw() {
     {
         let mut frame = display.acquire_next_frame().unwrap();
         frame.set_viewport(&viewport).unwrap();
-        // have to clone image here so it doesn't try to free itself while we are in a
-        // FrameRenderer cycle
-        let surf = th::Surface::new(th::Rect::new(32, 32, 16, 16), Some(image.clone()), None);
-        frame.draw_surface(&surf).unwrap();
+        let surf = th::Surface::new(th::Rect::new(32, 32, 16, 16), None);
+        frame.draw_surface(&surf, Some(&image)).unwrap();
         frame.present().unwrap();
     }
 

@@ -18,7 +18,7 @@ use thundr as th;
 /// These fields correspond to the identically named variants in Dakota.
 pub(crate) struct RenderTransaction<'a> {
     rt_resources: ll::Snapshot<'a, DakotaId>,
-    rt_resource_displayr_image: ll::Snapshot<'a, th::Image>,
+    rt_resource_thundr_image: ll::Snapshot<'a, th::Image>,
     rt_resource_color: ll::Snapshot<'a, dom::Color>,
     rt_fonts: ll::Snapshot<'a, dom::Font>,
     rt_text_font: ll::Snapshot<'a, DakotaId>,
@@ -32,7 +32,7 @@ impl<'a> RenderTransaction<'a> {
     /// Commit this transaction
     fn commit(&mut self) {
         self.rt_resources.commit();
-        self.rt_resource_displayr_image.commit();
+        self.rt_resource_thundr_image.commit();
         self.rt_resource_color.commit();
         self.rt_fonts.commit();
         self.rt_text_font.commit();
@@ -52,8 +52,8 @@ impl<'a> RenderTransaction<'a> {
         }
     }
 
-    /// Helper to get a displayr surface for a glyph.
-    pub fn get_displayr_surf_for_glyph(
+    /// Helper to get a display surface for a glyph.
+    pub fn get_thundr_surf_for_glyph(
         &self,
         node: &DakotaId,
         glyph: &Glyph,
@@ -62,12 +62,7 @@ impl<'a> RenderTransaction<'a> {
         let mut surf = th::Surface::new(
             th::Rect::new(pos.0, pos.1, glyph.g_bitmap_size.0, glyph.g_bitmap_size.1),
             None,
-            None,
         );
-
-        if let Some(image) = glyph.g_image.as_ref() {
-            surf.bind_image(image.clone());
-        }
 
         let font_id = self.get_font_id_for_el(node);
         let font = self.rt_fonts.get(&font_id).unwrap();
@@ -78,14 +73,10 @@ impl<'a> RenderTransaction<'a> {
         return surf;
     }
 
-    /// Populate a displayr surface with this nodes dimensions and content
+    /// Populate a display surface with this nodes dimensions and content
     ///
     /// This accepts a base offset to handle child element positioning
-    fn get_displayr_surf_for_el(
-        &self,
-        node: &DakotaId,
-        base: (i32, i32),
-    ) -> th::Result<th::Surface> {
+    fn get_thundr_surf_for_el(&self, node: &DakotaId, base: (i32, i32)) -> th::Result<th::Surface> {
         let layout = self.rt_layout_nodes.get(node).unwrap();
 
         // If this node is a viewport then ignore its offset, setting the viewport
@@ -102,7 +93,7 @@ impl<'a> RenderTransaction<'a> {
             // a real element. We ask the font code to give us a surface for
             // it that we can display.
             let glyph = self.rt_glyphs.get(glyph_id).unwrap();
-            self.get_displayr_surf_for_glyph(node, glyph, &offset)
+            self.get_thundr_surf_for_glyph(node, glyph, &offset)
         } else {
             th::Surface::new(
                 th::Rect::new(
@@ -111,20 +102,18 @@ impl<'a> RenderTransaction<'a> {
                     layout.l_size.width,
                     layout.l_size.height,
                 ),
-                None, // image
                 None, // color
             )
         };
 
         // Handle binding images
         // We need to get the resource's content from our resource map, get
-        // the displayr image for it, and bind it to our new surface.
+        // the display image for it, and bind it to our new surface.
         if let Some(resource_id) = self.rt_resources.get(node) {
             // Assert that only one content type is set
             let mut content_num = 0;
 
-            if let Some(image) = self.rt_resource_displayr_image.get(&resource_id) {
-                surf.bind_image(image.clone());
+            if self.rt_resource_thundr_image.get(&resource_id).is_some() {
                 content_num += 1;
             }
             if let Some(color) = self.rt_resource_color.get(&resource_id) {
@@ -143,7 +132,7 @@ impl<'a> RenderTransaction<'a> {
     /// This would be straightforward except that we have to clip our viewport
     /// to the size of the parent viewport. This keeps child elements within the
     /// bounds of the parent.
-    fn get_displayr_viewport(
+    fn get_display_viewport(
         &self,
         parent: &th::Viewport,
         node: &DakotaId, // child viewport
@@ -230,9 +219,24 @@ impl<'a> RenderTransaction<'a> {
             }
         }
 
-        let surf = self.get_displayr_surf_for_el(node, base)?;
+        let surf = self.get_thundr_surf_for_el(node, base)?;
 
-        frame.draw_surface(&surf)
+        // Get the image to use for this surface, if we have one
+        // This is done separately so that we can avoid cloning the image
+        // id. The atomic inc/dec to do this shows up in profiling
+        let layout = self.rt_layout_nodes.get(node).unwrap();
+        let mut image = None;
+
+        if let Some(glyph_id) = layout.l_glyph_id.as_ref() {
+            let glyph = self.rt_glyphs.get(glyph_id).unwrap();
+            image = glyph.g_image.as_ref();
+        } else if let Some(resource_id) = self.rt_resources.get(node) {
+            if let Some(res) = self.rt_resource_thundr_image.get(&resource_id) {
+                image = Some(res)
+            }
+        }
+
+        frame.draw_surface(&surf, image)
     }
 
     /// Recursively draw node and all of its children
@@ -245,11 +249,11 @@ impl<'a> RenderTransaction<'a> {
         node: &DakotaId,
         base: (i32, i32),
     ) -> th::Result<()> {
-        // If this node is a viewport then update our displayr viewport
+        // If this node is a viewport then update our display viewport
         let new_th_viewport = match self.rt_viewports.get(node).is_some() {
             true => {
                 // Set Thundr's currently in use viewport
-                let th_viewport = self.get_displayr_viewport(viewport, node, base).unwrap();
+                let th_viewport = self.get_display_viewport(viewport, node, base).unwrap();
                 frame.set_viewport(&th_viewport)?;
 
                 Some(th_viewport)
@@ -311,7 +315,7 @@ impl Dakota {
         let mut frame = self.d_display.acquire_next_frame()?;
         let mut trans = RenderTransaction {
             rt_resources: self.d_resources.snapshot(),
-            rt_resource_displayr_image: self.d_resource_thundr_image.snapshot(),
+            rt_resource_thundr_image: self.d_resource_thundr_image.snapshot(),
             rt_resource_color: self.d_resource_color.snapshot(),
             rt_fonts: self.d_fonts.snapshot(),
             rt_text_font: self.d_text_font.snapshot(),

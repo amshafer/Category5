@@ -56,8 +56,8 @@
 //! frame.set_viewport(&viewport).unwrap();
 //!
 //! // Draw a 16x16 surface at position (0, 0) referencing our image
-//! let surf = th::Surface::new(th::Rect::new(0, 0, 16, 16), Some(image.clone()), None);
-//! frame.draw_surface(&surf).unwrap();
+//! let surf = th::Surface::new(th::Rect::new(0, 0, 16, 16), None);
+//! frame.draw_surface(&surf, Some(&image)).unwrap();
 //!
 //! // present the frame
 //! frame.present().unwrap();

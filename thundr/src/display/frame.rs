@@ -90,9 +90,9 @@ impl<'a> FrameRenderer<'a> {
     ///
     /// This is the function for recording drawing of a set of surfaces. The surfaces
     /// in the list will be rendered withing the region specified by viewport.
-    pub fn draw_surface(&mut self, surface: &Surface) -> Result<()> {
+    pub fn draw_surface(&mut self, surface: &Surface, image: Option<&Image>) -> Result<()> {
         self.fr_pipe
-            .draw(&mut self.fr_params, &self.fr_dstate, surface);
+            .draw(&mut self.fr_params, &self.fr_dstate, surface, image);
 
         Ok(())
     }
