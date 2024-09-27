@@ -16,3 +16,7 @@ renderdoc={version="0.10", optional=true}
 renderdoc=["dep:renderdoc"]
 direct2display=["dakota/direct2display"]
 aftermath=["dakota/aftermath"]
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true

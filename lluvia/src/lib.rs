@@ -126,7 +126,10 @@ pub trait Container<T: 'static> {
 /// lluvia to support high client counts in frequently unused tables
 /// without wasting space.
 pub struct VecContainer<T: 'static> {
+    /// For performance reasons this needs to be a power of 2 so we
+    /// can avoid divide instructions
     v_block_size: usize,
+    v_block_index_shift: usize,
     v_blocks: Vec<Option<VCBlock<T>>>,
 }
 
@@ -139,15 +142,22 @@ const DEFAULT_LLUVIA_BLOCK_SIZE: usize = 32;
 
 impl<T: 'static> VecContainer<T> {
     fn new(block_size: usize) -> Self {
+        assert!(block_size % 2 == 0);
         Self {
             v_block_size: block_size,
+            v_block_index_shift: (block_size as f64).sqrt() as usize,
             v_blocks: Vec::new(),
         }
     }
 
     /// Helper that turns a global index into a block + offset index pair
     fn get_indices(&self, index: usize) -> (usize, usize) {
-        (index / self.v_block_size, index % self.v_block_size)
+        (
+            // avoid division by shifting, since our block size is a power of 2
+            index >> self.v_block_index_shift,
+            // avoid modulo with an and
+            index & self.v_block_size - 1,
+        )
     }
 
     /// Makes a final, returnable index from our (block, offset) pair
