@@ -86,6 +86,8 @@ pub struct GeomPipeline {
     /// Resources for the index buffer
     index_buffer: vk::Buffer,
     index_buffer_memory: vk::DeviceMemory,
+    /// Placeholder image for when the surface doesn't have one
+    tmp_image: Image,
 }
 
 /// Contiains a vertex and all its related data
@@ -240,17 +242,17 @@ impl Pipeline for GeomPipeline {
 
         // if we have an image bound to this surface grab its descriptor from the
         // imagevk. If not, then use the default tmp image
-        let image_desc = match image {
-            Some(img) => {
-                let imagevk = params
-                    .image_vk
-                    .get(&img.i_id)
-                    .expect("Image does not have ImageVK");
+        let image_desc = {
+            let imagevk = params
+                .image_vk
+                .get(match image {
+                    Some(img) => &img.i_id,
+                    None => &self.tmp_image.i_id,
+                })
+                .expect("Image does not have ImageVK");
 
-                assert!(imagevk.iv_desc.d_set != vk::DescriptorSet::null());
-                imagevk.iv_desc.d_set
-            }
-            None => self.g_dev.d_internal.read().unwrap().tmp_image_desc.d_set,
+            assert!(imagevk.iv_desc.d_set != vk::DescriptorSet::null());
+            imagevk.iv_desc.d_set
         };
 
         // TODO: If this surface is not contained in the viewport then don't draw it
@@ -434,7 +436,7 @@ impl GeomPipeline {
     /// shaders, geometry, and the like.
     ///
     /// This fills in the GeomPipeline struct in the Renderer
-    pub fn new(dev: Arc<Device>, dstate: &DisplayState) -> Result<GeomPipeline> {
+    pub fn new(dev: Arc<Device>, dstate: &DisplayState, tmp_image: Image) -> Result<GeomPipeline> {
         unsafe {
             let pass = GeomPipeline::create_pass(dstate.d_surface_format.format, &dev);
 
@@ -530,6 +532,7 @@ impl GeomPipeline {
                 vert_count: QUAD_INDICES.len() as u32 * 3,
                 index_buffer: ibuf,
                 index_buffer_memory: imem,
+                tmp_image: tmp_image,
             };
 
             // now we need to update the descriptor set with the

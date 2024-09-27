@@ -74,7 +74,7 @@ pub struct Display {
     pub(crate) d_state: DisplayState,
     /// Application specific stuff that will be set up after
     /// the original initialization
-    pub(crate) d_pipe: Box<dyn Pipeline>,
+    pub(crate) d_pipe: GeomPipeline,
 }
 
 /// Our Swapchain Backend
@@ -152,7 +152,7 @@ impl Display {
         return Err(ThundrError::NO_DISPLAY);
     }
 
-    pub fn new(info: &CreateInfo, dev: Arc<Device>) -> Result<Display> {
+    pub fn new(info: &CreateInfo, dev: Arc<Device>, tmp_image: Image) -> Result<Display> {
         unsafe {
             let swapchain = Self::initialize_swapchain(info, dev.clone())?;
             let queue_family = swapchain.select_queue_family()?;
@@ -186,10 +186,7 @@ impl Display {
                 d_images: Vec::with_capacity(0),
             };
 
-            // Create the pipeline(s) requested
-            // Record the type we are using so that we know which type to regenerate
-            // on window resizing
-            let pipe = Box::new(GeomPipeline::new(dev.clone(), &dstate)?);
+            let pipe = GeomPipeline::new(dev.clone(), &dstate, tmp_image)?;
 
             let mut ret = Self {
                 d_dev: dev,

@@ -343,7 +343,19 @@ impl Thundr {
     /// system or a physical display. Display abstracts away the swapchain platform
     /// and holds the drawing commands.
     pub fn get_display(&mut self, info: &CreateInfo) -> Result<Display> {
-        Display::new(info, self.th_dev.clone())
+        let pixels: Vec<u8> = std::iter::repeat(0).take(4 * 4 * 4).collect();
+        // Create an image from our MemImage
+        let tmp_image = self
+            .create_image_from_bits(
+                pixels.as_slice(),
+                4, // width of texture
+                4, // height of texture
+                4, // stride
+                None,
+            )
+            .unwrap();
+
+        Display::new(info, self.th_dev.clone(), tmp_image)
     }
 
     /// Update an existing image from a shm buffer

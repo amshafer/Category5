@@ -89,13 +89,6 @@ pub struct DeviceInternal {
     /// This controls allocation of image descriptors for all imagevks allocated
     /// on this Device.
     pub(crate) descpool: DescPool,
-
-    /// Temporary image to bind to the image list when
-    /// no images are attached.
-    tmp_image: vk::Image,
-    tmp_image_view: vk::ImageView,
-    tmp_image_mem: vk::DeviceMemory,
-    pub(crate) tmp_image_desc: Descriptor,
 }
 
 impl Device {
@@ -315,8 +308,7 @@ impl Device {
             dev.create_semaphore(&sema_create_info, None)
                 .or(Err(ThundrError::INVALID))?
         };
-        let mut descpool = DescPool::new(&dev);
-        let tmp_desc = descpool.alloc_descriptor(&dev);
+        let descpool = DescPool::new(&dev);
 
         let ret = Self {
             inst: instance,
@@ -341,10 +333,6 @@ impl Device {
                 deletion_queue: DeletionQueue::new(),
                 descpool: descpool,
                 image_sampler: vk::Sampler::null(),
-                tmp_image: vk::Image::null(),
-                tmp_image_view: vk::ImageView::null(),
-                tmp_image_mem: vk::DeviceMemory::null(),
-                tmp_image_desc: tmp_desc,
             })),
             d_image_vk: img_ecs.add_component(),
         };
@@ -359,75 +347,8 @@ impl Device {
             internal.copy_cbuf = copy_cbuf;
             internal.image_sampler = sampler;
         }
-        // Do this after the sampler is populated
-        ret.populate_tmp_image();
 
         Ok(ret)
-    }
-
-    /// Populate our default tmp image
-    ///
-    /// This is bound when a surface has no image assigned
-    fn populate_tmp_image(&self) {
-        let (tmp, tmp_view, tmp_mem) = self.create_image(
-            &vk::Extent2D {
-                width: 2,
-                height: 2,
-            },
-            vk::Format::B8G8R8A8_UNORM,
-            vk::ImageUsageFlags::SAMPLED,
-            vk::ImageAspectFlags::COLOR,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            vk::ImageTiling::LINEAR,
-        );
-
-        self.wait_for_copy();
-        unsafe {
-            let int_lock = self.d_internal.clone();
-            let internal = int_lock.write().unwrap();
-
-            // transition us into the appropriate memory layout for shaders
-            self.cbuf_begin_recording(
-                internal.copy_cbuf,
-                vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-            );
-
-            let layout_barrier = vk::ImageMemoryBarrier::builder()
-                .image(tmp)
-                .src_access_mask(vk::AccessFlags::default())
-                .dst_access_mask(vk::AccessFlags::SHADER_READ)
-                .old_layout(vk::ImageLayout::UNDEFINED)
-                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .subresource_range(
-                    vk::ImageSubresourceRange::builder()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .layer_count(1)
-                        .level_count(1)
-                        .build(),
-                )
-                .build();
-            self.dev.cmd_pipeline_barrier(
-                internal.copy_cbuf,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[layout_barrier],
-            );
-            self.cbuf_end_recording(internal.copy_cbuf);
-        }
-        self.copy_cbuf_submit_async();
-
-        let tmp_desc = self.create_new_image_descriptor(tmp_view);
-
-        let mut internal = self.d_internal.write().unwrap();
-        internal.tmp_image = tmp;
-        internal.tmp_image_view = tmp_view;
-        internal.tmp_image_mem = tmp_mem;
-        // replace the existing desc set
-        internal.tmp_image_desc.destroy();
-        internal.tmp_image_desc = tmp_desc;
     }
 
     /// returns a new vkCommandPool
@@ -1414,10 +1335,6 @@ impl Drop for Device {
             // first wait for the device to finish working
             self.dev.device_wait_idle().unwrap();
 
-            self.dev.destroy_image(internal.tmp_image, None);
-            self.dev.destroy_image_view(internal.tmp_image_view, None);
-            self.free_memory(internal.tmp_image_mem);
-            internal.tmp_image_desc.destroy();
             internal.descpool.destroy(&self.dev);
             self.dev.destroy_sampler(internal.image_sampler, None);
 

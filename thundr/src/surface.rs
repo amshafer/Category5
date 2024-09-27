@@ -29,9 +29,12 @@ impl Surface {
         }
     }
 
+    #[inline]
     pub fn get_pos(&self) -> (i32, i32) {
         (self.s_rect.r_pos.0, self.s_rect.r_pos.1)
     }
+
+    #[inline]
     pub fn set_pos(&mut self, x: i32, y: i32) {
         if self.s_rect.r_pos.0 != x || self.s_rect.r_pos.1 != y {
             self.s_rect.r_pos.0 = x;
@@ -39,10 +42,12 @@ impl Surface {
         }
     }
 
+    #[inline]
     pub fn get_size(&self) -> (i32, i32) {
         (self.s_rect.r_size.0, self.s_rect.r_size.1)
     }
 
+    #[inline]
     pub fn set_size(&mut self, w: i32, h: i32) {
         if self.s_rect.r_size.0 != w || self.s_rect.r_size.1 != h {
             self.s_rect.r_size.0 = w;
@@ -50,10 +55,12 @@ impl Surface {
         }
     }
 
+    #[inline]
     pub fn get_color(&self) -> Option<(f32, f32, f32, f32)> {
         self.s_color
     }
 
+    #[inline]
     pub fn set_color(&mut self, color: (f32, f32, f32, f32)) {
         self.s_color = Some(color);
     }

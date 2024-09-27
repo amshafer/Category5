@@ -73,7 +73,7 @@ impl<'a> RecordParams<'a> {
 pub struct FrameRenderer<'a> {
     pub(crate) fr_swapchain: &'a mut Box<dyn Swapchain>,
     pub(crate) fr_dstate: &'a DisplayState,
-    pub(crate) fr_pipe: &'a mut Box<dyn Pipeline>,
+    pub(crate) fr_pipe: &'a mut GeomPipeline,
     /// The current draw calls parameters
     pub(crate) fr_params: RecordParams<'a>,
 }

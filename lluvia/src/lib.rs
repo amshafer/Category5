@@ -1103,14 +1103,17 @@ impl<'a, T: Clone + 'static> Snapshot<'a, T> {
         }
     }
 
+    #[inline]
     fn is_id_in_snapshot(&self, entity: &Entity) -> bool {
         self.s_ids.index(entity.get_raw_id()).is_some()
     }
     /// record that we updated this entity in the snapshot
+    #[inline]
     fn mark_entity(&mut self, entity: &Entity) {
         self.s_ids.set(entity.get_raw_id(), entity.clone());
     }
 
+    #[inline]
     fn ensure_value(&mut self, entity: &Entity) {
         // If we haven't yet set this id in this snapshot then
         // try to grab it from the parent
@@ -1145,6 +1148,7 @@ impl<'a, T: Clone + 'static> Snapshot<'a, T> {
     /// This will merge all changes back into the parent component atomically.
     ///
     /// This resets the snapshot
+    #[inline]
     pub fn commit(&mut self) {
         // First we need to drop our read lock
         self.s_readlock = None;
