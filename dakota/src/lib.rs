@@ -362,24 +362,86 @@ impl Dakota {
         self.d_unbounded_subsurf.clear_modified();
     }
 
+    /// Create a new Dakota Id
+    ///
+    /// The type of the new id must be specified. In Dakota, all objects are
+    /// represented by an Id, the type of which is specified during creation.
+    /// This type will assign the "role" of this id, and what data can be
+    /// attached to it.
+    pub(crate) fn create_new_id_common(
+        ecs_inst: &mut ll::Instance,
+        node_types: &mut ll::Snapshot<DakotaObjectType>,
+        element_type: DakotaObjectType,
+    ) -> Result<DakotaId> {
+        let id = ecs_inst.add_entity();
+
+        node_types.set(&id, element_type);
+        return Ok(id);
+    }
+
     /// Create a new toplevel Dakota DOM
     pub fn create_dakota_dom(&mut self) -> Result<DakotaId> {
-        self.create_new_id_common(DakotaObjectType::DakotaDOM)
+        let mut node_types = self.d_node_types.snapshot();
+        let res = Dakota::create_new_id_common(
+            &mut self.d_ecs_inst,
+            &mut node_types,
+            DakotaObjectType::DakotaDOM,
+        );
+        node_types.commit();
+        return res;
     }
 
     /// Create a new Dakota element
     pub fn create_element(&mut self) -> Result<DakotaId> {
-        self.create_new_id_common(DakotaObjectType::Element)
+        let mut node_types = self.d_node_types.snapshot();
+        let res = Dakota::create_new_id_common(
+            &mut self.d_ecs_inst,
+            &mut node_types,
+            DakotaObjectType::Element,
+        );
+        node_types.commit();
+        return res;
     }
 
     /// Create a new Dakota resource
     pub fn create_resource(&mut self) -> Result<DakotaId> {
-        self.create_new_id_common(DakotaObjectType::Resource)
+        let mut node_types = self.d_node_types.snapshot();
+        let res = Dakota::create_new_id_common(
+            &mut self.d_ecs_inst,
+            &mut node_types,
+            DakotaObjectType::Resource,
+        );
+        node_types.commit();
+        return res;
     }
 
     /// Create a new Dakota Font
     pub fn create_font(&mut self) -> Result<DakotaId> {
-        self.create_new_id_common(DakotaObjectType::Font)
+        let mut node_types = self.d_node_types.snapshot();
+        let res = Dakota::create_new_id_common(
+            &mut self.d_ecs_inst,
+            &mut node_types,
+            DakotaObjectType::Font,
+        );
+        node_types.commit();
+        return res;
+    }
+
+    pub(crate) fn define_font_internal(
+        font_instances: &mut Vec<(dom::Font, font::FontInstance)>,
+        fonts: &mut ll::Snapshot<dom::Font>,
+        freetype: &ft::Library,
+        id: &DakotaId,
+        font: dom::Font,
+    ) {
+        if font_instances.iter().find(|(f, _)| *f == font).is_none() {
+            font_instances.push((
+                font.clone(),
+                FontInstance::new(freetype, &font.path, font.pixel_size),
+            ));
+        }
+
+        fonts.set(id, font);
     }
 
     /// Define a Font for text rendering
@@ -388,19 +450,15 @@ impl Dakota {
     /// of the font file. This is then loaded into Dakota and text rendering
     /// is allowed with the font.
     pub fn define_font(&mut self, id: &DakotaId, font: dom::Font) {
-        if self
-            .d_font_instances
-            .iter()
-            .find(|(f, _)| *f == font)
-            .is_none()
-        {
-            self.d_font_instances.push((
-                font.clone(),
-                FontInstance::new(&self.d_freetype, &font.path, font.pixel_size),
-            ));
-        }
-
-        self.d_fonts.set(id, font);
+        let mut fonts = self.d_fonts.snapshot();
+        Dakota::define_font_internal(
+            &mut self.d_font_instances,
+            &mut fonts,
+            &self.d_freetype,
+            id,
+            font,
+        );
+        fonts.commit();
     }
 
     /// Returns true if this element will have it's position chosen for it by
@@ -409,17 +467,37 @@ impl Dakota {
         self.d_offsets.get(id).is_some()
     }
 
-    /// Create a new Dakota Id
-    ///
-    /// The type of the new id must be specified. In Dakota, all objects are
-    /// represented by an Id, the type of which is specified during creation.
-    /// This type will assign the "role" of this id, and what data can be
-    /// attached to it.
-    fn create_new_id_common(&mut self, element_type: DakotaObjectType) -> Result<DakotaId> {
-        let id = self.d_ecs_inst.add_entity();
+    pub(crate) fn define_resource_from_image_internal(
+        thund: &mut th::Thundr,
+        resource_thundr_image: &mut ll::Snapshot<th::Image>,
+        resource_color: &ll::Snapshot<dom::Color>,
+        res: &DakotaId,
+        file_path: &std::path::Path,
+        format: dom::Format,
+    ) -> Result<()> {
+        if Self::is_resource_defined_internal(resource_thundr_image, resource_color, res) {
+            return Err(anyhow!("Cannot redefine Resource contents"));
+        }
 
-        self.d_node_types.set(&id, element_type);
-        return Ok(id);
+        // Create an in-memory representation of the image contents
+        let resolution = image::image_dimensions(file_path)
+            .context("Format of image could not be guessed correctly. Could not get resolution")?;
+        let img = image::open(file_path)
+            .context("Could not open image path")?
+            .to_bgra8();
+        let pixels: Vec<u8> = img.into_vec();
+
+        Self::define_resource_from_bits_internal(
+            thund,
+            resource_thundr_image,
+            resource_color,
+            res,
+            pixels.as_slice(),
+            resolution.0,
+            resolution.1,
+            0,
+            format,
+        )
     }
 
     /// Define a resource's contents given a PNG image
@@ -432,26 +510,21 @@ impl Dakota {
         file_path: &std::path::Path,
         format: dom::Format,
     ) -> Result<()> {
-        if self.is_resource_defined(res) {
-            return Err(anyhow!("Cannot redefine Resource contents"));
-        }
-
-        // Create an in-memory representation of the image contents
-        let resolution = image::image_dimensions(file_path)
-            .context("Format of image could not be guessed correctly. Could not get resolution")?;
-        let img = image::open(file_path)
-            .context("Could not open image path")?
-            .to_bgra8();
-        let pixels: Vec<u8> = img.into_vec();
-
-        self.define_resource_from_bits(
+        let mut images = self.d_resource_thundr_image.snapshot();
+        let mut colors = self.d_resource_color.snapshot();
+        let res = Self::define_resource_from_image_internal(
+            &mut self.d_thund,
+            &mut images,
+            &colors,
             res,
-            pixels.as_slice(),
-            resolution.0,
-            resolution.1,
-            0,
+            file_path,
             format,
-        )
+        );
+        images.precommit();
+        colors.precommit();
+        images.commit();
+        colors.commit();
+        res
     }
 
     /// Has this Resource been defined
@@ -459,7 +532,22 @@ impl Dakota {
     /// If a resource has been defined then it contains surface contents. This
     /// means an internal GPU resource has been allocated for it.
     pub fn is_resource_defined(&self, res: &DakotaId) -> bool {
-        self.d_resource_thundr_image.get(res).is_some() || self.d_resource_color.get(res).is_some()
+        let mut images = self.d_resource_thundr_image.snapshot();
+        let mut colors = self.d_resource_color.snapshot();
+        let res = Self::is_resource_defined_internal(&mut images, &colors, res);
+        images.precommit();
+        colors.precommit();
+        images.commit();
+        colors.commit();
+        res
+    }
+
+    fn is_resource_defined_internal(
+        resource_thundr_image: &ll::Snapshot<th::Image>,
+        resource_color: &ll::Snapshot<dom::Color>,
+        res: &DakotaId,
+    ) -> bool {
+        resource_thundr_image.get(res).is_some() || resource_color.get(res).is_some()
     }
 
     /// Define a resource's contents from an array
@@ -479,21 +567,51 @@ impl Dakota {
         stride: u32, // TODO: Handle stride properly
         format: dom::Format,
     ) -> Result<()> {
+        let mut images = &mut self.d_resource_thundr_image.snapshot();
+        let mut colors = self.d_resource_color.snapshot();
+        let res = Self::define_resource_from_bits_internal(
+            &mut self.d_thund,
+            &mut images,
+            &colors,
+            res,
+            data,
+            width,
+            height,
+            stride,
+            format,
+        );
+        images.precommit();
+        colors.precommit();
+        images.commit();
+        colors.commit();
+        res
+    }
+
+    fn define_resource_from_bits_internal(
+        thund: &mut th::Thundr,
+        resource_thundr_image: &mut ll::Snapshot<th::Image>,
+        resource_color: &ll::Snapshot<dom::Color>,
+        res: &DakotaId,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32, // TODO: Handle stride properly
+        format: dom::Format,
+    ) -> Result<()> {
         if format != dom::Format::ARGB8888 {
             return Err(anyhow!("Invalid image format"));
         }
 
-        if self.is_resource_defined(res) {
+        if Self::is_resource_defined_internal(resource_thundr_image, resource_color, res) {
             return Err(anyhow!("Cannot redefine Resource contents"));
         }
 
         // create a thundr image for each resource
-        let image = self
-            .d_thund
+        let image = thund
             .create_image_from_bits(data, width, height, stride, None)
             .context("Could not create Image resources")?;
 
-        self.d_resource_thundr_image.set(res, image);
+        resource_thundr_image.set(res, image);
         Ok(())
     }
 
@@ -539,7 +657,11 @@ impl Dakota {
         dmabuf: &Dmabuf,
         release_info: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Result<()> {
-        if self.is_resource_defined(res) {
+        if Self::is_resource_defined_internal(
+            &self.d_resource_thundr_image.snapshot(),
+            &self.d_resource_color.snapshot(),
+            res,
+        ) {
             return Err(anyhow!("Cannot redefine Resource contents"));
         }
 
@@ -612,13 +734,24 @@ impl Dakota {
         self.d_viewports.set(id, viewport);
     }
 
-    fn assert_id_has_type(&self, id: &DakotaId, ty: DakotaObjectType) {
-        let id_type = *self
-            .d_node_types
-            .get(id)
-            .expect("Dakota node not assigned an object type");
+    pub(crate) fn add_child_to_element_internal(
+        children: &mut ll::Snapshot<Vec<DakotaId>>,
+        parent: &DakotaId,
+        child: DakotaId,
+    ) {
+        // Add old_id as a child element
+        if children.get_mut(parent).is_none() {
+            children.set(parent, Vec::new());
+        }
+        let child_vec = children.get_mut(parent).unwrap();
 
-        assert!(id_type == ty);
+        if child_vec
+            .iter()
+            .find(|c| c.get_raw_id() == child.get_raw_id())
+            .is_none()
+        {
+            child_vec.push(child);
+        }
     }
 
     /// Add `child` as a child element to `parent`.
@@ -626,23 +759,9 @@ impl Dakota {
     /// This operation on makes sense for Dakota objects with the `Element` object
     /// type. Will only add `child` if it is not already a child of `parent`.
     pub fn add_child_to_element(&mut self, parent: &DakotaId, child: DakotaId) {
-        // Assert this id has the Element type
-        self.assert_id_has_type(parent, DakotaObjectType::Element);
-        self.assert_id_has_type(&child, DakotaObjectType::Element);
-
-        // Add old_id as a child element
-        if self.d_children.get_mut(parent).is_none() {
-            self.d_children.set(parent, Vec::new());
-        }
-        let mut children = self.d_children.get_mut(parent).unwrap();
-
-        if children
-            .iter()
-            .find(|c| c.get_raw_id() == child.get_raw_id())
-            .is_none()
-        {
-            children.push(child);
-        }
+        let mut children = self.d_children.snapshot();
+        Dakota::add_child_to_element_internal(&mut children, parent, child);
+        children.commit();
     }
 
     /// Remove `child` as a child element of `parent`.
@@ -650,10 +769,6 @@ impl Dakota {
     /// This operation on makes sense for Dakota objects with the `Element` object
     /// type. This does nothing if `child` is not a child of `parent`.
     pub fn remove_child_from_element(&mut self, parent: &DakotaId, child: &DakotaId) -> Result<()> {
-        // Assert this id has the Element type
-        self.assert_id_has_type(parent, DakotaObjectType::Element);
-        self.assert_id_has_type(&child, DakotaObjectType::Element);
-
         let mut children = match self.d_children.get_mut(parent) {
             Some(children) => children,
             None => return Ok(()),
@@ -685,11 +800,6 @@ impl Dakota {
         a: &DakotaId,
         b: &DakotaId,
     ) -> Result<()> {
-        // Assert this id has the Element type
-        self.assert_id_has_type(parent, DakotaObjectType::Element);
-        self.assert_id_has_type(a, DakotaObjectType::Element);
-        self.assert_id_has_type(b, DakotaObjectType::Element);
-
         let mut children = self
             .d_children
             .get_mut(parent)
@@ -723,10 +833,6 @@ impl Dakota {
     /// This is used for bringing an element into "focus", and placing it as
     /// the foremost child.
     pub fn move_child_to_front(&mut self, parent: &DakotaId, child: &DakotaId) -> Result<()> {
-        // Assert this id has the Element type
-        self.assert_id_has_type(parent, DakotaObjectType::Element);
-        self.assert_id_has_type(child, DakotaObjectType::Element);
-
         let mut children = self
             .d_children
             .get_mut(parent)
@@ -856,10 +962,23 @@ impl Dakota {
         self.d_event_sys.drain_events()
     }
 
+    /// Returns true if the node is of a type that guarantees it cannot have
+    /// child elements.
+    ///
+    /// This most notably happens with text elements.
+    pub(crate) fn node_can_have_children(
+        &self,
+        texts: &ll::Snapshot<dom::Text>,
+        id: &DakotaId,
+    ) -> bool {
+        !texts.get(id).is_some()
+    }
+
     fn viewport_at_pos_recursive(
         &self,
         layout_nodes: &ll::Snapshot<LayoutNode>,
         viewports: &ll::Snapshot<th::Viewport>,
+        texts: &ll::Snapshot<dom::Text>,
         id: &DakotaId,
         base: (i32, i32),
         x: i32,
@@ -871,7 +990,7 @@ impl Dakota {
         // If this node is of a type where we know it has a lot of children but none of them
         // could possibly be a viewport, take an early exit.
         // This most notably happens in the case of text nodes, which
-        if !self.node_can_have_children(id) && viewports.get(id).is_none() {
+        if !self.node_can_have_children(texts, id) && viewports.get(id).is_none() {
             return None;
         }
 
@@ -880,7 +999,7 @@ impl Dakota {
         // node matches
         for child in layout.l_children.iter() {
             if let Some(ret) =
-                self.viewport_at_pos_recursive(layout_nodes, viewports, child, offset, x, y)
+                self.viewport_at_pos_recursive(layout_nodes, viewports, texts, child, offset, x, y)
             {
                 return Some(ret);
             }
@@ -911,9 +1030,10 @@ impl Dakota {
         // use some snapshots here to hold the read locks open
         let layout_nodes = self.d_layout_nodes.snapshot();
         let viewports = self.d_viewports.snapshot();
+        let texts = self.d_texts.snapshot();
         assert!(viewports.get(root_node).is_some());
 
-        self.viewport_at_pos_recursive(&layout_nodes, &viewports, root_node, (0, 0), x, y)
+        self.viewport_at_pos_recursive(&layout_nodes, &viewports, &texts, root_node, (0, 0), x, y)
             .unwrap()
     }
 

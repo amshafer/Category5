@@ -120,6 +120,22 @@ pub(crate) struct LayoutTransaction<'a> {
 impl<'a> LayoutTransaction<'a> {
     /// Commit this transaction
     fn commit(&mut self) {
+        self.lt_resources.precommit();
+        self.lt_resource_thundr_image.precommit();
+        self.lt_resource_color.precommit();
+        self.lt_fonts.precommit();
+        self.lt_text_font.precommit();
+        self.lt_texts.precommit();
+        self.lt_glyphs.precommit();
+        self.lt_viewports.precommit();
+        self.lt_layout_nodes.precommit();
+        self.lt_contents.precommit();
+        self.lt_widths.precommit();
+        self.lt_heights.precommit();
+        self.lt_offsets.precommit();
+        self.lt_children.precommit();
+
+        // Now do the actual commit
         self.lt_resources.commit();
         self.lt_resource_thundr_image.commit();
         self.lt_resource_color.commit();
@@ -444,10 +460,27 @@ impl<'a> LayoutTransaction<'a> {
         Ok(())
     }
 
+    /// Returns true if the node is of a type that guarantees it cannot have
+    /// child elements.
+    ///
+    /// This most notably happens with text elements. Should match Dakota's
+    /// version of this
+    pub(crate) fn node_can_have_children(
+        &self,
+        texts: &ll::Snapshot<dom::Text>,
+        id: &DakotaId,
+    ) -> bool {
+        !texts.get(id).is_some()
+    }
+
     /// Handles creating LayoutNodes for every glyph in a passage
     ///
     /// This is the handler for the text field in the dakota file
     fn calculate_sizes_text(&mut self, el: &DakotaId) -> Result<()> {
+        if !self.node_can_have_children(&self.lt_texts, el) && self.lt_children.get(el).is_some() {
+            return Err(anyhow!("Text Elements cannot have children"));
+        }
+
         let font_id = self.get_font_id_for_el(el);
         let font = self.lt_fonts.get(&font_id).unwrap();
         let font_inst = &mut self

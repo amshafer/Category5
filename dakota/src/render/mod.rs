@@ -31,6 +31,16 @@ pub(crate) struct RenderTransaction<'a> {
 impl<'a> RenderTransaction<'a> {
     /// Commit this transaction
     fn commit(&mut self) {
+        self.rt_resources.precommit();
+        self.rt_resource_thundr_image.precommit();
+        self.rt_resource_color.precommit();
+        self.rt_fonts.precommit();
+        self.rt_text_font.precommit();
+        self.rt_glyphs.precommit();
+        self.rt_viewports.precommit();
+        self.rt_layout_nodes.precommit();
+
+        // Now do actual commit to WAR ids being dropped
         self.rt_resources.commit();
         self.rt_resource_thundr_image.commit();
         self.rt_resource_color.commit();

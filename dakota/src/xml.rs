@@ -9,14 +9,56 @@ extern crate quick_xml;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
-use crate::dom;
 use crate::utils::anyhow;
-use crate::{Context, Dakota, DakotaId, Result};
+use crate::{dom, font};
+use crate::{Context, Dakota, DakotaId, DakotaObjectType, Result};
 
 use std::collections::HashMap;
 use std::io::BufRead;
 use std::sync::Arc;
 use utils::log;
+
+/// XML parser transaction
+///
+/// This transaction allows the XML engine to have a consistent,
+/// read-only view of the state while it is populating the sizes of
+/// the LayoutNodes
+///
+/// These fields correspond to the identically named variants in Dakota.
+pub(crate) struct ParserTransaction<'a> {
+    pt_thund: &'a mut th::Thundr,
+    pt_ecs_inst: ll::Instance,
+    pt_node_types: ll::Snapshot<'a, DakotaObjectType>,
+    pt_dom: ll::Snapshot<'a, dom::DakotaDOM>,
+    pt_resource_hints: ll::Snapshot<'a, dom::Hints>,
+    pt_resources: ll::Snapshot<'a, DakotaId>,
+    pt_resource_thundr_image: ll::Snapshot<'a, th::Image>,
+    pt_resource_color: ll::Snapshot<'a, dom::Color>,
+    pt_fonts: ll::Snapshot<'a, dom::Font>,
+    pt_text_font: ll::Snapshot<'a, DakotaId>,
+    pt_texts: ll::Snapshot<'a, dom::Text>,
+    pt_glyphs: ll::Snapshot<'a, font::Glyph>,
+    pt_viewports: ll::Snapshot<'a, th::Viewport>,
+    pt_contents: ll::Snapshot<'a, dom::Content>,
+    pt_offsets: ll::Snapshot<'a, dom::RelativeOffset>,
+    pt_widths: ll::Snapshot<'a, dom::Value>,
+    pt_heights: ll::Snapshot<'a, dom::Value>,
+    pt_children: ll::Snapshot<'a, Vec<DakotaId>>,
+    pt_font_instances: &'a mut Vec<(dom::Font, font::FontInstance)>,
+    pt_freetype: &'a ft::Library,
+    pt_unbounded_subsurf: ll::Snapshot<'a, bool>,
+    /// This maps the string names for resource found in the
+    /// XML document to DakotaIds that represent those resources.
+    ///
+    /// We need this since the resource section may be processed
+    /// after the elements for some reason. We need to have a way
+    /// to translate from strings to ids so that we can set up
+    /// all the elements to reference resources without holding
+    /// a giant array of resources somewhere.
+    pt_name_to_id_map: HashMap<String, DakotaId>,
+    /// Similar motivation but for font definitions
+    pt_font_name_to_id_map: HashMap<String, DakotaId>,
+}
 
 /// A list of element names
 ///
@@ -219,47 +261,114 @@ impl Element {
     }
 }
 
-/// Data for this round of parsing
-///
-/// This will be freed after the XML stream is processed
-struct ParseData {
-    /// This maps the string names for resource found in the
-    /// XML document to DakotaIds that represent those resources.
-    ///
-    /// We need this since the resource section may be processed
-    /// after the elements for some reason. We need to have a way
-    /// to translate from strings to ids so that we can set up
-    /// all the elements to reference resources without holding
-    /// a giant array of resources somewhere.
-    name_to_id_map: HashMap<String, DakotaId>,
-    /// Similar motivation but for font definitions
-    font_name_to_id_map: HashMap<String, DakotaId>,
-}
+impl<'a> ParserTransaction<'a> {
+    /// Commit this transaction
+    fn commit(&mut self) {
+        // drop all locks to avoid deadlocking for ids that
+        // get invalidated and try to free their data
+        self.pt_node_types.precommit();
+        self.pt_dom.precommit();
+        self.pt_resource_hints.precommit();
+        self.pt_resources.precommit();
+        self.pt_resource_thundr_image.precommit();
+        self.pt_resource_color.precommit();
+        self.pt_fonts.precommit();
+        self.pt_text_font.precommit();
+        self.pt_texts.precommit();
+        self.pt_glyphs.precommit();
+        self.pt_viewports.precommit();
+        self.pt_contents.precommit();
+        self.pt_widths.precommit();
+        self.pt_heights.precommit();
+        self.pt_offsets.precommit();
+        self.pt_children.precommit();
+        self.pt_unbounded_subsurf.precommit();
 
-impl Dakota {
-    /// Parse a string of Dakota XML
-    ///
-    /// This provides a way to initialize a full application view from a
-    /// string of XML.
-    pub fn load_xml_str(&mut self, xml: &str) -> Result<DakotaId> {
-        let mut reader = Reader::from_str(xml);
-        reader.trim_text(true);
-
-        self.parse_xml(&mut reader)
-            .context("Failed to parse XML dakota string")
+        // Now we can commit
+        self.pt_node_types.commit();
+        self.pt_dom.commit();
+        self.pt_resource_hints.commit();
+        self.pt_resources.commit();
+        self.pt_resource_thundr_image.commit();
+        self.pt_resource_color.commit();
+        self.pt_fonts.commit();
+        self.pt_text_font.commit();
+        self.pt_texts.commit();
+        self.pt_glyphs.commit();
+        self.pt_viewports.commit();
+        self.pt_contents.commit();
+        self.pt_widths.commit();
+        self.pt_heights.commit();
+        self.pt_offsets.commit();
+        self.pt_children.commit();
+        self.pt_unbounded_subsurf.commit();
     }
 
-    /// Parse a string of Dakota XML
-    ///
-    /// This provides a way to initialize a full application view from a
-    /// arbitrary reader type that serves XML.
-    pub fn load_xml_reader<B: BufRead>(&mut self, reader: B) -> Result<DakotaId> {
-        let mut reader = Reader::from_reader(reader);
-        reader.trim_text(true);
-
-        self.parse_xml(&mut reader)
-            .context("Failed to parse XML dakota string")
+    // Similar to main Dakota functions. These here hook into common creation logic
+    // --------------------------------------------------------------------------
+    fn create_dakota_dom(&mut self) -> Result<DakotaId> {
+        Dakota::create_new_id_common(
+            &mut self.pt_ecs_inst,
+            &mut self.pt_node_types,
+            DakotaObjectType::DakotaDOM,
+        )
     }
+
+    fn create_element(&mut self) -> Result<DakotaId> {
+        Dakota::create_new_id_common(
+            &mut self.pt_ecs_inst,
+            &mut self.pt_node_types,
+            DakotaObjectType::Element,
+        )
+    }
+
+    fn create_resource(&mut self) -> Result<DakotaId> {
+        Dakota::create_new_id_common(
+            &mut self.pt_ecs_inst,
+            &mut self.pt_node_types,
+            DakotaObjectType::Resource,
+        )
+    }
+
+    fn create_font(&mut self) -> Result<DakotaId> {
+        Dakota::create_new_id_common(
+            &mut self.pt_ecs_inst,
+            &mut self.pt_node_types,
+            DakotaObjectType::Font,
+        )
+    }
+
+    fn add_child_to_element(&mut self, parent: &DakotaId, child: DakotaId) {
+        Dakota::add_child_to_element_internal(&mut self.pt_children, parent, child);
+    }
+
+    fn define_font(&mut self, id: &DakotaId, font: dom::Font) {
+        Dakota::define_font_internal(
+            &mut self.pt_font_instances,
+            &mut self.pt_fonts,
+            &self.pt_freetype,
+            id,
+            font,
+        );
+    }
+
+    fn define_resource_from_image(
+        &mut self,
+        res: &DakotaId,
+        file_path: &std::path::Path,
+        format: dom::Format,
+    ) -> Result<()> {
+        Dakota::define_resource_from_image_internal(
+            &mut self.pt_thund,
+            &mut self.pt_resource_thundr_image,
+            &self.pt_resource_color,
+            res,
+            file_path,
+            format,
+        )
+    }
+
+    // --------------------------------------------------------------------------
 
     /// Returns a new id if this element type will have a DakotaId created for
     /// it. None if no
@@ -292,17 +401,20 @@ impl Dakota {
     ///
     /// This is used to get an id for a resource even if it has not yet
     /// been created
-    fn get_id_for_name(
-        &mut self,
-        name_to_id_map: &mut HashMap<String, DakotaId>,
-        name: &str,
-    ) -> Result<DakotaId> {
+    fn get_id_for_name(&mut self, is_font: bool, name: &str) -> Result<DakotaId> {
+        let name_to_id_map = match is_font {
+            true => &mut self.pt_font_name_to_id_map,
+            false => &mut self.pt_name_to_id_map,
+        };
+
         if !name_to_id_map.contains_key(name) {
-            name_to_id_map.insert(
-                name.to_string(),
-                self.create_resource()
-                    .context("Creating DakotaId for Resource Definition")?,
-            );
+            let res = Dakota::create_new_id_common(
+                &mut self.pt_ecs_inst,
+                &mut self.pt_node_types,
+                DakotaObjectType::Resource,
+            )
+            .context("Creating DakotaId for Resource Definition")?;
+            name_to_id_map.insert(name.to_string(), res);
         }
 
         Ok(name_to_id_map.get(name).unwrap().clone())
@@ -322,9 +434,14 @@ impl Dakota {
     /// Returns true if the node is of a type that guarantees it cannot have
     /// child elements.
     ///
-    /// This most notably happens with text elements.
-    pub(crate) fn node_can_have_children(&self, id: &DakotaId) -> bool {
-        !self.d_texts.get(id).is_some()
+    /// This most notably happens with text elements. Should match Dakota's
+    /// version of this
+    pub(crate) fn node_can_have_children(
+        &self,
+        texts: &ll::Snapshot<dom::Text>,
+        id: &DakotaId,
+    ) -> bool {
+        !texts.get(id).is_some()
     }
 
     /// We need to check that all required fields were specified in the
@@ -338,7 +455,6 @@ impl Dakota {
     /// such as adding a child id to our children list.
     fn add_child(
         &mut self,
-        parse: &mut ParseData,
         id: &DakotaId,
         node: &mut Element,
         old_id: &DakotaId,
@@ -361,21 +477,21 @@ impl Dakota {
                     Element::Resource(name) => {
                         let resource_id = self
                             .get_id_for_name(
-                                &mut parse.name_to_id_map,
+                                false,
                                 name.as_ref()
                                     .ok_or(anyhow!("Element was not assigned a resource"))?,
                             )
                             .context("Getting resource reference for element")?;
-                        self.d_resources.set(id, resource_id)
+                        self.pt_resources.set(id, resource_id)
                     }
-                    Element::UnboundedSubsurface => self.d_unbounded_subsurf.set(id, true),
+                    Element::UnboundedSubsurface => self.pt_unbounded_subsurf.set(id, true),
                     Element::El {
                         x: _,
                         y: _,
                         width: _,
                         height: _,
                     } => {
-                        if !self.node_can_have_children(id) {
+                        if !self.node_can_have_children(&self.pt_texts, id) {
                             return Err(anyhow!("Element cannot have children due to other properties defined for it"));
                         }
 
@@ -386,11 +502,11 @@ impl Dakota {
                     Element::Width(val) => *width = *val,
                     Element::Height(val) => *height = *val,
                     Element::Text(data, font) => {
-                        if self.d_children.get(id).is_some() {
+                        if self.pt_children.get(id).is_some() {
                             return Err(anyhow!("Text Elements cannot have children"));
                         }
 
-                        self.d_texts.set(
+                        self.pt_texts.set(
                             id,
                             dom::Text {
                                 items: data.clone(),
@@ -399,12 +515,12 @@ impl Dakota {
                         // font is optional
                         if let Some(name) = font {
                             let resource_id = self
-                                .get_id_for_name(&mut parse.font_name_to_id_map, name)
+                                .get_id_for_name(true, name)
                                 .context("Getting resource reference for element")?;
-                            self.d_text_font.set(id, resource_id);
+                            self.pt_text_font.set(id, resource_id);
                         }
                     }
-                    Element::Content(data) => self.d_contents.set(
+                    Element::Content(data) => self.pt_contents.set(
                         id,
                         dom::Content {
                             el: data
@@ -415,13 +531,13 @@ impl Dakota {
                     Element::Size(width, height) => {
                         // Widths and heights are optional
                         if let Some(width) = width {
-                            self.d_widths.set(id, *width);
+                            self.pt_widths.set(id, *width);
                         }
                         if let Some(height) = height {
-                            self.d_heights.set(id, *height);
+                            self.pt_heights.set(id, *height);
                         }
                     }
-                    Element::Offset(x, y) => self.d_offsets.set(
+                    Element::Offset(x, y) => self.pt_offsets.set(
                         id,
                         dom::RelativeOffset {
                             x: x.clone()
@@ -532,7 +648,7 @@ impl Dakota {
                 Element::FontDefinition(name, path, size, color) => {
                     let resource_id = self
                         .get_id_for_name(
-                            &mut parse.font_name_to_id_map,
+                            true,
                             name.as_ref()
                                 .ok_or(anyhow!("Font definition does not have a name"))?,
                         )
@@ -561,14 +677,14 @@ impl Dakota {
                     // Look up this resource's id
                     let resource_id = self
                         .get_id_for_name(
-                            &mut parse.name_to_id_map,
+                            false,
                             name.as_ref()
                                 .ok_or(anyhow!("Resource definition does not have a name"))?,
                         )
                         .context("Getting resource id for resource definition")?;
 
                     if let Some(h) = hints.clone() {
-                        self.d_resource_hints.set(&resource_id, h);
+                        self.pt_resource_hints.set(&resource_id, h);
                     }
 
                     // If this resource is backed by an image, populate it
@@ -576,7 +692,7 @@ impl Dakota {
                         let file_path = std::path::Path::new(i.data.get_fs_path()?);
                         self.define_resource_from_image(&resource_id, &file_path, i.format)?;
                     } else if let Some(c) = color.as_ref() {
-                        self.d_resource_color.set(&resource_id, *c);
+                        self.pt_resource_color.set(&resource_id, *c);
                     }
                 }
                 e => return Err(anyhow!("Unexpected child element: {:?}", e)),
@@ -774,11 +890,6 @@ impl Dakota {
     /// This initializes our elements to be later processed into layout nodes.
     fn parse_xml<R: BufRead>(&mut self, reader: &mut Reader<R>) -> Result<DakotaId> {
         let mut buf = Vec::new();
-        // Our parsing data
-        let mut parse = ParseData {
-            name_to_id_map: HashMap::new(),
-            font_name_to_id_map: HashMap::new(),
-        };
 
         // The DakotaId we are currently populating
         let mut id = None;
@@ -828,7 +939,7 @@ impl Dakota {
                                     window,
                                     root_element,
                                 }) => {
-                                    self.d_dom.set(
+                                    self.pt_dom.set(
                                         old_id.as_ref().unwrap(),
                                         dom::DakotaDOM {
                                             version: version
@@ -860,7 +971,6 @@ impl Dakota {
                     // Validate old_node and add (old_id, old_node) as children of (id, node)
                     // We can expect id and node to be valid here since we just checked it
                     self.add_child(
-                        &mut parse,
                         id.as_ref().unwrap(),
                         node.as_mut().unwrap(),
                         old_id.as_ref().unwrap(),
@@ -898,5 +1008,67 @@ impl Dakota {
             Some(val) => Ok(val),
             None => Err(anyhow!("Error: no elements found in XML")),
         }
+    }
+}
+
+impl Dakota {
+    /// Parse a quick_xml stream into a Dakota DOM tree
+    ///
+    /// This initializes our elements to be later processed into layout nodes.
+    fn parse_xml<R: BufRead>(&mut self, reader: &mut Reader<R>) -> Result<DakotaId> {
+        let mut trans = ParserTransaction {
+            pt_thund: &mut self.d_thund,
+            pt_ecs_inst: self.d_ecs_inst.clone(),
+            pt_node_types: self.d_node_types.snapshot(),
+            pt_resources: self.d_resources.snapshot(),
+            pt_dom: self.d_dom.snapshot(),
+            pt_resource_hints: self.d_resource_hints.snapshot(),
+            pt_resource_thundr_image: self.d_resource_thundr_image.snapshot(),
+            pt_resource_color: self.d_resource_color.snapshot(),
+            pt_fonts: self.d_fonts.snapshot(),
+            pt_text_font: self.d_text_font.snapshot(),
+            pt_texts: self.d_texts.snapshot(),
+            pt_glyphs: self.d_glyphs.snapshot(),
+            pt_viewports: self.d_viewports.snapshot(),
+            pt_contents: self.d_contents.snapshot(),
+            pt_widths: self.d_widths.snapshot(),
+            pt_heights: self.d_heights.snapshot(),
+            pt_offsets: self.d_offsets.snapshot(),
+            pt_children: self.d_children.snapshot(),
+            pt_font_instances: &mut self.d_font_instances,
+            pt_name_to_id_map: HashMap::new(),
+            pt_font_name_to_id_map: HashMap::new(),
+            pt_freetype: &self.d_freetype,
+            pt_unbounded_subsurf: self.d_unbounded_subsurf.snapshot(),
+        };
+
+        let res = trans.parse_xml(reader)?;
+        trans.commit();
+
+        Ok(res)
+    }
+
+    /// Parse a string of Dakota XML
+    ///
+    /// This provides a way to initialize a full application view from a
+    /// string of XML.
+    pub fn load_xml_str(&mut self, xml: &str) -> Result<DakotaId> {
+        let mut reader = Reader::from_str(xml);
+        reader.trim_text(true);
+
+        self.parse_xml(&mut reader)
+            .context("Failed to parse XML dakota string")
+    }
+
+    /// Parse a string of Dakota XML
+    ///
+    /// This provides a way to initialize a full application view from a
+    /// arbitrary reader type that serves XML.
+    pub fn load_xml_reader<B: BufRead>(&mut self, reader: B) -> Result<DakotaId> {
+        let mut reader = Reader::from_reader(reader);
+        reader.trim_text(true);
+
+        self.parse_xml(&mut reader)
+            .context("Failed to parse XML dakota string")
     }
 }

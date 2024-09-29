@@ -1143,6 +1143,26 @@ impl<'a, T: Clone + 'static> Snapshot<'a, T> {
         }
     }
 
+    /// Take care of any pre-commit operations
+    ///
+    /// This drops the read lock held by this snapshot. The reason why this
+    /// is exposed is due to some tricky lock ordering issues that can happen
+    /// when Entitys are destroyed while snapshots exist. If an entity is
+    /// destroyed all Components will free their data for that Id. If snapshots
+    /// are currently active then this means the read lock is held, and dropping
+    /// this Entity hangs.
+    ///
+    /// This function solves this problem where it is most commonly found: when
+    /// a "transaction" of multiple Snapshots are being committed. It is possible
+    /// that the last usage of an Id is in one snapshot, but other snapshots which
+    /// are waiting to commit still hold read locks. By calling precommit on all
+    /// snapshots this allows them all to release locks, then they can all commit
+    /// without hanging.
+    pub fn precommit(&mut self) {
+        // First we need to drop our read lock
+        self.s_readlock = None;
+    }
+
     /// Commit this snapshot
     ///
     /// This will merge all changes back into the parent component atomically.
@@ -1151,21 +1171,24 @@ impl<'a, T: Clone + 'static> Snapshot<'a, T> {
     #[inline]
     pub fn commit(&mut self) {
         // First we need to drop our read lock
-        self.s_readlock = None;
-        // Now we can open a writer for this table
-        let mut writer = self.s_parent.c_table.t_internal.write().unwrap();
+        self.precommit();
 
-        // for each entity in the snapshot
-        // set the parent value to whatever's contained in the snapshot
-        for id in self.s_ids.iter() {
-            // we clear our data container here, as every id modified in
-            // the system will have its data set back to None
-            if let Some(val) = self.s_data.take(id.get_raw_id()) {
-                writer.t_entity.set(id.get_raw_id(), val);
-            } else {
-                // if the snapshot has this value cleared, do the same for
-                // the parent
-                writer.t_entity.take(id.get_raw_id());
+        {
+            // Now we can open a writer for this table
+            let mut writer = self.s_parent.c_table.t_internal.write().unwrap();
+
+            // for each entity in the snapshot
+            // set the parent value to whatever's contained in the snapshot
+            for id in self.s_ids.iter() {
+                // we clear our data container here, as every id modified in
+                // the system will have its data set back to None
+                if let Some(val) = self.s_data.take(id.get_raw_id()) {
+                    writer.t_entity.set(id.get_raw_id(), val);
+                } else {
+                    // if the snapshot has this value cleared, do the same for
+                    // the parent
+                    writer.t_entity.take(id.get_raw_id());
+                }
             }
         }
 

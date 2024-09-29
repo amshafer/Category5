@@ -274,7 +274,7 @@ pub struct Window {
     pub events: WindowEvents,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DakotaDOM {
     pub version: String,
     pub window: Window,
