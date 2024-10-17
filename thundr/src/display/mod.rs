@@ -20,6 +20,9 @@ use headless::HeadlessSwapchain;
 pub mod frame;
 use frame::{FrameRenderer, RecordParams};
 
+#[cfg(feature = "drm")]
+pub mod drm;
+
 /// Shared state that subsystems consume. We need this
 /// since Display holds rendering objects, but also has
 /// to pass down swapchain/image info so those rendering
@@ -131,25 +134,14 @@ impl Display {
     /// Figure out what the requested surface type is and call the appropriate
     /// swapchain backend new function.
     fn initialize_swapchain(info: &CreateInfo, dev: Arc<Device>) -> Result<Box<dyn Swapchain>> {
-        let mut vkswap = false;
-        let mut headless = true;
-
         match &info.surface_type {
             #[cfg(feature = "sdl")]
-            SurfaceType::SDL2(_, _) => vkswap = true,
-            SurfaceType::Display(_) => vkswap = true,
-            SurfaceType::Headless => headless = true,
+            SurfaceType::SDL2(_, _) => Ok(Box::new(VkSwapchain::new(info, dev.clone())?)),
+            SurfaceType::Display(_) => Ok(Box::new(VkSwapchain::new(info, dev.clone())?)),
+            SurfaceType::Headless => Ok(Box::new(HeadlessSwapchain::new(dev.clone())?)),
+            #[cfg(feature = "drm")]
+            SurfaceType::Drm => Ok(Box::new(drm::DrmSwapchain::new(dev.clone())?)),
         }
-
-        if vkswap {
-            return Ok(Box::new(VkSwapchain::new(info, dev.clone())?));
-        }
-
-        if headless {
-            return Ok(Box::new(HeadlessSwapchain::new(dev.clone())?));
-        }
-
-        return Err(ThundrError::NO_DISPLAY);
     }
 
     pub fn new(info: &CreateInfo, dev: Arc<Device>, tmp_image: Image) -> Result<Display> {
@@ -176,6 +168,8 @@ impl Display {
                 d_current_image: 0,
                 d_needs_present_sema: match info.surface_type {
                     SurfaceType::Headless => false,
+                    #[cfg(feature = "drm")]
+                    SurfaceType::Drm => false,
                     _ => true,
                 },
                 d_present_semas: Vec::new(),
@@ -300,6 +294,8 @@ impl Display {
     pub fn extension_names(info: &CreateInfo) -> Vec<*const i8> {
         match info.surface_type {
             SurfaceType::Headless => Vec::with_capacity(0),
+            #[cfg(feature = "drm")]
+            SurfaceType::Drm => Vec::with_capacity(0),
             SurfaceType::Display(_) => {
                 vec![khr::Surface::name().as_ptr(), khr::Display::name().as_ptr()]
             }

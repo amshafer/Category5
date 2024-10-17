@@ -240,7 +240,7 @@ impl SDL2Plat {
 
 #[cfg(feature = "sdl")]
 impl Platform for SDL2Plat {
-    fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType> {
+    fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType> {
         Ok(th::SurfaceType::SDL2(&self.sdl_video_sys, &self.sdl_window))
     }
 

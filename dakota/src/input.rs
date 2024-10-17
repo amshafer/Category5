@@ -4,9 +4,9 @@
 //
 // Austin Shafer - 2020
 
-#[cfg(feature = "direct2display")]
+#[cfg(any(feature = "direct2display", feature = "drm"))]
 extern crate xkbcommon;
-#[cfg(feature = "direct2display")]
+#[cfg(any(feature = "direct2display", feature = "drm"))]
 use xkbcommon::xkb;
 
 bitflags::bitflags! {
@@ -52,7 +52,7 @@ pub enum MouseButton {
 /// Converts a Linux kernel mouse button code into a Dakota enum.
 ///
 /// The conversion values are based on Linux's input.h
-#[cfg(feature = "direct2display")]
+#[cfg(any(feature = "direct2display", feature = "drm"))]
 pub fn convert_libinput_mouse_to_dakota(button: u32) -> MouseButton {
     match button {
         0x110 => MouseButton::LEFT,
@@ -67,7 +67,7 @@ pub fn convert_libinput_mouse_to_dakota(button: u32) -> MouseButton {
     }
 }
 
-#[cfg(feature = "direct2display")]
+#[cfg(any(feature = "direct2display", feature = "drm"))]
 impl MouseButton {
     /// Get the Linux kernel button code corresponding to this mouse button
     ///
@@ -142,7 +142,7 @@ impl<K: PartialEq + Copy, T: PartialEq + Copy> CodeTranslator<K, T> {
 }
 
 // Define different tables for our different possible keycode sets
-#[cfg(feature = "direct2display")]
+#[cfg(any(feature = "direct2display", feature = "drm"))]
 lazy_static::lazy_static! {
     static ref CT_XKB_TO_DAKOTA: CodeTranslator<Keycode, u32> =
         CodeTranslator {
@@ -1127,7 +1127,7 @@ impl Keycode {
 /// This handles looking up the keycode translation using an internal lookup table.
 ///
 /// TODO: Make this O(1)
-#[cfg(feature = "direct2display")]
+#[cfg(any(feature = "direct2display", feature = "drm"))]
 pub fn convert_xkb_keycode_to_dakota(key: u32) -> Keycode {
     CT_XKB_TO_DAKOTA.val_to_key(key).unwrap_or(Keycode::UNKNOWN)
 }

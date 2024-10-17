@@ -6,10 +6,10 @@ use crate::dom::DakotaDOM;
 use crate::{event::EventSystem, DakotaError, Result};
 use std::os::fd::RawFd;
 
-#[cfg(feature = "direct2display")]
+#[cfg(any(feature = "direct2display", feature = "drm"))]
 mod display;
-#[cfg(feature = "direct2display")]
-pub use display::DisplayPlat;
+#[cfg(any(feature = "direct2display", feature = "drm"))]
+pub use display::LibinputPlat;
 
 #[cfg(feature = "sdl")]
 mod sdl2;
@@ -23,7 +23,7 @@ pub use self::headless::HeadlessPlat;
 ///
 /// This isolates all of the Window system code.
 pub trait Platform {
-    fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType>;
+    fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType>;
 
     fn set_output_params(&mut self, win: &dom::Window, dims: (u32, u32)) -> Result<()>;
 

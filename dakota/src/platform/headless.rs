@@ -19,7 +19,7 @@ impl HeadlessPlat {
 }
 
 impl Platform for HeadlessPlat {
-    fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType> {
+    fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType> {
         Ok(th::SurfaceType::Headless)
     }
 

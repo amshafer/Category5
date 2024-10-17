@@ -172,10 +172,8 @@ macro_rules! create_component_and_table {
 
 impl Dakota {
     /// Helper for initializing Thundr for a given platform.
-    fn init_thundr(plat: &mut Box<dyn Platform>) -> Result<(th::Thundr, th::Display, (i32, i32))> {
-        let info = th::CreateInfo::builder()
-            .surface_type(plat.get_th_surf_type()?)
-            .build();
+    fn init_thundr(surface_type: th::SurfaceType) -> Result<(th::Thundr, th::Display, (i32, i32))> {
+        let info = th::CreateInfo::builder().surface_type(surface_type).build();
 
         let mut thundr = th::Thundr::new(&info).context("Failed to initialize Thundr")?;
         let display = thundr
@@ -197,13 +195,16 @@ impl Dakota {
     /// a physical display.
     fn initialize_platform() -> Result<(Box<dyn Platform>, th::Thundr, th::Display, (i32, i32))> {
         if std::env::var("DAKOTA_HEADLESS_BACKEND").is_err() {
+            // ------------------------------------------------------------------------
+            // SDL 2
+            // ------------------------------------------------------------------------
             // If we are not forcing headless mode, start by attempting sdl
             #[cfg(feature = "sdl")]
             if std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok() {
                 match platform::SDL2Plat::new() {
                     Ok(sdl) => {
-                        let mut sdl: Box<dyn Platform> = Box::new(sdl);
-                        match Self::init_thundr(&mut sdl) {
+                        let sdl: Box<dyn Platform> = Box::new(sdl);
+                        match Self::init_thundr(sdl.get_th_surf_type()?) {
                             Ok((thundr, th_disp, dpi)) => return Ok((sdl, thundr, th_disp, dpi)),
                             Err(e) => log::error!("Failed to create SDL2 backend: {:?}", e),
                         }
@@ -212,19 +213,37 @@ impl Dakota {
                 };
             }
 
+            // ------------------------------------------------------------------------
+            // DRM
+            // ------------------------------------------------------------------------
+            #[cfg(feature = "drm")]
+            if let Ok(d2d) = platform::LibinputPlat::new() {
+                let platform: Box<dyn Platform> = Box::new(d2d);
+                match Self::init_thundr(th::SurfaceType::Drm) {
+                    Ok((thundr, th_disp, dpi)) => return Ok((platform, thundr, th_disp, dpi)),
+                    Err(e) => log::error!("Failed to create DRM backend: {:?}", e),
+                }
+            }
+
+            // ------------------------------------------------------------------------
+            // Vulkan Direct to Display
+            // ------------------------------------------------------------------------
             #[cfg(feature = "direct2display")]
-            if let Ok(d2d) = platform::DisplayPlat::new() {
-                let mut platform: Box<dyn Platform> = Box::new(d2d);
-                match Self::init_thundr(&mut platform) {
+            if let Ok(d2d) = platform::LibinputPlat::new() {
+                let platform: Box<dyn Platform> = Box::new(d2d);
+                match Self::init_thundr(th::SurfaceType::Display(std::marker::PhantomData)) {
                     Ok((thundr, th_disp, dpi)) => return Ok((platform, thundr, th_disp, dpi)),
                     Err(e) => log::error!("Failed to create Direct2Display backend: {:?}", e),
                 }
             }
         }
 
+        // ------------------------------------------------------------------------
+        // Headless
+        // ------------------------------------------------------------------------
         let headless = platform::HeadlessPlat::new();
-        let mut platform: Box<dyn Platform> = Box::new(headless);
-        match Self::init_thundr(&mut platform) {
+        let platform: Box<dyn Platform> = Box::new(headless);
+        match Self::init_thundr(platform.get_th_surf_type()?) {
             Ok((thundr, th_disp, dpi)) => return Ok((platform, thundr, th_disp, dpi)),
             Err(e) => log::error!("Failed to create Headless backend: {:?}", e),
         }
@@ -321,6 +340,14 @@ impl Dakota {
     /// own Components which are indexed by DakotaId.
     pub fn get_ecs_instance(&self) -> ll::Instance {
         self.d_ecs_inst.clone()
+    }
+
+    /// Get the Lluvia ECS backing DakotaIds for Resources
+    ///
+    /// This allows for applications using this to create their
+    /// own Components which are indexed by Resource Ids.
+    pub fn get_resource_ecs_instance(&self) -> ll::Instance {
+        self.d_resource_ecs_inst.clone()
     }
 
     /// Do we need to refresh the layout tree and rerender

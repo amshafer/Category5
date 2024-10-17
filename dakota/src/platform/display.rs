@@ -86,7 +86,7 @@ impl LibinputInterface for Inkit {
 /// This platform is Direct 2 Display, meaning that there is no
 /// window server at all. This will use vulkan to present to a physical
 /// display and libinput to collect raw input events.
-pub struct DisplayPlat {
+pub struct LibinputPlat {
     /// libinput context
     dp_libin: Libinput,
     /// libxkbcommon context
@@ -104,7 +104,7 @@ pub struct DisplayPlat {
     dp_fdwatch: FdWatch,
 }
 
-impl DisplayPlat {
+impl LibinputPlat {
     pub fn new() -> Result<Self> {
         let kit: Inkit = Inkit { _inner: 0 };
         let mut libin = Libinput::new_with_udev(kit);
@@ -173,7 +173,6 @@ impl DisplayPlat {
     /// Get the next available event from libinput
     ///
     /// Dispatch should be called before this so libinput can
-    /// internally read and prepare all events.
     fn process_available(&mut self, evsys: &mut EventSystem) {
         while let Some(ev) = self.dp_libin.next() {
             match ev {
@@ -268,8 +267,8 @@ impl DisplayPlat {
     }
 }
 
-impl Platform for DisplayPlat {
-    fn get_th_surf_type<'a>(&mut self) -> Result<th::SurfaceType> {
+impl Platform for LibinputPlat {
+    fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType> {
         Ok(th::SurfaceType::Display(PhantomData))
     }
 

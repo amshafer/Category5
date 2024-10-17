@@ -169,11 +169,17 @@ pub enum ThundrError {
     INVALID_DMABUF,
     #[error("Stride does not match dimensions and size of image data")]
     INVALID_STRIDE,
+    #[error("Input error")]
+    IOERROR,
+}
+
+impl From<std::io::Error> for ThundrError {
+    fn from(_val: std::io::Error) -> Self {
+        ThundrError::IOERROR
+    }
 }
 
 pub struct Thundr {
-    /// The vulkan Instance
-    th_inst: Arc<Instance>,
     /// Our primary device
     th_dev: Arc<Device>,
     /// We keep a list of all the images allocated by this context
@@ -258,6 +264,8 @@ impl Viewport {
 
 pub enum SurfaceType<'a> {
     Headless,
+    #[cfg(feature = "drm")]
+    Drm,
     /// it exists to make the lifetime parameter play nice with rust.
     /// Since the Display variant doesn't have a lifetime, we need one that
     /// does incase xcb/macos aren't enabled.
@@ -328,10 +336,9 @@ impl Thundr {
         let mut img_ecs = ll::Instance::new();
 
         let inst = Arc::new(Instance::new(&info));
-        let dev = Arc::new(Device::new(inst.clone(), &mut img_ecs, info)?);
+        let dev = Arc::new(Device::new(inst, &mut img_ecs, info)?);
 
         Ok(Thundr {
-            th_inst: inst,
             th_dev: dev,
             th_image_ecs: img_ecs,
         })

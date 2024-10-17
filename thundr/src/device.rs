@@ -11,13 +11,18 @@ use lluvia as ll;
 
 extern crate utils as cat5_utils;
 use crate::descpool::{DescPool, Descriptor};
+#[cfg(feature = "drm")]
+extern crate drm;
+#[cfg(feature = "drm")]
+use crate::display::drm::drm_device::DrmDevice;
 use crate::image::ImageVk;
 use crate::instance::Instance;
 use crate::platform::VKDeviceFeatures;
 use crate::{CreateInfo, Damage, DeletionQueue, Droppable, Result, ThundrError};
 use cat5_utils::log;
 
-use std::sync::{Arc, RwLock};
+#[allow(unused_imports)]
+use std::sync::{Arc, Mutex, RwLock};
 
 /// Thundr Device
 ///
@@ -37,6 +42,12 @@ pub struct Device {
     pub(crate) d_internal: Arc<RwLock<DeviceInternal>>,
     /// This is a per-image backing resource that is resident on this Device
     pub d_image_vk: ll::Component<Arc<ImageVk>>,
+    /// Drm Device corresponding to this VkDevice
+    #[cfg(feature = "drm")]
+    pub d_drm_node: Option<Arc<Mutex<DrmDevice>>>,
+    /// List of pending DRM Events
+    #[cfg(feature = "drm")]
+    pub d_drm_events: Arc<Mutex<Vec<drm::control::PageFlipEvent>>>,
 }
 
 /// This is the set of per-device data that needs to be "externally synchronized"
@@ -169,7 +180,15 @@ impl Device {
     ///
     /// return is drm (renderMajor, renderMinor).
     pub fn get_drm_dev(&self) -> (i64, i64) {
-        if !self.dev_features.vkc_supports_phys_dev_drm {
+        Self::get_drm_dev_internal(&self.dev_features, &self.inst, self.pdev)
+    }
+
+    pub fn get_drm_dev_internal(
+        dev_features: &VKDeviceFeatures,
+        inst: &Arc<Instance>,
+        pdev: vk::PhysicalDevice,
+    ) -> (i64, i64) {
+        if !dev_features.vkc_supports_phys_dev_drm {
             log::error!("Using drm Vulkan extensions but the underlying vulkan library doesn't support them. This will cause problems");
         }
         let mut drm_info = vk::PhysicalDeviceDrmPropertiesEXT::builder().build();
@@ -177,14 +196,22 @@ impl Device {
         let mut info = vk::PhysicalDeviceProperties2::builder().build();
         info.p_next = &mut drm_info as *mut _ as *mut std::ffi::c_void;
 
-        unsafe {
-            self.inst
-                .inst
-                .get_physical_device_properties2(self.pdev, &mut info)
-        };
+        unsafe { inst.inst.get_physical_device_properties2(pdev, &mut info) };
         assert!(drm_info.has_render != 0);
 
         (drm_info.render_major, drm_info.render_minor)
+    }
+
+    /// Get a DrmDevice
+    #[cfg(feature = "drm")]
+    fn get_drm_node(
+        dev_features: &VKDeviceFeatures,
+        inst: &Arc<Instance>,
+        pdev: vk::PhysicalDevice,
+    ) -> Option<Arc<Mutex<DrmDevice>>> {
+        let (major, minor) = Self::get_drm_dev_internal(dev_features, inst, pdev);
+
+        DrmDevice::new(major, minor)
     }
 
     /// get the vkPhysicalDeviceMemoryProperties structure for a vkPhysicalDevice
@@ -310,6 +337,11 @@ impl Device {
         };
         let descpool = DescPool::new(&dev);
 
+        // If supported, get the DRM device fd for the master node
+        // for this VkDevice
+        #[cfg(feature = "drm")]
+        let drm = Self::get_drm_node(&dev_features, &instance, pdev);
+
         let ret = Self {
             inst: instance,
             dev: dev,
@@ -335,6 +367,10 @@ impl Device {
                 image_sampler: vk::Sampler::null(),
             })),
             d_image_vk: img_ecs.add_component(),
+            #[cfg(feature = "drm")]
+            d_drm_node: drm,
+            #[cfg(feature = "drm")]
+            d_drm_events: Arc::new(Mutex::new(Vec::new())),
         };
 
         {

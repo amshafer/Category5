@@ -236,6 +236,7 @@ impl Atmosphere {
     /// as index 1
     pub fn new(dakota: &dak::Dakota) -> Atmosphere {
         let mut surf_ecs = dakota.get_ecs_instance();
+        let mut resource_ecs = dakota.get_resource_ecs_instance();
         let mut client_ecs = ll::Instance::new();
 
         Atmosphere {
@@ -280,7 +281,7 @@ impl Atmosphere {
             a_input_region: surf_ecs.add_component(),
             a_surf_resource: dakota.resource(),
             // ---------------------
-            a_shadow_buffer: surf_ecs.add_component(),
+            a_shadow_buffer: resource_ecs.add_component(),
             a_surface_ecs: surf_ecs,
         }
     }

@@ -218,8 +218,7 @@ impl fmt::Debug for Image {
 #[derive(Debug)]
 enum ImagePrivate {
     InvalidImage,
-    #[allow(dead_code)]
-    Dmabuf(DmabufPrivate),
+    Dmabuf,
     MemImage,
 }
 
@@ -358,10 +357,139 @@ impl Device {
         return None;
     }
 
+    /// Get the DRM modifiers supported by this device
+    ///
+    /// These are the modifiers that are importable as Thundr Images.
+    pub fn get_supported_drm_modifiers(&self) -> Vec<vk::DrmFormatModifierPropertiesEXT> {
+        use std::iter;
+
+        // get_physical_device_format_properties2
+        let mut drm_fmt_props = vk::DrmFormatModifierPropertiesListEXT::builder().build();
+        let mut format_props = vk::FormatProperties2::builder()
+            .push_next(&mut drm_fmt_props)
+            .build();
+
+        // get the number of drm format mods props
+        unsafe {
+            self.inst.inst.get_physical_device_format_properties2(
+                self.pdev,
+                TARGET_FORMAT,
+                &mut format_props,
+            );
+            let mut mods: Vec<_> = iter::repeat(vk::DrmFormatModifierPropertiesEXT::default())
+                .take(drm_fmt_props.drm_format_modifier_count as usize)
+                .collect();
+
+            drm_fmt_props.p_drm_format_modifier_properties = mods.as_mut_ptr();
+            self.inst.inst.get_physical_device_format_properties2(
+                self.pdev,
+                TARGET_FORMAT,
+                &mut format_props,
+            );
+
+            return mods;
+        }
+    }
+
+    /// Get the DRM modifiers supported for rendering
+    ///
+    /// This is the same as `get_supported_drm_modifiers` but verifies that these modifiers
+    /// can be used as color attachments.
+    pub fn get_supported_drm_render_modifiers(&self) -> Vec<vk::DrmFormatModifierPropertiesEXT> {
+        let mut mods = self.get_supported_drm_modifiers();
+        mods.retain(|m| {
+            m.drm_format_modifier_tiling_features.contains(
+                vk::FormatFeatureFlags::COLOR_ATTACHMENT
+                    | vk::FormatFeatureFlags::COLOR_ATTACHMENT_BLEND,
+            )
+        });
+
+        return mods;
+    }
+
+    pub(crate) fn create_image_from_dmabuf_internal(
+        dev: &Device,
+        dmabuf: &Dmabuf,
+        image_usage: vk::ImageUsageFlags,
+    ) -> Result<(vk::Image, vk::ImageView, vk::DeviceMemory)> {
+        log::debug!("Updating new image with dmabuf {:?}", dmabuf);
+        // A lot of this is duplicated from Renderer::create_image
+        // Check validity of dmabuf format and print info
+        // -------------------------------------------------------
+        // TODO: multiplanar support
+        let plane = &dmabuf.db_planes[0];
+
+        #[cfg(debug_assertions)]
+        {
+            let mods = dev.get_supported_drm_modifiers();
+
+            for m in mods.iter() {
+                log::debug!("dmabuf {} found mod {:#?}", plane.db_fd.as_raw_fd(), m);
+            }
+        }
+
+        // the parameters to use for image creation
+        let mut img_fmt_info = vk::PhysicalDeviceImageFormatInfo2::builder()
+            .format(TARGET_FORMAT)
+            .ty(vk::ImageType::TYPE_2D)
+            .usage(vk::ImageUsageFlags::SAMPLED)
+            .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
+            .flags(vk::ImageCreateFlags::empty())
+            .build();
+        let drm_img_props = vk::PhysicalDeviceImageDrmFormatModifierInfoEXT::builder()
+            .drm_format_modifier(plane.db_mods)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .queue_family_indices(
+                dev.d_internal
+                    .read()
+                    .unwrap()
+                    .graphics_queue_families
+                    .as_slice(),
+            )
+            .build();
+        img_fmt_info.p_next = &drm_img_props as *const _ as *mut std::ffi::c_void;
+        // the returned properties
+        // the dimensions of the image will be returned here
+        let mut img_fmt_props = vk::ImageFormatProperties2::builder().build();
+        unsafe {
+            dev.inst
+                .inst
+                .get_physical_device_image_format_properties2(
+                    dev.pdev,
+                    &img_fmt_info,
+                    &mut img_fmt_props,
+                )
+                .unwrap();
+        }
+        // -------------------------------------------------------
+        log::debug!(
+            "dmabuf {} image format properties {:#?} {:#?}",
+            plane.db_fd.as_raw_fd(),
+            img_fmt_props,
+            drm_img_props
+        );
+
+        // Make Dmabuf private struct
+        // -------------------------------------------------------
+        // This will be updated by create_dmabuf_image
+        let mut dmabuf_priv = DmabufPrivate {
+            dp_mem_reqs: vk::MemoryRequirements::builder().build(),
+            dp_memtype_index: 0,
+        };
+        // Import the dmabuf
+        // -------------------------------------------------------
+        dev.create_dmabuf_image(&dmabuf, &mut dmabuf_priv, image_usage)
+            .map_err(|e| {
+                log::error!("Could not update dmabuf image: {:?}", e);
+                ThundrError::INVALID_DMABUF
+            })
+    }
+
     fn create_dmabuf_image(
         &self,
         dmabuf: &Dmabuf,
         dmabuf_priv: &mut DmabufPrivate,
+        image_usage: vk::ImageUsageFlags,
     ) -> Result<(vk::Image, vk::ImageView, vk::DeviceMemory)> {
         // TODO: multiplanar support
         let plane = &dmabuf.db_planes[0];
@@ -400,7 +528,7 @@ impl Device {
             .samples(vk::SampleCountFlags::TYPE_1)
             // we are only doing the linear format for now
             .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
-            .usage(vk::ImageUsageFlags::SAMPLED)
+            .usage(image_usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             .flags(vk::ImageCreateFlags::empty())
             .push_next(&mut ext_mem_info)
@@ -558,108 +686,14 @@ impl Thundr {
         dmabuf: &Dmabuf,
         release_info: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Result<Image> {
-        log::debug!("Updating new image with dmabuf {:?}", dmabuf);
-        // A lot of this is duplicated from Renderer::create_image
-        // Check validity of dmabuf format and print info
-        // -------------------------------------------------------
-        // TODO: multiplanar support
-        let plane = &dmabuf.db_planes[0];
-
-        #[cfg(debug_assertions)]
-        {
-            use std::iter;
-
-            // get_physical_device_format_properties2
-            let mut format_props = vk::FormatProperties2::builder().build();
-            let mut drm_fmt_props = vk::DrmFormatModifierPropertiesListEXT::builder().build();
-            format_props.p_next = &drm_fmt_props as *const _ as *mut std::ffi::c_void;
-
-            // get the number of drm format mods props
-            unsafe {
-                self.th_inst.inst.get_physical_device_format_properties2(
-                    self.th_dev.pdev,
-                    TARGET_FORMAT,
-                    &mut format_props,
-                );
-                let mut mods: Vec<_> = iter::repeat(vk::DrmFormatModifierPropertiesEXT::default())
-                    .take(drm_fmt_props.drm_format_modifier_count as usize)
-                    .collect();
-
-                drm_fmt_props.p_drm_format_modifier_properties = mods.as_mut_ptr();
-                self.th_inst.inst.get_physical_device_format_properties2(
-                    self.th_dev.pdev,
-                    TARGET_FORMAT,
-                    &mut format_props,
-                );
-
-                for m in mods.iter() {
-                    log::debug!("dmabuf {} found mod {:#?}", plane.db_fd.as_raw_fd(), m);
-                }
-            }
-        }
-
-        // the parameters to use for image creation
-        let mut img_fmt_info = vk::PhysicalDeviceImageFormatInfo2::builder()
-            .format(TARGET_FORMAT)
-            .ty(vk::ImageType::TYPE_2D)
-            .usage(vk::ImageUsageFlags::SAMPLED)
-            .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
-            .flags(vk::ImageCreateFlags::empty())
-            .build();
-        let drm_img_props = vk::PhysicalDeviceImageDrmFormatModifierInfoEXT::builder()
-            .drm_format_modifier(plane.db_mods)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .queue_family_indices(
-                self.th_dev
-                    .d_internal
-                    .read()
-                    .unwrap()
-                    .graphics_queue_families
-                    .as_slice(),
-            )
-            .build();
-        img_fmt_info.p_next = &drm_img_props as *const _ as *mut std::ffi::c_void;
-        // the returned properties
-        // the dimensions of the image will be returned here
-        let mut img_fmt_props = vk::ImageFormatProperties2::builder().build();
-        unsafe {
-            self.th_inst
-                .inst
-                .get_physical_device_image_format_properties2(
-                    self.th_dev.pdev,
-                    &img_fmt_info,
-                    &mut img_fmt_props,
-                )
-                .unwrap();
-        }
-        // -------------------------------------------------------
-        log::debug!(
-            "dmabuf {} image format properties {:#?} {:#?}",
-            plane.db_fd.as_raw_fd(),
-            img_fmt_props,
-            drm_img_props
-        );
-
-        // Make Dmabuf private struct
-        // -------------------------------------------------------
-        // This will be updated by create_dmabuf_image
-        let mut dmabuf_priv = DmabufPrivate {
-            dp_mem_reqs: vk::MemoryRequirements::builder().build(),
-            dp_memtype_index: 0,
-        };
-        // Import the dmabuf
-        // -------------------------------------------------------
-        let (image, view, image_memory) =
-            match self.th_dev.create_dmabuf_image(&dmabuf, &mut dmabuf_priv) {
-                Ok((i, v, im)) => (i, v, im),
-                Err(_e) => {
-                    log::debug!("Could not update dmabuf image: {:?}", _e);
-                    return Err(ThundrError::INVALID_DMABUF);
-                }
-            };
+        let (image, view, image_memory) = Device::create_image_from_dmabuf_internal(
+            &self.th_dev,
+            dmabuf,
+            vk::ImageUsageFlags::SAMPLED,
+        )?;
 
         return self.create_image_common(
-            ImagePrivate::Dmabuf(dmabuf_priv),
+            ImagePrivate::Dmabuf,
             &vk::Extent2D {
                 width: dmabuf.db_width as u32,
                 height: dmabuf.db_height as u32,
