@@ -20,6 +20,9 @@ use headless::HeadlessSwapchain;
 pub mod frame;
 use frame::{FrameRenderer, RecordParams};
 
+#[cfg(feature = "drm")]
+pub mod drm;
+
 /// Shared state that subsystems consume. We need this
 /// since Display holds rendering objects, but also has
 /// to pass down swapchain/image info so those rendering
