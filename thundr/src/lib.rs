@@ -169,6 +169,14 @@ pub enum ThundrError {
     INVALID_DMABUF,
     #[error("Stride does not match dimensions and size of image data")]
     INVALID_STRIDE,
+    #[error("Input error")]
+    IOERROR,
+}
+
+impl From<std::io::Error> for ThundrError {
+    fn from(_val: std::io::Error) -> Self {
+        ThundrError::IOERROR
+    }
 }
 
 pub struct Thundr {
