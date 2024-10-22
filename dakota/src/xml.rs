@@ -28,6 +28,7 @@ use utils::log;
 pub(crate) struct ParserTransaction<'a> {
     pt_thund: &'a mut th::Thundr,
     pt_ecs_inst: ll::Instance,
+    pt_resource_ecs_inst: ll::Instance,
     pt_node_types: ll::Snapshot<'a, DakotaObjectType>,
     pt_dom: ll::Snapshot<'a, dom::DakotaDOM>,
     pt_resource_hints: ll::Snapshot<'a, dom::Hints>,
@@ -340,14 +341,6 @@ impl<'a> ParserTransaction<'a> {
         )
     }
 
-    fn create_resource(&mut self) -> Result<DakotaId> {
-        Dakota::create_new_id_common(
-            &mut self.pt_ecs_inst,
-            &mut self.pt_node_types,
-            DakotaObjectType::Resource,
-        )
-    }
-
     fn create_font(&mut self) -> Result<DakotaId> {
         Dakota::create_new_id_common(
             &mut self.pt_ecs_inst,
@@ -392,12 +385,6 @@ impl<'a> ParserTransaction<'a> {
     /// it. None if no
     fn needs_new_id(&mut self, node: &Element) -> Result<Option<DakotaId>> {
         match node {
-            Element::ResourceDefinition {
-                name: _,
-                image: _,
-                color: _,
-                hints: _,
-            } => Ok(Some(self.create_resource()?)),
             Element::FontDefinition(_, _, _, _) => Ok(Some(self.create_font()?)),
             Element::El {
                 x: _,
@@ -426,12 +413,14 @@ impl<'a> ParserTransaction<'a> {
         };
 
         if !name_to_id_map.contains_key(name) {
-            let res = Dakota::create_new_id_common(
-                &mut self.pt_ecs_inst,
-                &mut self.pt_node_types,
-                DakotaObjectType::Resource,
-            )
-            .context("Creating DakotaId for Resource Definition")?;
+            let res = match is_font {
+                true => Dakota::create_new_id_common(
+                    &mut self.pt_ecs_inst,
+                    &mut self.pt_node_types,
+                    DakotaObjectType::Font,
+                ).context("Creating DakotaId for Resource Definition")?,
+                false => self.pt_resource_ecs_inst.add_entity(),
+            };
             name_to_id_map.insert(name.to_string(), res);
         }
 
@@ -1037,6 +1026,7 @@ impl Dakota {
         let mut trans = ParserTransaction {
             pt_thund: &mut self.d_thund,
             pt_ecs_inst: self.d_ecs_inst.clone(),
+            pt_resource_ecs_inst: self.d_resource_ecs_inst.clone(),
             pt_node_types: self.d_node_types.snapshot(),
             pt_resources: self.d_resources.snapshot(),
             pt_dom: self.d_dom.snapshot(),

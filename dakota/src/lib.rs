@@ -53,7 +53,6 @@ pub type DakotaId = ll::Entity;
 pub enum DakotaObjectType {
     Element,
     DakotaDOM,
-    Resource,
     Font,
 }
 
@@ -105,6 +104,7 @@ pub struct Dakota {
     // Resource components
     // --------------------------------------------
     /// The resource info configured by the user
+    d_resource_ecs_inst: ll::Instance,
     d_resource_hints: ll::Component<dom::Hints>,
     d_resource_thundr_image: ll::Component<th::Image>,
     d_resource_color: ll::Component<dom::Color>,
@@ -240,11 +240,12 @@ impl Dakota {
         let (plat, thundr, display, _dpi) = Self::initialize_platform()?;
 
         let mut layout_ecs = ll::Instance::new();
+        let mut resource_ecs = ll::Instance::new();
         create_component_and_table!(layout_ecs, LayoutNode, layout_table);
         create_component_and_table!(layout_ecs, DakotaObjectType, types_table);
-        create_component_and_table!(layout_ecs, dom::Hints, resource_hints_table);
-        create_component_and_table!(layout_ecs, th::Image, resource_thundr_image_table);
-        create_component_and_table!(layout_ecs, dom::Color, resource_color_table);
+        create_component_and_table!(resource_ecs, dom::Hints, resource_hints_table);
+        create_component_and_table!(resource_ecs, th::Image, resource_thundr_image_table);
+        create_component_and_table!(resource_ecs, dom::Color, resource_color_table);
         create_component_and_table!(layout_ecs, DakotaId, resources_table);
         create_component_and_table!(layout_ecs, dom::RelativeOffset, offsets_table);
         create_component_and_table!(layout_ecs, dom::Value, width_table);
@@ -268,6 +269,7 @@ impl Dakota {
             d_thund: thundr,
             d_display: display,
             d_ecs_inst: layout_ecs,
+            d_resource_ecs_inst: resource_ecs,
             d_layout_nodes: layout_table,
             d_node_types: types_table,
             d_resource_hints: resource_hints_table,
@@ -405,14 +407,7 @@ impl Dakota {
 
     /// Create a new Dakota resource
     pub fn create_resource(&mut self) -> Result<DakotaId> {
-        let mut node_types = self.d_node_types.snapshot();
-        let res = Dakota::create_new_id_common(
-            &mut self.d_ecs_inst,
-            &mut node_types,
-            DakotaObjectType::Resource,
-        );
-        node_types.commit();
-        return res;
+        Ok(self.d_resource_ecs_inst.add_entity())
     }
 
     /// Create a new Dakota Font

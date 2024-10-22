@@ -766,7 +766,7 @@ impl Instance {
     // Verify that this id belongs to this Instance
     // This will assert if false.
     fn id_is_valid(&self, _id: &Entity) {
-        #[cfg(debug)]
+        #[cfg(debug_assertions)]
         assert!(*self == _id.ecs_inst);
     }
 }
