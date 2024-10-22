@@ -117,9 +117,19 @@ pub(crate) struct LayoutTransaction<'a> {
     lt_thund: &'a mut th::Thundr,
 }
 
+impl<'a> Drop for LayoutTransaction<'a> {
+    fn drop(&mut self) {
+        // Unlock all of our snapshots
+        // This helps prevent deadlocking when we are returning
+        // early due to an error. In that case we have snapshots
+        // containing the final reference to an id, but can't
+        // drop it because the locks are held
+        self.precommit();
+    }
+}
+
 impl<'a> LayoutTransaction<'a> {
-    /// Commit this transaction
-    fn commit(&mut self) {
+    fn precommit(&mut self) {
         self.lt_resources.precommit();
         self.lt_resource_thundr_image.precommit();
         self.lt_resource_color.precommit();
@@ -134,6 +144,11 @@ impl<'a> LayoutTransaction<'a> {
         self.lt_heights.precommit();
         self.lt_offsets.precommit();
         self.lt_children.precommit();
+    }
+
+    /// Commit this transaction
+    fn commit(&mut self) {
+        self.precommit();
 
         // Now do the actual commit
         self.lt_resources.commit();

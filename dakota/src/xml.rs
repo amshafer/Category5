@@ -261,9 +261,22 @@ impl Element {
     }
 }
 
+
+impl<'a> Drop for ParserTransaction<'a> {
+    fn drop(&mut self) {
+        // Unlock all of our snapshots
+        // This helps prevent deadlocking when we are returning
+        // early due to an error. In that case we have snapshots
+        // containing the final reference to an id, but can't
+        // drop it because the locks are held
+        self.precommit();
+    }
+}
+
 impl<'a> ParserTransaction<'a> {
+
     /// Commit this transaction
-    fn commit(&mut self) {
+    fn precommit(&mut self) {
         // drop all locks to avoid deadlocking for ids that
         // get invalidated and try to free their data
         self.pt_node_types.precommit();
@@ -283,6 +296,11 @@ impl<'a> ParserTransaction<'a> {
         self.pt_offsets.precommit();
         self.pt_children.precommit();
         self.pt_unbounded_subsurf.precommit();
+    }
+
+    /// Commit this transaction
+    fn commit(&mut self) {
+        self.precommit();
 
         // Now we can commit
         self.pt_node_types.commit();
