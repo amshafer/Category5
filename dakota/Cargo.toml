@@ -36,3 +36,6 @@ default=["sdl", "thundr/drm"]
 sdl=["thundr/sdl", "sdl2", "sdl2-sys", "xkbcommon"]
 direct2display=["input", "xkbcommon"]
 aftermath = ["thundr/aftermath"]
+
+[patch.crates-io]
+drm = { git="https://github.com/amshafer/drm-rs" }

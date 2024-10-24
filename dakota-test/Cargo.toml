@@ -20,3 +20,6 @@ aftermath=["dakota/aftermath"]
 [profile.release-with-debug]
 inherits = "release"
 debug = true
+
+[patch.crates-io]
+drm = { git="https://github.com/amshafer/drm-rs" }
