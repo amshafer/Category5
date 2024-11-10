@@ -39,7 +39,7 @@ pub(crate) struct ParserTransaction<'a> {
     pt_text_font: ll::Snapshot<'a, DakotaId>,
     pt_texts: ll::Snapshot<'a, dom::Text>,
     pt_glyphs: ll::Snapshot<'a, font::Glyph>,
-    pt_viewports: ll::Snapshot<'a, th::Viewport>,
+    pt_is_viewport: ll::Snapshot<'a, bool>,
     pt_contents: ll::Snapshot<'a, dom::Content>,
     pt_offsets: ll::Snapshot<'a, dom::RelativeOffset>,
     pt_widths: ll::Snapshot<'a, dom::Value>,
@@ -47,6 +47,7 @@ pub(crate) struct ParserTransaction<'a> {
     pt_children: ll::Snapshot<'a, Vec<DakotaId>>,
     pt_font_instances: &'a mut Vec<(dom::Font, font::FontInstance)>,
     pt_freetype: &'a ft::Library,
+    pt_fontconfig: &'a fc::Fontconfig,
     pt_unbounded_subsurf: ll::Snapshot<'a, bool>,
     /// This maps the string names for resource found in the
     /// XML document to DakotaIds that represent those resources.
@@ -89,6 +90,7 @@ enum Element {
     },
     Version(Option<String>),
     Name(Option<String>),
+    FontName(Option<String>),
     Title(Option<String>),
     Width(Option<dom::Value>),
     Height(Option<dom::Value>),
@@ -116,7 +118,13 @@ enum Element {
     Data(dom::Data),
     ResourceMap,
     Resource(Option<String>),
-    FontDefinition(Option<String>, Option<String>, u32, Option<dom::Color>),
+    FontDefinition(
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        u32,
+        Option<dom::Color>,
+    ),
     ResourceDefinition {
         name: Option<String>,
         image: Option<dom::Image>,
@@ -143,6 +151,7 @@ enum Element {
     RedrawComplete(Option<dom::Event>),
     Closed(Option<dom::Event>),
     UnboundedSubsurface,
+    Viewport,
 }
 
 impl Element {
@@ -170,6 +179,7 @@ impl Element {
             },
             b"version" => Self::Version(None),
             b"name" => Self::Name(None),
+            b"font_name" => Self::FontName(None),
             b"title" => Self::Title(None),
             b"width" => Self::Width(None),
             b"height" => Self::Height(None),
@@ -200,7 +210,7 @@ impl Element {
             }),
             b"resourceMap" => Self::ResourceMap,
             b"resource" => Self::Resource(None),
-            b"define_font" => Self::FontDefinition(None, None, 0, None),
+            b"define_font" => Self::FontDefinition(None, None, None, 0, None),
             b"define_resource" => Self::ResourceDefinition {
                 name: None,
                 image: None,
@@ -227,6 +237,7 @@ impl Element {
             b"redraw_complete" => Self::RedrawComplete(None),
             b"closed" => Self::Closed(None),
             b"unbounded_subsurface" => Self::UnboundedSubsurface,
+            b"viewport" => Self::Viewport,
             _ => {
                 return Err(anyhow!(
                     "Element name {} is not a valid element name",
@@ -262,7 +273,6 @@ impl Element {
     }
 }
 
-
 impl<'a> Drop for ParserTransaction<'a> {
     fn drop(&mut self) {
         // Unlock all of our snapshots
@@ -275,7 +285,6 @@ impl<'a> Drop for ParserTransaction<'a> {
 }
 
 impl<'a> ParserTransaction<'a> {
-
     /// Commit this transaction
     fn precommit(&mut self) {
         // drop all locks to avoid deadlocking for ids that
@@ -290,7 +299,7 @@ impl<'a> ParserTransaction<'a> {
         self.pt_text_font.precommit();
         self.pt_texts.precommit();
         self.pt_glyphs.precommit();
-        self.pt_viewports.precommit();
+        self.pt_is_viewport.precommit();
         self.pt_contents.precommit();
         self.pt_widths.precommit();
         self.pt_heights.precommit();
@@ -314,7 +323,7 @@ impl<'a> ParserTransaction<'a> {
         self.pt_text_font.commit();
         self.pt_texts.commit();
         self.pt_glyphs.commit();
-        self.pt_viewports.commit();
+        self.pt_is_viewport.commit();
         self.pt_contents.commit();
         self.pt_widths.commit();
         self.pt_heights.commit();
@@ -358,6 +367,7 @@ impl<'a> ParserTransaction<'a> {
             &mut self.pt_font_instances,
             &mut self.pt_fonts,
             &self.pt_freetype,
+            &self.pt_fontconfig,
             id,
             font,
         );
@@ -385,7 +395,7 @@ impl<'a> ParserTransaction<'a> {
     /// it. None if no
     fn needs_new_id(&mut self, node: &Element) -> Result<Option<DakotaId>> {
         match node {
-            Element::FontDefinition(_, _, _, _) => Ok(Some(self.create_font()?)),
+            Element::FontDefinition(_, _, _, _, _) => Ok(Some(self.create_font()?)),
             Element::El {
                 x: _,
                 y: _,
@@ -418,7 +428,8 @@ impl<'a> ParserTransaction<'a> {
                     &mut self.pt_ecs_inst,
                     &mut self.pt_node_types,
                     DakotaObjectType::Font,
-                ).context("Creating DakotaId for Resource Definition")?,
+                )
+                .context("Creating DakotaId for Resource Definition")?,
                 false => self.pt_resource_ecs_inst.add_entity(),
             };
             name_to_id_map.insert(name.to_string(), res);
@@ -491,6 +502,7 @@ impl<'a> ParserTransaction<'a> {
                             .context("Getting resource reference for element")?;
                         self.pt_resources.set(id, resource_id)
                     }
+                    Element::Viewport => self.pt_is_viewport.set(id, true),
                     Element::UnboundedSubsurface => self.pt_unbounded_subsurf.set(id, true),
                     Element::El {
                         x: _,
@@ -652,7 +664,7 @@ impl<'a> ParserTransaction<'a> {
             },
             // -------------------------------------------------------
             Element::ResourceMap => match old_node {
-                Element::FontDefinition(name, path, size, color) => {
+                Element::FontDefinition(name, font_name, _path, size, color) => {
                     let resource_id = self
                         .get_id_for_name(
                             true,
@@ -667,9 +679,9 @@ impl<'a> ParserTransaction<'a> {
                             name: name
                                 .clone()
                                 .ok_or(anyhow!("Font definition does not have a name"))?,
-                            path: path
+                            font_name: font_name
                                 .clone()
-                                .ok_or(anyhow!("Font Definition requires name tag"))?,
+                                .ok_or(anyhow!("Font definition does not specify a font name"))?,
                             pixel_size: *size,
                             color: *color,
                         },
@@ -704,8 +716,9 @@ impl<'a> ParserTransaction<'a> {
                 }
                 e => return Err(anyhow!("Unexpected child element: {:?}", e)),
             },
-            Element::FontDefinition(name, path, size, color) => match old_node {
+            Element::FontDefinition(name, font_name, path, size, color) => match old_node {
                 Element::Name(n) => *name = n.clone(),
+                Element::FontName(n) => *font_name = n.clone(),
                 Element::AbsPath(p) | Element::RelPath(p) => *path = p.clone(),
                 Element::PixelSize(s) => *size = s.context("PixelSize was not populated")?,
                 Element::Color { r, g, b, a } => {
@@ -831,6 +844,7 @@ impl<'a> ParserTransaction<'a> {
                     | Element::Title(data)
                     | Element::Resource(data)
                     | Element::TextFont(data)
+                    | Element::FontName(data)
                     | Element::Name(data) => *data = Some(text),
                     // float fields
                     Element::R(data)
@@ -1037,7 +1051,7 @@ impl Dakota {
             pt_text_font: self.d_text_font.snapshot(),
             pt_texts: self.d_texts.snapshot(),
             pt_glyphs: self.d_glyphs.snapshot(),
-            pt_viewports: self.d_viewports.snapshot(),
+            pt_is_viewport: self.d_is_viewport.snapshot(),
             pt_contents: self.d_contents.snapshot(),
             pt_widths: self.d_widths.snapshot(),
             pt_heights: self.d_heights.snapshot(),
@@ -1047,6 +1061,7 @@ impl Dakota {
             pt_name_to_id_map: HashMap::new(),
             pt_font_name_to_id_map: HashMap::new(),
             pt_freetype: &self.d_freetype,
+            pt_fontconfig: &self.d_fontconfig,
             pt_unbounded_subsurf: self.d_unbounded_subsurf.snapshot(),
         };
 

@@ -2,7 +2,7 @@ freebsd_instance:
         image_family: freebsd-14-1
 
 category5_freebsd_task:
-        install_dependencies_script: pkg install -y rust vulkan-loader mesa-libs mesa-dri libxkbcommon libinput wayland wayland-protocols libudev-devd pkgconf sdl2 cmake ninja harfbuzz vulkan-validation-layers perceptualdiff
+        install_dependencies_script: pkg install -y rust vulkan-loader mesa-libs mesa-dri libxkbcommon libinput wayland wayland-protocols libudev-devd pkgconf sdl2 cmake ninja harfbuzz vulkan-validation-layers perceptualdiff fontconfig jetbrains-mono inconsolata-ttf
 
         # Now do the build
         build_lluvia_script: cd lluvia && cargo build
@@ -12,6 +12,9 @@ category5_freebsd_task:
         build_dakota_sdl2_script: cd dakota && cargo build --features=sdl
         # use one test thread because of lavapipe issues
         test_dakota_script: cd dakota && cargo test -- --test-threads=1
+        always:
+          dakota_test_artifacts:
+            path: "dakota/*.ppm"
         build_dakota_direct_2_display_script: cd dakota && cargo build --features=direct2display --no-default-features
         build_category5_script: cargo build
 
@@ -21,7 +24,7 @@ category5_linux_task:
 
         install_dependencies_script:
                 - apt update
-                - apt install -y libudev-dev clang libvulkan-dev libxkbcommon-dev libsdl2-dev git meson ninja-build libmtdev-dev libevdev-dev libharfbuzz-dev
+                - apt install -y libudev-dev clang libvulkan-dev libxkbcommon-dev libsdl2-dev git meson ninja-build libmtdev-dev libevdev-dev libharfbuzz-dev libfontconfig-dev
 
         install_libinput_script:
                 - cd ~/

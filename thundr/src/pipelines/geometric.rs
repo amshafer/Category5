@@ -184,19 +184,23 @@ impl Pipeline for GeomPipeline {
         unsafe {
             log::info!("Viewport is : {:?}", viewport);
 
-            // Set our current viewport
+            // Reset our viewport, but always keep it consistent to the overall
+            // window size. Otherwise this will transform our viewport content
+            // which we do not want
             self.g_dev.dev.cmd_set_viewport(
                 cbuf,
                 0,
                 &[vk::Viewport {
-                    x: viewport.offset.0 as f32,
-                    y: viewport.offset.1 as f32,
-                    width: viewport.size.0 as f32,
-                    height: viewport.size.1 as f32,
+                    x: 0.0,
+                    y: 0.0,
+                    width: dstate.d_resolution.width as f32,
+                    height: dstate.d_resolution.height as f32,
                     min_depth: 0.0,
                     max_depth: 1.0,
                 }],
             );
+            // Set the new scissor. This obeys our th::Viewport requested region
+            // and is what actually controls the content clipping
             self.g_dev.dev.cmd_set_scissor(
                 cbuf,
                 0,

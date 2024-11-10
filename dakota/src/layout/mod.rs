@@ -106,6 +106,7 @@ pub(crate) struct LayoutTransaction<'a> {
     lt_texts: ll::Snapshot<'a, dom::Text>,
     lt_default_font_inst: DakotaId,
     lt_glyphs: ll::Snapshot<'a, Glyph>,
+    lt_is_viewport: ll::Snapshot<'a, bool>,
     lt_viewports: ll::Snapshot<'a, th::Viewport>,
     lt_layout_nodes: ll::Snapshot<'a, LayoutNode>,
     lt_contents: ll::Snapshot<'a, dom::Content>,
@@ -137,6 +138,7 @@ impl<'a> LayoutTransaction<'a> {
         self.lt_text_font.precommit();
         self.lt_texts.precommit();
         self.lt_glyphs.precommit();
+        self.lt_is_viewport.precommit();
         self.lt_viewports.precommit();
         self.lt_layout_nodes.precommit();
         self.lt_contents.precommit();
@@ -158,6 +160,7 @@ impl<'a> LayoutTransaction<'a> {
         self.lt_text_font.commit();
         self.lt_texts.commit();
         self.lt_glyphs.commit();
+        self.lt_is_viewport.commit();
         self.lt_viewports.commit();
         self.lt_layout_nodes.commit();
         self.lt_contents.commit();
@@ -263,8 +266,8 @@ impl<'a> LayoutTransaction<'a> {
         // First adjust by the size of this element
         let el_size = self.lt_layout_nodes.get(&el).unwrap();
         size.max(match is_width {
-            true => el_size.l_offset.x as u32 + el_size.l_size.width as u32,
-            false => el_size.l_offset.y as u32 + el_size.l_size.height as u32,
+            true => (el_size.l_offset.x + el_size.l_size.width) as u32,
+            false => (el_size.l_offset.y + el_size.l_size.height) as u32,
         })
     }
 
@@ -290,7 +293,7 @@ impl<'a> LayoutTransaction<'a> {
             }
         }
 
-        let needs_size_to_child = !self.lt_viewports.get(el).is_some()
+        let needs_size_to_child = !self.lt_is_viewport.get(el).is_some()
             && !is_image_resource
             && self.lt_layout_nodes.get(el).unwrap().l_children.len() > 0;
 
@@ -465,8 +468,6 @@ impl<'a> LayoutTransaction<'a> {
             .into();
 
         node.l_size = self.get_default_size(el, space)?.into();
-        // Bounds will be checked in caller to see if the parent needs to be
-        // marked as a viewport.
 
         log::debug!("Offset of element is {:?}", node.l_offset);
         log::debug!("Size of element is {:?}", node.l_size);
@@ -668,7 +669,49 @@ impl<'a> LayoutTransaction<'a> {
         let final_size = self.get_final_size(el, space)?.into();
         self.lt_layout_nodes.get_mut(el).unwrap().l_size = final_size;
 
+        // Mark this node as a viewport now that we know the final sizes of everything
+        if *self.lt_is_viewport.get(el).unwrap_or(&false) {
+            self.set_viewport_internal(&el);
+        }
+
         return Ok(());
+    }
+
+    /// Get the total internal size for this layout node. This is used to calculate
+    /// the scrolling region within this node, useful if it is a viewport node.
+    fn get_node_internal_size(&self, id: DakotaId) -> (i32, i32) {
+        let node = self.lt_layout_nodes.get(&id).unwrap();
+        let mut ret = (node.l_size.width, node.l_size.height);
+
+        for child_id in node.l_children.iter() {
+            let child = self.lt_layout_nodes.get(&child_id).unwrap();
+
+            // If this childs end position is larger, adjust our returning size
+            // accordingly
+            ret.0 = ret.0.max(child.l_offset.x + child.l_size.width);
+            ret.1 = ret.1.max(child.l_offset.y + child.l_size.height);
+        }
+
+        return ret;
+    }
+
+    /// Fill in a new viewport entry for this layout node
+    fn set_viewport_internal(&mut self, id: &DakotaId) {
+        let layout = self.lt_layout_nodes.get(&id).unwrap();
+
+        assert!(*self.lt_is_viewport.get(id).unwrap() == true);
+
+        // Size and scroll offset will get updated elsewhere
+        let mut viewport = th::Viewport::new(
+            layout.l_offset.x as i32,
+            layout.l_offset.y as i32,
+            layout.l_size.width as i32,
+            layout.l_size.height as i32,
+        );
+        let scroll_region = self.get_node_internal_size(id.clone());
+        viewport.set_scroll_region(scroll_region.0 as i32, scroll_region.1 as i32);
+
+        self.lt_viewports.set(id, viewport);
     }
 }
 
@@ -687,6 +730,7 @@ impl Dakota {
             lt_texts: self.d_texts.snapshot(),
             lt_default_font_inst: self.d_default_font_inst.clone(),
             lt_glyphs: self.d_glyphs.snapshot(),
+            lt_is_viewport: self.d_is_viewport.snapshot(),
             lt_viewports: self.d_viewports.snapshot(),
             lt_layout_nodes: self.d_layout_nodes.snapshot(),
             lt_contents: self.d_contents.snapshot(),

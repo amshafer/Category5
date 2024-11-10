@@ -293,8 +293,8 @@ impl WindowManager {
         dakota.define_font(
             &menubar_font,
             dom::Font {
-                name: "Default Font".to_string(),
-                path: "./JetBrainsMono-Regular.ttf".to_string(),
+                name: "Menubar".to_string(),
+                font_name: "JetBrainsMono".to_string(),
                 pixel_size: 16,
                 color: Some(dom::Color {
                     r: 0.941,

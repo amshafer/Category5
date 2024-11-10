@@ -80,13 +80,7 @@ impl<'a> RenderTransaction<'a> {
     /// This accepts a base offset to handle child element positioning
     fn get_thundr_surf_for_el(&self, node: &DakotaId, base: (i32, i32)) -> th::Result<th::Surface> {
         let layout = self.rt_layout_nodes.get(node).unwrap();
-
-        // If this node is a viewport then ignore its offset, setting the viewport
-        // will take care of positioning it.
-        let offset = match self.rt_viewports.get(node).is_some() {
-            true => (0, 0),
-            false => (base.0 + layout.l_offset.x, base.1 + layout.l_offset.y),
-        };
+        let offset = (base.0 + layout.l_offset.x, base.1 + layout.l_offset.y);
 
         // Image/color content will be set later
         let mut surf = if let Some(glyph_id) = layout.l_glyph_id.as_ref() {
@@ -194,6 +188,39 @@ impl<'a> RenderTransaction<'a> {
         return Some(ret);
     }
 
+    /// Test if we should skip drawing this node because it is offscreen
+    fn is_node_visible(&self, viewport: &th::Viewport, node: &DakotaId, base: (i32, i32)) -> bool {
+        let layout = self.rt_layout_nodes.get(node).unwrap();
+
+        // Test that this child is visible before drawing it
+        let offset = dom::Offset::new(base.0 + layout.l_offset.x, base.1 + layout.l_offset.y);
+        !(offset.x > viewport.offset.0 + viewport.size.0
+                    || offset.y > viewport.offset.1 + viewport.size.1
+                    // Have we scrolled past this horizontally
+                    || (offset.x < 0 && offset.x * -1 > layout.l_size.width)
+                    // Have we scrolled past this vertically
+                    || (offset.y < 0 && offset.y * -1 > layout.l_size.height))
+    }
+
+    /// Test if we should skip drawing this viewport because it is offscreen
+    fn is_nodes_viewport_visible(
+        &self,
+        viewport: &th::Viewport,
+        child_viewport: &th::Viewport,
+        base: (i32, i32),
+    ) -> bool {
+        let offset = dom::Offset::new(
+            base.0 + child_viewport.offset.0,
+            base.1 + child_viewport.offset.1,
+        );
+        !(offset.x > viewport.offset.0 + viewport.size.0
+                    || offset.y > viewport.offset.1 + viewport.size.1
+                    // Have we scrolled past this horizontally
+                    || (offset.x + child_viewport.size.0 < viewport.offset.0)
+                    // Have we scrolled past this vertically
+                    || (offset.x + child_viewport.size.1 < viewport.offset.1))
+    }
+
     /// Helper for drawing a single element
     ///
     /// This does not recurse. Will skip drawing this node if it is out of the bounds of
@@ -205,23 +232,11 @@ impl<'a> RenderTransaction<'a> {
         node: &DakotaId,
         base: (i32, i32),
     ) -> th::Result<()> {
-        {
-            let layout = self.rt_layout_nodes.get(node).unwrap();
-
-            // Test that this child is visible before drawing it
-            let offset = dom::Offset::new(base.0 + layout.l_offset.x, base.1 + layout.l_offset.y);
-            if (offset.x > viewport.size.0
-                    && offset.y > viewport.size.1 )
-                    // Have we scrolled past this horizontally
-                    || (offset.x < 0 && offset.x * -1 > layout.l_size.width)
-                    // Have we scrolled past this vertically
-                    || (offset.y < 0 && offset.y * -1 > layout.l_size.height)
-            {
-                return Ok(());
-            }
-        }
-
         let surf = self.get_thundr_surf_for_el(node, base)?;
+
+        if !self.is_node_visible(viewport, node, base) {
+            return Ok(());
+        }
 
         // Get the image to use for this surface, if we have one
         // This is done separately so that we can avoid cloning the image
@@ -254,6 +269,15 @@ impl<'a> RenderTransaction<'a> {
         // If this node is a viewport then update our display viewport
         let new_th_viewport = match self.rt_viewports.get(node).is_some() {
             true => {
+                let child_viewport = self.rt_viewports.get(node).unwrap();
+                // If this node its viewport is not visible then we know
+                // we can skip it and all children as they must be clipped within
+                if !self.is_node_visible(viewport, node, base)
+                    || !self.is_nodes_viewport_visible(viewport, child_viewport, base)
+                {
+                    return Ok(());
+                }
+
                 // Set Thundr's currently in use viewport
                 let th_viewport = self.get_display_viewport(viewport, node, base).unwrap();
                 frame.set_viewport(&th_viewport)?;
@@ -274,13 +298,12 @@ impl<'a> RenderTransaction<'a> {
         let layout = self.rt_layout_nodes.get(node).unwrap();
 
         // Update our subsurf offset
-        // If this node is a viewport then the base offset needs to be reset
-        let new_base = match self.rt_viewports.get(node) {
-            // do scrolling here to allow us to test things that are off screen?
-            // By putting the offset here all children will be offset by it
-            Some(vp) => (vp.scroll_offset.0, vp.scroll_offset.1),
-            None => (base.0 + layout.l_offset.x, base.1 + layout.l_offset.y),
-        };
+        let mut new_base = (base.0 + layout.l_offset.x, base.1 + layout.l_offset.y);
+        // If this is a viewport boundary also add our scrolling offset
+        if self.rt_viewports.get(node).is_some() {
+            new_base.0 += new_viewport.scroll_offset.0;
+            new_base.1 += new_viewport.scroll_offset.1;
+        }
 
         // Now draw each of our children
         for child in layout.l_children.iter() {

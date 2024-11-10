@@ -48,29 +48,29 @@
   </define_resource>
   <define_font>
    <name>Heading</name>
-   <relPath>./Inconsolata.otf</relPath>
+   <font_name>Inconsolata</font_name>
    <pixel_size>64</pixel_size>
    <color>
-    <r>0.933</r>
-    <g>0.949</g>
-    <b>0.901</b>
+    <r>1.0</r>
+    <g>1.0</g>
+    <b>1.0</b>
     <a>1</a>
    </color>
   </define_font>
   <define_font>
    <name>Inconsolata</name>
-   <relPath>./Inconsolata.otf</relPath>
+   <font_name>Inconsolata</font_name>
    <pixel_size>16</pixel_size>
    <color>
-    <r>0.933</r>
-    <g>0.949</g>
-    <b>0.901</b>
+    <r>1.0</r>
+    <g>1.0</g>
+    <b>1.0</b>
     <a>1</a>
    </color>
   </define_font>
   <define_font>
    <name>JetBrainsMono</name>
-   <relPath>./JetBrainsMono-Regular.ttf</relPath>
+   <font_name>JetBrainsMono</font_name>
    <pixel_size>16</pixel_size>
    <color>
     <r>0.109</r>
@@ -90,6 +90,7 @@
    <resource>white</resource>
    <el>
     <resource>blue</resource>
+    <viewport></viewport>
     <size>
      <width><relative>1.0</relative></width>
      <height><constant>96</constant></height>
@@ -178,6 +179,7 @@
          <width><relative>1.0</relative></width>
          <height><constant>256</constant></height>
         </size>
+        <viewport></viewport>
         <content>
          <el>
           <resource>grey</resource>
@@ -287,6 +289,7 @@
            <width><relative>0.9</relative></width>
            <height><relative>0.9</relative></height>
           </size>
+          <viewport></viewport>
           <resource>grey</resource>
           <content>
            <el>

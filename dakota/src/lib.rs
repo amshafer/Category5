@@ -1,3 +1,4 @@
+extern crate fontconfig as fc;
 /// Dakota UI Toolkit
 ///
 /// Dakota is a UI toolkit designed for rendering trees of surfaces. These
@@ -125,7 +126,10 @@ pub struct Dakota {
     d_bounds: ll::Component<dom::Edges>,
     d_children: ll::Component<Vec<DakotaId>>,
     d_unbounded_subsurf: ll::Component<bool>,
-    /// Any viewports assigned
+    /// Is this element a viewport node. If so it will have a viewport
+    /// boundary and scroll the content inside of it.
+    d_is_viewport: ll::Component<bool>,
+    /// Any viewports assigned after layout
     ///
     /// If this is a viewport boundary then this will be populated to
     /// control draw clipping
@@ -144,6 +148,7 @@ pub struct Dakota {
     /// Default Font instance
     d_default_font_inst: DakotaId,
     d_freetype: ft::Library,
+    d_fontconfig: fc::Fontconfig,
     d_ood_counter: usize,
 
     /// Font shaping information. This is held separately outside of our ECS tables
@@ -279,6 +284,7 @@ impl Dakota {
         create_component_and_table!(layout_ecs, dom::DakotaDOM, dom_table);
         create_component_and_table!(layout_ecs, bool, unbounded_subsurf_table);
         create_component_and_table!(layout_ecs, th::Viewport, viewports_table);
+        create_component_and_table!(layout_ecs, bool, is_viewports_table);
 
         // Create a default Font instance
         let default_inst = layout_ecs.add_entity();
@@ -307,6 +313,7 @@ impl Dakota {
             d_children: children_table,
             d_dom: dom_table,
             d_unbounded_subsurf: unbounded_subsurf_table,
+            d_is_viewport: is_viewports_table,
             d_viewports: viewports_table,
             d_layout_tree_root: None,
             d_window_dims: None,
@@ -315,6 +322,8 @@ impl Dakota {
             d_event_sys: EventSystem::new(),
             d_default_font_inst: default_inst.clone(),
             d_freetype: ft::Library::init().context(anyhow!("Could not get freetype library"))?,
+            d_fontconfig: fc::Fontconfig::new()
+                .context(anyhow!("Could not initialize fontconfig"))?,
             d_ood_counter: 30,
             d_font_instances: Vec::new(),
             d_mouse_pos: (0, 0),
@@ -324,8 +333,8 @@ impl Dakota {
         ret.define_font(
             &default_inst,
             dom::Font {
-                name: "Default Font".to_string(),
-                path: "./JetBrainsMono-Regular.ttf".to_string(),
+                name: "Default".to_string(),
+                font_name: "JetBrainsMono".to_string(),
                 pixel_size: 16,
                 color: None,
             },
@@ -453,13 +462,16 @@ impl Dakota {
         font_instances: &mut Vec<(dom::Font, font::FontInstance)>,
         fonts: &mut ll::Snapshot<dom::Font>,
         freetype: &ft::Library,
+        fontconfig: &fc::Fontconfig,
         id: &DakotaId,
         font: dom::Font,
     ) {
+        let font_path = fontconfig.find(&font.font_name, None).unwrap();
+
         if font_instances.iter().find(|(f, _)| *f == font).is_none() {
             font_instances.push((
                 font.clone(),
-                FontInstance::new(freetype, &font.path, font.pixel_size),
+                FontInstance::new(freetype, font_path.path.to_str().unwrap(), font.pixel_size),
             ));
         }
 
@@ -477,6 +489,7 @@ impl Dakota {
             &mut self.d_font_instances,
             &mut fonts,
             &self.d_freetype,
+            &self.d_fontconfig,
             id,
             font,
         );
@@ -721,41 +734,6 @@ impl Dakota {
         self.d_display.get_drm_dev()
     }
 
-    /// Get the total internal size for this layout node. This is used to calculate
-    /// the scrolling region within this node, useful if it is a viewport node.
-    fn get_node_internal_size(&self, id: DakotaId) -> (i32, i32) {
-        let node = self.d_layout_nodes.get(&id).unwrap();
-        let mut ret = (node.l_size.width, node.l_size.height);
-
-        for child_id in node.l_children.iter() {
-            let child = self.d_layout_nodes.get(&child_id).unwrap();
-
-            // If this childs end position is larger, adjust our returning size
-            // accordingly
-            ret.0 = ret.0.max(child.l_offset.x + child.l_size.width);
-            ret.1 = ret.1.max(child.l_offset.y + child.l_size.height);
-        }
-
-        return ret;
-    }
-
-    /// Fill in a new viewport entry for this layout node
-    fn set_viewport(&self, id: &DakotaId) {
-        let layout = self.d_layout_nodes.get(&id).unwrap();
-
-        // Size and scroll offset will get updated elsewhere
-        let mut viewport = th::Viewport::new(
-            layout.l_offset.x as i32,
-            layout.l_offset.y as i32,
-            layout.l_size.width as i32,
-            layout.l_size.height as i32,
-        );
-        let scroll_region = self.get_node_internal_size(id.clone());
-        viewport.set_scroll_region(scroll_region.0 as i32, scroll_region.1 as i32);
-
-        self.d_viewports.set(id, viewport);
-    }
-
     pub(crate) fn add_child_to_element_internal(
         children: &mut ll::Snapshot<Vec<DakotaId>>,
         parent: &DakotaId,
@@ -930,11 +908,12 @@ impl Dakota {
         // Reset our old tree
         self.d_layout_tree_root = None;
 
-        // construct layout tree with sizes of all boxes
-        self.layout(&root_node_id)?;
         // Manually mark the root node as a viewport node. It always is, and it will
         // always have the root viewport.
-        self.set_viewport(&root_node_id);
+        self.d_is_viewport.set(&root_node_id, true);
+
+        // construct layout tree with sizes of all boxes
+        self.layout(&root_node_id)?;
 
         // Perform the Thundr pass
         //
@@ -1011,18 +990,30 @@ impl Dakota {
 
         // If this node is of a type where we know it has a lot of children but none of them
         // could possibly be a viewport, take an early exit.
-        // This most notably happens in the case of text nodes, which
+        // This most notably happens in the case of text nodes, which have a large number of
+        // virtual children.
         if !self.node_can_have_children(texts, id) && viewports.get(id).is_none() {
             return None;
         }
 
         // Since the tree is back to front, process the children first. If one of them is a match,
-        // it is the top-most viewport and we should return it. Otherwise we can test if this
-        // node matches
+        // it is the top-most viewport and we should return it. Otherwise we can test if this node
+        // matches.  If this is a new viewport boundary then add its scroll offset to our children
+        let mut child_offset = offset;
+        if let Some(vp) = viewports.get(id) {
+            child_offset.0 += vp.offset.0 + vp.scroll_offset.0;
+            child_offset.1 += vp.offset.1 + vp.scroll_offset.1;
+        }
         for child in layout.l_children.iter() {
-            if let Some(ret) =
-                self.viewport_at_pos_recursive(layout_nodes, viewports, texts, child, offset, x, y)
-            {
+            if let Some(ret) = self.viewport_at_pos_recursive(
+                layout_nodes,
+                viewports,
+                texts,
+                child,
+                child_offset,
+                x,
+                y,
+            ) {
                 return Some(ret);
             }
         }

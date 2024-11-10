@@ -234,8 +234,10 @@ pub struct WindowEvents {
 /// font to use for this text block
 #[derive(Debug, Clone, PartialEq)]
 pub struct Font {
+    /// This is a unique name for this font definition
     pub name: String,
-    pub path: String,
+    /// This is the name of the font to use (for example Inconsolata)
+    pub font_name: String,
     pub pixel_size: u32,
     pub color: Option<Color>,
 }
