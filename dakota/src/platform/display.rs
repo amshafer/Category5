@@ -12,7 +12,7 @@ use input::{Libinput, LibinputInterface};
 extern crate xkbcommon;
 use xkbcommon::xkb;
 
-use super::Platform;
+use super::{BackendType, OutputPlatform, Platform};
 use crate::event::*;
 use crate::input::{convert_libinput_mouse_to_dakota, convert_xkb_keycode_to_dakota, Mods};
 use crate::platform::DakotaDOM;
@@ -87,6 +87,7 @@ impl LibinputInterface for Inkit {
 /// window server at all. This will use vulkan to present to a physical
 /// display and libinput to collect raw input events.
 pub struct LibinputPlat {
+    dp_type: BackendType,
     /// libinput context
     dp_libin: Libinput,
     /// libxkbcommon context
@@ -105,7 +106,7 @@ pub struct LibinputPlat {
 }
 
 impl LibinputPlat {
-    pub fn new() -> Result<Self> {
+    pub fn new(backend_type: BackendType) -> Result<Self> {
         let kit: Inkit = Inkit { _inner: 0 };
         let mut libin = Libinput::new_with_udev(kit);
 
@@ -135,6 +136,7 @@ impl LibinputPlat {
         fdwatch.register_events();
 
         Ok(Self {
+            dp_type: backend_type,
             dp_libin: libin,
             _dp_xkb_ctx: context,
             _dp_xkb_keymap: keymap,
@@ -268,22 +270,31 @@ impl LibinputPlat {
 }
 
 impl Platform for LibinputPlat {
-    fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType> {
-        Ok(th::SurfaceType::Display(PhantomData))
+    /// Create a window
+    ///
+    /// This creates a new window output with our winsys, we can
+    /// then use this with a Thundr `Display`.
+    fn create_output(&mut self) -> Result<Box<dyn OutputPlatform>> {
+        Ok(Box::new(LibinputOutput {
+            lo_type: self.dp_type,
+        }))
     }
 
-    /// This doesn't make sense to implement, since the final size is just whatever
-    /// the size of the screen is.
-    fn set_output_params(&mut self, _win: &dom::Window, _dims: (u32, u32)) -> Result<()> {
-        log::error!("set_output_params on direct2display is unimplemented");
-        Ok(())
-    }
-
+    /// Add a watch descriptor to our list. This will cause the platform's
+    /// event loop to wake when this fd is readable and queue the UserFd
+    /// event.
     fn add_watch_fd(&mut self, fd: RawFd) {
         self.dp_fdwatch.add_fd(fd);
         self.dp_fdwatch.register_events();
     }
 
+    /// Run the event loop for this platform
+    ///
+    /// This will dispatch winsys handling and will wait for user
+    /// input.
+    ///
+    /// Returns true if we should redraw the app due to an out of
+    /// date swapchain.
     fn run(
         &mut self,
         evsys: &mut EventSystem,
@@ -297,5 +308,30 @@ impl Platform for LibinputPlat {
         self.process_available(evsys);
 
         Ok(false)
+    }
+}
+
+/// Libinput output
+///
+/// This doesn't hold as much state as other backends as there isn't
+/// a window system in play here.
+pub struct LibinputOutput {
+    lo_type: BackendType,
+}
+
+impl OutputPlatform for LibinputOutput {
+    fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType> {
+        Ok(match self.lo_type {
+            #[cfg(feature = "drm")]
+            BackendType::Drm => th::SurfaceType::Drm,
+            BackendType::VkD2d => th::SurfaceType::Display(PhantomData),
+        })
+    }
+
+    /// This doesn't make sense to implement, since the final size is just whatever
+    /// the size of the screen is.
+    fn set_geometry(&mut self, _win: &dom::Window, _dims: (u32, u32)) -> Result<()> {
+        log::error!("set_output_params on direct backends is unimplemented");
+        Ok(())
     }
 }

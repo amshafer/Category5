@@ -1,7 +1,7 @@
 /// SDL2 backend platform
 ///
 /// This handles all window systems using SDL2
-use super::Platform;
+use super::{OutputPlatform, Platform};
 use crate::dom;
 use crate::dom::DakotaDOM;
 use crate::utils::fdwatch::FdWatch;
@@ -21,11 +21,16 @@ use xkbcommon::xkb;
 
 const SCROLL_SENSITIVITY: f64 = 32.0;
 
+/// Single SDL2 window
+pub struct SDL2Window {
+    sdl_video_sys: sdl2::VideoSubsystem,
+    sdl_window: sdl2::video::Window,
+}
+
+/// Common SDL2 dispatch backend
 #[allow(dead_code)]
 pub struct SDL2Plat {
     sdl: sdl2::Sdl,
-    sdl_video_sys: sdl2::VideoSubsystem,
-    sdl_window: sdl2::video::Window,
     sdl_event_pump: sdl2::EventPump,
     /// last known mouse
     ///
@@ -52,13 +57,6 @@ impl SDL2Plat {
     pub fn new() -> Result<Self> {
         // SDL goodies
         let sdl_context = sdl2::init().unwrap();
-        let video_subsystem = sdl_context.video().unwrap();
-        let window = video_subsystem
-            .window("dakota", 640, 480)
-            .vulkan()
-            .resizable()
-            .position_centered()
-            .build()?;
         let event_pump = sdl_context.event_pump().unwrap();
         // Create all the components for xkb
         // A description of this can be found in the xkb
@@ -79,9 +77,7 @@ impl SDL2Plat {
         let state = xkb::State::new(&keymap);
         Ok(Self {
             sdl: sdl_context,
-            sdl_video_sys: video_subsystem,
             sdl_event_pump: event_pump,
-            sdl_window: window,
             sdl_mouse_pos: (0.0, 0.0),
             sdl_mods: Mods::NONE,
             sdl_xkb_ctx: context,
@@ -238,19 +234,29 @@ impl SDL2Plat {
     }
 }
 
-#[cfg(feature = "sdl")]
 impl Platform for SDL2Plat {
-    fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType> {
-        Ok(th::SurfaceType::SDL2(&self.sdl_video_sys, &self.sdl_window))
+    /// Create a window
+    ///
+    /// This creates a new window output with our winsys, we can
+    /// then use this with a Thundr `Display`.
+    fn create_output(&mut self) -> Result<Box<dyn OutputPlatform>> {
+        let video_subsystem = self.sdl.video().unwrap();
+        let window = video_subsystem
+            .window("dakota", 640, 480)
+            .vulkan()
+            .resizable()
+            .position_centered()
+            .build()?;
+
+        Ok(Box::new(SDL2Window {
+            sdl_video_sys: video_subsystem,
+            sdl_window: window,
+        }))
     }
 
-    fn set_output_params(&mut self, win: &dom::Window, dims: (u32, u32)) -> Result<()> {
-        let sdl_win = &mut self.sdl_window;
-        sdl_win.set_title(&win.title)?;
-        sdl_win.set_size(dims.0, dims.1)?;
-        Ok(())
-    }
-
+    /// Add a watch descriptor to our list. This will cause the platform's
+    /// event loop to wake when this fd is readable and queue the UserFd
+    /// event.
     fn add_watch_fd(&mut self, fd: RawFd) {
         if self.sdl_user_fds.is_none() {
             self.sdl_user_fds = Some(FdWatch::new());
@@ -261,6 +267,11 @@ impl Platform for SDL2Plat {
         watch.register_events();
     }
 
+    /// Run the event loop for this platform
+    ///
+    /// Returns true if we should redraw the app due to an out of
+    /// date swapchain.
+    ///
     /// Block and handle all available events from SDL2. If timeout
     /// is specified it will be passed to SDL's wait_event_timeout function.
     fn run(
@@ -322,5 +333,23 @@ impl Platform for SDL2Plat {
         }
 
         return Ok(needs_redraw);
+    }
+}
+
+impl OutputPlatform for SDL2Window {
+    /// Get the thundr surface type that this platform should use.
+    ///
+    /// This is where we share our window system object pointers that
+    /// Thundr will consume when it creates a `Dispaly` that draws to
+    /// this output.
+    fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType> {
+        Ok(th::SurfaceType::SDL2(&self.sdl_video_sys, &self.sdl_window))
+    }
+
+    /// Set the dimensions of this window
+    fn set_geometry(&mut self, win: &dom::Window, dims: (u32, u32)) -> Result<()> {
+        self.sdl_window.set_title(&win.title)?;
+        self.sdl_window.set_size(dims.0, dims.1)?;
+        Ok(())
     }
 }

@@ -1,11 +1,11 @@
+///! Dakota UI Toolkit
+///!
+///! Dakota is a UI toolkit designed for rendering trees of surfaces. These
+///! surfaces can be easily expressed in XML documents, and updated dynamically
+///! by the application.
+///!
+// Austin Shafer - 2022
 extern crate fontconfig as fc;
-/// Dakota UI Toolkit
-///
-/// Dakota is a UI toolkit designed for rendering trees of surfaces. These
-/// surfaces can be easily expressed in XML documents, and updated dynamically
-/// by the application.
-///
-/// Austin Shafer - 2022
 extern crate freetype as ft;
 extern crate image;
 extern crate lluvia as ll;
@@ -29,7 +29,7 @@ pub mod input;
 mod tests;
 pub use crate::input::{Keycode, MouseButton};
 mod platform;
-use platform::Platform;
+use platform::{OutputPlatform, Platform};
 pub mod xml;
 
 pub mod event;
@@ -91,6 +91,8 @@ pub struct Dakota {
     /// This may be SDL2 for windowed systems, or direct2display. This handles platform-specific
     /// initialization.
     d_plat: Box<dyn Platform>,
+    /// Platform handling specific to this output
+    d_output_plat: Box<dyn OutputPlatform>,
     /// This is one ECS that is composed of multiple tables
     d_ecs_inst: ll::Instance,
     /// This is all of the LayoutNodes in the system, each corresponding to
@@ -177,19 +179,97 @@ macro_rules! create_component_and_table {
 
 impl Dakota {
     /// Helper for initializing Thundr for a given platform.
-    fn init_thundr(surface_type: th::SurfaceType) -> Result<(th::Thundr, th::Display, (i32, i32))> {
-        let info = th::CreateInfo::builder().surface_type(surface_type).build();
+    ///
+    /// Here we create an output platform that we can then initialize thundr
+    /// from. Because this is the first window we need to provide a surface type
+    /// so thundr knows what Vulkan extensions to enable.
+    fn init_thundr(
+        mut plat: Box<dyn Platform>,
+    ) -> Result<(
+        Box<dyn Platform>,
+        Box<dyn OutputPlatform>,
+        th::Thundr,
+        th::Display,
+    )> {
+        let win = plat.create_output().map_err(|e| {
+            log::error!("Failed to initialize atomic DRM-KMS output: {:?}", e);
+            e
+        })?;
+
+        let info = th::CreateInfo::builder()
+            .surface_type(win.get_th_surf_type()?)
+            .build();
 
         let mut thundr = th::Thundr::new(&info).context("Failed to initialize Thundr")?;
         let display = thundr
             .get_display(&info)
             .context("Failed to get Thundr Display")?;
 
-        let dpi = display
-            .get_dpi()
-            .context("Failed to get DPI during platform init")?;
+        Ok((plat, win, thundr, display))
+    }
 
-        Ok((thundr, display, dpi))
+    /// Create an SDL2 backend
+    #[cfg(feature = "sdl")]
+    fn create_sdl_platform() -> Result<(
+        Box<dyn Platform>,
+        Box<dyn OutputPlatform>,
+        th::Thundr,
+        th::Display,
+    )> {
+        let plat = Box::new(platform::SDL2Plat::new().map_err(|e| {
+            log::error!("Failed to create new SDL platform: {:?}", e);
+            e
+        })?);
+
+        Self::init_thundr(plat)
+    }
+
+    /// Create an atomic DRM-KMS backend
+    #[cfg(feature = "drm")]
+    fn create_drm_platform() -> Result<(
+        Box<dyn Platform>,
+        Box<dyn OutputPlatform>,
+        th::Thundr,
+        th::Display,
+    )> {
+        let plat = Box::new(
+            platform::LibinputPlat::new(platform::BackendType::Drm).map_err(|e| {
+                log::error!("Failed to create new libinput platform: {:?}", e);
+                e
+            })?,
+        );
+
+        Self::init_thundr(plat)
+    }
+
+    /// Create a Vulkan "Direct to Display" platform
+    #[cfg(feature = "direct2display")]
+    fn create_vkd2d_platform() -> Result<(
+        Box<dyn Platform>,
+        Box<dyn OutputPlatform>,
+        th::Thundr,
+        th::Display,
+    )> {
+        let plat = Box::new(
+            platform::LibinputPlat::new(platform::BackendType::VkD2d).map_err(|e| {
+                log::error!("Failed to create new libinput platform: {:?}", e);
+                e
+            })?,
+        );
+
+        Self::init_thundr(plat)
+    }
+
+    /// Create a headless platform
+    fn create_headless_platform() -> Result<(
+        Box<dyn Platform>,
+        Box<dyn OutputPlatform>,
+        th::Thundr,
+        th::Display,
+    )> {
+        let plat = Box::new(platform::HeadlessPlat::new());
+
+        Self::init_thundr(plat)
     }
 
     /// Try initializing the different plaform backends until we find one that works
@@ -198,7 +278,12 @@ impl Dakota {
     /// get the DPI of the display. These three are tested since they all may fail
     /// given different configurations. DPI fails if SDL2 tries to initialize us on
     /// a physical display.
-    fn initialize_platform() -> Result<(Box<dyn Platform>, th::Thundr, th::Display, (i32, i32))> {
+    fn initialize_platform() -> Result<(
+        Box<dyn Platform>,
+        Box<dyn OutputPlatform>,
+        th::Thundr,
+        th::Display,
+    )> {
         if std::env::var("DAKOTA_HEADLESS_BACKEND").is_err() {
             // ------------------------------------------------------------------------
             // SDL 2
@@ -206,51 +291,37 @@ impl Dakota {
             // If we are not forcing headless mode, start by attempting sdl
             #[cfg(feature = "sdl")]
             if std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok() {
-                match platform::SDL2Plat::new() {
-                    Ok(sdl) => {
-                        let sdl: Box<dyn Platform> = Box::new(sdl);
-                        match Self::init_thundr(sdl.get_th_surf_type()?) {
-                            Ok((thundr, th_disp, dpi)) => return Ok((sdl, thundr, th_disp, dpi)),
-                            Err(e) => log::error!("Failed to create SDL2 backend: {:?}", e),
-                        }
-                    }
-                    Err(e) => log::error!("Failed to create new SDL platform instance: {:?}", e),
-                };
+                if let Ok(ret) = Self::create_sdl_platform() {
+                    log::debug!("Using SDL2");
+                    return Ok(ret);
+                }
             }
 
             // ------------------------------------------------------------------------
             // DRM
             // ------------------------------------------------------------------------
             #[cfg(feature = "drm")]
-            if let Ok(d2d) = platform::LibinputPlat::new() {
-                let platform: Box<dyn Platform> = Box::new(d2d);
-                match Self::init_thundr(th::SurfaceType::Drm) {
-                    Ok((thundr, th_disp, dpi)) => return Ok((platform, thundr, th_disp, dpi)),
-                    Err(e) => log::error!("Failed to create DRM backend: {:?}", e),
-                }
+            if let Ok(ret) = Self::create_drm_platform() {
+                log::debug!("Using Atomic DRM-KMS");
+                return Ok(ret);
             }
 
             // ------------------------------------------------------------------------
             // Vulkan Direct to Display
             // ------------------------------------------------------------------------
             #[cfg(feature = "direct2display")]
-            if let Ok(d2d) = platform::LibinputPlat::new() {
-                let platform: Box<dyn Platform> = Box::new(d2d);
-                match Self::init_thundr(th::SurfaceType::Display(std::marker::PhantomData)) {
-                    Ok((thundr, th_disp, dpi)) => return Ok((platform, thundr, th_disp, dpi)),
-                    Err(e) => log::error!("Failed to create Direct2Display backend: {:?}", e),
-                }
+            if let Ok(ret) = Self::create_vkd2d_platform() {
+                log::debug!("Using Vulkan Direct to Display");
+                return Ok(ret);
             }
         }
 
         // ------------------------------------------------------------------------
         // Headless
         // ------------------------------------------------------------------------
-        let headless = platform::HeadlessPlat::new();
-        let platform: Box<dyn Platform> = Box::new(headless);
-        match Self::init_thundr(platform.get_th_surf_type()?) {
-            Ok((thundr, th_disp, dpi)) => return Ok((platform, thundr, th_disp, dpi)),
-            Err(e) => log::error!("Failed to create Headless backend: {:?}", e),
+        if let Ok(ret) = Self::create_headless_platform() {
+            log::debug!("Using Vulkan Direct to Display");
+            return Ok(ret);
         }
 
         return Err(anyhow!("Could not find available platform"));
@@ -261,7 +332,7 @@ impl Dakota {
     /// This will initialize the window system platform layer, create a thundr
     /// instance from it, and wrap it in Dakota.
     pub fn new() -> Result<Self> {
-        let (plat, thundr, display, _dpi) = Self::initialize_platform()?;
+        let (plat, window_plat, thundr, display) = Self::initialize_platform()?;
 
         let mut layout_ecs = ll::Instance::new();
         let mut resource_ecs = ll::Instance::new();
@@ -291,6 +362,7 @@ impl Dakota {
 
         let mut ret = Self {
             d_plat: plat,
+            d_output_plat: window_plat,
             d_thund: thundr,
             d_display: display,
             d_ecs_inst: layout_ecs,
@@ -857,8 +929,8 @@ impl Dakota {
             .d_dom
             .get(dom_id)
             .ok_or(anyhow!("Only DOM objects can be refreshed"))?;
-        self.d_plat
-            .set_output_params(&dom.window, (width, height))?;
+        self.d_output_plat
+            .set_geometry(&dom.window, (width, height))?;
 
         Ok(())
     }
@@ -890,8 +962,8 @@ impl Dakota {
 
                 // we need to update the window dimensions if possible,
                 // so call into our platform do handle it
-                self.d_plat
-                    .set_output_params(&dom.window, self.d_window_dims.unwrap())?;
+                self.d_output_plat
+                    .set_geometry(&dom.window, self.d_window_dims.unwrap())?;
             }
             dom.root_element.clone()
         };
