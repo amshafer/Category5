@@ -269,13 +269,14 @@ impl EventManager {
         tm.reset();
         let mut needs_render = true;
         loop {
-            log::profiling!("starting loop");
+            log::debug!("starting loop");
 
             self.dispatch_dakota_platform(match needs_render {
                 true => Some(0),
                 false => None,
             })
             .expect("Dispatching Dakota platform handlers");
+            log::debug!("dispatch_platform done");
 
             {
                 let mut atmos = self.em_climate.c_atmos.lock().unwrap();
@@ -298,15 +299,7 @@ impl EventManager {
                         }
                     }
                 }
-
-                // Try to flip hemispheres to push our updates to vkcomp
-                // If we can't recieve it, vkcomp isn't ready, and we should
-                // continue processing wayland updates so the system
-                // doesn't lag
-                if atmos.is_changed() {
-                    atmos.clear_changed();
-                    needs_render = true;
-                }
+                log::debug!("input handling done");
             }
 
             // Accept any new clients
@@ -321,12 +314,31 @@ impl EventManager {
                     .expect("Could not register new client");
             }
 
+            // Handle any available wayland events.
+            // We should do this before rendering so that any updates are reflected
+            // immediately.
+            log::debug!("dispatching wayland");
+            self.em_display
+                .dispatch_clients(&mut self.em_climate)
+                .unwrap();
+
+            {
+                let mut atmos = self.em_climate.c_atmos.lock().unwrap();
+                // If our state database was updated by input or wayland processing then
+                // we need to rerender
+                if atmos.is_changed() {
+                    atmos.clear_changed();
+                    needs_render = true;
+                }
+            }
+
             if needs_render {
-                log::profiling!("trying to render frame");
+                log::debug!("trying to render frame");
                 let result = self.em_wm.render_frame(
                     &mut self.em_climate.c_dakota,
                     self.em_climate.c_atmos.lock().unwrap().deref_mut(),
                 );
+                log::debug!("rendering frame done");
 
                 match result {
                     Ok(()) => needs_render = false,
@@ -347,15 +359,14 @@ impl EventManager {
                 };
             }
 
-            // wait for the next event
-            self.em_display
-                .dispatch_clients(&mut self.em_climate)
-                .unwrap();
+            // Flush any wayland events we sent here
+            // The rendering code will send the wayland frame notifications, which
+            // have been queued but not yet flushed to the wayland socket.
+            log::debug!("flushing wayland");
             self.em_display
                 .flush_clients()
                 .expect("Could not flush wayland display");
-
-            log::profiling!("EventManager: Blocking for max {} ms", tm.time_remaining());
+            log::debug!("EventManager: Blocking for max {} ms", tm.time_remaining());
         }
     }
 }

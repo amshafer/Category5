@@ -1165,6 +1165,16 @@ impl Dakota {
         Ok(())
     }
 
+    /// Get the DRM format modifiers supported by this display
+    pub fn get_supported_drm_render_modifiers(&self) -> Vec<u64> {
+        self.d_display
+            .d_dev
+            .get_supported_drm_render_modifiers()
+            .iter()
+            .map(|m| m.drm_format_modifier)
+            .collect()
+    }
+
     /// Add a file descriptor to watch
     ///
     /// This will add a new file descriptor to the watch set inside dakota,

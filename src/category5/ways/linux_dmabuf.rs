@@ -22,15 +22,6 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::io::OwnedFd;
 use std::sync::{Arc, Mutex};
 
-// drm modifier saying to implicitly infer
-// the modifier from the dmabuf
-//
-// specified in linux-dmabuf-unstable-v1.xml
-#[allow(dead_code)]
-const DRM_FORMAT_MOD_INVALID_HI: u32 = 0x00ffffff;
-#[allow(dead_code)]
-const DRM_FORMAT_MOD_INVALID_LOW: u32 = 0xffffffff;
-
 // drm formats specified in mesa's private wl_drm
 // protocol. We need this for mesa clients.
 //
@@ -49,18 +40,24 @@ impl ws::GlobalDispatch<zldv1::ZwpLinuxDmabufV1, ()> for Climate {
         data_init: &mut ws::DataInit<'_, Self>,
     ) {
         let dma = data_init.init(resource, ());
+
+        let drm_formats = [WL_DRM_FORMAT_XRGB8888, WL_DRM_FORMAT_ARGB8888];
+
         // we need to advertise the format/modifier
         // combinations we support
-        dma.format(WL_DRM_FORMAT_XRGB8888);
-        dma.format(WL_DRM_FORMAT_ARGB8888);
+        for format in drm_formats {
+            dma.format(format);
 
-        // The above format events are implicitly ignored by mesa,
-        // these modifier events do the real work
-        //
-        // Sending zeroe as the modifier bits is the linear
-        // drm format
-        dma.modifier(WL_DRM_FORMAT_XRGB8888, 0, 0);
-        dma.modifier(WL_DRM_FORMAT_ARGB8888, 0, 0);
+            let render_mods = state.c_dakota.get_supported_drm_render_modifiers();
+            for modifier in render_mods.iter() {
+                let mod_hi = (modifier >> 32) as u32;
+                let mod_low = (modifier & 0xffffffff) as u32;
+                dma.modifier(format, mod_hi, mod_low);
+            }
+
+            // Send our linear modifier as it is always supported
+            dma.modifier(format, 0, 0);
+        }
     }
 }
 

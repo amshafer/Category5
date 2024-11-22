@@ -1101,7 +1101,10 @@ impl Device {
     /// queue. This gives the driver a chance to perform any residency operations
     /// or format conversions.
     pub(crate) fn acquire_dmabuf_image_from_external_queue(&self, image: vk::Image) {
+        // TODO: use separate cbuf for this
+        log::debug!("acquire_dmabuf_image_from_external_queue: enter");
         self.wait_for_copy();
+        log::debug!("acquire_dmabuf_image_from_external_queue: done waiting for copy");
 
         {
             let int_lock = self.d_internal.clone();

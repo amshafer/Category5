@@ -70,7 +70,7 @@ pub struct DisplayState {
 ///
 /// The swapchain is generated (and regenerated) from this stuff.
 pub struct Display {
-    d_dev: Arc<Device>,
+    pub d_dev: Arc<Device>,
     /// Our swapchain of images. This holds the different backends
     d_swapchain: Box<dyn Swapchain>,
     /// State to share with Renderer

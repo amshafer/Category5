@@ -412,6 +412,8 @@ impl Swapchain for DrmSwapchain {
     /// This will wait for the previous atomic commit's flip event to fire
     /// before updating our current image and continuing.
     fn get_next_swapchain_image(&mut self, dstate: &mut DisplayState) -> Result<()> {
+        log::debug!("get_next_swapchain_image: enter");
+
         if self.ds_committed {
             // Wait for an event saying the previous atomic commit has been
             // applied
@@ -437,7 +439,7 @@ impl Swapchain for DrmSwapchain {
                 let drm = self.ds_dev.d_drm_node.as_ref().unwrap().lock().unwrap();
 
                 let events = drm.receive_events().map_err(|e| {
-                    log::error!("Failed to get DRM events: {:?}", e);
+                    log::debug!("Failed to get DRM events: {:?}", e);
                     ThundrError::COULD_NOT_ACQUIRE_NEXT_IMAGE
                 })?;
 
@@ -459,6 +461,7 @@ impl Swapchain for DrmSwapchain {
                 }
             }
         }
+        log::debug!("get_next_swapchain_image: got image");
 
         // bump the image number
         dstate.d_current_image += 1;
@@ -474,8 +477,10 @@ impl Swapchain for DrmSwapchain {
     /// Finally we can actually flip the buffers and present
     /// this image.
     fn present(&mut self, dstate: &DisplayState) -> Result<()> {
+        log::debug!("present: enter");
         // First wait for rendering to complete
         self.ds_dev.wait_for_latest_timeline();
+        log::debug!("present: waited for rendering");
 
         // Now create an atomic commit with our latest frame
         let drm = self.ds_dev.d_drm_node.as_ref().unwrap().lock().unwrap();
@@ -552,11 +557,13 @@ impl Swapchain for DrmSwapchain {
         let ret = drm
             .atomic_commit(
                 control::AtomicCommitFlags::ALLOW_MODESET
+                    | control::AtomicCommitFlags::NONBLOCK
                     | control::AtomicCommitFlags::PAGE_FLIP_EVENT,
                 atomic_req,
             )
             .or(Err(ThundrError::PRESENT_FAILED));
         self.ds_committed = true;
+        log::debug!("present: done with flip");
 
         ret
     }
