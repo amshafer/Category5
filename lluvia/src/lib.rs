@@ -765,9 +765,10 @@ impl Instance {
 
     // Verify that this id belongs to this Instance
     // This will assert if false.
-    fn id_is_valid(&self, _id: &Entity) {
-        #[cfg(debug_assertions)]
-        assert!(*self == _id.ecs_inst);
+    fn id_is_valid(&self, id: &Entity) {
+        if *self != id.ecs_inst {
+            panic!("Bug: Requested Entity does not belong to this Lluvia Instance");
+        }
     }
 }
 

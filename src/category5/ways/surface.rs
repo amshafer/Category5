@@ -182,7 +182,8 @@ impl CommitState {
                     return;
                 }
                 // Bind this buffer's resource to our Dakota element
-                atmos.a_surf_resource.set(&self.cs_id, buffer_id.clone());
+                let id = atmos.a_dakota_id.get(&self.cs_id).unwrap();
+                atmos.a_surf_resource.set(&id, buffer_id.clone());
 
                 surf_size = (dmabuf.db_width as f32, dmabuf.db_height as f32)
             } else if let Some(shm_buffer) = buf.data::<ShmBuffer>() {
