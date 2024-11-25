@@ -71,26 +71,36 @@ pub enum RawKeycode {
     Linux(u32),
 }
 
-/// Dakota Events
+/// Dakota Global Events
+///
+/// These events are independent of any particular output, and may notify
+/// the user of polled file descriptors or timers.
+#[derive(Debug, Clone)]
+pub enum Event {
+    /// Indicates that one of the fds that the application provided
+    /// for the event loop is readable. This can be used to have
+    /// dakota `select()` a set of fds and wake the application up
+    /// when they are ready.
+    UserFdReadable,
+}
+
+/// Dakota Output Events
 ///
 /// These events come from a couple possible sources, the most important of
 /// which is user input. All mouse movements and button presses are recorded
 /// as Events in the Dakota event queue, along with window system events such
 /// as resizing the window.
 #[derive(Debug, Clone)]
-pub enum Event {
+pub enum OutputEvent {
     /// The window size has been changed, normally by the user.
-    WindowResized {
-        args: HandlerArgs,
-        size: dom::Size<u32>,
-    },
-    /// The Dakota Application window has been closed
-    WindowClosed { args: HandlerArgs },
+    Resized,
+    /// The output window has been closed
+    Destroyed { args: HandlerArgs },
     /// The platform has lost the current output and we need to re-present
     /// to update the display.
     ///
     /// This happens on window systems, when the window needs redrawn.
-    WindowNeedsRedraw,
+    Redraw,
     /// This event is triggered every time Dakota draws a frame
     WindowRedrawComplete { args: HandlerArgs },
     /// Key has been pressed. Includes the updated modifiers.
@@ -144,11 +154,6 @@ pub enum Event {
         /// The axis source.
         source: AxisSource,
     },
-    /// Indicates that one of the fds that the application provided
-    /// for the event loop is readable. This can be used to have
-    /// dakota `select()` a set of fds and wake the application up
-    /// when they are ready.
-    UserFdReadable,
 }
 
 impl EventSystem {
@@ -171,17 +176,12 @@ impl EventSystem {
         }
     }
 
-    /// Add a window resize event to the global queue
+    /// Add a window resize event
     ///
     /// This signifies that a window was resized, and is triggered
     /// anytime OOD is returned from thundr.
-    pub fn add_event_window_resized(&mut self, dom: &DakotaDOM, new_size: dom::Size<u32>) {
-        if let Some(handler) = dom.window.events.resize.as_ref() {
-            self.es_global_event_queue.push_back(Event::WindowResized {
-                args: handler.args.clone(),
-                size: new_size,
-            });
-        }
+    pub fn add_event_window_resized(&mut self, dom: &DakotaDOM) {
+        self.es_global_event_queue.push_back(Event::Resize);
     }
 
     /// Add notice that the window needs redrawing.
@@ -190,23 +190,17 @@ impl EventSystem {
     /// to update the display.
     ///
     /// This happens on window systems, when the window needs redrawn.
-    pub fn add_event_window_needs_redraw(&mut self) {
+    pub fn add_event_redraw(&mut self) {
         self.es_global_event_queue
             .push_back(Event::WindowNeedsRedraw);
     }
 
-    /// Add a redraw request completion to the global queue
+    /// Add a redraw request to the queue
     ///
-    /// Since while dispatching it isn't guaranteed that a redraw
-    /// will take place, this lets a client know that the previous frame
-    /// was drawn, and it should handle any once-per-frame actions it
-    /// needs to take.
-    ///
-    /// This isn't a performance limiting event, the app doesn't need to
-    /// use this to control drawing. This should be used to queue up the
-    /// next elements to be presented, or run subroutines. Dakota will
-    /// internally worry about drawing everything.
-    pub fn add_event_window_redraw_complete(&mut self, dom: &DakotaDOM) {
+    /// This notifies the client that a redraw needs to take place due
+    /// to the output state becoming out of date. The client should
+    /// call `output.redraw()` as a result of seeing this event.
+    pub fn add_event_window_redraw(&mut self, dom: &DakotaDOM) {
         if let Some(handler) = dom.window.events.redraw_complete.as_ref() {
             self.es_global_event_queue
                 .push_back(Event::WindowRedrawComplete {
@@ -219,9 +213,9 @@ impl EventSystem {
     ///
     /// This is not an optional event. It will always be sent. It is
     /// optional in the element tree however.
-    pub fn add_event_window_closed(&mut self, dom: &DakotaDOM) {
+    pub fn add_event_destroyed(&mut self, dom: &DakotaDOM) {
         if let Some(handler) = dom.window.events.closed.as_ref() {
-            self.es_global_event_queue.push_back(Event::WindowClosed {
+            self.es_global_event_queue.push_back(Event::Destroyed {
                 args: handler.args.clone(),
             });
             return;

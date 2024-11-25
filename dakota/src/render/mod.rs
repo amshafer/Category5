@@ -1,5 +1,7 @@
 use crate::font::Glyph;
-use crate::{dom, Dakota, DakotaId, LayoutNode};
+use crate::layout::LayoutNode;
+use crate::{dom, DakotaId, Output, Scene};
+
 /// Dakota Drawing logic
 ///
 /// This splits out the rendering layouut of Dakota, which uses
@@ -329,25 +331,26 @@ impl<'a> RenderTransaction<'a> {
     }
 }
 
-impl Dakota {
+impl Output {
     /// Draw the entire scene
     ///
     /// This starts at the root viewport and draws all child viewports
-    pub(crate) fn draw_surfacelists(&mut self) -> th::Result<()> {
-        let root_node = self.d_layout_tree_root.clone().unwrap();
-        let root_viewport = self.d_viewports.get_clone(&root_node).unwrap();
+    /// present in the specified scene object.
+    pub(crate) fn draw_surfacelists(&mut self, scene: &Scene) -> th::Result<()> {
+        let root_node = scene.d_layout_tree_root.clone().unwrap();
+        let root_viewport = scene.d_viewports.get_clone(&root_node).unwrap();
 
         let mut frame = self.d_display.acquire_next_frame()?;
         let mut trans = RenderTransaction {
-            rt_resources: self.d_resources.snapshot(),
-            rt_resource_thundr_image: self.d_resource_thundr_image.snapshot(),
-            rt_resource_color: self.d_resource_color.snapshot(),
-            rt_fonts: self.d_fonts.snapshot(),
-            rt_text_font: self.d_text_font.snapshot(),
-            rt_default_font_inst: self.d_default_font_inst.clone(),
-            rt_glyphs: self.d_glyphs.snapshot(),
-            rt_viewports: self.d_viewports.snapshot(),
-            rt_layout_nodes: self.d_layout_nodes.snapshot(),
+            rt_resources: scene.d_resources.snapshot(),
+            rt_resource_thundr_image: scene.d_resource_thundr_image.snapshot(),
+            rt_resource_color: scene.d_resource_color.snapshot(),
+            rt_fonts: scene.d_fonts.snapshot(),
+            rt_text_font: scene.d_text_font.snapshot(),
+            rt_default_font_inst: scene.d_default_font_inst.clone(),
+            rt_glyphs: scene.d_glyphs.snapshot(),
+            rt_viewports: scene.d_viewports.snapshot(),
+            rt_layout_nodes: scene.d_layout_nodes.snapshot(),
         };
         trans.draw_surfacelists(&mut frame, &root_viewport, root_node)?;
         trans.commit();

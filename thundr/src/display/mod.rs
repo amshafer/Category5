@@ -136,8 +136,8 @@ impl Display {
     fn initialize_swapchain(info: &CreateInfo, dev: Arc<Device>) -> Result<Box<dyn Swapchain>> {
         match &info.surface_type {
             #[cfg(feature = "sdl")]
-            SurfaceType::SDL2(_, _) => Ok(Box::new(VkSwapchain::new(info, dev.clone())?)),
-            SurfaceType::Display(_) => Ok(Box::new(VkSwapchain::new(info, dev.clone())?)),
+            SurfaceType::SDL2 => Ok(Box::new(VkSwapchain::new(info, dev.clone())?)),
+            SurfaceType::Display => Ok(Box::new(VkSwapchain::new(info, dev.clone())?)),
             SurfaceType::Headless => Ok(Box::new(HeadlessSwapchain::new(dev.clone())?)),
             #[cfg(feature = "drm")]
             SurfaceType::Drm => Ok(Box::new(drm::DrmSwapchain::new(dev.clone())?)),
@@ -314,15 +314,14 @@ impl Display {
                 vec![khr::Surface::name().as_ptr(), khr::Display::name().as_ptr()]
             }
             #[cfg(feature = "sdl")]
-            SurfaceType::SDL2(_, win) => win
-                .vulkan_instance_extensions()
-                .unwrap()
-                .iter()
-                .map(|s| {
-                    // we need to turn a Vec<&str> into a Vec<*const i8>
-                    s.as_ptr() as *const i8
-                })
-                .collect(),
+            SurfaceType::SDL2 => {
+                vec![
+                    khr::Surface::name().as_ptr(),
+                    khr::WaylandSurface::name().as_ptr(),
+                    khr::XlibSurface::name().as_ptr(),
+                    khr::XcbSurface::name().as_ptr(),
+                ]
+            }
         }
     }
 

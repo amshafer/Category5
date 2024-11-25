@@ -94,14 +94,12 @@ impl SDL2Plat {
         evsys: &mut EventSystem,
         dom: &DakotaDOM,
         raw_event: Option<Event>,
-    ) -> std::result::Result<bool, DakotaError> {
-        let mut needs_redraw = false;
-
+    ) -> std::result::Result<(), DakotaError> {
         // raw_event will be Some if we have a valid SDL event
         if let Some(event) = raw_event {
             match event {
                 // Tell the window to exit if the user closed it
-                Event::Quit { .. } => evsys.add_event_window_closed(dom),
+                Event::Quit { .. } => evsys.add_event_destroyed(dom),
                 // Here we record events for our keystrokes
                 //
                 // This requires converting the raw keycodes from sdl2 into an
@@ -188,8 +186,7 @@ impl SDL2Plat {
                     WindowEvent::Resized { .. } => return Err(DakotaError::OUT_OF_DATE),
                     WindowEvent::SizeChanged { .. } => return Err(DakotaError::OUT_OF_DATE),
                     WindowEvent::Exposed { .. } => {
-                        evsys.add_event_window_needs_redraw();
-                        needs_redraw = true;
+                        evsys.add_event_window_redraw();
                     }
                     _ => {}
                 },
@@ -197,7 +194,7 @@ impl SDL2Plat {
             }
         }
 
-        Ok(needs_redraw)
+        Ok(())
     }
 
     /// Update this platform's internal xkbcommon state representing that
@@ -279,9 +276,7 @@ impl Platform for SDL2Plat {
         evsys: &mut EventSystem,
         dom: &DakotaDOM,
         timeout: Option<usize>,
-    ) -> std::result::Result<bool, DakotaError> {
-        let mut needs_redraw = false;
-
+    ) -> std::result::Result<(), DakotaError> {
         // There are two modes we need to consider for polling for SDL events, since
         // it doesn't follow a unix style: 1) if we are waiting for just SDL, 2) if we
         // are waiting for SDL and some file descriptors
@@ -302,7 +297,7 @@ impl Platform for SDL2Plat {
                 // Or wait for the first SDL event
                 let ev = self.sdl_event_pump.poll_event();
                 if let Some(ev) = ev {
-                    needs_redraw |= self.handle_event(evsys, dom, Some(ev))?;
+                    self.handle_event(evsys, dom, Some(ev))?;
                     break;
                 }
 
@@ -317,22 +312,22 @@ impl Platform for SDL2Plat {
                 // If not, then just return without handling.
                 Some(timeout) => match self.sdl_event_pump.wait_event_timeout(timeout as u32) {
                     Some(event) => event,
-                    None => return Ok(needs_redraw),
+                    None => return Ok(()),
                 },
                 // No timeout was given, so we wait indefinitely
                 None => self.sdl_event_pump.wait_event(),
             };
-            needs_redraw |= self.handle_event(evsys, dom, Some(ev))?;
+            self.handle_event(evsys, dom, Some(ev))?;
         }
 
         // Now drain the available events before returning
         // control to the main dakota dispatch loop.
         let mut events: Vec<_> = self.sdl_event_pump.poll_iter().collect();
         for event in events.drain(..) {
-            needs_redraw |= self.handle_event(evsys, dom, Some(event))?;
+            self.handle_event(evsys, dom, Some(event))?;
         }
 
-        return Ok(needs_redraw);
+        return Ok(());
     }
 }
 
