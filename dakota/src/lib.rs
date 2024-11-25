@@ -29,31 +29,41 @@ pub mod input;
 mod tests;
 pub use crate::input::{Keycode, MouseButton};
 mod platform;
-use platform::{OutputPlatform, Platform};
+use platform::Platform;
 pub mod xml;
 
 pub mod event;
-use event::EventSystem;
-pub use event::{AxisSource, Event, RawKeycode};
+pub use event::{AxisSource, GlobalEvent, OutputEvent, PlatformEvent, RawKeycode};
+use event::{GlobalEventSystem, OutputEventSystem, PlatformEventSystem};
 mod layout;
-use layout::LayoutNode;
+mod output;
+mod virtual_output;
+pub use virtual_output::VirtualOutput;
 mod render;
-
+pub use output::Output;
 mod font;
-use font::*;
+mod scene;
+pub use scene::Scene;
 
-// Re-exmport our getters/setters
-mod generated;
-
-use std::ops::Deref;
 use std::os::fd::RawFd;
 
+/// Dakota Object Id
+///
+/// This is a resource handle which is used to look up information
+/// in a variety of Entity-Component tables. This allows us to attach
+/// arbitrary state to Dakota Elements, both in Dakota's implementation
+/// any in the client applications.
 pub type DakotaId = ll::Entity;
+
+/// Internal type for Output and VirtualOutput resources
+///
+/// This is our OutputId list. This will be used by other components to
+/// access all outputs at once, for example when doing event handling.
+pub(crate) type OutputId = DakotaId;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum DakotaObjectType {
     Element,
-    DakotaDOM,
     Font,
 }
 
@@ -84,85 +94,19 @@ pub struct Dakota {
     // It might reference the window inside plat, and will segfault if
     // dropped after it.
     d_thund: th::Thundr,
-    /// Our thundr output object
-    d_display: th::Display,
     /// The current window system backend.
     ///
     /// This may be SDL2 for windowed systems, or direct2display. This handles platform-specific
     /// initialization.
     d_plat: Box<dyn Platform>,
-    /// Platform handling specific to this output
-    d_output_plat: Box<dyn OutputPlatform>,
-    /// This is one ECS that is composed of multiple tables
-    d_ecs_inst: ll::Instance,
-    /// This is all of the LayoutNodes in the system, each corresponding to
-    /// an Element or a subcomponent of an Element. Indexed by DakotaId.
-    d_layout_nodes: ll::Component<LayoutNode>,
-    // NOTE: --------------------------------
-    //
-    // If you update the following you may have to edit the generated
-    // getters/setters in generated.rs
-    d_node_types: ll::Component<DakotaObjectType>,
-
-    // Resource components
-    // --------------------------------------------
-    /// The resource info configured by the user
-    d_resource_ecs_inst: ll::Instance,
-    d_resource_hints: ll::Component<dom::Hints>,
-    d_resource_thundr_image: ll::Component<th::Image>,
-    d_resource_color: ll::Component<dom::Color>,
-
-    // Element components
-    // --------------------------------------------
-    /// The resource currently assigned to this element
-    d_resources: ll::Component<DakotaId>,
-    d_offsets: ll::Component<dom::RelativeOffset>,
-    d_widths: ll::Component<dom::Value>,
-    d_heights: ll::Component<dom::Value>,
-    d_fonts: ll::Component<dom::Font>,
-    d_texts: ll::Component<dom::Text>,
-    d_glyphs: ll::Component<Glyph>,
-    /// points to an id with font instance
-    d_text_font: ll::Component<DakotaId>,
-    d_contents: ll::Component<dom::Content>,
-    d_bounds: ll::Component<dom::Edges>,
-    d_children: ll::Component<Vec<DakotaId>>,
-    d_unbounded_subsurf: ll::Component<bool>,
-    /// Is this element a viewport node. If so it will have a viewport
-    /// boundary and scroll the content inside of it.
-    d_is_viewport: ll::Component<bool>,
-    /// Any viewports assigned after layout
-    ///
-    /// If this is a viewport boundary then this will be populated to
-    /// control draw clipping
-    d_viewports: ll::Component<th::Viewport>,
-
-    // DOM components
-    // --------------------------------------------
-    d_dom: ll::Component<dom::DakotaDOM>,
-
-    /// This is the root node in the scene tree
-    d_layout_tree_root: Option<DakotaId>,
-    d_window_dims: Option<(u32, u32)>,
-    d_needs_redraw: bool,
-    d_needs_refresh: bool,
-    d_event_sys: EventSystem,
-    /// Default Font instance
-    d_default_font_inst: DakotaId,
-    d_freetype: ft::Library,
-    d_fontconfig: fc::Fontconfig,
-    d_ood_counter: usize,
-
-    /// Font shaping information. This is held separately outside of our ECS tables
-    /// since it is not threadsafe. This associates a Font with the corresponding
-    /// instance containing the shaping information.
-    d_font_instances: Vec<(dom::Font, FontInstance)>,
-
-    /// Cached mouse position
-    ///
-    /// Mouse updates are relative, so we need to add them to the last
-    /// known mouse location. That is the value stored here.
-    d_mouse_pos: (i32, i32),
+    /// Global event queue
+    d_global_event_system: GlobalEventSystem,
+    /// Output Id system
+    d_output_ecs: ll::Instance,
+    /// per-Output event queues
+    d_output_event_system: ll::Component<OutputEventSystem>,
+    /// per-VirtualOutput event queues
+    d_platform_event_system: ll::Component<PlatformEventSystem>,
 }
 
 /// Enum for specifying subsurface operations
@@ -171,51 +115,25 @@ pub enum SubsurfaceOrder {
     Below,
 }
 
-macro_rules! create_component_and_table {
-    ($ecs:ident, $llty:ty, $name:ident) => {
-        let $name: ll::Component<$llty> = $ecs.add_component();
-    };
-}
-
 impl Dakota {
     /// Helper for initializing Thundr for a given platform.
     ///
     /// Here we create an output platform that we can then initialize thundr
     /// from. Because this is the first window we need to provide a surface type
     /// so thundr knows what Vulkan extensions to enable.
-    fn init_thundr(
-        mut plat: Box<dyn Platform>,
-    ) -> Result<(
-        Box<dyn Platform>,
-        Box<dyn OutputPlatform>,
-        th::Thundr,
-        th::Display,
-    )> {
-        let win = plat.create_output().map_err(|e| {
-            log::error!("Failed to initialize atomic DRM-KMS output: {:?}", e);
-            e
-        })?;
-
+    fn init_thundr(plat: Box<dyn Platform>) -> Result<(Box<dyn Platform>, th::Thundr)> {
         let info = th::CreateInfo::builder()
-            .surface_type(win.get_th_surf_type()?)
+            .surface_type(plat.get_th_surf_type()?)
             .build();
 
-        let mut thundr = th::Thundr::new(&info).context("Failed to initialize Thundr")?;
-        let display = thundr
-            .get_display(&info)
-            .context("Failed to get Thundr Display")?;
+        let thundr = th::Thundr::new(&info).context("Failed to initialize Thundr")?;
 
-        Ok((plat, win, thundr, display))
+        Ok((plat, thundr))
     }
 
     /// Create an SDL2 backend
     #[cfg(feature = "sdl")]
-    fn create_sdl_platform() -> Result<(
-        Box<dyn Platform>,
-        Box<dyn OutputPlatform>,
-        th::Thundr,
-        th::Display,
-    )> {
+    fn create_sdl_platform() -> Result<(Box<dyn Platform>, th::Thundr)> {
         let plat = Box::new(platform::SDL2Plat::new().map_err(|e| {
             log::error!("Failed to create new SDL platform: {:?}", e);
             e
@@ -226,12 +144,7 @@ impl Dakota {
 
     /// Create an atomic DRM-KMS backend
     #[cfg(feature = "drm")]
-    fn create_drm_platform() -> Result<(
-        Box<dyn Platform>,
-        Box<dyn OutputPlatform>,
-        th::Thundr,
-        th::Display,
-    )> {
+    fn create_drm_platform() -> Result<(Box<dyn Platform>, th::Thundr)> {
         let plat = Box::new(
             platform::LibinputPlat::new(platform::BackendType::Drm).map_err(|e| {
                 log::error!("Failed to create new libinput platform: {:?}", e);
@@ -244,12 +157,7 @@ impl Dakota {
 
     /// Create a Vulkan "Direct to Display" platform
     #[cfg(feature = "direct2display")]
-    fn create_vkd2d_platform() -> Result<(
-        Box<dyn Platform>,
-        Box<dyn OutputPlatform>,
-        th::Thundr,
-        th::Display,
-    )> {
+    fn create_vkd2d_platform() -> Result<(Box<dyn Platform>, th::Thundr)> {
         let plat = Box::new(
             platform::LibinputPlat::new(platform::BackendType::VkD2d).map_err(|e| {
                 log::error!("Failed to create new libinput platform: {:?}", e);
@@ -261,12 +169,7 @@ impl Dakota {
     }
 
     /// Create a headless platform
-    fn create_headless_platform() -> Result<(
-        Box<dyn Platform>,
-        Box<dyn OutputPlatform>,
-        th::Thundr,
-        th::Display,
-    )> {
+    fn create_headless_platform() -> Result<(Box<dyn Platform>, th::Thundr)> {
         let plat = Box::new(platform::HeadlessPlat::new());
 
         Self::init_thundr(plat)
@@ -278,12 +181,7 @@ impl Dakota {
     /// get the DPI of the display. These three are tested since they all may fail
     /// given different configurations. DPI fails if SDL2 tries to initialize us on
     /// a physical display.
-    fn initialize_platform() -> Result<(
-        Box<dyn Platform>,
-        Box<dyn OutputPlatform>,
-        th::Thundr,
-        th::Display,
-    )> {
+    fn initialize_platform() -> Result<(Box<dyn Platform>, th::Thundr)> {
         if std::env::var("DAKOTA_HEADLESS_BACKEND").is_err() {
             // ------------------------------------------------------------------------
             // SDL 2
@@ -331,850 +229,75 @@ impl Dakota {
     ///
     /// This will initialize the window system platform layer, create a thundr
     /// instance from it, and wrap it in Dakota.
+    ///
+    /// This returns the main Dakota instance along with the primary/default
+    /// output.
     pub fn new() -> Result<Self> {
-        let (plat, window_plat, thundr, display) = Self::initialize_platform()?;
+        let (plat, thundr) = Self::initialize_platform()?;
 
-        let mut layout_ecs = ll::Instance::new();
-        let mut resource_ecs = ll::Instance::new();
-        create_component_and_table!(layout_ecs, LayoutNode, layout_table);
-        create_component_and_table!(layout_ecs, DakotaObjectType, types_table);
-        create_component_and_table!(resource_ecs, dom::Hints, resource_hints_table);
-        create_component_and_table!(resource_ecs, th::Image, resource_thundr_image_table);
-        create_component_and_table!(resource_ecs, dom::Color, resource_color_table);
-        create_component_and_table!(layout_ecs, DakotaId, resources_table);
-        create_component_and_table!(layout_ecs, dom::RelativeOffset, offsets_table);
-        create_component_and_table!(layout_ecs, dom::Value, width_table);
-        create_component_and_table!(layout_ecs, dom::Value, height_table);
-        create_component_and_table!(layout_ecs, dom::Text, texts_table);
-        create_component_and_table!(layout_ecs, dom::Font, font_table);
-        create_component_and_table!(layout_ecs, Glyph, glyph_table);
-        create_component_and_table!(layout_ecs, DakotaId, text_font_table);
-        create_component_and_table!(layout_ecs, dom::Content, content_table);
-        create_component_and_table!(layout_ecs, dom::Edges, bounds_table);
-        create_component_and_table!(layout_ecs, Vec<DakotaId>, children_table);
-        create_component_and_table!(layout_ecs, dom::DakotaDOM, dom_table);
-        create_component_and_table!(layout_ecs, bool, unbounded_subsurf_table);
-        create_component_and_table!(layout_ecs, th::Viewport, viewports_table);
-        create_component_and_table!(layout_ecs, bool, is_viewports_table);
+        let mut output_ecs = ll::Instance::new();
 
-        // Create a default Font instance
-        let default_inst = layout_ecs.add_entity();
-
-        let mut ret = Self {
+        Ok(Self {
             d_plat: plat,
-            d_output_plat: window_plat,
             d_thund: thundr,
-            d_display: display,
-            d_ecs_inst: layout_ecs,
-            d_resource_ecs_inst: resource_ecs,
-            d_layout_nodes: layout_table,
-            d_node_types: types_table,
-            d_resource_hints: resource_hints_table,
-            d_resource_thundr_image: resource_thundr_image_table,
-            d_resource_color: resource_color_table,
-            d_resources: resources_table,
-            d_offsets: offsets_table,
-            d_widths: width_table,
-            d_heights: height_table,
-            d_fonts: font_table,
-            d_texts: texts_table,
-            d_text_font: text_font_table,
-            d_glyphs: glyph_table,
-            d_contents: content_table,
-            d_bounds: bounds_table,
-            d_children: children_table,
-            d_dom: dom_table,
-            d_unbounded_subsurf: unbounded_subsurf_table,
-            d_is_viewport: is_viewports_table,
-            d_viewports: viewports_table,
-            d_layout_tree_root: None,
-            d_window_dims: None,
-            d_needs_redraw: false,
-            d_needs_refresh: false,
-            d_event_sys: EventSystem::new(),
-            d_default_font_inst: default_inst.clone(),
-            d_freetype: ft::Library::init().context(anyhow!("Could not get freetype library"))?,
-            d_fontconfig: fc::Fontconfig::new()
-                .context(anyhow!("Could not initialize fontconfig"))?,
-            d_ood_counter: 30,
-            d_font_instances: Vec::new(),
-            d_mouse_pos: (0, 0),
-        };
-
-        ret.d_node_types.set(&default_inst, DakotaObjectType::Font);
-        ret.define_font(
-            &default_inst,
-            dom::Font {
-                name: "Default".to_string(),
-                font_name: "JetBrainsMono".to_string(),
-                pixel_size: 16,
-                color: None,
-            },
-        );
-
-        return Ok(ret);
+            d_global_event_system: GlobalEventSystem::new(),
+            d_output_event_system: output_ecs.add_component(),
+            d_platform_event_system: output_ecs.add_component(),
+            d_output_ecs: output_ecs,
+        })
     }
 
-    /// Get the Lluvia ECS backing DakotaIds
+    /// Create a new VirtualOutput
     ///
-    /// This allows for applications using this to create their
-    /// own Components which are indexed by DakotaId.
-    pub fn get_ecs_instance(&self) -> ll::Instance {
-        self.d_ecs_inst.clone()
-    }
-
-    /// Get the Lluvia ECS backing DakotaIds for Resources
-    ///
-    /// This allows for applications using this to create their
-    /// own Components which are indexed by Resource Ids.
-    pub fn get_resource_ecs_instance(&self) -> ll::Instance {
-        self.d_resource_ecs_inst.clone()
-    }
-
-    /// Do we need to refresh the layout tree and rerender
-    fn needs_refresh(&self) -> bool {
-        self.d_needs_refresh
-            || self.d_node_types.is_modified()
-            || self.d_resource_hints.is_modified()
-            || self.d_resource_thundr_image.is_modified()
-            || self.d_resource_color.is_modified()
-            || self.d_resources.is_modified()
-            || self.d_offsets.is_modified()
-            || self.d_widths.is_modified()
-            || self.d_heights.is_modified()
-            || self.d_fonts.is_modified()
-            || self.d_texts.is_modified()
-            || self.d_text_font.is_modified()
-            || self.d_contents.is_modified()
-            || self.d_bounds.is_modified()
-            || self.d_children.is_modified()
-            || self.d_dom.is_modified()
-            || self.d_unbounded_subsurf.is_modified()
-    }
-
-    fn clear_needs_refresh(&mut self) {
-        self.d_needs_refresh = false;
-        self.d_node_types.clear_modified();
-        self.d_resource_hints.clear_modified();
-        self.d_resource_thundr_image.clear_modified();
-        self.d_resource_color.clear_modified();
-        self.d_resources.clear_modified();
-        self.d_offsets.clear_modified();
-        self.d_widths.clear_modified();
-        self.d_heights.clear_modified();
-        self.d_fonts.clear_modified();
-        self.d_texts.clear_modified();
-        self.d_text_font.clear_modified();
-        self.d_contents.clear_modified();
-        self.d_bounds.clear_modified();
-        self.d_children.clear_modified();
-        self.d_dom.clear_modified();
-        self.d_unbounded_subsurf.clear_modified();
-    }
-
-    /// Create a new Dakota Id
-    ///
-    /// The type of the new id must be specified. In Dakota, all objects are
-    /// represented by an Id, the type of which is specified during creation.
-    /// This type will assign the "role" of this id, and what data can be
-    /// attached to it.
-    pub(crate) fn create_new_id_common(
-        ecs_inst: &mut ll::Instance,
-        node_types: &mut ll::Snapshot<DakotaObjectType>,
-        element_type: DakotaObjectType,
-    ) -> Result<DakotaId> {
-        let id = ecs_inst.add_entity();
-
-        node_types.set(&id, element_type);
-        return Ok(id);
-    }
-
-    /// Create a new toplevel Dakota DOM
-    pub fn create_dakota_dom(&mut self) -> Result<DakotaId> {
-        let mut node_types = self.d_node_types.snapshot();
-        let res = Dakota::create_new_id_common(
-            &mut self.d_ecs_inst,
-            &mut node_types,
-            DakotaObjectType::DakotaDOM,
-        );
-        node_types.commit();
-        return res;
-    }
-
-    /// Create a new Dakota element
-    pub fn create_element(&mut self) -> Result<DakotaId> {
-        let mut node_types = self.d_node_types.snapshot();
-        let res = Dakota::create_new_id_common(
-            &mut self.d_ecs_inst,
-            &mut node_types,
-            DakotaObjectType::Element,
-        );
-        node_types.commit();
-        return res;
-    }
-
-    /// Create a new Dakota resource
-    pub fn create_resource(&mut self) -> Result<DakotaId> {
-        Ok(self.d_resource_ecs_inst.add_entity())
-    }
-
-    /// Create a new Dakota Font
-    pub fn create_font(&mut self) -> Result<DakotaId> {
-        let mut node_types = self.d_node_types.snapshot();
-        let res = Dakota::create_new_id_common(
-            &mut self.d_ecs_inst,
-            &mut node_types,
-            DakotaObjectType::Font,
-        );
-        node_types.commit();
-        return res;
-    }
-
-    pub(crate) fn define_font_internal(
-        font_instances: &mut Vec<(dom::Font, font::FontInstance)>,
-        fonts: &mut ll::Snapshot<dom::Font>,
-        freetype: &ft::Library,
-        fontconfig: &fc::Fontconfig,
-        id: &DakotaId,
-        font: dom::Font,
-    ) {
-        let font_path = fontconfig.find(&font.font_name, None).unwrap();
-
-        if font_instances.iter().find(|(f, _)| *f == font).is_none() {
-            font_instances.push((
-                font.clone(),
-                FontInstance::new(freetype, font_path.path.to_str().unwrap(), font.pixel_size),
-            ));
+    /// VirtualOutputs represent a theoretical surface that a Scene may be
+    /// configured on. The Scene will have layout calculated based on this
+    /// VirtualOutput and then some or all of that Scene will be displayed
+    /// by a real Output.
+    pub fn create_virtual_output(&mut self) -> Option<VirtualOutput> {
+        if !self.d_plat.create_virtual_output() {
+            log::error!("Platform does not support creating multiple VirtualOutputs");
+            return None;
         }
 
-        fonts.set(id, font);
-    }
-
-    /// Define a Font for text rendering
-    ///
-    /// This accepts a definition of a Font, including the name and location
-    /// of the font file. This is then loaded into Dakota and text rendering
-    /// is allowed with the font.
-    pub fn define_font(&mut self, id: &DakotaId, font: dom::Font) {
-        let mut fonts = self.d_fonts.snapshot();
-        Dakota::define_font_internal(
-            &mut self.d_font_instances,
-            &mut fonts,
-            &self.d_freetype,
-            &self.d_fontconfig,
-            id,
-            font,
-        );
-        fonts.commit();
-    }
-
-    /// Returns true if this element will have it's position chosen for it by
-    /// Dakota's layout engine.
-    pub fn child_uses_autolayout(&self, id: &DakotaId) -> bool {
-        self.d_offsets.get(id).is_some()
-    }
-
-    pub(crate) fn define_resource_from_image_internal(
-        display: &mut th::Display,
-        resource_thundr_image: &mut ll::Snapshot<th::Image>,
-        resource_color: &ll::Snapshot<dom::Color>,
-        res: &DakotaId,
-        file_path: &std::path::Path,
-        format: dom::Format,
-    ) -> Result<()> {
-        if Self::is_resource_defined_internal(resource_thundr_image, resource_color, res) {
-            return Err(anyhow!("Cannot redefine Resource contents"));
-        }
-
-        // Create an in-memory representation of the image contents
-        let resolution = image::image_dimensions(file_path)
-            .context("Format of image could not be guessed correctly. Could not get resolution")?;
-        let img = image::open(file_path)
-            .context("Could not open image path")?
-            .to_bgra8();
-        let pixels: Vec<u8> = img.into_vec();
-
-        Self::define_resource_from_bits_internal(
-            display,
-            resource_thundr_image,
-            resource_color,
-            res,
-            pixels.as_slice(),
-            resolution.0,
-            resolution.1,
-            0,
-            format,
+        let ret = VirtualOutput::new(
+            self.d_output_ecs.add_entity(),
+            self.d_platform_event_system.clone(),
         )
+        .unwrap();
+
+        Some(ret)
     }
 
-    /// Define a resource's contents given a PNG image
+    /// Create a new Output
     ///
-    /// This will look up and open the image at `file_path`, and populate
-    /// the resource `res`'s contents from it.
-    pub fn define_resource_from_image(
-        &mut self,
-        res: &DakotaId,
-        file_path: &std::path::Path,
-        format: dom::Format,
-    ) -> Result<()> {
-        let mut images = self.d_resource_thundr_image.snapshot();
-        let mut colors = self.d_resource_color.snapshot();
-        let res = Self::define_resource_from_image_internal(
-            &mut self.d_display,
-            &mut images,
-            &colors,
-            res,
-            file_path,
-            format,
-        );
-        images.precommit();
-        colors.precommit();
-        images.commit();
-        colors.commit();
-        res
-    }
-
-    /// Has this Resource been defined
+    /// Outputs represent a displayable surface and allow for performing
+    /// rendering and presentation.
     ///
-    /// If a resource has been defined then it contains surface contents. This
-    /// means an internal GPU resource has been allocated for it.
-    pub fn is_resource_defined(&self, res: &DakotaId) -> bool {
-        let mut images = self.d_resource_thundr_image.snapshot();
-        let mut colors = self.d_resource_color.snapshot();
-        let res = Self::is_resource_defined_internal(&mut images, &colors, res);
-        images.precommit();
-        colors.precommit();
-        images.commit();
-        colors.commit();
-        res
-    }
+    /// The new Output will be created to be compatible with the provided
+    /// VirtualOutput.
+    pub fn create_output(&mut self, virtual_output: &VirtualOutput) -> Result<Output> {
+        let output_id = self.d_output_ecs.add_entity();
+        let win = self
+            .d_plat
+            .create_output(output_id.clone(), virtual_output.d_id.clone())
+            .map_err(|e| {
+                log::error!("Failed to initialize atomic DRM-KMS output: {:?}", e);
+                e
+            })?;
 
-    fn is_resource_defined_internal(
-        resource_thundr_image: &ll::Snapshot<th::Image>,
-        resource_color: &ll::Snapshot<dom::Color>,
-        res: &DakotaId,
-    ) -> bool {
-        resource_thundr_image.get(res).is_some() || resource_color.get(res).is_some()
-    }
+        let info = th::CreateInfo::builder()
+            .surface_type(self.d_plat.get_th_surf_type()?)
+            .window_info(win.get_th_window_info()?)
+            .build();
 
-    /// Define a resource's contents from an array
-    ///
-    /// This will initialize the resource's GPU image using the contents from
-    /// the `data` slice. The `stride` and `format` arguments are used to correctly
-    /// specify the layout of memory within `data`, a stride of zero implies that
-    /// pixels are tightly packed.
-    ///
-    /// A stride of zero implies the pixels are tightly packed.
-    pub fn define_resource_from_bits(
-        &mut self,
-        res: &DakotaId,
-        data: &[u8],
-        width: u32,
-        height: u32,
-        stride: u32, // TODO: Handle stride properly
-        format: dom::Format,
-    ) -> Result<()> {
-        let mut images = &mut self.d_resource_thundr_image.snapshot();
-        let mut colors = self.d_resource_color.snapshot();
-        let res = Self::define_resource_from_bits_internal(
-            &mut self.d_display,
-            &mut images,
-            &colors,
-            res,
-            data,
-            width,
-            height,
-            stride,
-            format,
-        );
-        images.precommit();
-        colors.precommit();
-        images.commit();
-        colors.commit();
-        res
-    }
+        let display = self
+            .d_thund
+            .get_display(&info)
+            .context("Failed to get Thundr Display")?;
 
-    fn define_resource_from_bits_internal(
-        display: &mut th::Display,
-        resource_thundr_image: &mut ll::Snapshot<th::Image>,
-        resource_color: &ll::Snapshot<dom::Color>,
-        res: &DakotaId,
-        data: &[u8],
-        width: u32,
-        height: u32,
-        stride: u32, // TODO: Handle stride properly
-        format: dom::Format,
-    ) -> Result<()> {
-        if format != dom::Format::ARGB8888 {
-            return Err(anyhow!("Invalid image format"));
-        }
+        let ret = Output::new(win, display, output_id, self.d_output_event_system.clone()).unwrap();
 
-        if Self::is_resource_defined_internal(resource_thundr_image, resource_color, res) {
-            return Err(anyhow!("Cannot redefine Resource contents"));
-        }
-
-        // create a thundr image for each resource
-        let image = display
-            .d_dev
-            .create_image_from_bits(data, width, height, stride, None)
-            .context("Could not create Image resources")?;
-
-        resource_thundr_image.set(res, image);
-        Ok(())
-    }
-
-    /// Update the resource contents from a damaged CPU buffer
-    ///
-    /// This allows for updating the contents of a resource according to
-    /// the data provided, within the damage regions specified. This is
-    /// useful for compositor users to update a local copy of a shm texture.
-    /// This should *NOT* be used with dmabuf-backed textures.
-    pub fn update_resource_from_bits(
-        &mut self,
-        res: &DakotaId,
-        data: &[u8],
-        width: u32,
-        height: u32,
-        stride: u32, // TODO: Handle stride properly
-        format: dom::Format,
-        damage: Option<Damage>,
-    ) -> Result<()> {
-        if !(format == dom::Format::ARGB8888 || format == dom::Format::XRGB8888) {
-            return Err(anyhow!("Invalid image format"));
-        }
-
-        let image = self.d_resource_thundr_image.get_mut(res).ok_or(anyhow!(
-            "Resource does not have a internal GPU resource defined"
-        ))?;
-
-        self.d_thund
-            .update_image_from_bits(&image, data, width, height, stride, damage, None)
-            .context("Could not update image with damaged region")?;
-
-        Ok(())
-    }
-
-    /// Populate a resource by importing a dmabuf
-    ///
-    /// This allows for loading the `fd` specified into Dakota's internal
-    /// renderer without any copies. `modifier` must be supported by the
-    /// Dakota device in use.
-    pub fn define_resource_from_dmabuf(
-        &mut self,
-        res: &DakotaId,
-        dmabuf: &Dmabuf,
-        release_info: Option<Box<dyn Droppable + Send + Sync>>,
-    ) -> Result<()> {
-        if Self::is_resource_defined_internal(
-            &self.d_resource_thundr_image.snapshot(),
-            &self.d_resource_color.snapshot(),
-            res,
-        ) {
-            return Err(anyhow!("Cannot redefine Resource contents"));
-        }
-
-        let image = self
-            .d_display
-            .d_dev
-            .create_image_from_dmabuf(dmabuf, release_info)
-            .context("Could not create Image resources")?;
-
-        self.d_resource_thundr_image.set(res, image);
-        Ok(())
-    }
-
-    /// Helper for populating an element with default formatting
-    /// regular text. This saves the user from fully specifying the details
-    /// of the text objects for this common operation.
-    pub fn set_text_regular(&mut self, resource: &DakotaId, text: &str) {
-        self.d_texts.set(
-            resource,
-            dom::Text {
-                items: vec![dom::TextItem::p(dom::TextRun {
-                    value: text.to_owned(),
-                    cache: None,
-                })],
-            },
-        );
-    }
-
-    /// Get the current size of the drawing region for this display
-    pub fn get_resolution(&self) -> (u32, u32) {
-        self.d_display.get_resolution()
-    }
-
-    /// Get the major, minor of the DRM device currently in use
-    pub fn get_drm_dev(&self) -> Option<(i64, i64)> {
-        self.d_display.get_drm_dev()
-    }
-
-    pub(crate) fn add_child_to_element_internal(
-        children: &mut ll::Snapshot<Vec<DakotaId>>,
-        parent: &DakotaId,
-        child: DakotaId,
-    ) {
-        // Add old_id as a child element
-        if children.get_mut(parent).is_none() {
-            children.set(parent, Vec::new());
-        }
-        let child_vec = children.get_mut(parent).unwrap();
-
-        if child_vec
-            .iter()
-            .find(|c| c.get_raw_id() == child.get_raw_id())
-            .is_none()
-        {
-            child_vec.push(child);
-        }
-    }
-
-    /// Add `child` as a child element to `parent`.
-    ///
-    /// This operation on makes sense for Dakota objects with the `Element` object
-    /// type. Will only add `child` if it is not already a child of `parent`.
-    pub fn add_child_to_element(&mut self, parent: &DakotaId, child: DakotaId) {
-        let mut children = self.d_children.snapshot();
-        Dakota::add_child_to_element_internal(&mut children, parent, child);
-        children.commit();
-    }
-
-    /// Remove `child` as a child element of `parent`.
-    ///
-    /// This operation on makes sense for Dakota objects with the `Element` object
-    /// type. This does nothing if `child` is not a child of `parent`.
-    pub fn remove_child_from_element(&mut self, parent: &DakotaId, child: &DakotaId) -> Result<()> {
-        let mut children = match self.d_children.get_mut(parent) {
-            Some(children) => children,
-            None => return Ok(()),
-        };
-
-        // Get the indices of our two children
-        if let Some(pos) = children
-            .iter()
-            .position(|c| c.get_raw_id() == child.get_raw_id())
-        {
-            children.remove(pos);
-        }
-
-        Ok(())
-    }
-
-    /// Reorder two elements that are children of parent
-    ///
-    /// Depending on the value of `order`, this will insert child A above or below
-    /// child B in the element list.
-    ///
-    /// This is best used for when you need to bring an element to the front or back
-    /// of a child list without regenerating the entire thing. This is particularly
-    /// useful for category5, which orders elements for wayland subsurfaces
-    pub fn reorder_children_element(
-        &mut self,
-        parent: &DakotaId,
-        order: SubsurfaceOrder,
-        a: &DakotaId,
-        b: &DakotaId,
-    ) -> Result<()> {
-        let mut children = self
-            .d_children
-            .get_mut(parent)
-            .context("Parent does not have any children, cannot reorder")?;
-
-        // Get the indices of our two children
-        let pos_a = children
-            .iter()
-            .position(|c| c.get_raw_id() == a.get_raw_id())
-            .context("Could not find Child A in Parent's children")?;
-        let pos_b = children
-            .iter()
-            .position(|c| c.get_raw_id() == b.get_raw_id())
-            .context("Could not find Child B in Parent's children")?;
-
-        // Remove child A and insert it above or below child B
-        children.remove(pos_a);
-        children.insert(
-            match order {
-                SubsurfaceOrder::Above => pos_b + 1,
-                SubsurfaceOrder::Below => pos_b,
-            },
-            a.clone(),
-        );
-
-        Ok(())
-    }
-
-    /// Move child to front of children in parent
-    ///
-    /// This is used for bringing an element into "focus", and placing it as
-    /// the foremost child.
-    pub fn move_child_to_front(&mut self, parent: &DakotaId, child: &DakotaId) -> Result<()> {
-        let mut children = self
-            .d_children
-            .get_mut(parent)
-            .context("Parent does not have any children, cannot reorder")?;
-
-        // Get the indices of our two children
-        let pos = children
-            .iter()
-            .position(|c| c.get_raw_id() == child.get_raw_id())
-            .context("Could not find Child A in Parent's children")?;
-
-        // Remove child A and insert it above or below child B
-        children.remove(pos);
-        children.push(child.clone());
-
-        Ok(())
-    }
-
-    /// Set the resolution of the current window
-    pub fn set_resolution(&mut self, dom_id: &DakotaId, width: u32, height: u32) -> Result<()> {
-        let dom = self
-            .d_dom
-            .get(dom_id)
-            .ok_or(anyhow!("Only DOM objects can be refreshed"))?;
-        self.d_output_plat
-            .set_geometry(&dom.window, (width, height))?;
-
-        Ok(())
-    }
-
-    /// This refreshes the entire scene, and regenerates
-    /// the Thundr surface list.
-    pub fn refresh_elements(&mut self, dom_id: &DakotaId) -> Result<()> {
-        log::verbose!("Dakota: Refreshing element tree");
-        let root_node_id = {
-            let dom = self
-                .d_dom
-                .get(dom_id)
-                .ok_or(anyhow!("Only DOM objects can be refreshed"))?;
-
-            // check if the window size is set. If it is not, this is the
-            // first iteration and we need to populate the dimensions
-            // from the DOM
-            if self.d_window_dims.is_none() {
-                // If the user specified a window size use that, otherwise
-                // use the current vulkan surface size.
-                //
-                // This is important for physical display presentation, where
-                // we want to grow to the size of the screen unless told otherwise.
-                if let Some(size) = dom.window.size.as_ref() {
-                    self.d_window_dims = Some((size.0, size.1));
-                } else {
-                    self.d_window_dims = Some(self.d_display.get_resolution());
-                }
-
-                // we need to update the window dimensions if possible,
-                // so call into our platform do handle it
-                self.d_output_plat
-                    .set_geometry(&dom.window, self.d_window_dims.unwrap())?;
-            }
-            dom.root_element.clone()
-        };
-
-        // Set the size of our root node. We need to assign this a size manually so
-        // that it doesn't default and size itself to its children, causing the viewport
-        // scroll region calculation to go wrong.
-        let resolution = self.get_resolution();
-        self.d_widths
-            .set(&root_node_id, dom::Value::Constant(resolution.0 as i32));
-        self.d_heights
-            .set(&root_node_id, dom::Value::Constant(resolution.1 as i32));
-
-        // Reset our old tree
-        self.d_layout_tree_root = None;
-
-        // Manually mark the root node as a viewport node. It always is, and it will
-        // always have the root viewport.
-        self.d_is_viewport.set(&root_node_id, true);
-
-        // construct layout tree with sizes of all boxes
-        self.layout(&root_node_id)?;
-
-        // Perform the Thundr pass
-        //
-        self.d_layout_tree_root = Some(root_node_id);
-        self.d_needs_redraw = true;
-        self.clear_needs_refresh();
-
-        Ok(())
-    }
-
-    /// Completely flush the thundr surfaces/images and recreate the scene
-    pub fn refresh_full(&mut self, dom: &DakotaId) -> Result<()> {
-        self.refresh_elements(dom)
-            .context("Refreshing element layout")
-    }
-
-    /// Handle vulkan swapchain out of date. This is probably because the
-    /// window's size has changed. This will requery the window size and
-    /// refresh the layout tree.
-    fn handle_ood(&mut self, dom_id: &DakotaId) -> Result<()> {
-        let new_res = self.d_display.get_resolution();
-        let dom = self
-            .d_dom
-            .get(dom_id)
-            .ok_or(anyhow!("Only DOM objects can be refreshed"))?;
-
-        self.d_event_sys.add_event_window_resized(
-            dom.deref(),
-            dom::Size {
-                width: new_res.0,
-                height: new_res.1,
-            },
-        );
-
-        self.d_needs_redraw = true;
-        self.d_needs_refresh = true;
-        self.d_ood_counter = 30;
-        self.d_window_dims = Some(new_res);
-        Ok(())
-    }
-
-    /// Get the slice of currently unhandled events
-    ///
-    /// The app should do this in its main loop after dispatching.
-    /// These will be cleared during each dispatch.
-    pub fn drain_events<'b>(&'b mut self) -> std::collections::vec_deque::Drain<'b, Event> {
-        self.d_event_sys.drain_events()
-    }
-
-    /// Returns true if the node is of a type that guarantees it cannot have
-    /// child elements.
-    ///
-    /// This most notably happens with text elements.
-    pub(crate) fn node_can_have_children(
-        &self,
-        texts: &ll::Snapshot<dom::Text>,
-        id: &DakotaId,
-    ) -> bool {
-        !texts.get(id).is_some()
-    }
-
-    fn viewport_at_pos_recursive(
-        &self,
-        layout_nodes: &ll::Snapshot<LayoutNode>,
-        viewports: &ll::Snapshot<th::Viewport>,
-        texts: &ll::Snapshot<dom::Text>,
-        id: &DakotaId,
-        base: (i32, i32),
-        x: i32,
-        y: i32,
-    ) -> Option<DakotaId> {
-        let layout = layout_nodes.get(id).unwrap();
-        let offset = (base.0 + layout.l_offset.x, base.1 + layout.l_offset.y);
-
-        // If this node is of a type where we know it has a lot of children but none of them
-        // could possibly be a viewport, take an early exit.
-        // This most notably happens in the case of text nodes, which have a large number of
-        // virtual children.
-        if !self.node_can_have_children(texts, id) && viewports.get(id).is_none() {
-            return None;
-        }
-
-        // Since the tree is back to front, process the children first. If one of them is a match,
-        // it is the top-most viewport and we should return it. Otherwise we can test if this node
-        // matches.  If this is a new viewport boundary then add its scroll offset to our children
-        let mut child_offset = offset;
-        if let Some(vp) = viewports.get(id) {
-            child_offset.0 += vp.offset.0 + vp.scroll_offset.0;
-            child_offset.1 += vp.offset.1 + vp.scroll_offset.1;
-        }
-        for child in layout.l_children.iter() {
-            if let Some(ret) = self.viewport_at_pos_recursive(
-                layout_nodes,
-                viewports,
-                texts,
-                child,
-                child_offset,
-                x,
-                y,
-            ) {
-                return Some(ret);
-            }
-        }
-
-        // If this node is not a viewport return nothing
-        if viewports.get(id).is_none() {
-            return None;
-        }
-
-        let x_range = offset.0..(offset.0 + layout.l_size.width);
-        let y_range = offset.1..(offset.1 + layout.l_size.height);
-
-        if x_range.contains(&x) && y_range.contains(&y) {
-            return Some(id.clone());
-        }
-
-        None
-    }
-
-    /// Walks the viewport tree and returns the ECS id of the
-    /// viewport at this location. Note there will always be a viewport
-    /// because the entire window surface is at the very least, the root viewport
-    fn viewport_at_pos(&self, x: i32, y: i32) -> DakotaId {
-        assert!(self.d_layout_tree_root.is_some());
-        let root_node = self.d_layout_tree_root.as_ref().unwrap();
-
-        // use some snapshots here to hold the read locks open
-        let layout_nodes = self.d_layout_nodes.snapshot();
-        let viewports = self.d_viewports.snapshot();
-        let texts = self.d_texts.snapshot();
-        assert!(viewports.get(root_node).is_some());
-
-        self.viewport_at_pos_recursive(&layout_nodes, &viewports, &texts, root_node, (0, 0), x, y)
-            .unwrap()
-    }
-
-    /// Handle dakota-only events coming from the event system
-    ///
-    /// Most notably this handles scrolling
-    fn handle_private_events(&mut self) -> Result<()> {
-        for i in 0..self.d_event_sys.es_dakota_event_queue.len() {
-            let ev = &self.d_event_sys.es_dakota_event_queue[i];
-            match ev {
-                Event::InputScroll {
-                    position,
-                    xrel,
-                    yrel,
-                    ..
-                } => {
-                    let x = match *xrel {
-                        Some(v) => v as i32,
-                        None => 0,
-                    };
-                    let y = match *yrel {
-                        Some(v) => v as i32,
-                        None => 0,
-                    };
-                    // Update our mouse
-                    self.d_mouse_pos = (position.0 as i32, position.1 as i32);
-
-                    // Find viewport at this location
-                    let node = self.viewport_at_pos(self.d_mouse_pos.0, self.d_mouse_pos.1);
-                    let mut viewport = self.d_viewports.get_mut(&node).unwrap();
-                    log::error!("original_scroll_offset: {:?}", viewport.scroll_offset);
-
-                    viewport.update_scroll_amount(x, y);
-                    log::error!("new_scroll_offset: {:?}", viewport.scroll_offset);
-
-                    self.d_needs_redraw = true;
-                }
-                // Ignore all other events for now
-                _ => {}
-            }
-        }
-
-        self.d_event_sys.es_dakota_event_queue.clear();
-        Ok(())
-    }
-
-    /// Get the DRM format modifiers supported by this display
-    pub fn get_supported_drm_render_modifiers(&self) -> Vec<u64> {
-        self.d_display
-            .d_dev
-            .get_supported_drm_render_modifiers()
-            .iter()
-            .map(|m| m.drm_format_modifier)
-            .collect()
+        Ok(ret)
     }
 
     /// Add a file descriptor to watch
@@ -1186,159 +309,24 @@ impl Dakota {
         self.d_plat.add_watch_fd(fd);
     }
 
-    /// run the dakota thread.
+    /// Drain the queue of currently unhandled events
     ///
-    /// Dakota requires takover of one thread, because that's just how winit
-    /// wants to work. It's annoying, but we live with it. `func` will get
-    /// called before the next frame is drawn, it is the winsys event handler
-    /// for the app.
-    ///
-    /// This will (under construction):
-    /// * wait for new sdl events (blocking)
-    /// * handle events (input, etc)
-    /// * tell thundr to render if needed
-    ///
-    /// Returns true if we should terminate i.e. the window was closed.
-    /// Timeout is in milliseconds, and is the timeout to wait for
-    /// window system events.
-    pub fn dispatch(&mut self, dom: &DakotaId, mut timeout: Option<usize>) -> Result<()> {
-        let mut first_loop = true;
-
-        loop {
-            if !first_loop || self.d_ood_counter > 0 {
-                timeout = Some(0);
-                self.d_ood_counter -= 1;
-                self.d_needs_redraw = true;
-            }
-            first_loop = false;
-
-            // First handle input and platform changes
-            match self.dispatch_platform(dom, timeout) {
-                Ok(()) => {}
-                Err(e) => {
-                    if e.downcast_ref::<DakotaError>() == Some(&DakotaError::OUT_OF_DATE) {
-                        continue;
-                    } else {
-                        return Err(e);
-                    }
-                }
-            };
-
-            // Now render the frame
-            match self.dispatch_rendering(dom) {
-                Ok(()) => {}
-                Err(e) => {
-                    if e.downcast_ref::<DakotaError>() == Some(&DakotaError::OUT_OF_DATE) {
-                        continue;
-                    } else {
-                        return Err(e);
-                    }
-                }
-            };
-
-            return Ok(());
-        }
+    /// The app should do this in its main loop after dispatching.
+    /// These will be cleared during each dispatch.
+    pub fn drain_events<'a>(&'a mut self) -> std::collections::vec_deque::Drain<'a, GlobalEvent> {
+        self.d_global_event_system.drain_events()
     }
 
-    /// Dispatch platform specific handling code
+    /// run the main Dakota platform loop
     ///
-    /// This will handle user input and other things like that. This function
-    /// is internally called by the `dispatch` call and does not perform any
-    /// drawing.
-    pub fn dispatch_platform(&mut self, dom: &DakotaId, timeout: Option<usize>) -> Result<()> {
-        // First run our window system code. This will check if wayland/X11
-        // notified us of a resize, closure, or need to redraw
-        let plat_res = self.d_plat.run(
-            &mut self.d_event_sys,
-            self.d_dom
-                .get(dom)
-                .ok_or(anyhow!("Id passed to Dispatch must be a DOM object"))?
-                .deref(),
+    /// This waits for incoming events which will trigger user input or rendering
+    /// to take place.
+    pub fn dispatch(&mut self, timeout: Option<usize>) -> Result<()> {
+        self.d_plat.run(
+            &mut self.d_global_event_system,
+            &mut self.d_output_event_system,
+            &mut self.d_platform_event_system,
             timeout,
-        );
-
-        match plat_res {
-            Ok(needs_redraw) => {
-                if needs_redraw {
-                    self.d_needs_redraw = needs_redraw
-                }
-            }
-            Err(th::ThundrError::OUT_OF_DATE) => {
-                // This is a weird one
-                // So the above OUT_OF_DATEs are returned from thundr, where we
-                // can expect it will handle OOD itself. But here we have
-                // OUT_OF_DATE returned from our SDL2 backend, so we need
-                // to tell Thundr to do OOD itself
-                self.d_display.handle_ood()?;
-                self.handle_ood(dom)?;
-                return Err(th::ThundrError::OUT_OF_DATE.into());
-            }
-            Err(e) => return Err(Error::from(e).context("Thundr: presentation failed")),
-        };
-
-        return Ok(());
-    }
-
-    /// Draw the next frame
-    ///
-    /// This dispatches *only* the rendering backend of Dakota. The `dispatch_platform`
-    /// call *must* take place before this in order for correct updates to happen, as
-    /// this will only render the current state of Dakota.
-    pub fn dispatch_rendering(&mut self, dom: &DakotaId) -> Result<()> {
-        let mut stop = StopWatch::new();
-
-        // Now handle events like scrolling before we calculate sizes
-        self.handle_private_events()?;
-
-        if self.needs_refresh() {
-            let mut layout_stop = StopWatch::new();
-            layout_stop.start();
-            self.refresh_elements(dom)?;
-            layout_stop.end();
-            log::debug!(
-                "Dakota spent {} ms refreshing the layout",
-                layout_stop.get_duration().as_millis()
-            );
-        }
-        stop.start();
-
-        // if needs redraw, then tell thundr to draw and present a frame
-        // At every step of the way we check if the drawable has been resized
-        // and will return that to the dakota user so they have a chance to resize
-        // anything they want
-        if self.d_needs_redraw {
-            match self.draw_surfacelists() {
-                Ok(()) => {}
-                Err(th::ThundrError::OUT_OF_DATE) => {
-                    self.handle_ood(dom)?;
-                    return Err(th::ThundrError::OUT_OF_DATE.into());
-                }
-                Err(e) => return Err(Error::from(e).context("Thundr: drawing failed with error")),
-            };
-            self.d_needs_redraw = false;
-
-            // Notify the app that we just drew a frame and it should prepare the next one
-            self.d_event_sys.add_event_window_redraw_complete(
-                self.d_dom
-                    .get(dom)
-                    .ok_or(anyhow!("Id passed to Dispatch must be a DOM object"))?
-                    .deref(),
-            );
-            stop.end();
-            log::debug!(
-                "Dakota spent {} ms drawing this frame",
-                stop.get_duration().as_millis()
-            );
-        }
-
-        return Ok(());
-    }
-
-    /// Dump the current swapchain image to a file
-    ///
-    /// This dumps the image contents to a simple PPM file, used for automated testing
-    #[allow(dead_code)]
-    pub fn dump_framebuffer(&mut self, filename: &str) -> MappedImage {
-        self.d_display.dump_framebuffer(filename)
+        )
     }
 }

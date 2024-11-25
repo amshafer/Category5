@@ -117,7 +117,7 @@ impl FontInstance {
 
     fn create_glyph(
         &mut self,
-        display: &mut th::Display,
+        dev: &th::Device,
         inst: &mut ll::Instance,
         glyphs: &mut ll::Snapshot<Glyph>,
         id: u16,
@@ -180,16 +180,14 @@ impl FontInstance {
             }
 
             Some(
-                display
-                    .d_dev
-                    .create_image_from_bits(
-                        img.as_slice(),
-                        width as u32,
-                        bitmap.rows() as u32,
-                        0,
-                        None,
-                    )
-                    .unwrap(),
+                dev.create_image_from_bits(
+                    img.as_slice(),
+                    width as u32,
+                    bitmap.rows() as u32,
+                    0,
+                    None,
+                )
+                .unwrap(),
             )
         } else {
             None
@@ -214,7 +212,7 @@ impl FontInstance {
     /// Go ahead and create the Glyph for an id in our map
     fn ensure_glyph_exists(
         &mut self,
-        display: &mut th::Display,
+        dev: &th::Device,
         inst: &mut ll::Instance,
         glyphs: &mut ll::Snapshot<Glyph>,
         id: u16,
@@ -225,7 +223,7 @@ impl FontInstance {
         }
 
         if self.f_glyphs[id as usize].is_none() {
-            self.f_glyphs[id as usize] = Some(self.create_glyph(display, inst, glyphs, id));
+            self.f_glyphs[id as usize] = Some(self.create_glyph(dev, inst, glyphs, id));
         }
     }
 
@@ -237,13 +235,13 @@ impl FontInstance {
     /// than one line long.
     fn for_one_line<F>(
         &mut self,
-        display: &mut th::Display,
+        dev: &th::Device,
         cursor: &mut Cursor,
         text: &[CachedChar],
         glyph_callback: &mut F,
     ) -> bool
     where
-        F: FnMut(&mut Self, &mut th::Display, &mut Cursor, &CachedChar),
+        F: FnMut(&mut Self, &th::Device, &mut Cursor, &CachedChar),
     {
         let mut ret = false;
         let mut end_index = cursor.c_i + 1;
@@ -306,7 +304,7 @@ impl FontInstance {
             // move to the next char
             cursor.c_i += 1;
 
-            glyph_callback(self, display, cursor, &text[i]);
+            glyph_callback(self, dev, cursor, &text[i]);
 
             // Move the cursor
             cursor.c_x += text[i].cursor_advance.0;
@@ -325,17 +323,17 @@ impl FontInstance {
     /// the position of the cursor as it goes.
     fn for_each_text_block<F>(
         &mut self,
-        display: &mut th::Display,
+        dev: &th::Device,
         cursor: &mut Cursor,
         text: &[CachedChar],
         glyph_callback: &mut F,
     ) where
-        F: FnMut(&mut Self, &mut th::Display, &mut Cursor, &CachedChar),
+        F: FnMut(&mut Self, &th::Device, &mut Cursor, &CachedChar),
     {
         let line_space = self.get_vertical_line_spacing();
 
         loop {
-            if self.for_one_line(display, cursor, text, glyph_callback) {
+            if self.for_one_line(dev, cursor, text, glyph_callback) {
                 // Move down to the next line
                 cursor.c_x = cursor.c_min;
                 cursor.c_y += line_space;
@@ -369,24 +367,24 @@ impl FontInstance {
     /// text layout creation will continue at that point.
     pub fn layout_text<F>(
         &mut self,
-        display: &mut th::Display,
+        dev: &th::Device,
         cursor: &mut Cursor,
         text: &[CachedChar],
         glyph_callback: &mut F,
     ) where
-        F: FnMut(&mut Self, &mut th::Display, &mut Cursor, &CachedChar),
+        F: FnMut(&mut Self, &th::Device, &mut Cursor, &CachedChar),
     {
         // For each itemized text run we need to reset the index that
         // the cursor is using, since we will be using a different infos
         // array and we may accidentally use an old size
         cursor.c_i = 0;
 
-        self.for_each_text_block(display, cursor, text, glyph_callback)
+        self.for_each_text_block(dev, cursor, text, glyph_callback)
     }
 
     pub fn initialize_cached_chars(
         &mut self,
-        display: &mut th::Display,
+        dev: &th::Device,
         inst: &mut ll::Instance,
         glyphs: &mut ll::Snapshot<Glyph>,
         text: &str,
@@ -412,7 +410,7 @@ impl FontInstance {
 
         for i in 0..infos.len() {
             let raw_glyph_id = infos[i].codepoint as u16;
-            self.ensure_glyph_exists(display, inst, glyphs, raw_glyph_id);
+            self.ensure_glyph_exists(dev, inst, glyphs, raw_glyph_id);
             let glyph_id = self.f_glyphs[raw_glyph_id as usize]
                 .as_ref()
                 .expect("Bug: No Glyph created for this character");

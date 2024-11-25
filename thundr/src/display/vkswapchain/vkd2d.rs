@@ -7,7 +7,7 @@ use ash::vk;
 use ash::Entry;
 
 use super::VkSwapchainBackend;
-use crate::{Result as ThundrResult, SurfaceType};
+use crate::{Result as ThundrResult, WindowInfo};
 
 /// This Display backend represents a physical monitor sitting
 /// on the user's desk. It corresponds to the VK_KHR_display extension.
@@ -32,7 +32,7 @@ impl PhysicalDisplay {
         inst: &ash::Instance,
         pdev: vk::PhysicalDevice,
         surface_loader: &khr::Surface,
-        surf_type: &SurfaceType,
+        win_info: &WindowInfo,
     ) -> Option<(Box<dyn VkSwapchainBackend>, vk::SurfaceKHR, vk::Extent2D)> {
         let d_loader = khr::Display::new(entry, inst);
         let disp_props = d_loader
@@ -46,7 +46,7 @@ impl PhysicalDisplay {
             pd_native_res: disp_props[0].physical_resolution,
         });
         let surface = ret
-            .create_surface(entry, inst, pdev, surface_loader, surf_type)
+            .create_surface(entry, inst, pdev, surface_loader, win_info)
             .unwrap();
         let caps = surface_loader
             .get_physical_device_surface_capabilities(pdev, surface)
@@ -71,7 +71,7 @@ impl VkSwapchainBackend for PhysicalDisplay {
         _inst: &ash::Instance, // to be passed for compatibility
         pdev: vk::PhysicalDevice,
         _surface_loader: &khr::Surface,
-        _surf_type: &SurfaceType,
+        _win_info: &WindowInfo,
     ) -> Result<vk::SurfaceKHR, vk::Result> {
         unsafe {
             // This is essentially a list of the available displays.

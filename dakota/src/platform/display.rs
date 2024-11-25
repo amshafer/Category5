@@ -15,16 +15,16 @@ use xkbcommon::xkb;
 use super::{BackendType, OutputPlatform, Platform};
 use crate::event::*;
 use crate::input::{convert_libinput_mouse_to_dakota, convert_xkb_keycode_to_dakota, Mods};
-use crate::platform::DakotaDOM;
+use crate::OutputId;
 use crate::*;
 use utils::log;
 
 use std::fs::{File, OpenOptions};
-use std::marker::PhantomData;
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::OwnedFd;
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 
 /// This is sort of like a private userdata struct which
 /// is used as an interface to the systems devices
@@ -103,6 +103,8 @@ pub struct LibinputPlat {
     dp_current_modifiers: Mods,
     /// Our private fd listener
     dp_fdwatch: FdWatch,
+    /// This is the Id of the virtual output we are driving
+    dp_output_id: Arc<RwLock<Option<OutputId>>>,
 }
 
 impl LibinputPlat {
@@ -144,6 +146,7 @@ impl LibinputPlat {
             dp_xkb_state: state,
             dp_current_modifiers: Mods::NONE,
             dp_fdwatch: fdwatch,
+            dp_output_id: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -153,7 +156,7 @@ impl LibinputPlat {
     /// axis events.
     fn get_scroll_event(
         &self,
-        evsys: &mut EventSystem,
+        evsys: &mut PlatformEventSystem,
         ev: &dyn pointer::PointerScrollEvent,
         source: AxisSource,
         v120: (f64, f64),
@@ -163,10 +166,10 @@ impl LibinputPlat {
 
         // reverse the scroll directions
         if ev.has_axis(pointer::Axis::Horizontal) {
-            horizontal = Some(ev.scroll_value(pointer::Axis::Horizontal) * -1.0);
+            horizontal = Some((ev.scroll_value(pointer::Axis::Horizontal) * -1.0) as i32);
         }
         if ev.has_axis(pointer::Axis::Vertical) {
-            vertical = Some(ev.scroll_value(pointer::Axis::Vertical) * -1.0);
+            vertical = Some((ev.scroll_value(pointer::Axis::Vertical) * -1.0) as i32);
         }
 
         evsys.add_event_scroll(horizontal, vertical, v120, source);
@@ -175,18 +178,22 @@ impl LibinputPlat {
     /// Get the next available event from libinput
     ///
     /// Dispatch should be called before this so libinput can
-    fn process_available(&mut self, evsys: &mut EventSystem) {
+    fn process_available(&mut self, platform_queues: &mut ll::Component<PlatformEventSystem>) {
+        let mut evsys = platform_queues
+            .get_mut(self.dp_output_id.read().unwrap().as_ref().unwrap())
+            .unwrap();
+
         while let Some(ev) = self.dp_libin.next() {
             match ev {
                 input::event::Event::Pointer(PointerEvent::Motion(m)) => {
-                    evsys.add_event_mouse_move(m.dx(), m.dy());
+                    evsys.add_event_mouse_move(m.dx() as i32, m.dy() as i32);
                 }
                 // TODO: actually handle advanced scrolling/finger behavior
                 // We should track ScrollWheel using the v120 api, and handle
                 // high-res and wheel click behavior. For ScrollFinger we
                 // should handle kinetic scrolling
                 input::event::Event::Pointer(PointerEvent::ScrollFinger(sf)) => {
-                    self.get_scroll_event(evsys, &sf, AxisSource::Finger, (0.0, 0.0));
+                    self.get_scroll_event(&mut evsys, &sf, AxisSource::Finger, (0.0, 0.0));
                 }
                 input::event::Event::Pointer(PointerEvent::ScrollWheel(sw)) => {
                     let mut v120 = (0.0, 0.0);
@@ -200,7 +207,7 @@ impl LibinputPlat {
                         v120.1 = sw.scroll_value_v120(pointer::Axis::Vertical);
                     }
 
-                    self.get_scroll_event(evsys, &sw, AxisSource::Wheel, v120);
+                    self.get_scroll_event(&mut evsys, &sw, AxisSource::Wheel, v120);
                 }
                 input::event::Event::Pointer(PointerEvent::Button(b)) => {
                     let button = convert_libinput_mouse_to_dakota(b.button());
@@ -274,10 +281,25 @@ impl Platform for LibinputPlat {
     ///
     /// This creates a new window output with our winsys, we can
     /// then use this with a Thundr `Display`.
-    fn create_output(&mut self) -> Result<Box<dyn OutputPlatform>> {
+    fn create_output(
+        &mut self,
+        _id: OutputId,
+        virtual_output_id: OutputId,
+    ) -> Result<Box<dyn OutputPlatform>> {
+        *self.dp_output_id.write().unwrap() = Some(virtual_output_id);
+
         Ok(Box::new(LibinputOutput {
             lo_type: self.dp_type,
+            lo_output_id: self.dp_output_id.clone(),
         }))
+    }
+
+    /// Create a new virtual window
+    ///
+    /// This may fail if the platform only supports one virtual surface
+    fn create_virtual_output(&mut self) -> bool {
+        // We only support one context with libinput
+        self.dp_output_id.read().unwrap().is_none()
     }
 
     /// Add a watch descriptor to our list. This will cause the platform's
@@ -297,17 +319,22 @@ impl Platform for LibinputPlat {
     /// date swapchain.
     fn run(
         &mut self,
-        evsys: &mut EventSystem,
-        _dom: &DakotaDOM,
+        _global_evsys: &mut GlobalEventSystem,
+        _output_queues: &mut ll::Component<OutputEventSystem>,
+        platform_queues: &mut ll::Component<PlatformEventSystem>,
         timeout: Option<usize>,
-    ) -> std::result::Result<bool, DakotaError> {
+    ) -> Result<()> {
         self.dp_fdwatch.wait_for_events(timeout);
         // TODO: return UserFdReadable?
 
         self.dp_libin.dispatch().unwrap();
-        self.process_available(evsys);
+        self.process_available(platform_queues);
 
-        Ok(false)
+        Ok(())
+    }
+
+    fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType> {
+        Ok(th::SurfaceType::Display)
     }
 }
 
@@ -317,14 +344,21 @@ impl Platform for LibinputPlat {
 /// a window system in play here.
 pub struct LibinputOutput {
     lo_type: BackendType,
+    lo_output_id: Arc<RwLock<Option<OutputId>>>,
+}
+
+impl Drop for LibinputOutput {
+    fn drop(&mut self) {
+        self.lo_output_id.write().unwrap().take();
+    }
 }
 
 impl OutputPlatform for LibinputOutput {
-    fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType> {
+    fn get_th_window_info<'a>(&self) -> Result<th::WindowInfo> {
         Ok(match self.lo_type {
             #[cfg(feature = "drm")]
-            BackendType::Drm => th::SurfaceType::Drm,
-            BackendType::VkD2d => th::SurfaceType::Display(PhantomData),
+            BackendType::Drm => th::WindowInfo::Drm,
+            BackendType::VkD2d => th::WindowInfo::Display,
         })
     }
 

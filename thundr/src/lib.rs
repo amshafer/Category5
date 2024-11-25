@@ -263,14 +263,27 @@ impl Viewport {
     }
 }
 
-pub enum SurfaceType<'a> {
+pub enum SurfaceType {
     Headless,
     #[cfg(feature = "drm")]
     Drm,
+    Display,
+    #[cfg(feature = "sdl")]
+    SDL2,
+}
+
+pub enum WindowInfo<'a> {
     /// it exists to make the lifetime parameter play nice with rust.
     /// Since the Display variant doesn't have a lifetime, we need one that
     /// does incase xcb/macos aren't enabled.
-    Display(PhantomData<&'a usize>),
+    /// it exists to make the lifetime parameter play nice with rust.
+    /// Since the Display variant doesn't have a lifetime, we need one that
+    /// does incase xcb/macos aren't enabled.
+    Invalid(PhantomData<&'a usize>),
+    Headless,
+    #[cfg(feature = "drm")]
+    Drm,
+    Display,
     #[cfg(feature = "sdl")]
     SDL2(&'a sdl2::VideoSubsystem, &'a sdl2::video::Window),
 }
@@ -281,14 +294,20 @@ pub enum SurfaceType<'a> {
 /// be enabled. See `Pipeline` for methods that drive the data
 /// contained here.
 pub struct CreateInfo<'a> {
-    pub surface_type: SurfaceType<'a>,
+    /// This is the type of surface in use. This is consumed
+    /// by Thundr
+    pub surface_type: SurfaceType,
+    /// The window system information provided for creation. This
+    /// is consumed by Display
+    pub window_info: WindowInfo<'a>,
 }
 
 impl<'a> CreateInfo<'a> {
     pub fn builder() -> CreateInfoBuilder<'a> {
         CreateInfoBuilder {
             ci: CreateInfo {
-                surface_type: SurfaceType::Display(PhantomData),
+                surface_type: SurfaceType::Headless,
+                window_info: WindowInfo::Invalid(PhantomData),
             },
         }
     }
@@ -299,8 +318,13 @@ pub struct CreateInfoBuilder<'a> {
     ci: CreateInfo<'a>,
 }
 impl<'a> CreateInfoBuilder<'a> {
-    pub fn surface_type(mut self, ty: SurfaceType<'a>) -> Self {
+    pub fn surface_type(mut self, ty: SurfaceType) -> Self {
         self.ci.surface_type = ty;
+        self
+    }
+
+    pub fn window_info(mut self, win: WindowInfo<'a>) -> Self {
+        self.ci.window_info = win;
         self
     }
 

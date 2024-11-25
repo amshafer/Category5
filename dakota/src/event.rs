@@ -2,51 +2,147 @@
 //!
 // Austin Shafer - 2022
 
-use crate::dom;
-use crate::dom::DakotaDOM;
 use crate::input::{Keycode, Mods, MouseButton};
-use lluvia as ll;
 use std::collections::VecDeque;
-use std::sync::Arc;
 
-pub struct EventSystem {
+/// Global Dakota Event Queue
+pub struct GlobalEventSystem {
     /// The global event queue
-    /// This will be iterable after dispatching, and
-    /// must be cleared (all events handled) before the
-    /// next dispatch
-    es_global_event_queue: VecDeque<Event>,
-    /// These are dakota-only events, which the user doesn't
-    /// have to worry about and Dakota itself will handle
-    pub(crate) es_dakota_event_queue: Vec<Event>,
-    /// The compiled set of event handlers.
-    es_handler_ecs_inst: ll::Instance,
-    /// Ties a string name to a handler id
-    /// (name, Id)
-    es_name_to_handler_map: Vec<(String, ll::Entity)>,
+    es_event_queue: VecDeque<GlobalEvent>,
+}
+
+impl GlobalEventSystem {
+    pub fn new() -> Self {
+        Self {
+            es_event_queue: VecDeque::new(),
+        }
+    }
+}
+
+/// Dakota Global Events
+///
+/// These events are independent of any particular output, and may notify
+/// the user of polled file descriptors or timers.
+#[derive(Debug, Clone)]
+pub enum GlobalEvent {
+    /// Indicates that one of the fds that the application provided
+    /// for the event loop is readable. This can be used to have
+    /// dakota `select()` a set of fds and wake the application up
+    /// when they are ready.
+    UserFdReadable,
+    /// Dakota is quitting, the app should terminate
+    Quit,
+}
+
+impl GlobalEventSystem {
+    pub fn add_event_user_fd(&mut self) {
+        self.es_event_queue.push_back(GlobalEvent::UserFdReadable);
+    }
+
+    /// Notify the app that a window was closed
+    ///
+    /// This is not an optional event. It will always be sent. It is
+    /// optional in the element tree however.
+    pub fn add_event_quit(&mut self) {
+        self.es_event_queue.push_back(GlobalEvent::Quit);
+    }
+
+    /// Drain the queue of currently unhandled events
+    ///
+    /// The app should do this in its main loop after dispatching.
+    /// These will be cleared during each dispatch.
+    pub fn drain_events<'a>(&'a mut self) -> std::collections::vec_deque::Drain<'a, GlobalEvent> {
+        self.es_event_queue.drain(0..)
+    }
+}
+
+/// Output Event Queue
+pub struct OutputEventSystem {
+    /// The event queue itself
+    es_event_queue: VecDeque<OutputEvent>,
+}
+
+/// Dakota Output Events
+///
+/// These events come from a couple possible sources, the most important of
+/// which is the Redraw event. These are specific to a Dakota Output.
+#[derive(Debug, Clone)]
+pub enum OutputEvent {
+    /// The window size has been changed, normally by the user.
+    Resized,
+    /// The output window has been closed
+    Destroyed,
+    /// The platform has lost the current output and we need to re-present
+    /// to update the display.
+    ///
+    /// This happens on window systems, when the window needs redrawn.
+    Redraw,
+}
+
+impl OutputEventSystem {
+    pub fn new() -> Self {
+        Self {
+            es_event_queue: VecDeque::new(),
+        }
+    }
+}
+
+impl OutputEventSystem {
+    /// Add a window resize event
+    ///
+    /// This signifies that a window was resized, and is triggered
+    /// anytime OOD is returned from thundr.
+    pub fn add_event_resized(&mut self) {
+        self.es_event_queue.push_back(OutputEvent::Resized);
+    }
+
+    /// Add notice that the window needs redrawing.
+    ///
+    /// The platform has lost the current output and we need to re-present
+    /// to update the display.
+    ///
+    /// This happens on window systems, when the window needs redrawn.
+    pub fn add_event_redraw(&mut self) {
+        self.es_event_queue.push_back(OutputEvent::Redraw);
+    }
+
+    /// Notify the app that a window was closed
+    ///
+    /// This is not an optional event. It will always be sent. It is
+    /// optional in the element tree however.
+    pub fn add_event_destroyed(&mut self) {
+        self.es_event_queue.push_back(OutputEvent::Destroyed);
+    }
+
+    /// Get the next event
+    ///
+    /// The app should do this in its main loop after dispatching.
+    pub fn pop_event(&mut self) -> Option<OutputEvent> {
+        self.es_event_queue.pop_front()
+    }
+}
+
+/// Platform Event Queue
+pub struct PlatformEventSystem {
+    /// The event queue itself
+    es_event_queue: VecDeque<PlatformEvent>,
     /// Our current mouse position
     ///
     /// The individual backends report relative mouse position changes,
     /// but in the case of button presses we need to report the absolute
     /// location. This adds a place to cache this. The platforms will
     /// report relative mouse changes and we will update this here.
-    es_mouse_pos: (f64, f64),
+    es_mouse_pos: (i32, i32),
 }
 
-impl EventSystem {
+impl PlatformEventSystem {
     pub fn new() -> Self {
-        let handler_ecs = ll::Instance::new();
-
         Self {
-            es_global_event_queue: VecDeque::new(),
-            es_dakota_event_queue: Vec::new(),
-            es_handler_ecs_inst: handler_ecs,
-            es_name_to_handler_map: Vec::new(),
-            es_mouse_pos: (0.0, 0.0),
+            es_event_queue: VecDeque::new(),
+            es_mouse_pos: (0, 0),
         }
     }
 }
-
-pub type HandlerArgs = Arc<Vec<String>>;
 
 /// Source axis for scrolling operations
 ///
@@ -71,28 +167,13 @@ pub enum RawKeycode {
     Linux(u32),
 }
 
-/// Dakota Events
+/// Dakota Platform Events
 ///
-/// These events come from a couple possible sources, the most important of
-/// which is user input. All mouse movements and button presses are recorded
-/// as Events in the Dakota event queue, along with window system events such
-/// as resizing the window.
+/// These events are delivered on a virtual output and represent window
+/// system events that are relevant to the surface the scene is being
+/// applied to. The main event type delieverd here is user input.
 #[derive(Debug, Clone)]
-pub enum Event {
-    /// The window size has been changed, normally by the user.
-    WindowResized {
-        args: HandlerArgs,
-        size: dom::Size<u32>,
-    },
-    /// The Dakota Application window has been closed
-    WindowClosed { args: HandlerArgs },
-    /// The platform has lost the current output and we need to re-present
-    /// to update the display.
-    ///
-    /// This happens on window systems, when the window needs redrawn.
-    WindowNeedsRedraw,
-    /// This event is triggered every time Dakota draws a frame
-    WindowRedrawComplete { args: HandlerArgs },
+pub enum PlatformEvent {
     /// Key has been pressed. Includes the updated modifiers.
     InputKeyDown {
         key: Keycode,
@@ -114,12 +195,12 @@ pub enum Event {
     /// Movement of the mouse relative to the previous position
     ///
     /// This is the amount the mouse moved.
-    InputMouseMove { dx: f64, dy: f64 },
+    InputMouseMove { dx: i32, dy: i32 },
     /// A mouse button has been pressed. The button is specified
     /// in the case that there are multiple buttons on the mouse.
-    InputMouseButtonDown { button: MouseButton, x: f64, y: f64 },
+    InputMouseButtonDown { button: MouseButton, x: i32, y: i32 },
     /// A mouse button has been released
-    InputMouseButtonUp { button: MouseButton, x: f64, y: f64 },
+    InputMouseButtonUp { button: MouseButton, x: i32, y: i32 },
     /// User has taken a scrolling action.
     ///
     /// This is complex since there are a variety of scrolling options
@@ -132,11 +213,11 @@ pub enum Event {
     /// high resolution scroll wheel feedback.
     InputScroll {
         /// The current mouse position
-        position: (f64, f64),
+        position: (i32, i32),
         /// horizontal relative motion
-        xrel: Option<f64>,
+        xrel: Option<i32>,
         /// vertical relative motion
-        yrel: Option<f64>,
+        yrel: Option<i32>,
         /// The v120 libinput API value, if it was available
         /// This should only be set on AXIS_SOURCE_WHEEL input devices
         /// (horizontal, vertical)
@@ -144,105 +225,18 @@ pub enum Event {
         /// The axis source.
         source: AxisSource,
     },
-    /// Indicates that one of the fds that the application provided
-    /// for the event loop is readable. This can be used to have
-    /// dakota `select()` a set of fds and wake the application up
-    /// when they are ready.
-    UserFdReadable,
 }
 
-impl EventSystem {
-    /// Look up the ECS Id of an Event Handler given its string name
-    ///
-    /// This is used to go from the human name the app gave the handler to
-    /// the O(1) integer id of the handler that dakota will use.
-    pub fn get_handler_id_from_name(&mut self, name: String) -> ll::Entity {
-        // first, get the ECS id for this name
-        // check if this event handler has already been defined
-        match self.es_name_to_handler_map.iter().find(|(n, _)| *n == name) {
-            Some((_, ecs_id)) => ecs_id.clone(),
-            // otherwise make a new id for it, it's a new name
-            None => {
-                let ecs_id = self.es_handler_ecs_inst.add_entity();
-                self.es_name_to_handler_map
-                    .push((name.clone(), ecs_id.clone()));
-                ecs_id
-            }
-        }
-    }
-
-    /// Add a window resize event to the global queue
-    ///
-    /// This signifies that a window was resized, and is triggered
-    /// anytime OOD is returned from thundr.
-    pub fn add_event_window_resized(&mut self, dom: &DakotaDOM, new_size: dom::Size<u32>) {
-        if let Some(handler) = dom.window.events.resize.as_ref() {
-            self.es_global_event_queue.push_back(Event::WindowResized {
-                args: handler.args.clone(),
-                size: new_size,
-            });
-        }
-    }
-
-    /// Add notice that the window needs redrawing.
-    ///
-    /// The platform has lost the current output and we need to re-present
-    /// to update the display.
-    ///
-    /// This happens on window systems, when the window needs redrawn.
-    pub fn add_event_window_needs_redraw(&mut self) {
-        self.es_global_event_queue
-            .push_back(Event::WindowNeedsRedraw);
-    }
-
-    /// Add a redraw request completion to the global queue
-    ///
-    /// Since while dispatching it isn't guaranteed that a redraw
-    /// will take place, this lets a client know that the previous frame
-    /// was drawn, and it should handle any once-per-frame actions it
-    /// needs to take.
-    ///
-    /// This isn't a performance limiting event, the app doesn't need to
-    /// use this to control drawing. This should be used to queue up the
-    /// next elements to be presented, or run subroutines. Dakota will
-    /// internally worry about drawing everything.
-    pub fn add_event_window_redraw_complete(&mut self, dom: &DakotaDOM) {
-        if let Some(handler) = dom.window.events.redraw_complete.as_ref() {
-            self.es_global_event_queue
-                .push_back(Event::WindowRedrawComplete {
-                    args: handler.args.clone(),
-                });
-        }
-    }
-
-    /// Notify the app that a window was closed
-    ///
-    /// This is not an optional event. It will always be sent. It is
-    /// optional in the element tree however.
-    pub fn add_event_window_closed(&mut self, dom: &DakotaDOM) {
-        if let Some(handler) = dom.window.events.closed.as_ref() {
-            self.es_global_event_queue.push_back(Event::WindowClosed {
-                args: handler.args.clone(),
-            });
-            return;
-        }
-
-        // If we couldn't get the arg array from the tree, then
-        // just create an empty one
-        self.es_global_event_queue.push_back(Event::WindowClosed {
-            args: Arc::new(Vec::with_capacity(0)),
-        });
-    }
-
+impl PlatformEventSystem {
     pub fn add_event_key_down(&mut self, key: Keycode, utf8: String, raw_key: RawKeycode) {
-        self.es_global_event_queue.push_back(Event::InputKeyDown {
+        self.es_event_queue.push_back(PlatformEvent::InputKeyDown {
             key: key,
             utf8: utf8,
             raw_keycode: raw_key,
         });
     }
     pub fn add_event_key_up(&mut self, key: Keycode, utf8: String, raw_key: RawKeycode) {
-        self.es_global_event_queue.push_back(Event::InputKeyUp {
+        self.es_event_queue.push_back(PlatformEvent::InputKeyUp {
             key: key,
             utf8: utf8,
             raw_keycode: raw_key,
@@ -250,29 +244,29 @@ impl EventSystem {
     }
 
     pub fn add_event_keyboard_modifiers(&mut self, mods: Mods) {
-        self.es_global_event_queue
-            .push_back(Event::InputKeyboardModifiers { mods: mods });
+        self.es_event_queue
+            .push_back(PlatformEvent::InputKeyboardModifiers { mods: mods });
     }
 
-    pub fn add_event_mouse_move(&mut self, dx: f64, dy: f64) {
+    pub fn add_event_mouse_move(&mut self, dx: i32, dy: i32) {
         // Update our cached mouse position
         self.es_mouse_pos.0 += dx;
         self.es_mouse_pos.1 += dy;
 
-        self.es_global_event_queue
-            .push_back(Event::InputMouseMove { dx: dx, dy: dy });
+        self.es_event_queue
+            .push_back(PlatformEvent::InputMouseMove { dx: dx, dy: dy });
     }
     pub fn add_event_mouse_button_down(&mut self, button: MouseButton) {
-        self.es_global_event_queue
-            .push_back(Event::InputMouseButtonDown {
+        self.es_event_queue
+            .push_back(PlatformEvent::InputMouseButtonDown {
                 button: button,
                 x: self.es_mouse_pos.0,
                 y: self.es_mouse_pos.1,
             });
     }
     pub fn add_event_mouse_button_up(&mut self, button: MouseButton) {
-        self.es_global_event_queue
-            .push_back(Event::InputMouseButtonUp {
+        self.es_event_queue
+            .push_back(PlatformEvent::InputMouseButtonUp {
                 button: button,
                 x: self.es_mouse_pos.0,
                 y: self.es_mouse_pos.1,
@@ -281,35 +275,24 @@ impl EventSystem {
 
     pub fn add_event_scroll(
         &mut self,
-        x: Option<f64>,
-        y: Option<f64>,
+        x: Option<i32>,
+        y: Option<i32>,
         v120: (f64, f64),
         source: AxisSource,
     ) {
-        let ev = Event::InputScroll {
+        self.es_event_queue.push_back(PlatformEvent::InputScroll {
             position: self.es_mouse_pos,
             xrel: x,
             yrel: y,
             v120_val: v120,
             source: source,
-        };
-
-        self.es_global_event_queue.push_back(ev.clone());
-
-        // We also want to handle scrolling ourselves, so put this event on the
-        // dakota queue as well
-        self.es_dakota_event_queue.push(ev);
+        });
     }
 
-    pub fn add_event_user_fd(&mut self) {
-        self.es_global_event_queue.push_back(Event::UserFdReadable);
-    }
-
-    /// Drain the queue of currently unhandled events
+    /// Get the next event
     ///
     /// The app should do this in its main loop after dispatching.
-    /// These will be cleared during each dispatch.
-    pub fn drain_events<'a>(&'a mut self) -> std::collections::vec_deque::Drain<'a, Event> {
-        self.es_global_event_queue.drain(0..)
+    pub fn pop_event(&mut self) -> Option<PlatformEvent> {
+        self.es_event_queue.pop_front()
     }
 }
