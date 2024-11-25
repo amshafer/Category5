@@ -2,8 +2,10 @@
 ///
 /// This hides away the window system code from the rest of Dakota
 use crate::dom;
-use crate::dom::DakotaDOM;
-use crate::{event::EventSystem, DakotaError, Result};
+use crate::{
+    event::{GlobalEventSystem, OutputEventSystem, PlatformEventSystem},
+    OutputId, Result,
+};
 use std::os::fd::RawFd;
 
 #[cfg(any(feature = "direct2display", feature = "drm"))]
@@ -39,11 +41,27 @@ pub enum BackendType {
 /// This holds the global platform state, individual windows will have
 /// their winsys objects held in a separate `OutputPlatform`.
 pub trait Platform {
+    /// Get the thundr surface type that this platform should use.
+    ///
+    /// This is where we share our window system object pointers that
+    /// Thundr will consume when it creates a `Dispaly` that draws to
+    /// this output.
+    fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType>;
+
     /// Create a window
     ///
     /// This creates a new window output with our winsys, we can
     /// then use this with a Thundr `Display`.
-    fn create_output(&mut self) -> Result<Box<dyn OutputPlatform>>;
+    fn create_output(
+        &mut self,
+        id: OutputId,
+        virtual_output_id: OutputId,
+    ) -> Result<Box<dyn OutputPlatform>>;
+
+    /// Create a new virtual window
+    ///
+    /// This may fail if the platform only supports one virtual surface
+    fn create_virtual_output(&mut self) -> bool;
 
     /// Add a watch descriptor to our list. This will cause the platform's
     /// event loop to wake when this fd is readable and queue the UserFd
@@ -59,10 +77,11 @@ pub trait Platform {
     /// date swapchain.
     fn run(
         &mut self,
-        evsys: &mut EventSystem,
-        dom: &DakotaDOM,
+        global_evsys: &mut GlobalEventSystem,
+        output_queues: &mut ll::Component<OutputEventSystem>,
+        platform_queues: &mut ll::Component<PlatformEventSystem>,
         timeout: Option<usize>,
-    ) -> std::result::Result<bool, DakotaError>;
+    ) -> Result<()>;
 }
 
 /// Platform code for a single window
@@ -75,7 +94,7 @@ pub trait OutputPlatform {
     /// This is where we share our window system object pointers that
     /// Thundr will consume when it creates a `Dispaly` that draws to
     /// this output.
-    fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType>;
+    fn get_th_window_info<'a>(&self) -> Result<th::WindowInfo>;
 
     /// Set the dimensions of this window
     fn set_geometry(&mut self, win: &dom::Window, dims: (u32, u32)) -> Result<()>;

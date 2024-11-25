@@ -109,6 +109,8 @@ pub struct ImageVk {
 
 impl ImageVk {
     pub fn clear(&mut self) {
+        self.iv_dev.wait_for_latest_timeline();
+
         if self.iv_is_dmabuf {
             // Now that we are done with this vulkan image, release ownership
             // of it.
@@ -117,9 +119,11 @@ impl ImageVk {
             self.iv_dev.wait_for_copy();
         }
 
+        self.iv_desc.destroy();
+
         unsafe {
-            self.iv_dev.dev.destroy_image(self.iv_image, None);
             self.iv_dev.dev.destroy_image_view(self.iv_image_view, None);
+            self.iv_dev.dev.destroy_image(self.iv_image, None);
             self.iv_dev.free_memory(self.iv_image_mem);
         }
 
@@ -133,7 +137,6 @@ impl ImageVk {
             height: 0,
         };
         self.iv_release_info = None;
-        self.iv_desc.destroy();
     }
 }
 
@@ -146,7 +149,6 @@ impl Drop for ImageVk {
             return;
         }
 
-        self.iv_dev.wait_for_copy();
         log::debug!("Deleting image view {:?}", self.iv_image_view);
 
         self.clear();

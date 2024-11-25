@@ -8,7 +8,7 @@ use ash::vk;
 use ash::Entry;
 
 use super::VkSwapchainBackend;
-use crate::{Result as ThundrResult, SurfaceType};
+use crate::{Result as ThundrResult, WindowInfo};
 use utils::log;
 
 /// The SDL backend is the general purpose window system
@@ -31,10 +31,10 @@ impl SDL2DisplayBackend {
         inst: &ash::Instance,
         pdev: vk::PhysicalDevice,
         surface_loader: &khr::Surface,
-        surf_type: &SurfaceType,
+        win_info: &WindowInfo,
     ) -> Option<(Box<dyn VkSwapchainBackend>, vk::SurfaceKHR, vk::Extent2D)> {
-        match surf_type {
-            SurfaceType::SDL2(vid_sys, win) => {
+        match win_info {
+            WindowInfo::SDL2(vid_sys, win) => {
                 let ret = Box::new(Self {
                     // create a new window wrapper by cloning the Rc pointer
                     sdl_window: unsafe { sdl2::video::Window::from_ref(win.context()) },
@@ -42,7 +42,7 @@ impl SDL2DisplayBackend {
                 });
 
                 let surface = ret
-                    .create_surface(entry, inst, pdev, surface_loader, surf_type)
+                    .create_surface(entry, inst, pdev, surface_loader, win_info)
                     .unwrap();
                 let caps = unsafe {
                     surface_loader
@@ -65,12 +65,12 @@ impl VkSwapchainBackend for SDL2DisplayBackend {
         inst: &ash::Instance, // to be passed for compatibility
         _pdev: vk::PhysicalDevice,
         _surface_loader: &khr::Surface,
-        surf_type: &SurfaceType,
+        win_info: &WindowInfo,
     ) -> Result<vk::SurfaceKHR, vk::Result> {
         use vk::Handle;
 
-        match surf_type {
-            SurfaceType::SDL2(_, win) => {
+        match win_info {
+            WindowInfo::SDL2(_, win) => {
                 // we need to convert our ash instance into the pointer to the raw vk instance
                 let raw_surf = match win.vulkan_create_surface(inst.handle().as_raw() as usize) {
                     Ok(s) => s,

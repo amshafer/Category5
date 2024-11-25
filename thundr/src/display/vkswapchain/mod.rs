@@ -14,7 +14,7 @@ use ash::Entry;
 
 use super::{DisplayState, Swapchain};
 use crate::device::Device;
-use crate::{CreateInfo, Result as ThundrResult, SurfaceType, ThundrError};
+use crate::{CreateInfo, Result as ThundrResult, SurfaceType, ThundrError, WindowInfo};
 use utils::log;
 
 use std::str::FromStr;
@@ -49,7 +49,7 @@ pub(crate) trait VkSwapchainBackend {
         inst: &ash::Instance, // to be passed for compatibility
         pdev: vk::PhysicalDevice,
         surface_loader: &khr::Surface,
-        surf_type: &SurfaceType,
+        win_info: &WindowInfo,
     ) -> Result<vk::SurfaceKHR, vk::Result>;
 
     /// Get the dots per inch for this surface
@@ -260,20 +260,16 @@ impl VkSwapchain {
 
             let s_loader = khr::Surface::new(entry, inst);
             let (back, surf, _) = match &info.surface_type {
-                SurfaceType::Display(_) => vkd2d::PhysicalDisplay::new(
-                    entry,
-                    inst,
-                    dev.pdev,
-                    &s_loader,
-                    &info.surface_type,
-                ),
+                SurfaceType::Display => {
+                    vkd2d::PhysicalDisplay::new(entry, inst, dev.pdev, &s_loader, &info.window_info)
+                }
                 #[cfg(feature = "sdl")]
-                SurfaceType::SDL2(_, _) => sdl::SDL2DisplayBackend::new(
+                SurfaceType::SDL2 => sdl::SDL2DisplayBackend::new(
                     entry,
                     inst,
                     dev.pdev,
                     &s_loader,
-                    &info.surface_type,
+                    &info.window_info,
                 ),
                 _ => panic!("Unsupported surface type"),
             }

@@ -5,7 +5,7 @@ extern crate paste;
 use paste::paste;
 extern crate lluvia as ll;
 
-use crate::{dom, Dakota, DakotaId, DakotaObjectType};
+use crate::{dom, DakotaId, DakotaObjectType, Scene};
 
 // ------------------------------------------------
 // Now implement some getters/setters
@@ -30,11 +30,7 @@ macro_rules! define_element_property {
 
 // Define a rule for each entry in Dakota
 
-impl Dakota {
-    // Get the Dakota object type for this DakotaId
-    //
-    // This sets the "role" of the object.
-    define_element_property!(object_type, node_types, DakotaObjectType);
+impl Scene {
     // Provide hints for this resource.
     //
     // Allows for specifying things like will the resource be updated
@@ -46,11 +42,14 @@ impl Dakota {
     // color specified in this component.
     define_element_property!(resource_color, resource_color, dom::Color);
     // Resource assigned to an Element
-    //
     // If the DakotaId is of type Element, then we can assign another
     // DakotaId that represents a Resource which will define what Dakota
     // should draw inside of the Element.
     define_element_property!(resource, resources, DakotaId);
+    // Get the Dakota object type for this DakotaId
+    //
+    // This sets the "role" of the object.
+    define_element_property!(object_type, node_types, DakotaObjectType);
     // Element Offset
     //
     // This specifies the Offset of an Element relative to its parent.
@@ -107,8 +106,6 @@ impl Dakota {
     // Child Elements may be assigned, and will be contained within the parents
     // dimensions.
     define_element_property!(children, children, Vec<DakotaId>);
-    // The toplevel Dakota DOM
-    define_element_property!(dakota_dom, dom, dom::DakotaDOM);
     // Mark this subsurface as unbounded
     //
     // This excepts it from being clipped inside of the parent during drawing.

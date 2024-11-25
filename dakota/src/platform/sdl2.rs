@@ -3,11 +3,10 @@
 /// This handles all window systems using SDL2
 use super::{OutputPlatform, Platform};
 use crate::dom;
-use crate::dom::DakotaDOM;
-use crate::utils::fdwatch::FdWatch;
+use crate::utils::{fdwatch::FdWatch, log};
 use crate::{
-    event::{AxisSource, EventSystem, RawKeycode},
-    DakotaError, Result,
+    event::{AxisSource, GlobalEventSystem, OutputEventSystem, PlatformEventSystem, RawKeycode},
+    OutputId, Result,
 };
 
 extern crate sdl2;
@@ -17,15 +16,10 @@ use sdl2::event::{Event, WindowEvent};
 
 extern crate xkbcommon;
 use std::os::fd::RawFd;
+use std::sync::{Arc, RwLock};
 use xkbcommon::xkb;
 
 const SCROLL_SENSITIVITY: f64 = 32.0;
-
-/// Single SDL2 window
-pub struct SDL2Window {
-    sdl_video_sys: sdl2::VideoSubsystem,
-    sdl_window: sdl2::video::Window,
-}
 
 /// Common SDL2 dispatch backend
 #[allow(dead_code)]
@@ -37,7 +31,7 @@ pub struct SDL2Plat {
     /// Because the mouse may disappear off one edge of the SDL window
     /// and re-appear on another, we have to manually calculate
     /// relative mouse motions using the last known mouse location.
-    sdl_mouse_pos: (f64, f64),
+    sdl_mouse_pos: (i32, i32),
     /// The current set of active modifiers
     sdl_mods: Mods,
     /// libxkbcommon context
@@ -50,9 +44,12 @@ pub struct SDL2Plat {
     sdl_xkb_state: xkb::State,
     /// fds the user wants us to wake up on
     sdl_user_fds: Option<FdWatch>,
+    /// This maps a SDL window_id to the OutputIds of our Output
+    /// and VirtualOutput that events should be delivered one.
+    /// The format is `(SDL window_id, Output, VirtualOutput)`.
+    sdl_window_id_map: Arc<RwLock<Vec<(u32, OutputId, OutputId)>>>,
 }
 
-#[cfg(feature = "sdl")]
 impl SDL2Plat {
     pub fn new() -> Result<Self> {
         // SDL goodies
@@ -78,30 +75,75 @@ impl SDL2Plat {
         Ok(Self {
             sdl: sdl_context,
             sdl_event_pump: event_pump,
-            sdl_mouse_pos: (0.0, 0.0),
+            sdl_mouse_pos: (0, 0),
             sdl_mods: Mods::NONE,
             sdl_xkb_ctx: context,
             sdl_xkb_keymap: keymap,
             sdl_xkb_keymap_name: km_name,
             sdl_xkb_state: state,
             sdl_user_fds: None,
+            sdl_window_id_map: Arc::new(RwLock::new(Vec::with_capacity(1))),
         })
+    }
+
+    /// SDL hands us events that are identified by a window_id to tell us
+    /// which SDL toplevel surface the event was delivered on. We need to
+    /// turn this into our OutputId for the Output or VirtualOutput that
+    /// we should queue this event up on.
+    fn get_output_from_sdl_id(&self, window_id: u32) -> (u32, OutputId, OutputId) {
+        self.sdl_window_id_map
+            .read()
+            .unwrap()
+            .iter()
+            .find(|e| e.0 == window_id)
+            .expect(&format!(
+                "Could not find output corresponding to SDL window id {}",
+                window_id
+            ))
+            .clone()
     }
 
     /// Returns Result<bool, DakotaError>, true if we should terminate
     fn handle_event(
         &mut self,
-        evsys: &mut EventSystem,
-        dom: &DakotaDOM,
+        global_evsys: &mut GlobalEventSystem,
+        output_queues: &mut ll::Component<OutputEventSystem>,
+        platform_queues: &mut ll::Component<PlatformEventSystem>,
         raw_event: Option<Event>,
-    ) -> std::result::Result<bool, DakotaError> {
-        let mut needs_redraw = false;
-
+    ) -> Result<()> {
         // raw_event will be Some if we have a valid SDL event
         if let Some(event) = raw_event {
+            // First get the event queues for the window reported by this event
+            let (mut output_evsys, mut platform_evsys) = match event {
+                Event::KeyDown { window_id, .. }
+                | Event::KeyUp { window_id, .. }
+                | Event::MouseButtonDown { window_id, .. }
+                | Event::MouseButtonUp { window_id, .. }
+                | Event::MouseWheel { window_id, .. }
+                | Event::MouseMotion { window_id, .. }
+                | Event::Window { window_id, .. } => {
+                    // A window ID of zero is invalid in SDL, we should log this event
+                    // and skip it
+                    // https://wiki.libsdl.org/SDL3/SDL_GetWindowID
+                    if window_id == 0 {
+                        log::error!("SDL Event with invalid window_id {:?}", event);
+                        return Ok(());
+                    }
+
+                    let (_, output_id, virtual_id) = self.get_output_from_sdl_id(window_id);
+
+                    (
+                        Some(output_queues.get_mut(&output_id).unwrap()),
+                        Some(platform_queues.get_mut(&virtual_id).unwrap()),
+                    )
+                }
+                _ => (None, None),
+            };
+
+            // Now we can handle the event and record its events in its queue
             match event {
                 // Tell the window to exit if the user closed it
-                Event::Quit { .. } => evsys.add_event_window_closed(dom),
+                Event::Quit { .. } => global_evsys.add_event_quit(),
                 // Here we record events for our keystrokes
                 //
                 // This requires converting the raw keycodes from sdl2 into an
@@ -118,11 +160,18 @@ impl SDL2Plat {
                     self.update_xkb_from_scancode(scancode.unwrap(), xkb::KeyDirection::Down);
                     let (raw, utf) = self.get_utf8_from_key(scancode.unwrap());
 
-                    evsys.add_event_key_down(key, utf, RawKeycode::Linux(raw));
+                    platform_evsys.as_mut().unwrap().add_event_key_down(
+                        key,
+                        utf,
+                        RawKeycode::Linux(raw),
+                    );
 
                     if mods != self.sdl_mods {
                         self.sdl_mods = mods;
-                        evsys.add_event_keyboard_modifiers(mods);
+                        platform_evsys
+                            .as_mut()
+                            .unwrap()
+                            .add_event_keyboard_modifiers(mods);
                     }
                 }
                 Event::KeyUp {
@@ -136,7 +185,7 @@ impl SDL2Plat {
                     self.update_xkb_from_scancode(scancode.unwrap(), xkb::KeyDirection::Up);
                     let (raw, _) = self.get_utf8_from_key(scancode.unwrap());
 
-                    evsys.add_event_key_up(
+                    platform_evsys.as_mut().unwrap().add_event_key_up(
                         key,
                         String::with_capacity(0), // no utf8 characters are generated for lifting a key
                         RawKeycode::Linux(raw),
@@ -144,34 +193,45 @@ impl SDL2Plat {
 
                     if mods != self.sdl_mods {
                         self.sdl_mods = mods;
-                        evsys.add_event_keyboard_modifiers(mods);
+                        platform_evsys
+                            .as_mut()
+                            .unwrap()
+                            .add_event_keyboard_modifiers(mods);
                     }
                 }
                 // handle pointer inputs. This just looks like the above keyboard
                 Event::MouseButtonDown { mouse_btn, .. } => {
                     let button = convert_sdl_mouse_to_dakota(mouse_btn);
-                    evsys.add_event_mouse_button_down(button);
+                    platform_evsys
+                        .as_mut()
+                        .unwrap()
+                        .add_event_mouse_button_down(button);
                 }
                 Event::MouseButtonUp { mouse_btn, .. } => {
                     let button = convert_sdl_mouse_to_dakota(mouse_btn);
-                    evsys.add_event_mouse_button_up(button);
+                    platform_evsys
+                        .as_mut()
+                        .unwrap()
+                        .add_event_mouse_button_up(button);
                 }
-                Event::MouseWheel { x, y, .. } => evsys.add_event_scroll(
-                    // reverse the scroll direction
-                    Some(x as f64 * SCROLL_SENSITIVITY * -1.0),
-                    Some(y as f64 * SCROLL_SENSITIVITY * -1.0),
-                    (0.0, 0.0), // v120 value unspecified
-                    AxisSource::Wheel,
-                ),
+                Event::MouseWheel { x, y, .. } => {
+                    platform_evsys.as_mut().unwrap().add_event_scroll(
+                        // reverse the scroll direction
+                        Some((x as f64 * SCROLL_SENSITIVITY * -1.0) as i32),
+                        Some((y as f64 * SCROLL_SENSITIVITY * -1.0) as i32),
+                        (0.0, 0.0), // v120 value unspecified
+                        AxisSource::Wheel,
+                    )
+                }
                 Event::MouseMotion { x, y, .. } => {
-                    evsys.add_event_mouse_move(
-                        x as f64 - self.sdl_mouse_pos.0,
-                        y as f64 - self.sdl_mouse_pos.1,
-                    );
+                    platform_evsys
+                        .as_mut()
+                        .unwrap()
+                        .add_event_mouse_move(x - self.sdl_mouse_pos.0, y - self.sdl_mouse_pos.1);
 
                     // Update our mouse position
-                    self.sdl_mouse_pos.0 = x as f64;
-                    self.sdl_mouse_pos.1 = y as f64;
+                    self.sdl_mouse_pos.0 = x;
+                    self.sdl_mouse_pos.1 = y;
                 }
 
                 // Now we have window events. There's really only one we need to
@@ -179,17 +239,13 @@ impl SDL2Plat {
                 // going to check for OUT_OF_DATE, but it's possible that the toolkit
                 // (SDL) might need refreshing while libvulkan doesn't yet know about
                 // it.
-                Event::Window {
-                    timestamp: _,
-                    window_id: _,
-                    win_event,
-                } => match win_event {
-                    // check redraw requested?
-                    WindowEvent::Resized { .. } => return Err(DakotaError::OUT_OF_DATE),
-                    WindowEvent::SizeChanged { .. } => return Err(DakotaError::OUT_OF_DATE),
+                Event::Window { win_event, .. } => match win_event {
+                    WindowEvent::Close => output_evsys.as_mut().unwrap().add_event_destroyed(),
+                    WindowEvent::Resized { .. } | WindowEvent::SizeChanged { .. } => {
+                        output_evsys.as_mut().unwrap().add_event_resized();
+                    }
                     WindowEvent::Exposed { .. } => {
-                        evsys.add_event_window_needs_redraw();
-                        needs_redraw = true;
+                        output_evsys.as_mut().unwrap().add_event_redraw();
                     }
                     _ => {}
                 },
@@ -197,7 +253,7 @@ impl SDL2Plat {
             }
         }
 
-        Ok(needs_redraw)
+        Ok(())
     }
 
     /// Update this platform's internal xkbcommon state representing that
@@ -239,7 +295,11 @@ impl Platform for SDL2Plat {
     ///
     /// This creates a new window output with our winsys, we can
     /// then use this with a Thundr `Display`.
-    fn create_output(&mut self) -> Result<Box<dyn OutputPlatform>> {
+    fn create_output(
+        &mut self,
+        id: OutputId,
+        virtual_output_id: OutputId,
+    ) -> Result<Box<dyn OutputPlatform>> {
         let video_subsystem = self.sdl.video().unwrap();
         let window = video_subsystem
             .window("dakota", 640, 480)
@@ -248,10 +308,25 @@ impl Platform for SDL2Plat {
             .position_centered()
             .build()?;
 
+        // Record this in our map
+        log::debug!("adding SDL window id {}", window.id());
+        self.sdl_window_id_map
+            .write()
+            .unwrap()
+            .push((window.id(), id, virtual_output_id));
+
         Ok(Box::new(SDL2Window {
             sdl_video_sys: video_subsystem,
             sdl_window: window,
+            sdl_window_id_map: self.sdl_window_id_map.clone(),
         }))
+    }
+
+    /// Create a new virtual window
+    ///
+    /// This may fail if the platform only supports one virtual surface
+    fn create_virtual_output(&mut self) -> bool {
+        true
     }
 
     /// Add a watch descriptor to our list. This will cause the platform's
@@ -269,19 +344,15 @@ impl Platform for SDL2Plat {
 
     /// Run the event loop for this platform
     ///
-    /// Returns true if we should redraw the app due to an out of
-    /// date swapchain.
-    ///
     /// Block and handle all available events from SDL2. If timeout
     /// is specified it will be passed to SDL's wait_event_timeout function.
     fn run(
         &mut self,
-        evsys: &mut EventSystem,
-        dom: &DakotaDOM,
+        global_evsys: &mut GlobalEventSystem,
+        output_evsys: &mut ll::Component<OutputEventSystem>,
+        platform_evsys: &mut ll::Component<PlatformEventSystem>,
         timeout: Option<usize>,
-    ) -> std::result::Result<bool, DakotaError> {
-        let mut needs_redraw = false;
-
+    ) -> Result<()> {
         // There are two modes we need to consider for polling for SDL events, since
         // it doesn't follow a unix style: 1) if we are waiting for just SDL, 2) if we
         // are waiting for SDL and some file descriptors
@@ -295,14 +366,14 @@ impl Platform for SDL2Plat {
             loop {
                 // Wait for the first readable fd
                 if fds.wait_for_events(Some(1)) {
-                    evsys.add_event_user_fd();
+                    global_evsys.add_event_user_fd();
                     break;
                 }
 
                 // Or wait for the first SDL event
                 let ev = self.sdl_event_pump.poll_event();
                 if let Some(ev) = ev {
-                    needs_redraw |= self.handle_event(evsys, dom, Some(ev))?;
+                    self.handle_event(global_evsys, output_evsys, platform_evsys, Some(ev))?;
                     break;
                 }
 
@@ -317,33 +388,59 @@ impl Platform for SDL2Plat {
                 // If not, then just return without handling.
                 Some(timeout) => match self.sdl_event_pump.wait_event_timeout(timeout as u32) {
                     Some(event) => event,
-                    None => return Ok(needs_redraw),
+                    None => return Ok(()),
                 },
                 // No timeout was given, so we wait indefinitely
                 None => self.sdl_event_pump.wait_event(),
             };
-            needs_redraw |= self.handle_event(evsys, dom, Some(ev))?;
+            self.handle_event(global_evsys, output_evsys, platform_evsys, Some(ev))?;
         }
 
         // Now drain the available events before returning
         // control to the main dakota dispatch loop.
         let mut events: Vec<_> = self.sdl_event_pump.poll_iter().collect();
         for event in events.drain(..) {
-            needs_redraw |= self.handle_event(evsys, dom, Some(event))?;
+            self.handle_event(global_evsys, output_evsys, platform_evsys, Some(event))?;
         }
 
-        return Ok(needs_redraw);
+        return Ok(());
+    }
+
+    fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType> {
+        Ok(th::SurfaceType::SDL2)
+    }
+}
+
+/// Single SDL2 window
+pub struct SDL2Window {
+    sdl_video_sys: sdl2::VideoSubsystem,
+    sdl_window: sdl2::video::Window,
+    /// This maps a SDL window_id to the OutputIds of our Output
+    /// and VirtualOutput that events should be delivered one.
+    /// The format is `(SDL window_id, Output, VirtualOutput)`.
+    sdl_window_id_map: Arc<RwLock<Vec<(u32, OutputId, OutputId)>>>,
+}
+
+impl Drop for SDL2Window {
+    fn drop(&mut self) {
+        // Remove this window from our tracking list
+        let window_id = self.sdl_window.id();
+        log::debug!("removing SDL window id {}", window_id);
+        self.sdl_window_id_map
+            .write()
+            .unwrap()
+            .retain(|e| e.0 != window_id);
     }
 }
 
 impl OutputPlatform for SDL2Window {
-    /// Get the thundr surface type that this platform should use.
+    /// Get the thundr winsys info that this platform should use.
     ///
     /// This is where we share our window system object pointers that
     /// Thundr will consume when it creates a `Dispaly` that draws to
     /// this output.
-    fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType> {
-        Ok(th::SurfaceType::SDL2(&self.sdl_video_sys, &self.sdl_window))
+    fn get_th_window_info<'a>(&self) -> Result<th::WindowInfo> {
+        Ok(th::WindowInfo::SDL2(&self.sdl_video_sys, &self.sdl_window))
     }
 
     /// Set the dimensions of this window

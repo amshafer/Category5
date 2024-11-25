@@ -11,7 +11,7 @@ use quick_xml::Reader;
 
 use crate::utils::anyhow;
 use crate::{dom, font};
-use crate::{Context, Dakota, DakotaId, DakotaObjectType, Result};
+use crate::{Context, DakotaId, DakotaObjectType, Result, Scene};
 
 use std::collections::HashMap;
 use std::io::BufRead;
@@ -26,11 +26,10 @@ use utils::log;
 ///
 /// These fields correspond to the identically named variants in Dakota.
 pub(crate) struct ParserTransaction<'a> {
-    pt_display: &'a mut th::Display,
+    pt_dev: &'a th::Device,
     pt_ecs_inst: ll::Instance,
     pt_resource_ecs_inst: ll::Instance,
     pt_node_types: ll::Snapshot<'a, DakotaObjectType>,
-    pt_dom: ll::Snapshot<'a, dom::DakotaDOM>,
     pt_resource_hints: ll::Snapshot<'a, dom::Hints>,
     pt_resources: ll::Snapshot<'a, DakotaId>,
     pt_resource_thundr_image: ll::Snapshot<'a, th::Image>,
@@ -290,7 +289,6 @@ impl<'a> ParserTransaction<'a> {
         // drop all locks to avoid deadlocking for ids that
         // get invalidated and try to free their data
         self.pt_node_types.precommit();
-        self.pt_dom.precommit();
         self.pt_resource_hints.precommit();
         self.pt_resources.precommit();
         self.pt_resource_thundr_image.precommit();
@@ -314,7 +312,6 @@ impl<'a> ParserTransaction<'a> {
 
         // Now we can commit
         self.pt_node_types.commit();
-        self.pt_dom.commit();
         self.pt_resource_hints.commit();
         self.pt_resources.commit();
         self.pt_resource_thundr_image.commit();
@@ -334,16 +331,8 @@ impl<'a> ParserTransaction<'a> {
 
     // Similar to main Dakota functions. These here hook into common creation logic
     // --------------------------------------------------------------------------
-    fn create_dakota_dom(&mut self) -> Result<DakotaId> {
-        Dakota::create_new_id_common(
-            &mut self.pt_ecs_inst,
-            &mut self.pt_node_types,
-            DakotaObjectType::DakotaDOM,
-        )
-    }
-
     fn create_element(&mut self) -> Result<DakotaId> {
-        Dakota::create_new_id_common(
+        Scene::create_new_id_common(
             &mut self.pt_ecs_inst,
             &mut self.pt_node_types,
             DakotaObjectType::Element,
@@ -351,7 +340,7 @@ impl<'a> ParserTransaction<'a> {
     }
 
     fn create_font(&mut self) -> Result<DakotaId> {
-        Dakota::create_new_id_common(
+        Scene::create_new_id_common(
             &mut self.pt_ecs_inst,
             &mut self.pt_node_types,
             DakotaObjectType::Font,
@@ -359,11 +348,11 @@ impl<'a> ParserTransaction<'a> {
     }
 
     fn add_child_to_element(&mut self, parent: &DakotaId, child: DakotaId) {
-        Dakota::add_child_to_element_internal(&mut self.pt_children, parent, child);
+        Scene::add_child_to_element_internal(&mut self.pt_children, parent, child);
     }
 
     fn define_font(&mut self, id: &DakotaId, font: dom::Font) {
-        Dakota::define_font_internal(
+        Scene::define_font_internal(
             &mut self.pt_font_instances,
             &mut self.pt_fonts,
             &self.pt_freetype,
@@ -379,8 +368,8 @@ impl<'a> ParserTransaction<'a> {
         file_path: &std::path::Path,
         format: dom::Format,
     ) -> Result<()> {
-        Dakota::define_resource_from_image_internal(
-            &mut self.pt_display,
+        Scene::define_resource_from_image_internal(
+            &mut self.pt_dev,
             &mut self.pt_resource_thundr_image,
             &self.pt_resource_color,
             res,
@@ -396,18 +385,11 @@ impl<'a> ParserTransaction<'a> {
     fn needs_new_id(&mut self, node: &Element) -> Result<Option<DakotaId>> {
         match node {
             Element::FontDefinition(_, _, _, _, _) => Ok(Some(self.create_font()?)),
-            Element::El {
-                x: _,
-                y: _,
-                width: _,
-                height: _,
-            }
-            | Element::Layout => Ok(Some(self.create_element()?)),
-            Element::Dakota {
-                version: _,
-                window: _,
-                root_element: _,
-            } => Ok(Some(self.create_dakota_dom()?)),
+            Element::El { .. }
+            | Element::Layout
+            // create a dummy element Id for the toplevel dakota object to help
+            // keep the parsing logic easy. It will not be used.
+            | Element::Dakota {..} => Ok(Some(self.create_element()?)),
             _ => Ok(None),
         }
     }
@@ -424,7 +406,7 @@ impl<'a> ParserTransaction<'a> {
 
         if !name_to_id_map.contains_key(name) {
             let res = match is_font {
-                true => Dakota::create_new_id_common(
+                true => Scene::create_new_id_common(
                     &mut self.pt_ecs_inst,
                     &mut self.pt_node_types,
                     DakotaObjectType::Font,
@@ -909,7 +891,7 @@ impl<'a> ParserTransaction<'a> {
     /// Parse a quick_xml stream into a Dakota DOM tree
     ///
     /// This initializes our elements to be later processed into layout nodes.
-    fn parse_xml<R: BufRead>(&mut self, reader: &mut Reader<R>) -> Result<DakotaId> {
+    fn parse_xml<R: BufRead>(&mut self, reader: &mut Reader<R>) -> Result<dom::DakotaDOM> {
         let mut buf = Vec::new();
 
         // The DakotaId we are currently populating
@@ -949,32 +931,28 @@ impl<'a> ParserTransaction<'a> {
 
                     // Pop our parent node info back into focus
                     match stack.pop() {
-                        // If we have reached the end break from our loop
+                        // If we have finished the dakota element then we can return
                         Some((None, None)) | None => {
                             // The Dakota object is our toplevel object. Since we are
                             // done processing here the old_* variables will be our DOM,
-                            // which we need to add to our ECS
                             match old_node {
                                 Some(Element::Dakota {
                                     version,
                                     window,
                                     root_element,
                                 }) => {
-                                    self.pt_dom.set(
-                                        old_id.as_ref().unwrap(),
-                                        dom::DakotaDOM {
-                                            version: version
-                                                .clone()
-                                                .ok_or(anyhow!("Dakota missing field version"))?,
-                                            window: window
-                                                .clone()
-                                                .ok_or(anyhow!("Dakota missing field version"))?,
-                                            root_element: root_element
-                                                .clone()
-                                                .ok_or(anyhow!("Dakota missing field version"))?,
-                                        },
-                                    );
-                                    break;
+                                    // Return a DOM object
+                                    return Ok(dom::DakotaDOM {
+                                        version: version
+                                            .clone()
+                                            .ok_or(anyhow!("Dakota missing field version"))?,
+                                        window: window
+                                            .clone()
+                                            .ok_or(anyhow!("Dakota missing field version"))?,
+                                        root_element: root_element
+                                            .clone()
+                                            .ok_or(anyhow!("Dakota missing field version"))?,
+                                    });
                                 }
                                 _ => {
                                     return Err(anyhow!(
@@ -983,6 +961,7 @@ impl<'a> ParserTransaction<'a> {
                                 }
                             };
                         }
+                        // Update our current node with the popped value
                         Some((i, n)) => {
                             id = i;
                             node = n;
@@ -1025,25 +1004,21 @@ impl<'a> ParserTransaction<'a> {
             buf.clear();
         }
 
-        match ret {
-            Some(val) => Ok(val),
-            None => Err(anyhow!("Error: no elements found in XML")),
-        }
+        return Err(anyhow!("Error: no elements found in XML"));
     }
 }
 
-impl Dakota {
+impl Scene {
     /// Parse a quick_xml stream into a Dakota DOM tree
     ///
     /// This initializes our elements to be later processed into layout nodes.
-    fn parse_xml<R: BufRead>(&mut self, reader: &mut Reader<R>) -> Result<DakotaId> {
+    fn parse_xml<R: BufRead>(&mut self, reader: &mut Reader<R>) -> Result<()> {
         let mut trans = ParserTransaction {
-            pt_display: &mut self.d_display,
+            pt_dev: &self.d_dev,
             pt_ecs_inst: self.d_ecs_inst.clone(),
             pt_resource_ecs_inst: self.d_resource_ecs_inst.clone(),
             pt_node_types: self.d_node_types.snapshot(),
             pt_resources: self.d_resources.snapshot(),
-            pt_dom: self.d_dom.snapshot(),
             pt_resource_hints: self.d_resource_hints.snapshot(),
             pt_resource_thundr_image: self.d_resource_thundr_image.snapshot(),
             pt_resource_color: self.d_resource_color.snapshot(),
@@ -1065,17 +1040,18 @@ impl Dakota {
             pt_unbounded_subsurf: self.d_unbounded_subsurf.snapshot(),
         };
 
-        let res = trans.parse_xml(reader)?;
+        self.d_dom = Some(trans.parse_xml(reader)?);
+        trans.precommit();
         trans.commit();
 
-        Ok(res)
+        Ok(())
     }
 
     /// Parse a string of Dakota XML
     ///
     /// This provides a way to initialize a full application view from a
     /// string of XML.
-    pub fn load_xml_str(&mut self, xml: &str) -> Result<DakotaId> {
+    pub fn load_xml_str(&mut self, xml: &str) -> Result<()> {
         let mut reader = Reader::from_str(xml);
         reader.trim_text(true);
 
@@ -1087,7 +1063,7 @@ impl Dakota {
     ///
     /// This provides a way to initialize a full application view from a
     /// arbitrary reader type that serves XML.
-    pub fn load_xml_reader<B: BufRead>(&mut self, reader: B) -> Result<DakotaId> {
+    pub fn load_xml_reader<B: BufRead>(&mut self, reader: B) -> Result<()> {
         let mut reader = Reader::from_reader(reader);
         reader.trim_text(true);
 
