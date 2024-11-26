@@ -78,6 +78,8 @@ pub struct Display {
     /// Application specific stuff that will be set up after
     /// the original initialization
     pub(crate) d_pipe: GeomPipeline,
+    /// Image ECS cloned from Thundr
+    pub(crate) d_image_ecs: ll::Instance,
 }
 
 /// Our Swapchain Backend
@@ -144,7 +146,7 @@ impl Display {
         }
     }
 
-    pub fn new(info: &CreateInfo, dev: Arc<Device>, tmp_image: Image) -> Result<Display> {
+    pub fn new(info: &CreateInfo, dev: Arc<Device>, image_ecs: ll::Instance) -> Result<Display> {
         unsafe {
             let swapchain = Self::initialize_swapchain(info, dev.clone())?;
             let queue_family = swapchain.select_queue_family()?;
@@ -180,14 +182,28 @@ impl Display {
                 d_images: Vec::with_capacity(0),
             };
 
-            let pipe = GeomPipeline::new(dev.clone(), &dstate, tmp_image)?;
+            let pipe = GeomPipeline::new(dev.clone(), &dstate)?;
 
             let mut ret = Self {
                 d_dev: dev,
                 d_swapchain: swapchain,
                 d_state: dstate,
                 d_pipe: pipe,
+                d_image_ecs: image_ecs,
             };
+
+            // Add a dummy image to the pipeline
+            let pixels: Vec<u8> = std::iter::repeat(0).take(4 * 4 * 4).collect();
+            let tmp_image = ret
+                .create_image_from_bits(
+                    pixels.as_slice(),
+                    4, // width of texture
+                    4, // height of texture
+                    4, // stride
+                    None,
+                )
+                .unwrap();
+            ret.d_pipe.set_tmp_image(tmp_image);
 
             // Trigger the creation of our swapchain images and pipeline framebuffers
             ret.handle_ood()?;

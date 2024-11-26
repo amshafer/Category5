@@ -115,7 +115,7 @@ pub(crate) struct LayoutTransaction<'a> {
     lt_heights: ll::Snapshot<'a, dom::Value>,
     lt_children: ll::Snapshot<'a, Vec<DakotaId>>,
     lt_font_instances: &'a mut Vec<(dom::Font, FontInstance)>,
-    lt_thund: &'a mut th::Thundr,
+    lt_display: &'a mut th::Display,
 }
 
 impl<'a> Drop for LayoutTransaction<'a> {
@@ -543,7 +543,7 @@ impl<'a> LayoutTransaction<'a> {
                         // This must be called to initialize the glyphs before we do
                         // the layout and line splitting.
                         run.cache = Some(font_inst.initialize_cached_chars(
-                            &mut self.lt_thund,
+                            &mut self.lt_display,
                             &mut self.lt_ecs_inst,
                             &mut self.lt_glyphs,
                             &trim,
@@ -561,7 +561,7 @@ impl<'a> LayoutTransaction<'a> {
                     // We will create a whole bunch of sub-nodes which will be assigned
                     // glyph ids. These ids will later be used to get surfaces for.
                     font_inst.layout_text(
-                        &mut self.lt_thund,
+                        &mut self.lt_display,
                         &mut cursor,
                         run.cache.as_ref().unwrap(),
                         &mut |_inst: &mut FontInstance, _thund, curse, ch| {
@@ -739,7 +739,7 @@ impl Dakota {
             lt_offsets: self.d_offsets.snapshot(),
             lt_children: self.d_children.snapshot(),
             lt_font_instances: &mut self.d_font_instances,
-            lt_thund: &mut self.d_thund,
+            lt_display: &mut self.d_display,
         };
 
         trans.calculate_sizes(

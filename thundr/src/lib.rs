@@ -37,7 +37,7 @@
 //!
 //! let pixels: Vec<u8> = std::iter::repeat(128).take(4 * 64 * 64).collect();
 //! // Create an image from our MemImage
-//! let image = thund
+//! let image = display
 //!     .create_image_from_bits(
 //!         pixels.as_slice(),
 //!         64, // width of texture
@@ -350,19 +350,7 @@ impl Thundr {
     /// system or a physical display. Display abstracts away the swapchain platform
     /// and holds the drawing commands.
     pub fn get_display(&mut self, info: &CreateInfo) -> Result<Display> {
-        let pixels: Vec<u8> = std::iter::repeat(0).take(4 * 4 * 4).collect();
-        // Create an image from our MemImage
-        let tmp_image = self
-            .create_image_from_bits(
-                pixels.as_slice(),
-                4, // width of texture
-                4, // height of texture
-                4, // stride
-                None,
-            )
-            .unwrap();
-
-        Display::new(info, self.th_dev.clone(), tmp_image)
+        Display::new(info, self.th_dev.clone(), self.th_image_ecs.clone())
     }
 
     /// Update an existing image from a shm buffer

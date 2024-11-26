@@ -26,7 +26,7 @@ use utils::log;
 ///
 /// These fields correspond to the identically named variants in Dakota.
 pub(crate) struct ParserTransaction<'a> {
-    pt_thund: &'a mut th::Thundr,
+    pt_display: &'a mut th::Display,
     pt_ecs_inst: ll::Instance,
     pt_resource_ecs_inst: ll::Instance,
     pt_node_types: ll::Snapshot<'a, DakotaObjectType>,
@@ -380,7 +380,7 @@ impl<'a> ParserTransaction<'a> {
         format: dom::Format,
     ) -> Result<()> {
         Dakota::define_resource_from_image_internal(
-            &mut self.pt_thund,
+            &mut self.pt_display,
             &mut self.pt_resource_thundr_image,
             &self.pt_resource_color,
             res,
@@ -1038,7 +1038,7 @@ impl Dakota {
     /// This initializes our elements to be later processed into layout nodes.
     fn parse_xml<R: BufRead>(&mut self, reader: &mut Reader<R>) -> Result<DakotaId> {
         let mut trans = ParserTransaction {
-            pt_thund: &mut self.d_thund,
+            pt_display: &mut self.d_display,
             pt_ecs_inst: self.d_ecs_inst.clone(),
             pt_resource_ecs_inst: self.d_resource_ecs_inst.clone(),
             pt_node_types: self.d_node_types.snapshot(),

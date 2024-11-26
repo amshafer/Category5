@@ -575,7 +575,7 @@ impl Dakota {
     }
 
     pub(crate) fn define_resource_from_image_internal(
-        thund: &mut th::Thundr,
+        display: &mut th::Display,
         resource_thundr_image: &mut ll::Snapshot<th::Image>,
         resource_color: &ll::Snapshot<dom::Color>,
         res: &DakotaId,
@@ -595,7 +595,7 @@ impl Dakota {
         let pixels: Vec<u8> = img.into_vec();
 
         Self::define_resource_from_bits_internal(
-            thund,
+            display,
             resource_thundr_image,
             resource_color,
             res,
@@ -620,7 +620,7 @@ impl Dakota {
         let mut images = self.d_resource_thundr_image.snapshot();
         let mut colors = self.d_resource_color.snapshot();
         let res = Self::define_resource_from_image_internal(
-            &mut self.d_thund,
+            &mut self.d_display,
             &mut images,
             &colors,
             res,
@@ -677,7 +677,7 @@ impl Dakota {
         let mut images = &mut self.d_resource_thundr_image.snapshot();
         let mut colors = self.d_resource_color.snapshot();
         let res = Self::define_resource_from_bits_internal(
-            &mut self.d_thund,
+            &mut self.d_display,
             &mut images,
             &colors,
             res,
@@ -695,7 +695,7 @@ impl Dakota {
     }
 
     fn define_resource_from_bits_internal(
-        thund: &mut th::Thundr,
+        display: &mut th::Display,
         resource_thundr_image: &mut ll::Snapshot<th::Image>,
         resource_color: &ll::Snapshot<dom::Color>,
         res: &DakotaId,
@@ -714,7 +714,7 @@ impl Dakota {
         }
 
         // create a thundr image for each resource
-        let image = thund
+        let image = display
             .create_image_from_bits(data, width, height, stride, None)
             .context("Could not create Image resources")?;
 
@@ -773,7 +773,7 @@ impl Dakota {
         }
 
         let image = self
-            .d_thund
+            .d_display
             .create_image_from_dmabuf(dmabuf, release_info)
             .context("Could not create Image resources")?;
 

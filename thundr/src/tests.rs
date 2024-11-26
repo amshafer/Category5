@@ -41,7 +41,7 @@ fn init_thundr() -> (th::Thundr, th::Display) {
 
 #[test]
 fn basic_image() {
-    let (mut thund, mut display) = init_thundr();
+    let (mut _thund, mut display) = init_thundr();
     let res = display.get_resolution();
     let viewport = th::Viewport::new(0, 0, res.0 as i32, res.1 as i32);
 
@@ -50,7 +50,7 @@ fn basic_image() {
     let u_size = size as usize;
     let pixels: Vec<u8> = std::iter::repeat(128).take(4 * u_size * u_size).collect();
     // Create an image from our MemImage
-    let image = thund
+    let image = display
         .create_image_from_bits(
             pixels.as_slice(),
             size, // width of texture
@@ -134,7 +134,7 @@ fn many_colors() {
 
 #[test]
 fn redraw() {
-    let (mut thund, mut display) = init_thundr();
+    let (mut _thund, mut display) = init_thundr();
     let res = display.get_resolution();
     let viewport = th::Viewport::new(0, 0, res.0 as i32, res.1 as i32);
 
@@ -143,7 +143,7 @@ fn redraw() {
     let u_size = size as usize;
     let pixels: Vec<u8> = std::iter::repeat(128).take(4 * u_size * u_size).collect();
     // Create an image from our MemImage
-    let image = thund
+    let image = display
         .create_image_from_bits(
             pixels.as_slice(),
             size, // width of texture

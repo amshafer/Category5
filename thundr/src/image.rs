@@ -8,8 +8,7 @@ extern crate nix;
 
 use super::device::Device;
 use crate::descpool::Descriptor;
-use crate::Thundr;
-use crate::{Damage, Droppable, Result, ThundrError};
+use crate::{Damage, Display, Droppable, Result, ThundrError};
 use utils::log;
 use utils::region::Rect;
 
@@ -633,7 +632,7 @@ impl Device {
     }
 }
 
-impl Thundr {
+impl Display {
     /// create_image_from_bits
     ///
     /// A stride of zero implies tightly packed data
@@ -660,9 +659,9 @@ impl Thundr {
         //);
 
         // This image will back the contents of the on-screen client window.
-        let (image, view, img_mem) = self.th_dev.alloc_bgra8_image(&tex_res);
+        let (image, view, img_mem) = self.d_dev.alloc_bgra8_image(&tex_res);
 
-        self.th_dev
+        self.d_dev
             .update_image_from_data(image, data, width, height, stride)?;
 
         return self.create_image_common(
@@ -687,7 +686,7 @@ impl Thundr {
         release_info: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Result<Image> {
         let (image, view, image_memory) = Device::create_image_from_dmabuf_internal(
-            &self.th_dev,
+            &self.d_dev,
             dmabuf,
             vk::ImageUsageFlags::SAMPLED,
         )?;
@@ -724,10 +723,10 @@ impl Thundr {
         is_dmabuf: bool,
         release: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Result<Image> {
-        let descriptor = self.th_dev.create_new_image_descriptor(view);
+        let descriptor = self.d_dev.create_new_image_descriptor(view);
 
         let image_vk = Arc::new(ImageVk {
-            iv_dev: self.th_dev.clone(),
+            iv_dev: self.d_dev.clone(),
             iv_is_dmabuf: is_dmabuf,
             iv_image: image,
             iv_image_view: view,
@@ -737,7 +736,7 @@ impl Thundr {
             iv_desc: descriptor,
         });
 
-        let id = self.th_image_ecs.add_entity();
+        let id = self.d_image_ecs.add_entity();
         let internal = ImageInternal {
             i_priv: private,
             i_opaque: None,
@@ -745,7 +744,7 @@ impl Thundr {
         };
 
         // Add our vulkan resources to the ECS
-        self.th_dev.d_image_vk.set(&id, image_vk);
+        self.d_dev.d_image_vk.set(&id, image_vk);
 
         return Ok(Image {
             i_id: id,

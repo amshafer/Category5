@@ -87,7 +87,7 @@ pub struct GeomPipeline {
     index_buffer: vk::Buffer,
     index_buffer_memory: vk::DeviceMemory,
     /// Placeholder image for when the surface doesn't have one
-    tmp_image: Image,
+    tmp_image: Option<Image>,
 }
 
 /// Contiains a vertex and all its related data
@@ -251,7 +251,7 @@ impl Pipeline for GeomPipeline {
                 .image_vk
                 .get(match image {
                     Some(img) => &img.i_id,
-                    None => &self.tmp_image.i_id,
+                    None => &self.tmp_image.as_ref().unwrap().i_id,
                 })
                 .expect("Image does not have ImageVK");
 
@@ -413,6 +413,14 @@ impl GeomPipeline {
         );
     }
 
+    /// Set our temporary image
+    ///
+    /// This has to be done later since we need a Display to initialize this
+    /// Image but this GeomPipeline is created first.
+    pub fn set_tmp_image(&mut self, tmp_image: Image) {
+        self.tmp_image = Some(tmp_image);
+    }
+
     /// Create a descriptor pool for the uniform buffer
     ///
     /// All other dynamic sets are tracked using a DescPool. This pool
@@ -440,7 +448,7 @@ impl GeomPipeline {
     /// shaders, geometry, and the like.
     ///
     /// This fills in the GeomPipeline struct in the Renderer
-    pub fn new(dev: Arc<Device>, dstate: &DisplayState, tmp_image: Image) -> Result<GeomPipeline> {
+    pub fn new(dev: Arc<Device>, dstate: &DisplayState) -> Result<GeomPipeline> {
         unsafe {
             let pass = GeomPipeline::create_pass(dstate.d_surface_format.format, &dev);
 
@@ -536,7 +544,7 @@ impl GeomPipeline {
                 vert_count: QUAD_INDICES.len() as u32 * 3,
                 index_buffer: ibuf,
                 index_buffer_memory: imem,
-                tmp_image: tmp_image,
+                tmp_image: None,
             };
 
             // now we need to update the descriptor set with the
