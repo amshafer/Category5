@@ -51,6 +51,7 @@ fn basic_image() {
     let pixels: Vec<u8> = std::iter::repeat(128).take(4 * u_size * u_size).collect();
     // Create an image from our MemImage
     let image = display
+        .d_dev
         .create_image_from_bits(
             pixels.as_slice(),
             size, // width of texture
@@ -144,6 +145,7 @@ fn redraw() {
     let pixels: Vec<u8> = std::iter::repeat(128).take(4 * u_size * u_size).collect();
     // Create an image from our MemImage
     let image = display
+        .d_dev
         .create_image_from_bits(
             pixels.as_slice(),
             size, // width of texture

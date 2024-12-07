@@ -733,7 +733,7 @@ impl Instance {
     ///
     /// This function allocates a new internal id for the entity, and returns its tracking
     /// structure. There is non-zero time spent to find an old, free id value to recycle.
-    pub fn add_entity(&mut self) -> Entity {
+    pub fn add_entity(&self) -> Entity {
         let new_self = self.clone();
         let mut internal = self.i_internal.write().unwrap();
 

@@ -22,12 +22,15 @@ use crate::{CreateInfo, Damage, DeletionQueue, Droppable, Result, ThundrError};
 use cat5_utils::log;
 
 #[allow(unused_imports)]
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 
 /// Thundr Device
 ///
 /// This holds all of the Vulkan logic for one GPU.
 pub struct Device {
+    /// Image ECS cloned from Thundr
+    pub(crate) d_image_ecs: ll::Instance,
+    /// Our Vulkan Instance
     pub(crate) inst: Arc<Instance>,
     /// the logical device we are using
     pub(crate) dev: ash::Device,
@@ -53,6 +56,8 @@ pub struct Device {
 /// This is the set of per-device data that needs to be "externally synchronized"
 /// according to Vulkan. Also contains any mutable state.
 pub struct DeviceInternal {
+    /// This self (parent Device) reference is used to fill in the ImageVk's device fields
+    pub(crate) d_self: Weak<Device>,
     /// The graphics queue families in use by Renderers created for
     /// this device. These can't actually live here since they are
     /// determined by Displays driven by Renderers, and at Device
@@ -298,7 +303,7 @@ impl Device {
         instance: Arc<Instance>,
         img_ecs: &mut ll::Instance,
         info: &CreateInfo,
-    ) -> Result<Self> {
+    ) -> Result<Arc<Self>> {
         let pdev = Self::select_pdev(&instance.inst);
 
         let transfer_queue_family =
@@ -342,7 +347,8 @@ impl Device {
         #[cfg(feature = "drm")]
         let drm = Self::get_drm_node(&dev_features, &instance, pdev);
 
-        let ret = Self {
+        let ret = Arc::new(Self {
+            d_image_ecs: img_ecs.clone(),
             inst: instance,
             dev: dev,
             dev_features: dev_features,
@@ -350,6 +356,7 @@ impl Device {
             mem_props: mem_props,
             external_mem_fd_loader: ext_mem_loader,
             d_internal: Arc::new(RwLock::new(DeviceInternal {
+                d_self: Weak::new(),
                 graphics_queue_families: Vec::new(),
                 copy_cmd_pool: vk::CommandPool::null(),
                 copy_cbuf: vk::CommandBuffer::null(),
@@ -371,7 +378,7 @@ impl Device {
             d_drm_node: drm,
             #[cfg(feature = "drm")]
             d_drm_events: Arc::new(Mutex::new(Vec::new())),
-        };
+        });
 
         {
             let copy_cmd_pool = ret.create_command_pool(transfer_queue_family);
@@ -379,6 +386,7 @@ impl Device {
             let sampler = ret.create_sampler();
 
             let mut internal = ret.d_internal.write().unwrap();
+            internal.d_self = Arc::downgrade(&ret);
             internal.copy_cmd_pool = copy_cmd_pool;
             internal.copy_cbuf = copy_cbuf;
             internal.image_sampler = sampler;

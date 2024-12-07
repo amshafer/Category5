@@ -86,7 +86,7 @@ fn scene2() {
 #[test]
 fn text() {
     // exception for hidpi laptop screen on linux
-    test_file("text", 400)
+    test_file("text", 0)
 }
 
 #[test]

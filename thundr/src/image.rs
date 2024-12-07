@@ -8,7 +8,7 @@ extern crate nix;
 
 use super::device::Device;
 use crate::descpool::Descriptor;
-use crate::{Damage, Display, Droppable, Result, ThundrError};
+use crate::{Damage, Droppable, Result, ThundrError};
 use utils::log;
 use utils::region::Rect;
 
@@ -630,14 +630,12 @@ impl Device {
             Ok((image, view, image_memory))
         }
     }
-}
 
-impl Display {
     /// create_image_from_bits
     ///
     /// A stride of zero implies tightly packed data
     pub fn create_image_from_bits(
-        &mut self,
+        &self,
         data: &[u8],
         width: u32,
         height: u32,
@@ -659,10 +657,9 @@ impl Display {
         //);
 
         // This image will back the contents of the on-screen client window.
-        let (image, view, img_mem) = self.d_dev.alloc_bgra8_image(&tex_res);
+        let (image, view, img_mem) = self.alloc_bgra8_image(&tex_res);
 
-        self.d_dev
-            .update_image_from_data(image, data, width, height, stride)?;
+        self.update_image_from_data(image, data, width, height, stride)?;
 
         return self.create_image_common(
             ImagePrivate::MemImage,
@@ -681,15 +678,12 @@ impl Display {
     /// contents on an app. It will import the dmabuf
     /// and create an image/view pair representing it.
     pub fn create_image_from_dmabuf(
-        &mut self,
+        &self,
         dmabuf: &Dmabuf,
         release_info: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Result<Image> {
-        let (image, view, image_memory) = Device::create_image_from_dmabuf_internal(
-            &self.d_dev,
-            dmabuf,
-            vk::ImageUsageFlags::SAMPLED,
-        )?;
+        let (image, view, image_memory) =
+            Device::create_image_from_dmabuf_internal(&self, dmabuf, vk::ImageUsageFlags::SAMPLED)?;
 
         return self.create_image_common(
             ImagePrivate::Dmabuf,
@@ -714,7 +708,7 @@ impl Display {
     /// resources the image was made from. It allocates
     /// descriptors and constructs the image struct
     fn create_image_common(
-        &mut self,
+        &self,
         private: ImagePrivate,
         res: &vk::Extent2D,
         image: vk::Image,
@@ -723,10 +717,11 @@ impl Display {
         is_dmabuf: bool,
         release: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Result<Image> {
-        let descriptor = self.d_dev.create_new_image_descriptor(view);
+        let descriptor = self.create_new_image_descriptor(view);
 
         let image_vk = Arc::new(ImageVk {
-            iv_dev: self.d_dev.clone(),
+            // use our device's weak pointer to get an Arc
+            iv_dev: self.d_internal.read().unwrap().d_self.upgrade().unwrap(),
             iv_is_dmabuf: is_dmabuf,
             iv_image: image,
             iv_image_view: view,
@@ -744,7 +739,7 @@ impl Display {
         };
 
         // Add our vulkan resources to the ECS
-        self.d_dev.d_image_vk.set(&id, image_vk);
+        self.d_image_vk.set(&id, image_vk);
 
         return Ok(Image {
             i_id: id,

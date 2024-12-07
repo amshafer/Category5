@@ -715,6 +715,7 @@ impl Dakota {
 
         // create a thundr image for each resource
         let image = display
+            .d_dev
             .create_image_from_bits(data, width, height, stride, None)
             .context("Could not create Image resources")?;
 
@@ -774,6 +775,7 @@ impl Dakota {
 
         let image = self
             .d_display
+            .d_dev
             .create_image_from_dmabuf(dmabuf, release_info)
             .context("Could not create Image resources")?;
 

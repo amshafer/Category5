@@ -181,6 +181,7 @@ impl FontInstance {
 
             Some(
                 display
+                    .d_dev
                     .create_image_from_bits(
                         img.as_slice(),
                         width as u32,
