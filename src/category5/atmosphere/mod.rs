@@ -117,9 +117,7 @@ pub struct Atmosphere {
     /// information about each surface.
     pub a_surface_ecs: ll::Instance,
     // Indexed by SurfaceId -------------------------------------------------------
-    /// The DakotaId for this surface used by vkcomp
-    pub a_dakota_id: ll::Component<dak::DakotaId>,
-    /// is this id in use?
+    // is this id in use?
     pub a_window_in_use: ll::Component<bool>,
     /// The client that created this window
     pub a_owner: ll::Component<ClientId>,
@@ -237,9 +235,9 @@ impl Atmosphere {
     /// One subsystem must be setup as index 0 and the other
     /// as index 1
     pub fn new(dakota: &dak::Dakota) -> Atmosphere {
+        let mut surf_ecs = dakota.get_ecs_instance();
         let mut resource_ecs = dakota.get_resource_ecs_instance();
         let mut client_ecs = ll::Instance::new();
-        let mut surf_ecs = ll::Instance::new();
 
         Atmosphere {
             a_cursor_pos: (0.0, 0.0),
@@ -260,7 +258,6 @@ impl Atmosphere {
             a_seat: client_ecs.add_component(),
             a_client_ecs: client_ecs,
             // ---------------------
-            a_dakota_id: surf_ecs.add_component(),
             a_window_in_use: surf_ecs.add_component(),
             a_owner: surf_ecs.add_component(),
             a_toplevel: surf_ecs.add_component(),
@@ -374,9 +371,8 @@ impl Atmosphere {
     /// Ids are used as indexes for most of the vecs
     /// in the hemisphere, and we need to mark this as
     /// no longer available
-    pub fn mint_surface_id(&mut self, dakota: &mut dak::Dakota, client: &ClientId) -> SurfaceId {
-        let id = self.a_surface_ecs.add_entity();
-        self.a_dakota_id.set(&id, dakota.create_element().unwrap());
+    pub fn mint_window_id(&mut self, dakota: &mut dak::Dakota, client: &ClientId) -> SurfaceId {
+        let id = dakota.create_element().unwrap();
 
         // first initialize all our properties
         self.a_owner.set(&id, client.clone());
@@ -524,18 +520,10 @@ impl Atmosphere {
     }
 
     /// Get or create a shadow buffer for this surface
-    fn get_shadow_resource(
-        &mut self,
-        dakota: &mut dak::Dakota,
-        surface_id: &SurfaceId,
-    ) -> BufferId {
-        {
-            let id = self.a_dakota_id.get(&surface_id).unwrap();
-            // This is really dakota.resource().get_clone()
-            if let Some(buffer_id) = self.a_surf_resource.get_clone(&id) {
-                if self.a_shadow_buffer.get(&buffer_id).is_some() {
-                    return buffer_id;
-                }
+    fn get_shadow_resource(&mut self, dakota: &mut dak::Dakota, surf: &SurfaceId) -> BufferId {
+        if let Some(id) = self.a_surf_resource.get_clone(surf) {
+            if self.a_shadow_buffer.get(&id).is_some() {
+                return id;
             }
         }
 
@@ -594,8 +582,7 @@ impl Atmosphere {
         // Release the new buffer immediately so the app can reuse it
         buffer.release();
         // Now we can (re)bind it to this surface
-        let id = self.a_dakota_id.get(surf).unwrap();
-        self.a_surf_resource.set(&id, shadow);
+        self.a_surf_resource.set(&surf, shadow);
 
         Ok(())
     }

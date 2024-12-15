@@ -417,17 +417,15 @@ impl WindowManager {
         &mut self,
         atmos: &mut Atmosphere,
         dakota: &mut dak::Dakota,
-        surface_id: &SurfaceId,
+        id: &SurfaceId,
     ) -> Result<()> {
-        log::debug!("Closing window {:?}", surface_id);
-        let id = atmos.a_dakota_id.get(&surface_id).unwrap();
+        log::debug!("Closing window {:?}", id);
 
         // remove this surface in case it is a toplevel window
-        dakota.remove_child_from_element(&self.wm_desktop, &id)?;
+        dakota.remove_child_from_element(&self.wm_desktop, id)?;
         // If this is a subsurface, remove it from its parent
-        if let Some(parent_id) = atmos.a_parent_window.get_clone(surface_id) {
-            let parent = atmos.a_dakota_id.get(&parent_id).unwrap();
-            dakota.remove_child_from_element(&parent, &id)?;
+        if let Some(parent) = atmos.a_parent_window.get_clone(id) {
+            dakota.remove_child_from_element(&parent, id)?;
         }
 
         Ok(())
@@ -442,20 +440,19 @@ impl WindowManager {
         &mut self,
         atmos: &mut Atmosphere,
         dakota: &mut dak::Dakota,
-        surface_id: &SurfaceId,
+        win: &SurfaceId,
     ) -> Result<()> {
         // get and use the root window for this subsurface
         // in case it is a subsurface.
-        let root = match atmos.a_root_window.get_clone(surface_id) {
+        let root = match atmos.a_root_window.get_clone(win) {
             Some(parent) => parent,
-            None => surface_id.clone(),
+            None => win.clone(),
         };
 
         // Move this surface to the front child of the window parent
-        let id = atmos.a_dakota_id.get(&root).unwrap();
         dakota
-            .move_child_to_front(&self.wm_desktop, &id)
-            .context(format!("Moving window {:?} to the front", surface_id))?;
+            .move_child_to_front(&self.wm_desktop, &root)
+            .context(format!("Moving window {:?} to the front", win))?;
 
         Ok(())
     }
@@ -464,17 +461,11 @@ impl WindowManager {
     ///
     /// This maps a new toplevel surface and places it in the desktop. This
     /// is where the dakota element is added to the desktop as a child.
-    fn new_toplevel(
-        &mut self,
-        atmos: &mut Atmosphere,
-        dakota: &mut dak::Dakota,
-        surface_id: &SurfaceId,
-    ) -> Result<()> {
-        let id = atmos.a_dakota_id.get(&surface_id).unwrap();
+    fn new_toplevel(&mut self, dakota: &mut dak::Dakota, surf: &SurfaceId) -> Result<()> {
         // We might have not added this element to the desktop, moving to front
         // as part of focus is one of the first things that happens when a
         // new window is created
-        dakota.add_child_to_element(&self.wm_desktop, id.clone());
+        dakota.add_child_to_element(&self.wm_desktop, surf.clone());
 
         Ok(())
     }
@@ -497,23 +488,19 @@ impl WindowManager {
 
         // Clear the cursor if the client unset it. Otherwise get the
         // new surface, add it as a child and set it.
-        if let Some(surface_id) = surf.as_ref() {
-            let id = atmos.a_dakota_id.get_clone(surface_id).unwrap();
-            dakota.add_child_to_element(&self.wm_dakota_root, id.clone());
+        self.wm_cursor = surf;
 
+        if let Some(surf) = self.wm_cursor.as_ref() {
+            dakota.add_child_to_element(&self.wm_dakota_root, surf.clone());
             // Set the size of the cursor
-            let surface_size = atmos.a_surface_size.get(surface_id).unwrap();
+            let surface_size = atmos.a_surface_size.get(surf).unwrap();
             dakota
                 .width()
-                .set(&id, dom::Value::Constant(surface_size.0 as i32));
+                .set(surf, dom::Value::Constant(surface_size.0 as i32));
             dakota
                 .height()
-                .set(&id, dom::Value::Constant(surface_size.1 as i32));
-
-            log::debug!("Setting cursor image with size {:?}", *surface_size);
-            self.wm_cursor = Some(id);
-        } else {
-            self.wm_cursor = None;
+                .set(surf, dom::Value::Constant(surface_size.1 as i32));
+            log::debug!("Setting cursor image with size {:?}", *surface_size,);
         }
 
         Ok(())
@@ -543,20 +530,16 @@ impl WindowManager {
     /// through the wl_subsurface interface.
     fn new_subsurface(
         &mut self,
-        atmos: &mut Atmosphere,
         dakota: &mut dak::Dakota,
-        surface_id: &SurfaceId,
-        parent_id: &SurfaceId,
+        surf: &SurfaceId,
+        parent: &SurfaceId,
     ) -> Result<()> {
-        let surf = atmos.a_dakota_id.get(&surface_id).unwrap();
-        let parent = atmos.a_dakota_id.get(&parent_id).unwrap();
-
-        dakota.add_child_to_element(&parent, surf.clone());
+        dakota.add_child_to_element(parent, surf.clone());
         // Under normal operation Dakota elements are restricted to the size of
         // their parent. We do not want this for XDG popup surfaces, which are
         // layered ontop of toplevel windows but are not restricted by their
         // bounds. This special attribute tells dakota not to clip them.
-        dakota.unbounded_subsurface().set(&surf, true);
+        dakota.unbounded_subsurface().set(surf, true);
         Ok(())
     }
 
@@ -590,17 +573,15 @@ impl WindowManager {
         atmos: &mut Atmosphere,
         dakota: &mut dak::Dakota,
         order: dak::SubsurfaceOrder,
-        surface_id: &SurfaceId,
-        other_id: &SurfaceId,
+        surf: &SurfaceId,
+        other: &SurfaceId,
     ) -> Result<()> {
         let root = atmos
             .a_root_window
-            .get_clone(surface_id)
+            .get_clone(surf)
             .expect("The window should have a root since it is a subsurface");
 
-        let surf = atmos.a_dakota_id.get(&surface_id).unwrap();
-        let other = atmos.a_dakota_id.get(&other_id).unwrap();
-        dakota.reorder_children_element(&root, order, &surf, &other)?;
+        dakota.reorder_children_element(&root, order, surf, other)?;
 
         Ok(())
     }
@@ -616,7 +597,7 @@ impl WindowManager {
                 .move_to_front(atmos, dakota, id)
                 .context("Task: Moving window to front"),
             Task::new_subsurface { id, parent } => self
-                .new_subsurface(atmos, dakota, id, parent)
+                .new_subsurface(dakota, id, parent)
                 .context("Task: new_subsurface"),
             Task::place_subsurface_above { id, other } => self
                 .subsurf_place_above(atmos, dakota, id, other)
@@ -627,9 +608,7 @@ impl WindowManager {
             Task::close_window(id) => self
                 .close_window(atmos, dakota, id)
                 .context("Task: close_window"),
-            Task::new_toplevel(id) => self
-                .new_toplevel(atmos, dakota, id)
-                .context("Task: new_toplevel"),
+            Task::new_toplevel(id) => self.new_toplevel(dakota, id).context("Task: new_toplevel"),
             Task::set_cursor { id } => self
                 .set_cursor(atmos, dakota, id.clone())
                 .context("Task: set_cursor"),
@@ -683,8 +662,8 @@ impl WindowManager {
         // This helps us avoid nasty borrow checker stuff by avoiding recursion
         // ----------------------------------------------------------------
         let aids = &mut self.wm_atmos_ids;
-        atmos.map_inorder_on_surfs(|surface_id, _| {
-            aids.push(surface_id);
+        atmos.map_inorder_on_surfs(|id, _| {
+            aids.push(id);
             return true;
         });
 
@@ -695,12 +674,12 @@ impl WindowManager {
         // surfaces. They should already have images attached, and damage will
         // be calculated from the result.
         // ----------------------------------------------------------------
-        for surface_id in self.wm_atmos_ids.iter() {
+        for id in self.wm_atmos_ids.iter() {
             // Now render the windows
             // get parameters
             // ----------------------------------------------------------------
-            let surface_pos = *atmos.a_surface_pos.get(surface_id).unwrap();
-            let surface_size = *atmos.a_surface_size.get(surface_id).unwrap();
+            let surface_pos = *atmos.a_surface_pos.get(id).unwrap();
+            let surface_size = *atmos.a_surface_size.get(id).unwrap();
             log::debug!(
                 "placing dakota element at {:?} with size {:?}",
                 surface_pos,
@@ -708,25 +687,23 @@ impl WindowManager {
             );
 
             // update the th::Surface pos and size
-            {
-                let id = atmos.a_dakota_id.get(&surface_id).unwrap();
-                dakota.offset().set(
-                    &id,
-                    dom::RelativeOffset {
-                        x: dom::Value::Constant(surface_pos.0 as i32),
-                        y: dom::Value::Constant(surface_pos.1 as i32),
-                    },
-                );
-                dakota
-                    .width()
-                    .set(&id, dom::Value::Constant(surface_size.0 as i32));
-                dakota
-                    .height()
-                    .set(&id, dom::Value::Constant(surface_size.1 as i32));
-            }
+            dakota.offset().set(
+                id,
+                dom::RelativeOffset {
+                    x: dom::Value::Constant(surface_pos.0 as i32),
+                    y: dom::Value::Constant(surface_pos.1 as i32),
+                },
+            );
+            dakota
+                .width()
+                .set(id, dom::Value::Constant(surface_size.0 as i32));
+            dakota
+                .height()
+                .set(id, dom::Value::Constant(surface_size.1 as i32));
+            // ----------------------------------------------------------------
 
             // Send any pending frame callbacks
-            atmos.send_frame_callbacks_for_surf(surface_id);
+            atmos.send_frame_callbacks_for_surf(id);
         }
     }
 
