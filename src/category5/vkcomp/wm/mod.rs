@@ -34,7 +34,6 @@
 
 // Austin Shafer - 2020
 
-#![allow(dead_code)]
 extern crate chrono;
 extern crate dakota as dak;
 extern crate image;
@@ -45,9 +44,7 @@ use dak::dom;
 use dak::DakotaId;
 
 use crate::category5::atmosphere::*;
-
-pub use crate::utils::Result;
-use utils::{log, timing::*, *};
+use utils::{log, Context, Result};
 
 pub mod task;
 use task::*;
@@ -60,15 +57,6 @@ use renderdoc::RenderDoc;
 // Menu bar is 16 pixels tall
 static MENUBAR_SIZE: i32 = 32;
 pub static DESKTOP_OFFSET: i32 = MENUBAR_SIZE;
-
-/// This consolidates the multiple resources needed
-/// to represent a titlebar
-struct Titlebar {
-    /// The thick bar itself
-    bar: DakotaId,
-    /// One dot to rule them all. Used for buttons
-    dot: DakotaId,
-}
 
 /// Encapsulates vkcomp and provides a sensible windowing API
 ///
@@ -85,14 +73,7 @@ pub struct WindowManager {
     ///
     /// In Dakota layout is heirarchical, so we have a root node that we attach all
     /// elements to. This is that base node.
-    wm_dakota_root: DakotaId,
-    /// Dakota DOM, the top level dakota object
-    pub wm_dakota_dom: DakotaId,
-    /// The menu bar across the top of the screen
-    ///
-    /// This is a Dakota element that holds all of the menu items and widgets
-    /// in the top screen bar.
-    wm_menubar: DakotaId,
+    wm_scene_root: DakotaId,
     /// Font definition for UI widgets
     wm_menubar_font: DakotaId,
     /// The date time string UI element.
@@ -106,120 +87,67 @@ pub struct WindowManager {
     wm_cursor: Option<DakotaId>,
     /// Category5's cursor, used when the client hasn't set one.
     wm_default_cursor: DakotaId,
-    /// Title bar to draw above the windows
-    wm_titlebar: Titlebar,
     #[cfg(feature = "renderdoc")]
     wm_renderdoc: RenderDoc<renderdoc::V141>,
 }
 
 impl WindowManager {
-    /// Create a Titlebar resource
-    ///
-    /// The Titlebar will hold all of the components which make
-    /// up all of the titlebars in a scene. These imagees will
-    /// be colored differently when multidrawn
-    fn get_default_titlebar(dakota: &mut dak::Dakota) -> Titlebar {
-        let img = image::open(format!(
-            "{}/{}",
-            std::env::current_dir().unwrap().to_str().unwrap(),
-            "images/bar.png"
-        ))
-        .unwrap()
-        .to_rgba8();
-        let pixels: Vec<u8> = img.into_vec();
-
-        // TODO: make a way to change titlebar colors
-        let bar = dakota.create_resource().unwrap();
-        dakota
-            .define_resource_from_bits(
-                &bar,
-                pixels.as_slice(),
-                64,
-                64,
-                0,
-                dak::dom::Format::ARGB8888,
-            )
-            .unwrap();
-
-        let img = image::open(format!(
-            "{}/{}",
-            std::env::current_dir().unwrap().to_str().unwrap(),
-            "images/dot.png"
-        ))
-        .unwrap()
-        .to_bgra8();
-        let pixels: Vec<u8> = img.into_vec();
-        let dot = dakota.create_resource().unwrap();
-        dakota
-            .define_resource_from_bits(
-                &dot,
-                pixels.as_slice(),
-                64,
-                64,
-                0,
-                dak::dom::Format::ARGB8888,
-            )
-            .unwrap();
-
-        Titlebar { bar: bar, dot: dot }
-    }
-
     /// Called when the swapchain image resizes
-    pub fn handle_ood(&mut self, dakota: &mut dak::Dakota) {
-        dakota
+    pub fn handle_ood(&mut self, virtual_output: &dak::VirtualOutput, scene: &mut dak::Scene) {
+        scene
             .width()
             .set(&self.wm_desktop, dom::Value::Relative(1.0));
-        dakota.height().set(
+        scene.height().set(
             &self.wm_desktop,
-            dom::Value::Constant(dakota.get_resolution().1 as i32 - MENUBAR_SIZE),
+            dom::Value::Constant(virtual_output.get_size().1 as i32 - MENUBAR_SIZE),
         );
     }
 
     /// Returns an ID for an element bound with a defaul texture resource
-    fn get_default_cursor(dakota: &mut dak::Dakota) -> DakotaId {
-        let image = dakota.create_resource().unwrap();
-        dakota
+    fn get_default_cursor(scene: &mut dak::Scene) -> DakotaId {
+        let image = scene.create_resource().unwrap();
+        scene
             .define_resource_from_image(
                 &image,
                 std::path::Path::new("images/cursor.png"),
                 dom::Format::ARGB8888,
             )
-            .expect("Could not import background image into dakota");
-        let surf = dakota.create_element().unwrap();
-        dakota.offset().set(
+            .expect("Could not import background image into scene");
+        let surf = scene.create_element().unwrap();
+        scene.offset().set(
             &surf,
             dom::RelativeOffset {
                 x: dom::Value::Constant(0),
                 y: dom::Value::Constant(0),
             },
         );
-        dakota.width().set(&surf, dom::Value::Constant(10));
-        dakota.height().set(&surf, dom::Value::Constant(15));
-        dakota.resource().set(&surf, image.clone());
+        scene.width().set(&surf, dom::Value::Constant(10));
+        scene.height().set(&surf, dom::Value::Constant(15));
+        scene.resource().set(&surf, image.clone());
 
         surf
     }
 
     /// Define all of the Dakota elements that make up the menu bar
     /// at the top of the screen
-    fn create_menubar(dakota: &mut dak::Dakota, menubar_font: DakotaId) -> DakotaId {
-        let barcolor = dakota.create_resource().unwrap();
-        dakota
+    fn create_menubar(scene: &mut dak::Scene, menubar_font: DakotaId) -> DakotaId {
+        let barcolor = scene.create_resource().unwrap();
+        scene
             .resource_color()
             .set(&barcolor, dak::dom::Color::new(0.085, 0.09, 0.088, 0.9));
 
-        let menubar = dakota.create_element().unwrap();
+        let menubar = scene.create_element().unwrap();
         // Make our bar 16 px tall but stretch across the screen
-        dakota.width().set(&menubar, dom::Value::Relative(1.0));
-        dakota
+        scene.width().set(&menubar, dom::Value::Relative(1.0));
+        scene
             .height()
             .set(&menubar, dom::Value::Constant(MENUBAR_SIZE));
-        dakota.resource().set(&menubar, barcolor);
+        scene.resource().set(&menubar, barcolor);
 
-        let name = dakota.create_element().unwrap();
-        dakota.set_text_regular(&name, "Category5");
-        dakota.text_font().set(&name, menubar_font);
-        dakota.add_child_to_element(&menubar, name);
+        let name = scene.create_element().unwrap();
+        scene.set_text_regular(&name, "Category5");
+        scene.text_font().set(&name, menubar_font);
+        scene.add_child_to_element(&menubar, name);
 
         return menubar;
     }
@@ -227,14 +155,14 @@ impl WindowManager {
     /// Refresh the date and time string in the menubar
     ///
     /// This should be called every time change.
-    pub fn refresh_datetime(&mut self, dakota: &mut dak::Dakota) {
+    pub fn refresh_datetime(&mut self, scene: &mut dak::Scene) {
         let date = chrono::Local::now();
         // https://docs.rs/chrono-wasi07/latest/chrono/format/strftime/index.html
-        dakota.set_text_regular(
+        scene.set_text_regular(
             &self.wm_datetime,
             &date.format("%a %B %e %l:%M %p").to_string(),
         );
-        dakota
+        scene
             .text_font()
             .set(&self.wm_datetime, self.wm_menubar_font.clone());
         log::error!(
@@ -248,50 +176,51 @@ impl WindowManager {
     /// This will create all the graphical resources needed for
     /// the compositor. The WindowManager will create and own
     /// the Thundr, thereby readying the display to draw.
-    pub fn new(dakota: &mut dak::Dakota, atmos: &mut Atmosphere) -> WindowManager {
+    pub fn new(
+        virtual_output: &dak::VirtualOutput,
+        output: &dak::Output,
+        scene: &mut dak::Scene,
+        atmos: &mut Atmosphere,
+    ) -> WindowManager {
         #[cfg(feature = "renderdoc")]
         let doc = RenderDoc::new().unwrap();
 
         // Tell the atmosphere rend's resolution
-        let res = dakota.get_resolution();
+        let res = virtual_output.get_size();
         atmos.set_resolution(res);
-        if let Some(drm_dev) = dakota.get_drm_dev() {
+        if let Some(drm_dev) = output.get_drm_dev() {
             atmos.set_drm_dev(drm_dev);
         }
 
         // Create a DOM object that all others will hang off of
         // ------------------------------------------------------------------
-        let root = dakota.create_element().unwrap();
+        let root = scene.create_element().unwrap();
         // Manually set the size to the parent container so that its size
         // isn't derived from the image we set as the desktop background
-        dakota.width().set(&root, dom::Value::Relative(1.0));
-        dakota.height().set(&root, dom::Value::Relative(1.0));
+        scene.width().set(&root, dom::Value::Relative(1.0));
+        scene.height().set(&root, dom::Value::Relative(1.0));
 
-        let dom = dakota.create_dakota_dom().unwrap();
-        dakota.dakota_dom().set(
-            &dom,
-            dak::dom::DakotaDOM {
-                version: "0.0.1".to_string(),
-                window: dak::dom::Window {
-                    title: "Category5".to_string(),
-                    size: Some(res),
-                    events: dak::dom::WindowEvents {
-                        resize: None,
-                        redraw_complete: None,
-                        closed: None,
-                    },
+        scene.set_dakota_dom(dak::dom::DakotaDOM {
+            version: "0.0.1".to_string(),
+            window: dak::dom::Window {
+                title: "Category5".to_string(),
+                size: Some(res),
+                events: dak::dom::WindowEvents {
+                    resize: None,
+                    redraw_complete: None,
+                    closed: None,
                 },
-                root_element: root.clone(),
             },
-        );
+            root_element: root.clone(),
+        });
 
         // First create our menu bar across the top of the screen
         // ------------------------------------------------------------------
-        let menubar_font = dakota.create_font().unwrap();
-        let menubar = Self::create_menubar(dakota, menubar_font.clone());
-        dakota.add_child_to_element(&root, menubar.clone());
+        let menubar_font = scene.create_font().unwrap();
+        let menubar = Self::create_menubar(scene, menubar_font.clone());
+        scene.add_child_to_element(&root, menubar.clone());
 
-        dakota.define_font(
+        scene.define_font(
             &menubar_font,
             dom::Font {
                 name: "Menubar".to_string(),
@@ -305,9 +234,9 @@ impl WindowManager {
                 }),
             },
         );
-        let datetime = dakota.create_element().unwrap();
-        dakota.height().set(&datetime, dom::Value::Relative(1.0));
-        dakota.content().set(
+        let datetime = scene.create_element().unwrap();
+        scene.height().set(&datetime, dom::Value::Relative(1.0));
+        scene.content().set(
             &menubar,
             dom::Content {
                 el: datetime.clone(),
@@ -317,31 +246,28 @@ impl WindowManager {
         // Next add a dummy element to place all of the client window child elements
         // inside of.
         // ------------------------------------------------------------------
-        let desktop = dakota.create_element().unwrap();
-        dakota.add_child_to_element(&root, desktop.clone());
+        let desktop = scene.create_element().unwrap();
+        scene.add_child_to_element(&root, desktop.clone());
         // set the background for this desktop
-        let image = dakota.create_resource().unwrap();
-        dakota
+        let image = scene.create_resource().unwrap();
+        scene
             .define_resource_from_image(
                 &image,
                 std::path::Path::new("images/cat5_desktop.png"),
                 dom::Format::ARGB8888,
             )
-            .expect("Could not import background image into dakota");
-        dakota.resource().set(&desktop, image);
+            .expect("Could not import background image into scene");
+        scene.resource().set(&desktop, image);
 
         // now add a cursor on top of this
         // ------------------------------------------------------------------
-        let cursor = WindowManager::get_default_cursor(dakota);
-        dakota.add_child_to_element(&root, cursor.clone());
+        let cursor = WindowManager::get_default_cursor(scene);
+        scene.add_child_to_element(&root, cursor.clone());
 
         let mut ret = WindowManager {
-            wm_titlebar: WindowManager::get_default_titlebar(dakota),
             wm_cursor: Some(cursor.clone()),
             wm_default_cursor: cursor,
-            wm_dakota_root: root,
-            wm_dakota_dom: dom,
-            wm_menubar: menubar,
+            wm_scene_root: root,
             wm_menubar_font: menubar_font,
             wm_datetime: datetime,
             wm_desktop: desktop,
@@ -349,9 +275,9 @@ impl WindowManager {
             #[cfg(feature = "renderdoc")]
             wm_renderdoc: doc,
         };
-        ret.refresh_datetime(dakota);
+        ret.refresh_datetime(scene);
         // This sets the desktop size
-        ret.handle_ood(dakota);
+        ret.handle_ood(virtual_output, scene);
 
         return ret;
     }
@@ -360,15 +286,16 @@ impl WindowManager {
     ///
     /// This basically just creates a image with the max
     /// depth that takes up the entire screen.
+    #[allow(dead_code)]
     fn set_background_from_mem(
-        dakota: &mut dak::Dakota,
+        scene: &mut dak::Scene,
         elem: &DakotaId,
         texture: &[u8],
         tex_width: u32,
         tex_height: u32,
     ) {
-        let image = dakota.create_resource().unwrap();
-        dakota
+        let image = scene.create_resource().unwrap();
+        scene
             .define_resource_from_bits(
                 &image,
                 texture,
@@ -378,36 +305,7 @@ impl WindowManager {
                 dak::dom::Format::ARGB8888,
             )
             .unwrap();
-        dakota.resource().set(elem, image);
-    }
-
-    /// We have to pass in the barsize to get around some annoying borrow checker stuff
-    fn get_bar_dims(barsize: f32, surface_size: &(f32, f32)) -> (f32, f32, f32, f32) {
-        (
-            // align it at the top right
-            0.0,
-            // draw the bar above the window
-            -barsize,
-            // the bar is as wide as the window
-            surface_size.0,
-            // use a percentage of the screen size
-            barsize,
-        )
-    }
-
-    fn get_dot_dims(barsize: f32, surface_size: &(f32, f32)) -> (f32, f32, f32, f32) {
-        // The dotsize should be just slightly smaller
-        let dotsize = barsize * 0.95;
-
-        (
-            surface_size.0
-                // we don't want to go past the end of the bar
-                    - barsize,
-            -barsize,
-            // align it at the top right
-            dotsize, // width
-            dotsize, // height
-        )
+        scene.resource().set(elem, image);
     }
 
     /// Flag this window to be killed.
@@ -417,16 +315,16 @@ impl WindowManager {
     fn close_window(
         &mut self,
         atmos: &mut Atmosphere,
-        dakota: &mut dak::Dakota,
+        scene: &mut dak::Scene,
         id: &SurfaceId,
     ) -> Result<()> {
         log::debug!("Closing window {:?}", id);
 
         // remove this surface in case it is a toplevel window
-        dakota.remove_child_from_element(&self.wm_desktop, id)?;
+        scene.remove_child_from_element(&self.wm_desktop, id)?;
         // If this is a subsurface, remove it from its parent
         if let Some(parent) = atmos.a_parent_window.get_clone(id) {
-            dakota.remove_child_from_element(&parent, id)?;
+            scene.remove_child_from_element(&parent, id)?;
         }
 
         Ok(())
@@ -440,7 +338,7 @@ impl WindowManager {
     fn move_to_front(
         &mut self,
         atmos: &mut Atmosphere,
-        dakota: &mut dak::Dakota,
+        scene: &mut dak::Scene,
         win: &SurfaceId,
     ) -> Result<()> {
         // get and use the root window for this subsurface
@@ -451,7 +349,7 @@ impl WindowManager {
         };
 
         // Move this surface to the front child of the window parent
-        dakota
+        scene
             .move_child_to_front(&self.wm_desktop, &root)
             .context(format!("Moving window {:?} to the front", win))?;
 
@@ -461,12 +359,12 @@ impl WindowManager {
     /// Add a new toplevel surface
     ///
     /// This maps a new toplevel surface and places it in the desktop. This
-    /// is where the dakota element is added to the desktop as a child.
-    fn new_toplevel(&mut self, dakota: &mut dak::Dakota, surf: &SurfaceId) -> Result<()> {
+    /// is where the scene element is added to the desktop as a child.
+    fn new_toplevel(&mut self, scene: &mut dak::Scene, surf: &SurfaceId) -> Result<()> {
         // We might have not added this element to the desktop, moving to front
         // as part of focus is one of the first things that happens when a
         // new window is created
-        dakota.add_child_to_element(&self.wm_desktop, surf.clone());
+        scene.add_child_to_element(&self.wm_desktop, surf.clone());
 
         Ok(())
     }
@@ -478,11 +376,11 @@ impl WindowManager {
     fn set_cursor(
         &mut self,
         atmos: &mut Atmosphere,
-        dakota: &mut dak::Dakota,
+        scene: &mut dak::Scene,
         surf: Option<SurfaceId>,
     ) -> Result<()> {
         if let Some(old) = self.wm_cursor.as_ref() {
-            dakota.remove_child_from_element(&self.wm_dakota_root, old)?;
+            scene.remove_child_from_element(&self.wm_scene_root, old)?;
             // Don't reset the cursor hotspot here. It's already been updated
             // by the wl_pointer handlers.
         }
@@ -492,13 +390,13 @@ impl WindowManager {
         self.wm_cursor = surf;
 
         if let Some(surf) = self.wm_cursor.as_ref() {
-            dakota.add_child_to_element(&self.wm_dakota_root, surf.clone());
+            scene.add_child_to_element(&self.wm_scene_root, surf.clone());
             // Set the size of the cursor
             let surface_size = atmos.a_surface_size.get(surf).unwrap();
-            dakota
+            scene
                 .width()
                 .set(surf, dom::Value::Constant(surface_size.0 as i32));
-            dakota
+            scene
                 .height()
                 .set(surf, dom::Value::Constant(surface_size.1 as i32));
             log::debug!("Setting cursor image with size {:?}", *surface_size,);
@@ -511,12 +409,12 @@ impl WindowManager {
     ///
     /// Used when we are no longer listening to the client's suggested
     /// cursor
-    fn reset_cursor(&mut self, atmos: &mut Atmosphere, dakota: &mut dak::Dakota) -> Result<()> {
+    fn reset_cursor(&mut self, atmos: &mut Atmosphere, scene: &mut dak::Scene) -> Result<()> {
         if let Some(old) = self.wm_cursor.as_ref() {
-            dakota.remove_child_from_element(&self.wm_dakota_root, old)?;
+            scene.remove_child_from_element(&self.wm_scene_root, old)?;
         }
 
-        dakota.add_child_to_element(&self.wm_dakota_root, self.wm_default_cursor.clone());
+        scene.add_child_to_element(&self.wm_scene_root, self.wm_default_cursor.clone());
         self.wm_cursor = Some(self.wm_default_cursor.clone());
         atmos.set_cursor_hotspot((0, 0));
         atmos.set_cursor_surface(None);
@@ -531,16 +429,16 @@ impl WindowManager {
     /// through the wl_subsurface interface.
     fn new_subsurface(
         &mut self,
-        dakota: &mut dak::Dakota,
+        scene: &mut dak::Scene,
         surf: &SurfaceId,
         parent: &SurfaceId,
     ) -> Result<()> {
-        dakota.add_child_to_element(parent, surf.clone());
+        scene.add_child_to_element(parent, surf.clone());
         // Under normal operation Dakota elements are restricted to the size of
         // their parent. We do not want this for XDG popup surfaces, which are
         // layered ontop of toplevel windows but are not restricted by their
-        // bounds. This special attribute tells dakota not to clip them.
-        dakota.unbounded_subsurface().set(surf, true);
+        // bounds. This special attribute tells scene not to clip them.
+        scene.unbounded_subsurface().set(surf, true);
         Ok(())
     }
 
@@ -551,28 +449,28 @@ impl WindowManager {
     fn subsurf_place_above(
         &mut self,
         atmos: &mut Atmosphere,
-        dakota: &mut dak::Dakota,
+        scene: &mut dak::Scene,
         win: &SurfaceId,
         other: &SurfaceId,
     ) -> Result<()> {
-        self.subsurf_reorder_common(atmos, dakota, dak::SubsurfaceOrder::Above, win, other)
+        self.subsurf_reorder_common(atmos, scene, dak::SubsurfaceOrder::Above, win, other)
     }
 
     /// Same as above, but place the subsurface below other.
     fn subsurf_place_below(
         &mut self,
         atmos: &mut Atmosphere,
-        dakota: &mut dak::Dakota,
+        scene: &mut dak::Scene,
         win: &SurfaceId,
         other: &SurfaceId,
     ) -> Result<()> {
-        self.subsurf_reorder_common(atmos, dakota, dak::SubsurfaceOrder::Below, win, other)
+        self.subsurf_reorder_common(atmos, scene, dak::SubsurfaceOrder::Below, win, other)
     }
 
     fn subsurf_reorder_common(
         &mut self,
         atmos: &mut Atmosphere,
-        dakota: &mut dak::Dakota,
+        scene: &mut dak::Scene,
         order: dak::SubsurfaceOrder,
         surf: &SurfaceId,
         other: &SurfaceId,
@@ -582,7 +480,7 @@ impl WindowManager {
             .get_clone(surf)
             .expect("The window should have a root since it is a subsurface");
 
-        dakota.reorder_children_element(&root, order, surf, other)?;
+        scene.reorder_children_element(&root, order, surf, other)?;
 
         Ok(())
     }
@@ -591,30 +489,30 @@ impl WindowManager {
     ///
     /// This is where we handle things like surface/element creation, window creation and
     /// destruction, etc.
-    pub fn process_task(&mut self, atmos: &mut Atmosphere, dakota: &mut dak::Dakota, task: &Task) {
+    pub fn process_task(&mut self, atmos: &mut Atmosphere, scene: &mut dak::Scene, task: &Task) {
         log::debug!("wm: got task {:?}", task);
         let err = match task {
             Task::move_to_front(id) => self
-                .move_to_front(atmos, dakota, id)
+                .move_to_front(atmos, scene, id)
                 .context("Task: Moving window to front"),
             Task::new_subsurface { id, parent } => self
-                .new_subsurface(dakota, id, parent)
+                .new_subsurface(scene, id, parent)
                 .context("Task: new_subsurface"),
             Task::place_subsurface_above { id, other } => self
-                .subsurf_place_above(atmos, dakota, id, other)
+                .subsurf_place_above(atmos, scene, id, other)
                 .context("Task: place_subsurface_above"),
             Task::place_subsurface_below { id, other } => self
-                .subsurf_place_below(atmos, dakota, id, other)
+                .subsurf_place_below(atmos, scene, id, other)
                 .context("Task: place_subsurface_below"),
             Task::close_window(id) => self
-                .close_window(atmos, dakota, id)
+                .close_window(atmos, scene, id)
                 .context("Task: close_window"),
-            Task::new_toplevel(id) => self.new_toplevel(dakota, id).context("Task: new_toplevel"),
+            Task::new_toplevel(id) => self.new_toplevel(scene, id).context("Task: new_toplevel"),
             Task::set_cursor { id } => self
-                .set_cursor(atmos, dakota, id.clone())
+                .set_cursor(atmos, scene, id.clone())
                 .context("Task: set_cursor"),
             Task::reset_cursor => self
-                .reset_cursor(atmos, dakota)
+                .reset_cursor(atmos, scene)
                 .context("Task: reset_cursor"),
         };
 
@@ -632,7 +530,7 @@ impl WindowManager {
     ///
     /// params: a private info structure for the Thundr. It holds all
     /// the data about what we are recording.
-    fn record_draw(&mut self, atmos: &mut Atmosphere, dakota: &mut dak::Dakota) {
+    fn record_draw(&mut self, atmos: &mut Atmosphere, scene: &mut dak::Scene) {
         // get the latest cursor position
         // ----------------------------------------------------------------
         let (cursor_x, cursor_y) = atmos.get_cursor_pos();
@@ -644,7 +542,7 @@ impl WindowManager {
             hotspot
         );
         if let Some(cursor) = self.wm_cursor.as_mut() {
-            dakota.offset().set(
+            scene.offset().set(
                 &cursor,
                 dom::RelativeOffset {
                     x: dom::Value::Constant((cursor_x as i32).saturating_sub(hotspot.0)),
@@ -682,23 +580,23 @@ impl WindowManager {
             let surface_pos = *atmos.a_surface_pos.get(id).unwrap();
             let surface_size = *atmos.a_surface_size.get(id).unwrap();
             log::debug!(
-                "placing dakota element at {:?} with size {:?}",
+                "placing scene element at {:?} with size {:?}",
                 surface_pos,
                 surface_size
             );
 
             // update the th::Surface pos and size
-            dakota.offset().set(
+            scene.offset().set(
                 id,
                 dom::RelativeOffset {
                     x: dom::Value::Constant(surface_pos.0 as i32),
                     y: dom::Value::Constant(surface_pos.1 as i32),
                 },
             );
-            dakota
+            scene
                 .width()
                 .set(id, dom::Value::Constant(surface_size.0 as i32));
-            dakota
+            scene
                 .height()
                 .set(id, dom::Value::Constant(surface_size.1 as i32));
             // ----------------------------------------------------------------
@@ -709,10 +607,13 @@ impl WindowManager {
     }
 
     /// The main event loop of the vkcomp thread
-    pub fn render_frame(&mut self, dakota: &mut dak::Dakota, atmos: &mut Atmosphere) -> Result<()> {
-        // how much time is spent drawing/presenting
-        let mut draw_stop = StopWatch::new();
-
+    pub fn render_frame(
+        &mut self,
+        virtual_output: &dak::VirtualOutput,
+        output: &mut dak::Output,
+        scene: &mut dak::Scene,
+        atmos: &mut Atmosphere,
+    ) -> Result<()> {
         #[cfg(feature = "renderdoc")]
         if atmos.get_renderdoc_recording() {
             self.wm_renderdoc
@@ -723,38 +624,31 @@ impl WindowManager {
         // us in this hemisphere
         //  (aka process the work queue)
         while let Some(task) = atmos.get_next_wm_task() {
-            self.process_task(atmos, dakota, &task);
+            self.process_task(atmos, scene, &task);
+        }
+
+        // If nothing has changed then we can exit
+        //
+        // TODO: track this per-output to prevent excess redraws
+        if !atmos.is_changed() {
+            return Ok(());
         }
 
         // start recording how much time we spent doing graphics
         log::debug!("_____________________________ FRAME BEGIN");
-        // Create a frame out of the hemisphere we got from ways
-        draw_stop.start();
 
-        // Update our surface locations in Dakota
-        //
-        // Check if there are updates from wayland before doing this, since updating
-        // the dakota elements triggers a full redraw
-        if atmos.is_changed() {
-            self.record_draw(atmos, dakota);
-            atmos.clear_changed();
-        }
+        // Update our dakota element positions
+        self.record_draw(atmos, scene);
+        scene
+            .recompile(&virtual_output)
+            .expect("Failed to recalculate layout");
+        // Have Dakota redraw the scene
+        output
+            .redraw(virtual_output, scene)
+            .context("Redrawing WM Output")?;
 
-        // Rerun rendering until it succeeds, this will handle out of date swapchains
-        loop {
-            match dakota.dispatch_rendering(&self.wm_dakota_dom) {
-                Ok(()) => break,
-                // Do not call handle_ood here. This will propogate the error back up to
-                // the main event loop which will call back to us from there.
-                Err(e) => return Err(e),
-            };
-        }
-
-        draw_stop.end();
-        log::debug!(
-            "spent {} ms drawing this frame",
-            draw_stop.get_duration().as_millis()
-        );
+        atmos.clear_changed();
+        log::debug!("_____________________________ FRAME END");
 
         atmos.print_surface_tree();
 
@@ -763,8 +657,6 @@ impl WindowManager {
             self.wm_renderdoc
                 .end_frame_capture(std::ptr::null(), std::ptr::null());
         }
-
-        log::debug!("_____________________________ FRAME END");
 
         Ok(())
     }

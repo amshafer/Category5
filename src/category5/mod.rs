@@ -13,7 +13,7 @@ mod ways;
 
 use crate::category5::input::Input;
 use atmosphere::{Atmosphere, ClientId};
-use cat5_utils::{log, timing::*};
+use cat5_utils::{log, Result};
 use vkcomp::wm::*;
 
 use wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_v1 as zldv1;
@@ -61,10 +61,19 @@ impl Category5 {
 /// handle protocol events, and we will forward requests to said
 /// substructs with the delegate_dispatch! macro family.
 pub struct Climate {
-    /// The vulkan renderer. It implements the draw logic,
-    /// whereas WindowManager implements organizational logic
+    /// This is our toplevel Dakota UI toolkit handle
     c_dakota: dak::Dakota,
-    /// The big database of all our properties
+    /// This is the virtual surface that we lay out a desktop on
+    /// and present portions of.
+    c_virtual_output: dak::VirtualOutput,
+    /// This is our presentation object which actually shows pixels
+    /// on a presentable surface such as a physical display.
+    c_output: dak::Output,
+    /// This is our scene, a layout tree of the Dakota Elements which
+    /// correspond to our Wayland surfaces.
+    c_scene: dak::Scene,
+    /// This is a database containing tables of properties for Wayland
+    /// surfaces and clients.
     c_atmos: Arc<Mutex<Atmosphere>>,
     /// The list of all output objects created for clients.
     ///
@@ -77,11 +86,28 @@ pub struct Climate {
 
 impl Climate {
     fn new() -> Self {
-        let dakota = dak::Dakota::new().unwrap();
+        let mut dakota = dak::Dakota::new().expect("Could not create dakota instance");
+
+        let mut virtual_output = dakota
+            .create_virtual_output()
+            .expect("Failed to create Dakota Virtual Output Surface");
+        let output = dakota
+            .create_output(&virtual_output)
+            .expect("Failed to create Dakota Output");
+
+        let resolution = output.get_resolution();
+        virtual_output.set_size(resolution);
+
+        let scene = output
+            .create_scene(&virtual_output)
+            .expect("Could not create scene");
 
         Self {
-            c_atmos: Arc::new(Mutex::new(Atmosphere::new(&dakota))),
+            c_atmos: Arc::new(Mutex::new(Atmosphere::new(&scene))),
             c_dakota: dakota,
+            c_virtual_output: virtual_output,
+            c_output: output,
+            c_scene: scene,
             c_outputs: Vec::new(),
             c_input: Input::new(),
         }
@@ -141,7 +167,9 @@ impl EventManager {
         // Our big state holder for wayland-rs
         let mut state = Climate::new();
         let wm = WindowManager::new(
-            &mut state.c_dakota,
+            &mut state.c_virtual_output,
+            &mut state.c_output,
+            &mut state.c_scene,
             state.c_atmos.lock().unwrap().deref_mut(),
         );
 
@@ -204,58 +232,51 @@ impl EventManager {
     /// This is where we update the resolution and notify clients of the
     /// change
     fn handle_ood(&mut self) {
-        let res = self.em_climate.c_dakota.get_resolution();
+        let res = self.em_climate.c_output.get_resolution();
         {
             let mut atmos = self.em_climate.c_atmos.lock().unwrap();
             atmos.mark_changed();
             atmos.set_resolution(res);
         }
         self.em_climate.send_all_geometry();
-        self.em_wm.handle_ood(&mut self.em_climate.c_dakota);
+
+        // First handle the resize on this output
+        self.em_climate
+            .c_output
+            .handle_resize()
+            .expect("Failed to resize output");
+        // Update our VirtualOutput with the newly resized dimensions
+        let resolution = self.em_climate.c_output.get_resolution();
+        self.em_climate.c_virtual_output.set_size(resolution);
+
+        // Notify our WM that the resize has taken place
+        self.em_wm.handle_ood(
+            &mut self.em_climate.c_virtual_output,
+            &mut self.em_climate.c_scene,
+        );
     }
 
-    /// Helper to repeat Dakota's `dispatch_platform` until success
+    /// Redraw the output
     ///
-    /// This is needed for out of date handling.
-    pub fn dispatch_dakota_platform(&mut self, mut timeout: Option<usize>) -> Result<()> {
-        let mut first_loop = true;
-
-        loop {
-            if !first_loop {
-                timeout = Some(0);
-            }
-            first_loop = false;
-
-            // First handle input and platform changes
-            match self
-                .em_climate
-                .c_dakota
-                .dispatch_platform(&self.em_wm.wm_dakota_dom, timeout)
-            {
-                Ok(()) => {}
-                Err(e) => {
-                    if e.downcast_ref::<dak::DakotaError>() == Some(&dak::DakotaError::OUT_OF_DATE)
-                    {
-                        self.handle_ood();
-                        continue;
-                    } else {
-                        return Err(e);
-                    }
-                }
-            };
-            return Ok(());
-        }
+    /// This recompiles our scene and redraws our Dakota Output
+    fn redraw(&mut self) {
+        let mut atmos = self.em_climate.c_atmos.lock().unwrap();
+        log::debug!("trying to render frame");
+        self.em_wm
+            .render_frame(
+                &mut self.em_climate.c_virtual_output,
+                &mut self.em_climate.c_output,
+                &mut self.em_climate.c_scene,
+                &mut atmos,
+            )
+            .expect("Failed to redraw output");
+        log::debug!("rendering frame done");
+        atmos.clear_changed();
     }
 
     /// Each subsystem has a function that implements its main
     /// loop. This is that function
     pub fn worker_thread(&mut self) {
-        // We want to track every 15ms. This is a little less than
-        // once per 60fps frame. It doesn't have to be exact, but
-        // we need to send certain updates to vkcomp roughly once per
-        // frame
-        let mut tm = TimingManager::new(15);
-
         // wayland-rs will not do blocking for us,
         // When registered, these will tell kqueue to notify
         // use when the wayland or libinput fds are readable
@@ -268,42 +289,43 @@ impl EventManager {
             .c_dakota
             .add_watch_fd(self.em_socket.as_raw_fd());
 
-        // reset the timer before we start
-        tm.reset();
-        let mut needs_render = true;
         loop {
             log::debug!("starting loop");
 
-            self.dispatch_dakota_platform(match needs_render {
-                true => Some(0),
-                false => None,
-            })
-            .expect("Dispatching Dakota platform handlers");
+            self.em_climate
+                .c_dakota
+                .dispatch(None)
+                .expect("Dispatching Dakota platform handlers");
             log::debug!("dispatch_platform done");
 
-            {
-                let mut atmos = self.em_climate.c_atmos.lock().unwrap();
-                // First thing to do is to dispatch libinput
-                // It has time sensitive operations which need to take
-                // place as soon as the fd is readable
-                // now go through each event
-                for event in self.em_climate.c_dakota.drain_events() {
-                    match &event {
-                        // Don't print fd events since they happen constantly and
-                        // flood the output
-                        dak::Event::UserFdReadable => {}
-                        dak::Event::WindowNeedsRedraw => needs_render = true,
-                        dak::Event::WindowClosed { .. } => return,
-                        e => {
-                            log::debug!("Category5: got Dakota event: {:?}", e);
-                            self.em_climate
-                                .c_input
-                                .handle_input_event(atmos.deref_mut(), e);
-                        }
+            log::debug!("begin event handling");
+            // First thing to do is to dispatch libinput
+            // It has time sensitive operations which need to take
+            // place as soon as the fd is readable
+            // now go through each event
+            for event in self.em_climate.c_dakota.drain_events() {
+                match &event {
+                    // Don't print fd events since they happen constantly and
+                    // flood the output
+                    dak::GlobalEvent::UserFdReadable => {}
+                    // Exit gracefully if quit
+                    dak::GlobalEvent::Quit => return,
+                }
+            }
+            log::debug!("Global handling done");
+
+            while let Some(ev) = self.em_climate.c_virtual_output.pop_event() {
+                match &ev {
+                    e => {
+                        log::debug!("Category5: got Dakota PlatformEvent: {:?}", e);
+                        self.em_climate.c_input.handle_input_event(
+                            self.em_climate.c_atmos.lock().unwrap().deref_mut(),
+                            e,
+                        );
                     }
                 }
-                log::debug!("input handling done");
             }
+            log::debug!("Platform handling done");
 
             // Accept any new clients
             // Do this first to fill in their client data and initialize
@@ -325,42 +347,27 @@ impl EventManager {
                 .dispatch_clients(&mut self.em_climate)
                 .unwrap();
 
-            {
-                let mut atmos = self.em_climate.c_atmos.lock().unwrap();
-                // If our state database was updated by input or wayland processing then
-                // we need to rerender
-                if atmos.is_changed() {
-                    atmos.clear_changed();
-                    needs_render = true;
+            // If our state database was updated by input or wayland processing then
+            // we need to rerender
+            let mut needs_render = self.em_climate.c_atmos.lock().unwrap().is_changed();
+
+            while let Some(ev) = self.em_climate.c_output.pop_event() {
+                match &ev {
+                    // Redraw our scene
+                    dak::OutputEvent::Redraw => {
+                        needs_render = false;
+                        self.redraw();
+                    }
+                    // Our output surface is out of date, reallocate it
+                    dak::OutputEvent::Resized => self.handle_ood(),
+                    dak::OutputEvent::Destroyed => {}
                 }
             }
 
             if needs_render {
-                log::debug!("trying to render frame");
-                let result = self.em_wm.render_frame(
-                    &mut self.em_climate.c_dakota,
-                    self.em_climate.c_atmos.lock().unwrap().deref_mut(),
-                );
-                log::debug!("rendering frame done");
-
-                match result {
-                    Ok(()) => needs_render = false,
-                    Err(e) => {
-                        if let Some(err) = e.downcast_ref::<dak::DakotaError>() {
-                            if *err == dak::DakotaError::NOT_READY
-                                || *err == dak::DakotaError::TIMEOUT
-                            {
-                                // ignore the timeout, start our loop over
-                                log::profiling!("Next frame isn't ready, continuing");
-                            } else if *err == dak::DakotaError::OUT_OF_DATE {
-                                self.handle_ood();
-                            } else {
-                                panic!("Rendering a frame failed with {:?}", e);
-                            }
-                        }
-                    }
-                };
+                self.redraw();
             }
+            log::debug!("Output handling done");
 
             // Flush any wayland events we sent here
             // The rendering code will send the wayland frame notifications, which
@@ -369,7 +376,6 @@ impl EventManager {
             self.em_display
                 .flush_clients()
                 .expect("Could not flush wayland display");
-            log::debug!("EventManager: Blocking for max {} ms", tm.time_remaining());
         }
     }
 }

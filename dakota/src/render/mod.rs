@@ -337,7 +337,10 @@ impl Output {
     /// This starts at the root viewport and draws all child viewports
     /// present in the specified scene object.
     pub(crate) fn draw_surfacelists(&mut self, scene: &Scene) -> th::Result<()> {
-        let root_node = scene.d_layout_tree_root.clone().unwrap();
+        let root_node = scene
+            .d_layout_tree_root
+            .clone()
+            .expect("No compiled layout found, need to compile this Scene before using it");
         let root_viewport = scene.d_viewports.get_clone(&root_node).unwrap();
 
         let mut frame = self.d_display.acquire_next_frame()?;

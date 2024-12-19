@@ -48,7 +48,7 @@ impl ws::GlobalDispatch<zldv1::ZwpLinuxDmabufV1, ()> for Climate {
         for format in drm_formats {
             dma.format(format);
 
-            let render_mods = state.c_dakota.get_supported_drm_render_modifiers();
+            let render_mods = state.c_output.get_supported_drm_render_modifiers();
             for modifier in render_mods.iter() {
                 let mod_hi = (modifier >> 32) as u32;
                 let mod_low = (modifier & 0xffffffff) as u32;
@@ -104,7 +104,7 @@ impl ws::Dispatch<zlbpv1::ZwpLinuxBufferParamsV1, Arc<Mutex<Params>>> for Climat
         data_init: &mut ws::DataInit<'_, Self>,
     ) {
         data.lock().unwrap().handle_request(
-            &mut state.c_dakota,
+            &mut state.c_scene,
             state.c_atmos.lock().as_mut().unwrap(),
             request,
             resource,
@@ -130,7 +130,7 @@ impl Params {
     #[allow(unused_variables)]
     fn handle_request(
         &mut self,
-        dakota: &mut dak::Dakota,
+        scene: &mut dak::Scene,
         atmos: &mut Atmosphere,
         req: zlbpv1::Request,
         params: &zlbpv1::ZwpLinuxBufferParamsV1,
@@ -154,9 +154,9 @@ impl Params {
                 // so we can have a valid buffer object to use as the release data in
                 // the dmabuf import
                 let dmabuf = self.create(width, height, format);
-                let tmp = atmos.mint_buffer_id(dakota);
+                let tmp = atmos.mint_buffer_id(scene);
                 // Test that we can import this dmabuf
-                match dakota.define_resource_from_dmabuf(&tmp, &dmabuf, None) {
+                match scene.define_resource_from_dmabuf(&tmp, &dmabuf, None) {
                     Ok(res) => res,
                     Err(e) => {
                         log::error!("Failed to import dmabuf: {:?}", e);

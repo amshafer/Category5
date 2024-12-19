@@ -79,7 +79,7 @@ impl Climate {
     ) {
         let mut atmos = self.c_atmos.lock().unwrap();
         let client_id = utils::get_id_from_client(atmos.deref_mut(), client.clone());
-        let win_id = atmos.mint_window_id(&mut self.c_dakota, &client_id);
+        let win_id = atmos.mint_window_id(&mut self.c_scene, &client_id);
         log::debug!("Creating new surface {:?}", win_id.get_raw_id());
 
         // Create a reference counted object

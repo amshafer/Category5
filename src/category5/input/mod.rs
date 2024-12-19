@@ -180,8 +180,8 @@ impl Input {
     fn handle_pointer_axis(
         &mut self,
         atmos: &mut Atmosphere,
-        xrel: Option<f64>,
-        yrel: Option<f64>,
+        xrel: Option<i32>,
+        yrel: Option<i32>,
         v120_val: (f64, f64),
         source: dak::AxisSource,
     ) {
@@ -206,7 +206,7 @@ impl Input {
                             Self::send_axis(
                                 pointer,
                                 wl_pointer::Axis::HorizontalScroll,
-                                hori_val,
+                                hori_val as f64,
                                 v120_val.0,
                             );
                         }
@@ -214,7 +214,7 @@ impl Input {
                             Self::send_axis(
                                 pointer,
                                 wl_pointer::Axis::VerticalScroll,
-                                vert_val,
+                                vert_val as f64,
                                 // convert our Option<tuple> to Option<f64>
                                 v120_val.1,
                             );
@@ -358,9 +358,9 @@ impl Input {
     ///
     /// Also generates wl_pointer.motion events to the surface
     /// in focus if the cursor is on that surface
-    fn handle_pointer_move(&mut self, atmos: &mut Atmosphere, dx: f64, dy: f64) {
+    fn handle_pointer_move(&mut self, atmos: &mut Atmosphere, dx: i32, dy: i32) {
         // Update the atmosphere with the new cursor pos
-        atmos.add_cursor_pos(dx, dy);
+        atmos.add_cursor_pos(dx as f64, dy as f64);
 
         // If a resize is happening then collect the cursor changes
         // to send at the end of the frame
@@ -644,23 +644,25 @@ impl Input {
     /// Input events are either handled by us or by the wayland client
     /// we need to figure out the appropriate destination and perform
     /// the right action.
-    pub fn handle_input_event(&mut self, atmos: &mut Atmosphere, ev: &dak::Event) {
+    pub fn handle_input_event(&mut self, atmos: &mut Atmosphere, ev: &dak::PlatformEvent) {
         match ev {
-            dak::Event::InputMouseMove { dx, dy } => self.handle_pointer_move(atmos, *dx, *dy),
-            dak::Event::InputScroll {
+            dak::PlatformEvent::InputMouseMove { dx, dy } => {
+                self.handle_pointer_move(atmos, *dx, *dy)
+            }
+            dak::PlatformEvent::InputScroll {
                 xrel,
                 yrel,
                 v120_val,
                 source,
                 ..
             } => self.handle_pointer_axis(atmos, *xrel, *yrel, *v120_val, *source),
-            dak::Event::InputMouseButtonUp { button, .. } => {
+            dak::PlatformEvent::InputMouseButtonUp { button, .. } => {
                 self.handle_click_on_window(atmos, *button, ButtonState::Released)
             }
-            dak::Event::InputMouseButtonDown { button, .. } => {
+            dak::PlatformEvent::InputMouseButtonDown { button, .. } => {
                 self.handle_click_on_window(atmos, *button, ButtonState::Pressed)
             }
-            dak::Event::InputKeyUp {
+            dak::PlatformEvent::InputKeyUp {
                 key, raw_keycode, ..
             } => self.handle_keyboard(
                 atmos,
@@ -670,7 +672,7 @@ impl Input {
                 },
                 ButtonState::Released,
             ),
-            dak::Event::InputKeyDown {
+            dak::PlatformEvent::InputKeyDown {
                 key, raw_keycode, ..
             } => self.handle_keyboard(
                 atmos,

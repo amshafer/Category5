@@ -45,7 +45,7 @@ pub type BufferId = dak::DakotaId;
 
 /// Shadow buffer state
 ///
-/// A shadow buffer is an internally owned Dakota Resource which contains
+/// A shadow buffer is an internally owned Scene Resource which contains
 /// a copy of the surface contents. This is used primarily for shm buffers,
 /// where we have a local copy that we update based on buffer damage and
 /// release the attached buffer immediately.
@@ -185,14 +185,14 @@ pub struct Atmosphere {
     /// The input region.
     /// Input events will only be delivered if this region is in focus
     pub a_input_region: ll::Component<Arc<Mutex<Region>>>,
-    /// Dakota resources per surface. This is the same as dakota.resource(), and
+    /// Scene resources per surface. This is the same as dakota.resource(), and
     /// is the resource currently bound to this surface (i.e. dakota element)
     pub a_surf_resource: ll::Component<BufferId>,
 
     // -------------------------------------------------------
     // Resource id tracking
     //
-    // These are indexed by BufferIds which represent Dakota resource objects.
+    // These are indexed by BufferIds which represent Scene resource objects.
     // These will be attached to SurfaceIds to assign window content.
     /// Shadow Resource (local copy of buffer)
     a_shadow_buffer: ll::Component<ShadowBuffer>,
@@ -234,9 +234,9 @@ impl Atmosphere {
     /// also be passed to the other subsystem.
     /// One subsystem must be setup as index 0 and the other
     /// as index 1
-    pub fn new(dakota: &dak::Dakota) -> Atmosphere {
-        let mut surf_ecs = dakota.get_ecs_instance();
-        let mut resource_ecs = dakota.get_resource_ecs_instance();
+    pub fn new(scene: &dak::Scene) -> Atmosphere {
+        let mut surf_ecs = scene.get_ecs_instance();
+        let mut resource_ecs = scene.get_resource_ecs_instance();
         let mut client_ecs = ll::Instance::new();
 
         Atmosphere {
@@ -279,7 +279,7 @@ impl Atmosphere {
             a_frame_callbacks: surf_ecs.add_component(),
             a_opaque_region: surf_ecs.add_component(),
             a_input_region: surf_ecs.add_component(),
-            a_surf_resource: dakota.resource(),
+            a_surf_resource: scene.resource(),
             // ---------------------
             a_shadow_buffer: resource_ecs.add_component(),
             a_surface_ecs: surf_ecs,
@@ -371,8 +371,8 @@ impl Atmosphere {
     /// Ids are used as indexes for most of the vecs
     /// in the hemisphere, and we need to mark this as
     /// no longer available
-    pub fn mint_window_id(&mut self, dakota: &mut dak::Dakota, client: &ClientId) -> SurfaceId {
-        let id = dakota.create_element().unwrap();
+    pub fn mint_window_id(&mut self, scene: &mut dak::Scene, client: &ClientId) -> SurfaceId {
+        let id = scene.create_element().unwrap();
 
         // first initialize all our properties
         self.a_owner.set(&id, client.clone());
@@ -391,9 +391,9 @@ impl Atmosphere {
 
     /// Create a new BufferId
     ///
-    /// This is really a Dakota Resource id type.
-    pub fn mint_buffer_id(&mut self, dakota: &mut dak::Dakota) -> BufferId {
-        dakota.create_resource().unwrap()
+    /// This is really a Scene Resource id type.
+    pub fn mint_buffer_id(&mut self, scene: &mut dak::Scene) -> BufferId {
+        scene.create_resource().unwrap()
     }
 
     /// Recalculate the pointer focus
@@ -502,13 +502,13 @@ impl Atmosphere {
     /// Creates a new image if one doesn't exist yet.
     pub fn create_dmabuf_resource(
         &mut self,
-        dakota: &mut dak::Dakota,
+        scene: &mut dak::Scene,
         resource: &dak::DakotaId,
         buffer: wl_buffer::WlBuffer,
         dmabuf: &dak::Dmabuf,
     ) -> dak::Result<()> {
         // Create a new resource from this dmabuf
-        dakota.define_resource_from_dmabuf(
+        scene.define_resource_from_dmabuf(
             resource,
             dmabuf,
             Some(Box::new(GenericReleaseInfo {
@@ -520,14 +520,14 @@ impl Atmosphere {
     }
 
     /// Get or create a shadow buffer for this surface
-    fn get_shadow_resource(&mut self, dakota: &mut dak::Dakota, surf: &SurfaceId) -> BufferId {
+    fn get_shadow_resource(&mut self, scene: &mut dak::Scene, surf: &SurfaceId) -> BufferId {
         if let Some(id) = self.a_surf_resource.get_clone(surf) {
             if self.a_shadow_buffer.get(&id).is_some() {
                 return id;
             }
         }
 
-        let id = self.mint_buffer_id(dakota);
+        let id = self.mint_buffer_id(scene);
         self.a_shadow_buffer.set(&id, ShadowBuffer {});
         return id;
     }
@@ -538,7 +538,7 @@ impl Atmosphere {
     /// Creates a new image if one doesn't exist yet.
     pub fn update_shm_resource(
         &mut self,
-        dakota: &mut dak::Dakota,
+        scene: &mut dak::Scene,
         surf: &SurfaceId,
         shm_buffer: &ShmBuffer,
         buffer: &wl_buffer::WlBuffer,
@@ -546,13 +546,13 @@ impl Atmosphere {
         // Get the shadow resource if it exists. If not, create it.
         // We do this by checking if the surface is currently assigned a resource
         // which has had its shadow state set.
-        let shadow = self.get_shadow_resource(dakota, surf);
+        let shadow = self.get_shadow_resource(scene, surf);
 
         let pixels = shm_buffer.get_mem_image();
-        if let Err(e) = match dakota.is_resource_defined(&shadow) {
+        if let Err(e) = match scene.is_resource_defined(&shadow) {
             // If the shadow resource is defined, then copy the damaged regions
             // of this new buffer into the shadow copy.
-            true => dakota.update_resource_from_bits(
+            true => scene.update_resource_from_bits(
                 &shadow,
                 &pixels,
                 shm_buffer.sb_width as u32,
@@ -563,7 +563,7 @@ impl Atmosphere {
             ),
             // If the shadow resource is not defined, define it now using the
             // buffers contents
-            false => dakota.define_resource_from_bits(
+            false => scene.define_resource_from_bits(
                 &shadow,
                 &pixels,
                 shm_buffer.sb_width as u32,
