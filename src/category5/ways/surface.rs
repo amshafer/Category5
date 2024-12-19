@@ -36,7 +36,7 @@ impl ws::Dispatch<wlsi::WlSurface, Arc<Mutex<Surface>>> for Climate {
     ) {
         let surf = resource.data::<Arc<Mutex<Surface>>>().unwrap();
         surf.lock().unwrap().handle_request(
-            &mut state.c_dakota,
+            &mut state.c_scene,
             state.c_atmos.lock().unwrap().deref_mut(),
             resource,
             data_init,
@@ -157,7 +157,7 @@ impl CommitState {
     /// This actually does all the work to apply the state info to
     /// the system, resetting the state in the process. Any child states
     /// will also be applied at this time.
-    pub fn commit(&mut self, dakota: &mut dak::Dakota, atmos: &mut Atmosphere) {
+    pub fn commit(&mut self, scene: &mut dak::Scene, atmos: &mut Atmosphere) {
         log::debug!("Committing state for surface {:?}", self.cs_id.get_raw_id());
 
         // ----- Update our surface size -----
@@ -172,11 +172,10 @@ impl CommitState {
         // ----- Commit our buffer -----
         // update our size while we are at it
         if let Some(buf) = self.cs_buffer.take() {
-            let buffer_id = atmos.mint_buffer_id(dakota);
+            let buffer_id = atmos.mint_buffer_id(scene);
 
             if let Some(dmabuf) = buf.data::<dak::Dmabuf>() {
-                if let Err(e) =
-                    atmos.create_dmabuf_resource(dakota, &buffer_id, buf.clone(), dmabuf)
+                if let Err(e) = atmos.create_dmabuf_resource(scene, &buffer_id, buf.clone(), dmabuf)
                 {
                     log::error!("Error during commit: {:?}", e);
                     return;
@@ -187,7 +186,7 @@ impl CommitState {
                 surf_size = (dmabuf.db_width as f32, dmabuf.db_height as f32)
             } else if let Some(shm_buffer) = buf.data::<ShmBuffer>() {
                 // Create a dakota resource for this buffer
-                if let Err(e) = atmos.update_shm_resource(dakota, &self.cs_id, shm_buffer, &buf) {
+                if let Err(e) = atmos.update_shm_resource(scene, &self.cs_id, shm_buffer, &buf) {
                     log::error!("Error during commit: {:?}", e);
                     return;
                 }
@@ -282,7 +281,7 @@ impl CommitState {
 
         // ----- commit all of the pending child commits -----
         for mut cs in self.cs_children.drain(0..) {
-            cs.commit(dakota, atmos);
+            cs.commit(scene, atmos);
         }
     }
 }
@@ -330,7 +329,7 @@ impl Surface {
     #[allow(unused_variables)]
     pub fn handle_request(
         &mut self,
-        dakota: &mut dak::Dakota,
+        scene: &mut dak::Scene,
         atmos: &mut Atmosphere,
         surf: &wlsi::WlSurface,
         data_init: &mut ws::DataInit<'_, Climate>,
@@ -338,7 +337,7 @@ impl Surface {
     ) {
         match req {
             wlsi::Request::Attach { buffer, x, y } => self.attach(surf, buffer, x, y),
-            wlsi::Request::Commit => self.commit(dakota, atmos),
+            wlsi::Request::Commit => self.commit(scene, atmos),
             wlsi::Request::Damage {
                 x,
                 y,
@@ -425,7 +424,7 @@ impl Surface {
     /// Atmosphere is passed in since committing one surface
     /// will recursively call commit on the subsurfaces, and
     /// we need to avoid a refcell panic.
-    fn commit(&mut self, dakota: &mut dak::Dakota, atmos: &mut Atmosphere) {
+    fn commit(&mut self, scene: &mut dak::Scene, atmos: &mut Atmosphere) {
         // Check if we are a synchronized subsurface. if this is true, then we need
         // to move our CommitState into the parent's state as a pending child and then
         // exit.
@@ -447,7 +446,7 @@ impl Surface {
             }
         }
 
-        self.s_state.commit(dakota, atmos);
+        self.s_state.commit(scene, atmos);
 
         // Commit any role state before we update window bits
         let surf_size = *atmos.a_surface_size.get(&self.s_id).unwrap();
