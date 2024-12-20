@@ -161,8 +161,11 @@ impl EventManager {
         display_handle.create_global::<Climate, wl_seat::WlSeat, ()>(8, ());
         display_handle.create_global::<Climate, wl_subcompositor::WlSubcompositor, ()>(1, ());
         display_handle.create_global::<Climate, wl_output::WlOutput, ()>(4, ());
-        display_handle.create_global::<Climate, zldv1::ZwpLinuxDmabufV1, ()>(3, ());
-        display_handle.create_global::<Climate, wl_drm::WlDrm, ()>(2, ());
+        if evman.em_climate.c_atmos.lock().unwrap().get_drm_dev() != (0, 0) {
+            log::debug!("No DRM device detected, not advertising DRM-based interfaces");
+            display_handle.create_global::<Climate, zldv1::ZwpLinuxDmabufV1, ()>(3, ());
+            display_handle.create_global::<Climate, wl_drm::WlDrm, ()>(2, ());
+        }
         display_handle.create_global::<Climate, wl_shell::WlShell, ()>(1, ());
         display_handle.create_global::<Climate, wl_shm::WlShm, ()>(1, ());
         display_handle.create_global::<Climate, wlddm::WlDataDeviceManager, ()>(3, ());

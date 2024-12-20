@@ -255,8 +255,9 @@ impl WindowManager {
         // Tell the atmosphere rend's resolution
         let res = dakota.get_resolution();
         atmos.set_resolution(res);
-        let drm_dev = dakota.get_drm_dev();
-        atmos.set_drm_dev(drm_dev);
+        if let Some(drm_dev) = dakota.get_drm_dev() {
+            atmos.set_drm_dev(drm_dev);
+        }
 
         // Create a DOM object that all others will hang off of
         // ------------------------------------------------------------------

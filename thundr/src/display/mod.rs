@@ -281,7 +281,7 @@ impl Display {
     }
 
     /// Get the DRM device major/minor in use by this Display's Device
-    pub fn get_drm_dev(&self) -> (i64, i64) {
+    pub fn get_drm_dev(&self) -> Option<(i64, i64)> {
         self.d_dev.get_drm_dev()
     }
 

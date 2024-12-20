@@ -184,7 +184,7 @@ impl Device {
     /// if it is not in use.
     ///
     /// return is drm (renderMajor, renderMinor).
-    pub fn get_drm_dev(&self) -> (i64, i64) {
+    pub fn get_drm_dev(&self) -> Option<(i64, i64)> {
         Self::get_drm_dev_internal(&self.dev_features, &self.inst, self.pdev)
     }
 
@@ -192,7 +192,7 @@ impl Device {
         dev_features: &VKDeviceFeatures,
         inst: &Arc<Instance>,
         pdev: vk::PhysicalDevice,
-    ) -> (i64, i64) {
+    ) -> Option<(i64, i64)> {
         if !dev_features.vkc_supports_phys_dev_drm {
             log::error!("Using drm Vulkan extensions but the underlying vulkan library doesn't support them. This will cause problems");
         }
@@ -202,9 +202,12 @@ impl Device {
         info.p_next = &mut drm_info as *mut _ as *mut std::ffi::c_void;
 
         unsafe { inst.inst.get_physical_device_properties2(pdev, &mut info) };
-        assert!(drm_info.has_render != 0);
 
-        (drm_info.render_major, drm_info.render_minor)
+        // Only support DRM if we have it
+        match drm_info.has_render {
+            0 => None,
+            _ => Some((drm_info.render_major, drm_info.render_minor)),
+        }
     }
 
     /// Get a DrmDevice
@@ -214,7 +217,7 @@ impl Device {
         inst: &Arc<Instance>,
         pdev: vk::PhysicalDevice,
     ) -> Option<Arc<Mutex<DrmDevice>>> {
-        let (major, minor) = Self::get_drm_dev_internal(dev_features, inst, pdev);
+        let (major, minor) = Self::get_drm_dev_internal(dev_features, inst, pdev)?;
 
         DrmDevice::new(major, minor)
     }
@@ -293,6 +296,16 @@ impl Device {
             .nth(0)
             // for now we are just going to get the first one
             .expect("Couldn't find suitable device.")
+    }
+
+    /// Does this device have a DRM node backing it.
+    ///
+    /// This returns true if the device has access to an underlying
+    /// DRM-KMS device. If false this device may be a regular, pure
+    /// Vulkan device.
+    #[cfg(feature = "drm")]
+    pub fn has_drm_kms(&self) -> bool {
+        self.d_drm_node.is_some()
     }
 
     /// Create a new default Device

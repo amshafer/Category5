@@ -138,15 +138,16 @@ macro_rules! log_internal{
                     use std::fs::OpenOptions;
                     use std::io::prelude::*;
 
-                    let mut file = OpenOptions::new()
+                    let res = OpenOptions::new()
                         .write(true)
                         .append(true)
                         .create(true)
-                        .open("/tmp/cat5_debug_log.txt")
-                        .unwrap();
+                        .open("/tmp/cat5_debug_log.txt");
 
-                    if let Err(e) = writeln!(file, "{}", fmtstr) {
-                        eprintln!("Couldn't write to debug file: {}", e);
+                    if let Ok(mut file) = res {
+                        if let Err(e) = writeln!(file, "{}", fmtstr) {
+                            eprintln!("Couldn't write to debug file: {}", e);
+                        }
                     }
                 }
             }

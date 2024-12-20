@@ -804,7 +804,7 @@ impl Dakota {
     }
 
     /// Get the major, minor of the DRM device currently in use
-    pub fn get_drm_dev(&self) -> (i64, i64) {
+    pub fn get_drm_dev(&self) -> Option<(i64, i64)> {
         self.d_display.get_drm_dev()
     }
 
