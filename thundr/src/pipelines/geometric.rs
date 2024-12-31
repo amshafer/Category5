@@ -738,14 +738,14 @@ impl GeomPipeline {
                 //     vec3:  VK_FORMAT_R32G32B32_SFLOAT
                 //     vec4:  VK_FORMAT_R32G32B32A32_SFLOAT
                 format: vk::Format::R32G32_SFLOAT,
-                offset: offset_of!(VertData, vertex) as u32,
+                offset: std::mem::offset_of!(VertData, vertex) as u32,
             },
             // Texture coordinates
             vk::VertexInputAttributeDescription {
                 binding: 0,  // The data binding to parse
                 location: 1, // the location of the attribute we are specifying
                 format: vk::Format::R32G32_SFLOAT,
-                offset: offset_of!(VertData, tex) as u32,
+                offset: std::mem::offset_of!(VertData, tex) as u32,
             },
         ];
 

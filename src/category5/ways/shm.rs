@@ -15,7 +15,7 @@ use utils::{log, MemImage};
 
 use nix::sys::mman;
 use std::ffi::c_void;
-use std::os::unix::io::{AsRawFd, OwnedFd};
+use std::os::unix::io::OwnedFd;
 use std::sync::{Arc, Mutex};
 
 #[allow(unused_variables)]
@@ -153,7 +153,7 @@ impl ws::Dispatch<wl_shm_pool::WlShmPool, Arc<Mutex<ShmRegion>>> for Climate {
 #[allow(dead_code)]
 struct ShmRegion {
     sr_fd: OwnedFd,
-    sr_raw_ptr: *mut c_void,
+    sr_raw_ptr: std::ptr::NonNull<c_void>,
     sr_size: usize,
 }
 
@@ -174,7 +174,7 @@ impl ShmRegion {
                 core::num::NonZeroUsize::new(size).unwrap(),
                 mman::ProtFlags::PROT_READ,
                 mman::MapFlags::MAP_SHARED,
-                fd.as_raw_fd(),
+                fd.try_clone().unwrap(),
                 0,
             ) {
                 Ok(p) => p,
@@ -195,30 +195,29 @@ impl ShmRegion {
         assert!(self.sr_size <= size);
         self.sr_size = size;
 
-        self.sr_raw_ptr = unsafe {
-            match mman::mmap(
+        unsafe {
+            mman::munmap(self.sr_raw_ptr, self.sr_size).unwrap();
+            self.sr_raw_ptr = match mman::mmap(
                 None,
                 core::num::NonZeroUsize::new(self.sr_size).unwrap(),
                 mman::ProtFlags::PROT_READ,
                 mman::MapFlags::MAP_SHARED,
-                self.sr_fd.as_raw_fd(),
+                self.sr_fd.try_clone().unwrap(),
                 0,
             ) {
                 Ok(p) => p,
                 Err(e) => panic!("Could not resize the shm pool error: {:?}", e),
-            }
-        };
+            };
+        }
     }
 }
 
 impl Drop for ShmRegion {
     fn drop(&mut self) {
-        if !self.sr_raw_ptr.is_null() {
-            unsafe {
-                // We need to manually unmap this region whenever
-                // it goes out of scope. These prevent memory leaks
-                mman::munmap(self.sr_raw_ptr, self.sr_size).unwrap();
-            }
+        unsafe {
+            // We need to manually unmap this region whenever
+            // it goes out of scope. These prevent memory leaks
+            mman::munmap(self.sr_raw_ptr, self.sr_size).unwrap();
         }
     }
 }
@@ -254,7 +253,8 @@ impl ShmBuffer {
                     .unwrap()
                     .sr_raw_ptr
                     .offset(self.sb_offset as isize)
-            } as *mut u8,
+                    .as_ptr() as *const u8
+            },
             4, // 4 bytes per pixel hardcoded
             self.sb_width as usize,
             self.sb_height as usize,

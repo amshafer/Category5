@@ -138,7 +138,7 @@ impl SeatInstance {
         let mut file = unsafe { File::from_raw_fd(fd) };
         // according to the manpage: writes do not extend
         // shm objects, so we need to call ftruncate first
-        ftruncate(fd, input.i_xkb_keymap_name.as_bytes().len() as i64)
+        ftruncate(&file, input.i_xkb_keymap_name.as_bytes().len() as i64)
             .expect("Could not truncate the temp xkb keymap file");
         // write the input systems keymap to our anon file
         file.write(input.i_xkb_keymap_name.as_bytes())

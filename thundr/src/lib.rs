@@ -119,9 +119,6 @@ pub type Result<T> = std::result::Result<T, ThundrError>;
 #[cfg(feature = "wayland")]
 extern crate wayland_client as wc;
 
-#[macro_use]
-extern crate memoffset;
-
 extern crate thiserror;
 use thiserror::Error;
 

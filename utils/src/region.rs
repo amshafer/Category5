@@ -2,8 +2,6 @@
 //
 // Austin Shafer - 2020
 
-use serde_derive::{Deserialize, Serialize};
-
 use std::cmp::{Ord, PartialOrd};
 use std::ops::{Add, Sub};
 
@@ -14,7 +12,7 @@ use std::ops::{Add, Sub};
 /// the corders of a rectangle:
 ///   r_start: the upper left corner's position on the desktop
 ///   r_size:  the distance from the left to the lower right
-#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
 #[repr(C)]
 pub struct Rect<T: PartialOrd + Copy + Add + Add<Output = T>> {
     pub r_pos: (T, T),
