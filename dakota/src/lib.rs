@@ -254,18 +254,17 @@ impl Dakota {
     /// VirtualOutput and then some or all of that Scene will be displayed
     /// by a real Output.
     pub fn create_virtual_output(&mut self) -> Option<VirtualOutput> {
-        if !self.d_plat.create_virtual_output() {
-            log::error!("Platform does not support creating multiple VirtualOutputs");
-            return None;
-        }
-
-        let ret = VirtualOutput::new(
-            self.d_output_ecs.add_entity(),
+        VirtualOutput::new(
+            self.d_plat
+                .create_virtual_output(&self.d_output_ecs)
+                .map_err(|e| {
+                    log::error!("Could not create VirtualOutput: {:?}", e);
+                    e
+                })
+                .ok()?,
             self.d_platform_event_system.clone(),
         )
-        .unwrap();
-
-        Some(ret)
+        .ok()
     }
 
     /// Create a new Output

@@ -1,13 +1,15 @@
 /// DRM Device
 ///
 /// Austin - 2024
+extern crate gbm;
 #[cfg(target_os = "linux")]
 use nix::sys::stat::makedev;
 
 use crate::display::drm::drm::Device;
+use crate::utils::{Context, Result};
 
+use std::os::fd::AsFd;
 use std::sync::{Arc, Mutex};
-use utils::log;
 
 // In FreeBSD types.h:
 //
@@ -32,6 +34,8 @@ fn makedev(major: u64, minor: u64) -> u64 {
 /// and gives us a place to make calls to DRM
 pub struct DrmDevice {
     ds_drm_fd: std::fs::File,
+    /// Our gbm_device.
+    pub ds_gbm: gbm::Device<std::os::fd::OwnedFd>,
 }
 
 /// Implementing `AsFd` is a prerequisite to implementing the traits found
@@ -46,46 +50,35 @@ impl Device for DrmDevice {}
 impl drm::control::Device for DrmDevice {}
 
 impl DrmDevice {
-    pub fn new(major: i64, minor: i64) -> Option<Arc<Mutex<Self>>> {
+    pub fn new(major: i64, minor: i64) -> Result<Arc<Mutex<Self>>> {
         let dev_t = makedev(major as u64, minor as u64);
         #[cfg(target_os = "freebsd")]
         let dev_t = dev_t as u32;
-        let path = match drm::node::dev_path(dev_t.into(), drm::node::NodeType::Primary) {
-            Ok(path) => path,
-            Err(e) => {
-                log::error!("Could not get DRM path from dev_t {}: {}", dev_t, e);
-                return None;
-            }
-        };
+        let path = drm::node::dev_path(dev_t.into(), drm::node::NodeType::Primary)
+            .context(format!("Could not get DRM path from dev_t {}", dev_t))?;
 
         let mut options = std::fs::OpenOptions::new();
         options.read(true);
         options.write(true);
-        let file = match options.open(&path) {
-            Ok(file) => file,
-            Err(e) => {
-                log::error!("Could not open DRM Device path {}: {}", path.display(), e);
-                return None;
-            }
+        let file = options
+            .open(&path)
+            .context(format!("Could not open DRM Device path {}", path.display()))?;
+
+        let gbm = gbm::Device::new(file.as_fd().try_clone_to_owned()?)
+            .context("Could not create GBM Device")?;
+
+        let ret = DrmDevice {
+            ds_drm_fd: file,
+            ds_gbm: gbm,
         };
 
-        let ret = DrmDevice { ds_drm_fd: file };
         // Request any properties needed
-        if ret
-            .set_client_capability(drm::ClientCapability::UniversalPlanes, true)
-            .is_err()
-        {
-            log::error!("Failed to request UniversalPlanes capability");
-            return None;
-        }
-        if ret
-            .set_client_capability(drm::ClientCapability::Atomic, true)
-            .is_err()
-        {
-            log::error!("Failed to request Atomic capability");
-            return None;
-        }
+        ret.set_client_capability(drm::ClientCapability::UniversalPlanes, true)
+            .context("Failed to request UniversalPlanes capability")?;
 
-        return Some(Arc::new(Mutex::new(ret)));
+        ret.set_client_capability(drm::ClientCapability::Atomic, true)
+            .context("Failed to request Atomic capability")?;
+
+        return Ok(Arc::new(Mutex::new(ret)));
     }
 }

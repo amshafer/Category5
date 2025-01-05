@@ -6,7 +6,6 @@ use drm_device::DrmDevice;
 mod blob;
 
 extern crate drm;
-extern crate gbm;
 use ash::vk;
 use drm::control::{
     atomic, connector, crtc, framebuffer, plane, property, Device as ControlDevice,
@@ -19,7 +18,6 @@ use crate::image::{Dmabuf, DmabufPlane};
 use crate::{Result, ThundrError};
 use utils::log;
 
-use std::os::fd::AsFd;
 use std::sync::Arc;
 
 // Constants to use to index for the property handles. We do this
@@ -46,8 +44,6 @@ const MODE_ID: usize = 11;
 pub struct DrmSwapchain {
     /// Our DRM KMS node
     ds_dev: Arc<Device>,
-    /// Our gbm_device
-    ds_gbm: gbm::Device<std::os::fd::OwnedFd>,
     /// DRM plane we are presenting to. Should be primary
     ds_plane: plane::Handle,
     /// Our ARGB8888 supported modifiers
@@ -114,7 +110,7 @@ impl DrmSwapchain {
         // For this we are going to create a set of DRM Framebuffers, and then import that
         // memory into Vulkan for the rest of Thundr to use.
         for _ in 0..2 {
-            let bo = self
+            let bo = drm
                 .ds_gbm
                 .create_buffer_object_with_modifiers2::<()>(
                     dstate.d_resolution.width,
@@ -298,14 +294,8 @@ impl DrmSwapchain {
             rmod.drm_format_modifier_plane_count == 1
         });
 
-        let gbm = gbm::Device::new(drm.as_fd().try_clone_to_owned()?).map_err(|e| {
-            log::error!("Could not create GBM Device: {:?}", e);
-            e
-        })?;
-
         Ok(Self {
             ds_dev: dev_clone,
-            ds_gbm: gbm,
             ds_plane: plane,
             ds_plane_mods: mods,
             ds_props: props,

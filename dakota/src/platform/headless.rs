@@ -46,8 +46,8 @@ impl Platform for HeadlessPlat {
     /// Create a new virtual window
     ///
     /// This may fail if the platform only supports one virtual surface
-    fn create_virtual_output(&mut self) -> bool {
-        true
+    fn create_virtual_output(&mut self, output_ecs: &ll::Instance) -> Result<OutputId> {
+        Ok(output_ecs.add_entity())
     }
 
     fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType> {

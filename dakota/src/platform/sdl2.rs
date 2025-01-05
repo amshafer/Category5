@@ -325,8 +325,8 @@ impl Platform for SDL2Plat {
     /// Create a new virtual window
     ///
     /// This may fail if the platform only supports one virtual surface
-    fn create_virtual_output(&mut self) -> bool {
-        true
+    fn create_virtual_output(&mut self, output_ecs: &ll::Instance) -> Result<OutputId> {
+        Ok(output_ecs.add_entity())
     }
 
     /// Add a watch descriptor to our list. This will cause the platform's

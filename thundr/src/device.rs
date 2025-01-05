@@ -220,6 +220,11 @@ impl Device {
         let (major, minor) = Self::get_drm_dev_internal(dev_features, inst, pdev)?;
 
         DrmDevice::new(major, minor)
+            .map_err(|e| {
+                log::error!("Failed to create DRM Device: {:#?}", e);
+                e
+            })
+            .ok()
     }
 
     /// get the vkPhysicalDeviceMemoryProperties structure for a vkPhysicalDevice

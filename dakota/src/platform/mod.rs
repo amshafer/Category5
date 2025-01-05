@@ -61,7 +61,7 @@ pub trait Platform {
     /// Create a new virtual window
     ///
     /// This may fail if the platform only supports one virtual surface
-    fn create_virtual_output(&mut self) -> bool;
+    fn create_virtual_output(&mut self, output_ecs: &ll::Instance) -> Result<OutputId>;
 
     /// Add a watch descriptor to our list. This will cause the platform's
     /// event loop to wake when this fd is readable and queue the UserFd

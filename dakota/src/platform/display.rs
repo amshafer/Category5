@@ -24,7 +24,6 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::OwnedFd;
 use std::path::Path;
-use std::sync::{Arc, RwLock};
 
 /// This is sort of like a private userdata struct which
 /// is used as an interface to the systems devices
@@ -104,7 +103,10 @@ pub struct LibinputPlat {
     /// Our private fd listener
     dp_fdwatch: FdWatch,
     /// This is the Id of the virtual output we are driving
-    dp_output_id: Arc<RwLock<Option<OutputId>>>,
+    /// TODO: right now this does not ever free our VirtualOutput
+    /// id, so we need to find a way to allow recreation of the
+    /// VirtualOutput.
+    dp_output_id: Option<OutputId>,
 }
 
 impl LibinputPlat {
@@ -146,7 +148,7 @@ impl LibinputPlat {
             dp_xkb_state: state,
             dp_current_modifiers: Mods::NONE,
             dp_fdwatch: fdwatch,
-            dp_output_id: Arc::new(RwLock::new(None)),
+            dp_output_id: None,
         })
     }
 
@@ -180,7 +182,7 @@ impl LibinputPlat {
     /// Dispatch should be called before this so libinput can
     fn process_available(&mut self, platform_queues: &mut ll::Component<PlatformEventSystem>) {
         let mut evsys = platform_queues
-            .get_mut(self.dp_output_id.read().unwrap().as_ref().unwrap())
+            .get_mut(self.dp_output_id.as_ref().unwrap())
             .unwrap();
 
         while let Some(ev) = self.dp_libin.next() {
@@ -284,22 +286,26 @@ impl Platform for LibinputPlat {
     fn create_output(
         &mut self,
         _id: OutputId,
-        virtual_output_id: OutputId,
+        _virtual_output_id: OutputId,
     ) -> Result<Box<dyn OutputPlatform>> {
-        *self.dp_output_id.write().unwrap() = Some(virtual_output_id);
-
         Ok(Box::new(LibinputOutput {
             lo_type: self.dp_type,
-            lo_output_id: self.dp_output_id.clone(),
         }))
     }
 
     /// Create a new virtual window
     ///
     /// This may fail if the platform only supports one virtual surface
-    fn create_virtual_output(&mut self) -> bool {
-        // We only support one context with libinput
-        self.dp_output_id.read().unwrap().is_none()
+    fn create_virtual_output(&mut self, output_ecs: &ll::Instance) -> Result<OutputId> {
+        if self.dp_output_id.is_some() {
+            return Err(anyhow!(
+                "Libinput platform supports only one VirtualOutput at a time"
+            ));
+        }
+
+        let ret = output_ecs.add_entity();
+        self.dp_output_id = Some(ret.clone());
+        Ok(ret)
     }
 
     /// Add a watch descriptor to our list. This will cause the platform's
@@ -344,13 +350,6 @@ impl Platform for LibinputPlat {
 /// a window system in play here.
 pub struct LibinputOutput {
     lo_type: BackendType,
-    lo_output_id: Arc<RwLock<Option<OutputId>>>,
-}
-
-impl Drop for LibinputOutput {
-    fn drop(&mut self) {
-        self.lo_output_id.write().unwrap().take();
-    }
 }
 
 impl OutputPlatform for LibinputOutput {
