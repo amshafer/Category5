@@ -178,8 +178,11 @@ impl From<std::io::Error> for ThundrError {
 }
 
 pub struct Thundr {
-    /// Our primary device
-    th_dev: Arc<Device>,
+    /// Our primary device.
+    /// This is the first device in th_dev_list.
+    th_primary_dev: Arc<Device>,
+    /// Devices for all GPUs in the system.
+    th_dev_list: Vec<Arc<Device>>,
     /// We keep a list of all the images allocated by this context
     /// so that Pipeline::draw doesn't have to dedup the surfacelist's images
     pub th_image_ecs: ll::Instance,
@@ -358,12 +361,22 @@ impl Thundr {
         let mut img_ecs = ll::Instance::new();
 
         let inst = Arc::new(Instance::new(&info));
-        let dev = Device::new(inst, &mut img_ecs, info)?;
+        let dev_list = Device::create_for_all_devices(inst, &mut img_ecs, info)?;
 
         Ok(Thundr {
-            th_dev: dev,
+            th_primary_dev: dev_list[0].clone(),
+            th_dev_list: dev_list,
             th_image_ecs: img_ecs,
         })
+    }
+
+    /// Get Device list
+    ///
+    /// This returns the full list of Devices, corresponding to all
+    /// physical devices present. This list can then be used for advanced
+    /// features and Display creation
+    pub fn get_device_list(&self) -> &Vec<Arc<Device>> {
+        &self.th_dev_list
     }
 
     /// Get a display object to draw with
@@ -372,7 +385,7 @@ impl Thundr {
     /// system or a physical display. Display abstracts away the swapchain platform
     /// and holds the drawing commands.
     pub fn get_display(&mut self, info: &CreateInfo) -> Result<Display> {
-        Display::new(info, self.th_dev.clone())
+        Display::new(info, self.th_primary_dev.clone())
     }
 
     /// Update an existing image from a shm buffer
@@ -386,7 +399,7 @@ impl Thundr {
         damage: Option<Damage>,
         release: Option<Box<dyn Droppable + Send + Sync>>,
     ) -> Result<()> {
-        self.th_dev
+        self.th_primary_dev
             .update_image_from_bits(image, data, width, height, stride, damage, release)
     }
 }

@@ -281,28 +281,6 @@ impl Device {
         }
     }
 
-    /// Choose a vkPhysicalDevice and queue family index.
-    ///
-    /// selects a physical device and a queue family
-    /// provide the surface PFN loader and the surface so
-    /// that we can ensure the pdev/queue combination can
-    /// present the surface.
-    pub(crate) fn select_pdev(inst: &ash::Instance) -> vk::PhysicalDevice {
-        let pdevices = unsafe {
-            inst.enumerate_physical_devices()
-                .expect("Physical device error")
-        };
-
-        // for each physical device
-        *pdevices
-            .iter()
-            // eventually there needs to be a way of grabbing
-            // the configured pdev from the user
-            .nth(0)
-            // for now we are just going to get the first one
-            .expect("Couldn't find suitable device.")
-    }
-
     /// Does this device have a DRM node backing it.
     ///
     /// This returns true if the device has access to an underlying
@@ -313,17 +291,74 @@ impl Device {
         self.d_drm_node.is_some()
     }
 
+    /// Create the Device list
+    ///
+    /// This will create a Device for every physical device present in
+    /// the system. The primary device will be the first in the list.
+    /// This does follow some rules, such as placing the ideal device
+    /// first in the list if possible.
+    pub fn create_for_all_devices(
+        instance: Arc<Instance>,
+        img_ecs: &mut ll::Instance,
+        info: &CreateInfo,
+    ) -> Result<Vec<Arc<Self>>> {
+        let mut ret = Vec::new();
+        let mut pdevices = unsafe {
+            instance
+                .inst
+                .enumerate_physical_devices()
+                .expect("Physical device error")
+        };
+
+        // If there are multiple GPUs then sort them
+        // If there are multiple physical devices and one of them is a CPU device (llvmpipe)
+        // then drop llvmpipe from the list.
+        if pdevices.len() > 1 {
+            pdevices.retain(|pdev| {
+                let mut dev_info = vk::PhysicalDeviceProperties2::builder()
+                    .push_next(&mut vk::PhysicalDeviceDrmPropertiesEXT::builder().build())
+                    .build();
+                unsafe {
+                    instance
+                        .inst
+                        .get_physical_device_properties2(*pdev, &mut dev_info)
+                };
+
+                let device_name = String::from_utf8(
+                    dev_info
+                        .properties
+                        .device_name
+                        .iter()
+                        .map(|&v| v as u8)
+                        .collect::<Vec<_>>(),
+                )
+                .expect("Invalid Vulkan Device Name");
+                if device_name.contains("llvmpipe") {
+                    return false;
+                }
+
+                return true;
+            });
+        }
+
+        // Now create a Thundr Device for each selected physical device
+        for pdev in pdevices.iter() {
+            ret.push(Self::new_from_pdev(instance.clone(), img_ecs, info, *pdev)?);
+        }
+
+        return Ok(ret);
+    }
+
     /// Create a new default Device
     ///
     /// This creates a new device for the default chosen physical device
     /// in the Instance.
-    pub fn new(
+    pub fn new_from_pdev(
         instance: Arc<Instance>,
         img_ecs: &mut ll::Instance,
         info: &CreateInfo,
+        pdev: vk::PhysicalDevice,
     ) -> Result<Arc<Self>> {
-        let pdev = Self::select_pdev(&instance.inst);
-
         let transfer_queue_family =
             Self::select_queue_family(&instance.inst, pdev, vk::QueueFlags::TRANSFER);
         let mem_props = Self::get_pdev_mem_properties(&instance.inst, pdev);
