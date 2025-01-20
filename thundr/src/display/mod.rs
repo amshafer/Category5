@@ -13,15 +13,28 @@ use crate::*;
 
 use std::sync::Arc;
 
-mod vkswapchain;
+pub mod vkswapchain;
 use vkswapchain::VkSwapchain;
-mod headless;
+pub mod headless;
 use headless::HeadlessSwapchain;
 pub mod frame;
 use frame::{FrameRenderer, RecordParams};
 
 #[cfg(feature = "drm")]
 pub mod drm;
+
+/// This is the actual interface providing the per-Display type information.
+/// This will be initialized and added to the main OutputInfo struct.
+pub trait DisplayInfoPayload {
+    /// Multiple Displays may be created for the platform this info describes
+    /// or only one, depending on the capabilities of this Display backend.
+    /// Returns the number of Displays we can create for this output.
+    fn max_output_count(&self) -> usize;
+
+    /// This method uses the Any trait to allow downcasing this payload
+    /// to the underlying Display output info backend.
+    fn as_any(&self) -> &dyn std::any::Any;
+}
 
 /// Shared state that subsystems consume. We need this
 /// since Display holds rendering objects, but also has
@@ -71,6 +84,9 @@ pub struct DisplayState {
 /// The swapchain is generated (and regenerated) from this stuff.
 pub struct Display {
     pub d_dev: Arc<Device>,
+    /// The OutputInfo this Display was created from. We will release
+    /// our usage of this display region when this Display is destroyed
+    _d_payload: Arc<dyn DisplayInfoPayload>,
     /// Our swapchain of images. This holds the different backends
     d_swapchain: Box<dyn Swapchain>,
     /// State to share with Renderer
@@ -140,7 +156,7 @@ impl Display {
             SurfaceType::Display => Ok(Box::new(VkSwapchain::new(info, dev.clone())?)),
             SurfaceType::Headless => Ok(Box::new(HeadlessSwapchain::new(dev.clone())?)),
             #[cfg(feature = "drm")]
-            SurfaceType::Drm => Ok(Box::new(drm::DrmSwapchain::new(dev.clone())?)),
+            SurfaceType::Drm => Ok(Box::new(drm::DrmSwapchain::new(info, dev.clone())?)),
         }
     }
 
@@ -184,6 +200,7 @@ impl Display {
 
             let mut ret = Self {
                 d_dev: dev,
+                _d_payload: info.payload.clone().unwrap(),
                 d_swapchain: swapchain,
                 d_state: dstate,
                 d_pipe: pipe,

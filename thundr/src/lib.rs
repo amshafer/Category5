@@ -27,11 +27,14 @@
 //! use thundr as th;
 //!
 //! // specify surface type here, this example uses headless
-//! let info = th::CreateInfo::builder()
+//! let mut info = th::CreateInfo::builder()
 //!     .surface_type(th::SurfaceType::Headless)
 //!     .build();
 //!
 //! let mut thund = th::Thundr::new(&info).unwrap();
+//!
+//! let display_infos = thund.get_display_info_list(&info).unwrap();
+//! info.set_display_info(display_infos[0].clone());
 //! let mut display = thund.get_display(&info).unwrap();
 //! let res = display.get_resolution();
 //!
@@ -104,7 +107,10 @@ pub use self::image::{Dmabuf, DmabufPlane};
 pub use damage::Damage;
 pub(crate) use deletion_queue::DeletionQueue;
 pub use device::Device;
-pub use display::{frame::FrameRenderer, Display};
+#[cfg(feature = "drm")]
+use display::drm::DrmSwapchain;
+pub use display::{frame::FrameRenderer, Display, DisplayInfoPayload};
+use display::{headless::HeadlessSwapchain, vkswapchain::VkSwapchain};
 use instance::Instance;
 pub use surface::Surface;
 
@@ -300,6 +306,12 @@ pub struct CreateInfo<'a> {
     /// The window system information provided for creation. This
     /// is consumed by Display
     pub window_info: WindowInfo<'a>,
+    /// A provided display info payload
+    ///
+    /// This payload controls the creation of a Display by providing
+    /// particular information about the target virtual/physical display
+    /// region.
+    pub payload: Option<Arc<dyn DisplayInfoPayload>>,
 }
 
 impl<'a> CreateInfo<'a> {
@@ -308,8 +320,13 @@ impl<'a> CreateInfo<'a> {
             ci: CreateInfo {
                 surface_type: SurfaceType::Headless,
                 window_info: WindowInfo::Invalid(PhantomData),
+                payload: None,
             },
         }
+    }
+
+    pub fn set_display_info(&mut self, payload: Arc<dyn DisplayInfoPayload>) {
+        self.payload = Some(payload);
     }
 }
 
@@ -325,6 +342,11 @@ impl<'a> CreateInfoBuilder<'a> {
 
     pub fn window_info(mut self, win: WindowInfo<'a>) -> Self {
         self.ci.window_info = win;
+        self
+    }
+
+    pub fn display_info(mut self, payload: Arc<dyn DisplayInfoPayload>) -> Self {
+        self.ci.payload = Some(payload);
         self
     }
 
@@ -377,6 +399,44 @@ impl Thundr {
     /// features and Display creation
     pub fn get_device_list(&self) -> &Vec<Arc<Device>> {
         &self.th_dev_list
+    }
+
+    /// Get the list of Display infos
+    ///
+    /// This returns a list of Display payloads which identify a particular
+    /// virtual or physical output. The user will specify one of these
+    /// when creating a new Display
+    pub fn get_display_info_list(
+        &self,
+        info: &CreateInfo,
+    ) -> Result<Vec<Arc<dyn DisplayInfoPayload>>> {
+        match &info.surface_type {
+            #[cfg(feature = "sdl")]
+            SurfaceType::SDL2 => VkSwapchain::get_display_info_list(&self.th_primary_dev),
+            SurfaceType::Headless => HeadlessSwapchain::get_display_info_list(&self.th_primary_dev),
+            _ => {
+                // In the case of DRM and VK_KHR_Display we want to create an
+                // entry for each physical output present on all GPUs in the system.
+                // To accomplish that we will loop through the dev list instead of
+                // only using the primary.
+                //
+                // NOTE: for now on vkd2d this will only create one VkDisplayKHR
+                // for each GPU. Will need VK_EXT_acquire_drm_display and wayland
+                // to get set up leasing for multiple monitors
+                let mut ret = Vec::new();
+                for dev in self.th_dev_list.iter() {
+                    let mut list = match &info.surface_type {
+                        #[cfg(feature = "drm")]
+                        SurfaceType::Drm => DrmSwapchain::get_display_info_list(&dev)?,
+                        SurfaceType::Display => VkSwapchain::get_display_info_list(&dev)?,
+                        _ => unreachable!(),
+                    };
+                    ret.append(&mut list);
+                }
+
+                return Ok(ret);
+            }
+        }
     }
 
     /// Get a display object to draw with

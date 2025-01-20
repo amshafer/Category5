@@ -3,14 +3,27 @@
 /// Austin Shafer - 2024
 use ash::vk;
 
-use super::{DisplayState, Swapchain};
+use super::{DisplayInfoPayload, DisplayState, Swapchain};
 use crate::device::Device;
-use crate::{Result as ThundrResult, ThundrError};
+use crate::{Result, ThundrError};
 
 use std::sync::Arc;
 
 const WIDTH: u32 = 640;
 const HEIGHT: u32 = 480;
+
+/// Empty payload here since we have no state
+struct HeadlessOutputPayload {}
+
+impl DisplayInfoPayload for HeadlessOutputPayload {
+    fn max_output_count(&self) -> usize {
+        usize::MAX
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
 
 /// A headless swapchain
 ///
@@ -25,6 +38,11 @@ pub struct HeadlessSwapchain {
 }
 
 impl HeadlessSwapchain {
+    /// Return a dummy display info
+    pub fn get_display_info_list(_: &Device) -> Result<Vec<Arc<dyn DisplayInfoPayload>>> {
+        Ok(vec![Arc::new(HeadlessOutputPayload {})])
+    }
+
     fn destroy_swapchain(&mut self) {
         unsafe {
             for image in self.h_images.drain(..) {
@@ -70,7 +88,7 @@ impl HeadlessSwapchain {
         };
     }
 
-    pub fn new(dev: Arc<Device>) -> ThundrResult<Self> {
+    pub fn new(dev: Arc<Device>) -> Result<Self> {
         Ok(Self {
             h_dev: dev,
             h_images: Vec::new(),
@@ -86,7 +104,7 @@ impl Swapchain for HeadlessSwapchain {
     /// provide the surface PFN loader and the surface so
     /// that we can ensure the pdev/queue combination can
     /// present the surface
-    fn select_queue_family(&self) -> ThundrResult<u32> {
+    fn select_queue_family(&self) -> Result<u32> {
         let inst = &self.h_dev.inst.inst;
 
         // get the properties per queue family
@@ -110,7 +128,7 @@ impl Swapchain for HeadlessSwapchain {
     /// These capabilities are used elsewhere to identify swapchain
     /// surface capabilities. Even if the swapchain doesn't actually
     /// use VkSurfaceKHR these will still be filled in.
-    fn get_surface_info(&self) -> ThundrResult<(vk::SurfaceCapabilitiesKHR, vk::SurfaceFormatKHR)> {
+    fn get_surface_info(&self) -> Result<(vk::SurfaceCapabilitiesKHR, vk::SurfaceFormatKHR)> {
         let extent = vk::Extent2D {
             width: WIDTH,
             height: HEIGHT,
@@ -138,7 +156,7 @@ impl Swapchain for HeadlessSwapchain {
     /// the window is being resized and we have to regenerate accordingly.
     /// Keep in mind the Pipeline in Thundr will also have to be recreated
     /// separately.
-    fn recreate_swapchain(&mut self, dstate: &mut DisplayState) -> ThundrResult<()> {
+    fn recreate_swapchain(&mut self, dstate: &mut DisplayState) -> Result<()> {
         self.destroy_swapchain();
         self.create_swapchain(dstate);
         Ok(())
@@ -148,7 +166,7 @@ impl Swapchain for HeadlessSwapchain {
     ///
     /// For VK_KHR_display we will calculate it ourselves, and for
     /// SDL we will ask SDL to tell us it.
-    fn get_dpi(&self) -> ThundrResult<(i32, i32)> {
+    fn get_dpi(&self) -> Result<(i32, i32)> {
         // Default to 100, lower end of average DPI
         Ok((100, 100))
     }
@@ -159,7 +177,7 @@ impl Swapchain for HeadlessSwapchain {
     /// TIMEOUT), then this will loop on calling `vkAcquireNextImageKHR` until
     /// it gets a valid image. This has to be done on AMD hw or else the TIMEOUT
     /// error will get passed up the callstack and fail.
-    fn get_next_swapchain_image(&mut self, dstate: &mut DisplayState) -> ThundrResult<()> {
+    fn get_next_swapchain_image(&mut self, dstate: &mut DisplayState) -> Result<()> {
         // simply bump the image number
         dstate.d_current_image += 1;
         if dstate.d_current_image >= self.h_images.len() as u32 {
@@ -173,7 +191,7 @@ impl Swapchain for HeadlessSwapchain {
     ///
     /// Finally we can actually flip the buffers and present
     /// this image.
-    fn present(&mut self, _dstate: &DisplayState) -> ThundrResult<()> {
+    fn present(&mut self, _dstate: &DisplayState) -> Result<()> {
         // no-op here, nothing to present
         Ok(())
     }

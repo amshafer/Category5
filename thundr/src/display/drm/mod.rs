@@ -12,10 +12,10 @@ use drm::control::{
 };
 use drm::{control, Device as DrmDeviceTrait};
 
-use super::{DisplayState, Swapchain};
+use super::{DisplayInfoPayload, DisplayState, Swapchain};
 use crate::device::Device;
 use crate::image::{Dmabuf, DmabufPlane};
-use crate::{Result, ThundrError};
+use crate::{CreateInfo, Result, ThundrError};
 use utils::log;
 
 use std::sync::Arc;
@@ -35,15 +35,14 @@ const CRTC_W: usize = 9;
 const CRTC_H: usize = 10;
 const MODE_ID: usize = 11;
 
-/// A thundr backend which uses linux's DRM KMS
+/// DRM Output Info Payload
 ///
-/// This allows for fine-grained display control and is the
-/// optimal display method for compositors. This uses the
-/// atomic DRM api. It drives one connector on the device,
-/// and handles swapchain management for that output.
-pub struct DrmSwapchain {
-    /// Our DRM KMS node
-    ds_dev: Arc<Device>,
+/// The OutputInfo interface was created for the DrmSwapchain
+/// backend, where Category5 needs to be able to have visibility
+/// into the different DRM connectors that are active or inactive
+/// in the system.
+#[derive(Clone)]
+pub(crate) struct DrmSwapchainPayload {
     /// DRM plane we are presenting to. Should be primary
     ds_plane: plane::Handle,
     /// Our ARGB8888 supported modifiers
@@ -57,6 +56,30 @@ pub struct DrmSwapchain {
     ds_conn: connector::Info,
     /// The index of the current mode in ds_conn
     ds_current_mode: usize,
+}
+
+impl DisplayInfoPayload for DrmSwapchainPayload {
+    /// We can only have one DrmSwapchain driving an output plane
+    fn max_output_count(&self) -> usize {
+        1
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// A thundr backend which uses linux's DRM KMS
+///
+/// This allows for fine-grained display control and is the
+/// optimal display method for compositors. This uses the
+/// atomic DRM api. It drives one connector on the device,
+/// and handles swapchain management for that output.
+pub struct DrmSwapchain {
+    /// Our DRM KMS node
+    ds_dev: Arc<Device>,
+    /// The OutputInfo this swapchain was created from
+    ds_payload: Arc<dyn DisplayInfoPayload>,
     /// GBM Buffer objects
     ds_gbm_bos: Vec<gbm::BufferObject<()>>,
     /// DRM Framebuffers
@@ -93,11 +116,13 @@ impl DrmSwapchain {
         assert!(dstate.d_views.len() == 0);
         assert!(self.ds_image_mems.len() == 0);
         let drm = self.ds_dev.d_drm_node.as_ref().unwrap().lock().unwrap();
+        let payload = self
+            .ds_payload
+            .as_any()
+            .downcast_ref::<DrmSwapchainPayload>()
+            .unwrap();
 
-        // Default to the first (recommended) mode
-        // TODO: let user choose mode
-        self.ds_current_mode = 0;
-        let mode = self.ds_conn.modes()[self.ds_current_mode];
+        let mode = payload.ds_conn.modes()[payload.ds_current_mode];
 
         let (disp_width, disp_height) = mode.size();
         dstate.d_resolution = vk::Extent2D {
@@ -117,7 +142,7 @@ impl DrmSwapchain {
                     dstate.d_resolution.height,
                     // TODO: allow other formats
                     gbm::Format::Argb8888,
-                    self.ds_plane_mods.iter().copied(),
+                    payload.ds_plane_mods.iter().copied(),
                     gbm::BufferObjectFlags::SCANOUT | gbm::BufferObjectFlags::RENDERING,
                 )
                 .or(Err(ThundrError::OUT_OF_MEMORY))?;
@@ -185,12 +210,11 @@ impl DrmSwapchain {
         (res, coninfo, crtcinfo)
     }
 
-    /// Create a new DRM swapchain for this device, requesting a new connector.
+    /// Create display info
     ///
-    /// Returns INVALID_FD if no DRM node is in use. Returns NO_DISPLAY if
-    /// there are no available connectors.
-    pub fn new(dev: Arc<Device>) -> Result<Self> {
-        let dev_clone = dev.clone();
+    /// This will create a display info payload for each available
+    /// connector we can find in DRM for this device.
+    pub fn get_display_info_list(dev: &Device) -> Result<Vec<Arc<dyn DisplayInfoPayload>>> {
         let drm = dev
             .d_drm_node
             .as_ref()
@@ -203,106 +227,128 @@ impl DrmSwapchain {
             return Err(ThundrError::NO_DISPLAY);
         }
 
+        let mut payloads: Vec<Arc<dyn DisplayInfoPayload>> = Vec::new();
         let (res, coninfo, crtcinfo) = Self::get_drm_infos(&drm);
 
         // Filter each connector until we find one that's connected.
-        let con = coninfo
+        // We will fill up our payload list with everything we find
+        for con in coninfo
             .iter()
-            .find(|&i| i.state() == connector::State::Connected)
-            .ok_or(ThundrError::NO_DISPLAY)?;
+            .filter(|&i| i.state() == connector::State::Connected)
+        {
+            // Default to the first CRTC available
+            let crtc = crtcinfo.first().ok_or(ThundrError::NO_DISPLAY)?;
 
-        let crtc = crtcinfo.first().ok_or(ThundrError::NO_DISPLAY)?;
+            // Find the primary plane
+            // We need to find a compatible plane for this available connector
+            let planes = drm.plane_handles().or(Err(ThundrError::NO_DISPLAY))?;
+            let plane = *planes
+                .iter()
+                .find(|&&plane| {
+                    let plane_prop_list = match drm.get_properties(plane) {
+                        Ok(props) => props,
+                        Err(_) => return false,
+                    };
+                    let info = drm.get_plane(plane).unwrap();
+                    // verify this plane supports our crtc
+                    let compatible_crtcs = res.filter_crtcs(info.possible_crtcs());
+                    if !compatible_crtcs.contains(&crtc.handle()) {
+                        return false;
+                    }
 
-        // Get a plane to present to
-        let planes = drm.plane_handles().or(Err(ThundrError::NO_DISPLAY))?;
-        let plane = *planes
-            .iter()
-            .find(|&&plane| {
-                let plane_prop_list = match drm.get_properties(plane) {
-                    Ok(props) => props,
-                    Err(_) => return false,
-                };
-                let info = drm.get_plane(plane).unwrap();
-                // verify this plane supports our crtc
-                let compatible_crtcs = res.filter_crtcs(info.possible_crtcs());
-                if !compatible_crtcs.contains(&crtc.handle()) {
-                    return false;
-                }
-
-                for (&id, &val) in plane_prop_list.iter() {
-                    if let Ok(prop_info) = drm.get_property(id) {
-                        if prop_info
-                            .name()
-                            .to_str()
-                            .map(|x| x == "type")
-                            .unwrap_or(false)
-                        {
-                            return val == (drm::control::PlaneType::Primary as u32).into();
+                    for (&id, &val) in plane_prop_list.iter() {
+                        if let Ok(prop_info) = drm.get_property(id) {
+                            if prop_info
+                                .name()
+                                .to_str()
+                                .map(|x| x == "type")
+                                .unwrap_or(false)
+                            {
+                                return val == (drm::control::PlaneType::Primary as u32).into();
+                            }
                         }
                     }
-                }
-                false
-            })
-            .ok_or(ThundrError::NO_DISPLAY)?;
+                    false
+                })
+                .ok_or(ThundrError::NO_DISPLAY)?;
 
-        let mut props = Vec::new();
+            let mut props = Vec::new();
 
-        let plane_props = drm
-            .get_properties(plane)
-            .or(Err(ThundrError::NO_DISPLAY))?
-            .as_hashmap(&*drm)
-            .or(Err(ThundrError::NO_DISPLAY))?;
-        let con_props = drm
-            .get_properties(con.handle())
-            .or(Err(ThundrError::NO_DISPLAY))?
-            .as_hashmap(&*drm)
-            .or(Err(ThundrError::NO_DISPLAY))?;
-        let crtc_props = drm
-            .get_properties(crtc.handle())
-            .or(Err(ThundrError::NO_DISPLAY))?
-            .as_hashmap(&*drm)
-            .or(Err(ThundrError::NO_DISPLAY))?;
+            let plane_props = drm
+                .get_properties(plane)
+                .or(Err(ThundrError::NO_DISPLAY))?
+                .as_hashmap(&*drm)
+                .or(Err(ThundrError::NO_DISPLAY))?;
+            let con_props = drm
+                .get_properties(con.handle())
+                .or(Err(ThundrError::NO_DISPLAY))?
+                .as_hashmap(&*drm)
+                .or(Err(ThundrError::NO_DISPLAY))?;
+            let crtc_props = drm
+                .get_properties(crtc.handle())
+                .or(Err(ThundrError::NO_DISPLAY))?
+                .as_hashmap(&*drm)
+                .or(Err(ThundrError::NO_DISPLAY))?;
 
-        // This order must follow the order of the similarly named constants
-        props.push(crtc_props["ACTIVE"].handle());
-        props.push(plane_props["FB_ID"].handle());
-        props.push(con_props["CRTC_ID"].handle());
-        props.push(plane_props["SRC_X"].handle());
-        props.push(plane_props["SRC_Y"].handle());
-        props.push(plane_props["SRC_W"].handle());
-        props.push(plane_props["SRC_H"].handle());
-        props.push(plane_props["CRTC_X"].handle());
-        props.push(plane_props["CRTC_Y"].handle());
-        props.push(plane_props["CRTC_W"].handle());
-        props.push(plane_props["CRTC_H"].handle());
-        props.push(crtc_props["MODE_ID"].handle());
+            // This order must follow the order of the similarly named constants
+            props.push(crtc_props["ACTIVE"].handle());
+            props.push(plane_props["FB_ID"].handle());
+            props.push(con_props["CRTC_ID"].handle());
+            props.push(plane_props["SRC_X"].handle());
+            props.push(plane_props["SRC_Y"].handle());
+            props.push(plane_props["SRC_W"].handle());
+            props.push(plane_props["SRC_H"].handle());
+            props.push(plane_props["CRTC_X"].handle());
+            props.push(plane_props["CRTC_Y"].handle());
+            props.push(plane_props["CRTC_W"].handle());
+            props.push(plane_props["CRTC_H"].handle());
+            props.push(crtc_props["MODE_ID"].handle());
 
-        // Filter a list of supported modifiers
-        let render_mods = dev_clone.get_supported_drm_render_modifiers();
-        let mut mods = blob::get_argb8888_modifiers(&drm, plane)?;
-        mods.retain(|modifier| {
-            // Find our modifier in our render modifier list
-            let rmod = match render_mods
-                .iter()
-                .find(|m| m.drm_format_modifier == (*modifier).into())
-            {
-                Some(m) => m,
-                None => return false,
-            };
+            // Filter a list of supported modifiers
+            let render_mods = dev.get_supported_drm_render_modifiers();
+            let mut mods = blob::get_argb8888_modifiers(&drm, plane)?;
+            mods.retain(|modifier| {
+                // Find our modifier in our render modifier list
+                let rmod = match render_mods
+                    .iter()
+                    .find(|m| m.drm_format_modifier == (*modifier).into())
+                {
+                    Some(m) => m,
+                    None => return false,
+                };
 
-            // If it has more than one plane we don't support it
-            rmod.drm_format_modifier_plane_count == 1
-        });
+                // If it has more than one plane we don't support it
+                rmod.drm_format_modifier_plane_count == 1
+            });
 
+            payloads.push(Arc::new(DrmSwapchainPayload {
+                ds_plane: plane,
+                ds_plane_mods: mods,
+                ds_props: props,
+                ds_conn: con.clone(),
+                // Default to the first (recommended) mode
+                // TODO: let user choose mode
+                ds_current_mode: 0,
+                ds_crtc: crtc.clone(),
+            }));
+        }
+
+        if payloads.len() >= 1 {
+            return Ok(payloads);
+        }
+
+        log::error!("No available DRM connectors found");
+        return Err(ThundrError::NO_DISPLAY);
+    }
+
+    /// Create a new DRM swapchain for this device, requesting a new connector.
+    ///
+    /// Returns INVALID_FD if no DRM node is in use. Returns NO_DISPLAY if
+    /// there are no available connectors.
+    pub fn new<'a>(info: &CreateInfo<'a>, dev: Arc<Device>) -> Result<Self> {
         Ok(Self {
-            ds_dev: dev_clone,
-            ds_plane: plane,
-            ds_plane_mods: mods,
-            ds_props: props,
-            ds_conn: con.clone(),
-            // Default to the first (recommended) mode
-            ds_current_mode: 0,
-            ds_crtc: crtc.clone(),
+            ds_dev: dev,
+            ds_payload: info.payload.clone().unwrap(),
             ds_gbm_bos: Vec::new(),
             ds_fbs: Vec::new(),
             ds_images: Vec::new(),
@@ -344,7 +390,13 @@ impl Swapchain for DrmSwapchain {
     /// surface capabilities. Even if the swapchain doesn't actually
     /// use VkSurfaceKHR these will still be filled in.
     fn get_surface_info(&self) -> Result<(vk::SurfaceCapabilitiesKHR, vk::SurfaceFormatKHR)> {
-        let mode = self.ds_conn.modes()[self.ds_current_mode];
+        let payload = self
+            .ds_payload
+            .as_any()
+            .downcast_ref::<DrmSwapchainPayload>()
+            .unwrap();
+
+        let mode = payload.ds_conn.modes()[payload.ds_current_mode];
         let (disp_width, disp_height) = mode.size();
         let extent = vk::Extent2D {
             width: disp_width as u32,
@@ -384,11 +436,17 @@ impl Swapchain for DrmSwapchain {
     /// Do this by getting the physical dimensions of the DRM connector in use
     /// and dividing the preferred mode by them.
     fn get_dpi(&self) -> Result<(i32, i32)> {
+        let payload = self
+            .ds_payload
+            .as_any()
+            .downcast_ref::<DrmSwapchainPayload>()
+            .unwrap();
+
         // size of display in mm
-        let physical_size = self.ds_conn.size().ok_or(ThundrError::NO_DISPLAY)?;
+        let physical_size = payload.ds_conn.size().ok_or(ThundrError::NO_DISPLAY)?;
         // Get the resolution of the native mode
-        // use the first mode, which is assumed to be the "ideal" one
-        let mode = self.ds_conn.modes()[0];
+        // use the current mode, which is assumed to be the "ideal" one
+        let mode = payload.ds_conn.modes()[payload.ds_current_mode];
         let (disp_width, disp_height) = mode.size();
 
         let dpi_h = disp_width as u32 / physical_size.0;
@@ -403,6 +461,11 @@ impl Swapchain for DrmSwapchain {
     /// before updating our current image and continuing.
     fn get_next_swapchain_image(&mut self, dstate: &mut DisplayState) -> Result<()> {
         log::debug!("get_next_swapchain_image: enter");
+        let payload = self
+            .ds_payload
+            .as_any()
+            .downcast_ref::<DrmSwapchainPayload>()
+            .unwrap();
 
         if self.ds_committed {
             // Wait for an event saying the previous atomic commit has been
@@ -417,7 +480,7 @@ impl Swapchain for DrmSwapchain {
                 let mut drm_events = self.ds_dev.d_drm_events.lock().unwrap();
                 if let Some(index) = drm_events
                     .iter()
-                    .position(|flip| flip.crtc == self.ds_crtc.handle())
+                    .position(|flip| flip.crtc == payload.ds_crtc.handle())
                 {
                     drm_events.remove(index);
                     break;
@@ -437,7 +500,7 @@ impl Swapchain for DrmSwapchain {
                 for ev in events {
                     if let control::Event::PageFlip(flip) = ev {
                         // Record all events except for our CRTC
-                        match flip.crtc == self.ds_crtc.handle() {
+                        match flip.crtc == payload.ds_crtc.handle() {
                             true => flip_event_found = true,
                             false => drm_events.push(flip),
                         }
@@ -471,74 +534,79 @@ impl Swapchain for DrmSwapchain {
         // First wait for rendering to complete
         self.ds_dev.wait_for_latest_timeline();
         log::debug!("present: waited for rendering");
+        let payload = self
+            .ds_payload
+            .as_any()
+            .downcast_ref::<DrmSwapchainPayload>()
+            .unwrap();
 
         // Now create an atomic commit with our latest frame
         let drm = self.ds_dev.d_drm_node.as_ref().unwrap().lock().unwrap();
-        let mode = self.ds_conn.modes()[self.ds_current_mode];
+        let mode = payload.ds_conn.modes()[payload.ds_current_mode];
 
         let mut atomic_req = atomic::AtomicModeReq::new();
         atomic_req.add_property(
-            self.ds_conn.handle(),
-            self.ds_props[CRTC_ID],
-            property::Value::CRTC(Some(self.ds_crtc.handle())),
+            payload.ds_conn.handle(),
+            payload.ds_props[CRTC_ID],
+            property::Value::CRTC(Some(payload.ds_crtc.handle())),
         );
         let blob = drm
             .create_property_blob(&mode)
             .expect("Failed to create blob");
-        atomic_req.add_property(self.ds_crtc.handle(), self.ds_props[MODE_ID], blob);
+        atomic_req.add_property(payload.ds_crtc.handle(), payload.ds_props[MODE_ID], blob);
         atomic_req.add_property(
-            self.ds_crtc.handle(),
-            self.ds_props[ACTIVE],
+            payload.ds_crtc.handle(),
+            payload.ds_props[ACTIVE],
             property::Value::Boolean(true),
         );
         atomic_req.add_property(
-            self.ds_plane,
-            self.ds_props[FB_ID],
+            payload.ds_plane,
+            payload.ds_props[FB_ID],
             property::Value::Framebuffer(Some(self.ds_fbs[dstate.d_current_image as usize])),
         );
         atomic_req.add_property(
-            self.ds_plane,
-            self.ds_props[CRTC_ID],
-            property::Value::CRTC(Some(self.ds_crtc.handle())),
+            payload.ds_plane,
+            payload.ds_props[CRTC_ID],
+            property::Value::CRTC(Some(payload.ds_crtc.handle())),
         );
         atomic_req.add_property(
-            self.ds_plane,
-            self.ds_props[SRC_X],
+            payload.ds_plane,
+            payload.ds_props[SRC_X],
             property::Value::UnsignedRange(0),
         );
         atomic_req.add_property(
-            self.ds_plane,
-            self.ds_props[SRC_Y],
+            payload.ds_plane,
+            payload.ds_props[SRC_Y],
             property::Value::UnsignedRange(0),
         );
         atomic_req.add_property(
-            self.ds_plane,
-            self.ds_props[SRC_W],
+            payload.ds_plane,
+            payload.ds_props[SRC_W],
             property::Value::UnsignedRange((mode.size().0 as u64) << 16),
         );
         atomic_req.add_property(
-            self.ds_plane,
-            self.ds_props[SRC_H],
+            payload.ds_plane,
+            payload.ds_props[SRC_H],
             property::Value::UnsignedRange((mode.size().1 as u64) << 16),
         );
         atomic_req.add_property(
-            self.ds_plane,
-            self.ds_props[CRTC_X],
+            payload.ds_plane,
+            payload.ds_props[CRTC_X],
             property::Value::SignedRange(0),
         );
         atomic_req.add_property(
-            self.ds_plane,
-            self.ds_props[CRTC_Y],
+            payload.ds_plane,
+            payload.ds_props[CRTC_Y],
             property::Value::SignedRange(0),
         );
         atomic_req.add_property(
-            self.ds_plane,
-            self.ds_props[CRTC_W],
+            payload.ds_plane,
+            payload.ds_props[CRTC_W],
             property::Value::UnsignedRange(mode.size().0 as u64),
         );
         atomic_req.add_property(
-            self.ds_plane,
-            self.ds_props[CRTC_H],
+            payload.ds_plane,
+            payload.ds_props[CRTC_H],
             property::Value::UnsignedRange(mode.size().1 as u64),
         );
 

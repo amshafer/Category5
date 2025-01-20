@@ -63,12 +63,10 @@ impl VkSwapchainBackend for PhysicalDisplay {
     /// mode the display is using, and the resolution of the screen.
     /// The resolution is returned here to avoid having to recall the
     /// vkGetDisplayModeProperties function a second time.
-    ///
-    /// Yea this has a gross amount of return values...
     fn create_surface(
         &self,
-        _entry: &Entry,        // entry and inst aren't used but still need
-        _inst: &ash::Instance, // to be passed for compatibility
+        _entry: &Entry,
+        _inst: &ash::Instance,
         pdev: vk::PhysicalDevice,
         _surface_loader: &khr::Surface,
         _win_info: &WindowInfo,

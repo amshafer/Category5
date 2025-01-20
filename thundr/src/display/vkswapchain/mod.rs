@@ -12,13 +12,31 @@ use ash::extensions::khr;
 use ash::vk;
 use ash::Entry;
 
-use super::{DisplayState, Swapchain};
+use super::{DisplayInfoPayload, DisplayState, Swapchain};
 use crate::device::Device;
 use crate::{CreateInfo, Result as ThundrResult, SurfaceType, ThundrError, WindowInfo};
 use utils::log;
 
 use std::str::FromStr;
 use std::sync::Arc;
+
+/// This is our output info payload that Dakota will use to
+/// initialize a new swapchain.
+#[derive(Clone)]
+pub(crate) struct VkSwapchainPayload {
+    // function pointer loaders
+    pub sp_surface_loader: khr::Surface,
+}
+
+impl DisplayInfoPayload for VkSwapchainPayload {
+    fn max_output_count(&self) -> usize {
+        usize::MAX
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
 
 /// VkSwapchainKHR based outputs
 ///
@@ -27,10 +45,10 @@ use std::sync::Arc;
 /// two implementations are using SDL and using Direct to Display.
 pub(crate) struct VkSwapchain {
     d_dev: Arc<Device>,
+    /// The OutputInfo this swapchain was created from
+    d_payload: Arc<dyn DisplayInfoPayload>,
     // the actual surface (KHR extension)
     pub d_surface: vk::SurfaceKHR,
-    // function pointer loaders
-    pub d_surface_loader: khr::Surface,
     d_back: Box<dyn VkSwapchainBackend>,
     /// Cache the present mode here so we don't re-request it
     pub d_present_mode: vk::PresentModeKHR,
@@ -72,9 +90,16 @@ impl VkSwapchain {
     /// Queue families need to support graphical presentation and
     /// presentation on the given surface.
     fn is_valid_queue_family(&self, info: vk::QueueFamilyProperties, index: u32) -> bool {
+        let payload = self
+            .d_payload
+            .as_any()
+            .downcast_ref::<VkSwapchainPayload>()
+            .unwrap();
+
         info.queue_flags.contains(vk::QueueFlags::GRAPHICS)
             && unsafe {
-                self.d_surface_loader
+                payload
+                    .sp_surface_loader
                     // ensure compatibility with the surface
                     .get_physical_device_surface_support(self.d_dev.pdev, index, self.d_surface)
                     .unwrap()
@@ -86,8 +111,15 @@ impl VkSwapchain {
     /// This selects the color space and layout for a surface. This should
     /// be called by the Renderer after creating a Display.
     fn select_surface_format(&self) -> ThundrResult<vk::SurfaceFormatKHR> {
+        let payload = self
+            .d_payload
+            .as_any()
+            .downcast_ref::<VkSwapchainPayload>()
+            .unwrap();
+
         let formats = unsafe {
-            self.d_surface_loader
+            payload
+                .sp_surface_loader
                 .get_physical_device_surface_formats(self.d_dev.pdev, self.d_surface)
                 .or(Err(ThundrError::INVALID))?
         };
@@ -237,13 +269,20 @@ impl VkSwapchain {
 
     /// Fetch the drawable size from the Vulkan surface
     fn get_vulkan_drawable_size(&self) -> vk::Extent2D {
+        let payload = self
+            .d_payload
+            .as_any()
+            .downcast_ref::<VkSwapchainPayload>()
+            .unwrap();
+
         match self.d_back.get_vulkan_drawable_size() {
             Some(size) => size,
             None => {
                 // If the backend doesn't support this then just get the
                 // value from vulkan
                 unsafe {
-                    self.d_surface_loader
+                    payload
+                        .sp_surface_loader
                         .get_physical_device_surface_capabilities(self.d_dev.pdev, self.d_surface)
                         .expect("Could not get physical device surface capabilities")
                         .current_extent
@@ -252,23 +291,42 @@ impl VkSwapchain {
         }
     }
 
+    /// Create a Display Info entry for this backend
+    ///
+    /// For now this just creates one. vkd2d will need more in the future.
+    pub fn get_display_info_list(dev: &Device) -> ThundrResult<Vec<Arc<dyn DisplayInfoPayload>>> {
+        Ok(vec![Arc::new(VkSwapchainPayload {
+            sp_surface_loader: khr::Surface::new(&dev.inst.loader, &dev.inst.inst),
+        })])
+    }
+
     /// Choose a backend and create a new Vulkan based Swapchain
     pub fn new(info: &CreateInfo, dev: Arc<Device>) -> ThundrResult<Self> {
         unsafe {
             let entry = &dev.inst.loader;
             let inst = &dev.inst.inst;
+            let payload = info
+                .payload
+                .as_ref()
+                .unwrap()
+                .as_any()
+                .downcast_ref::<VkSwapchainPayload>()
+                .unwrap();
 
-            let s_loader = khr::Surface::new(entry, inst);
             let (back, surf, _) = match &info.surface_type {
-                SurfaceType::Display => {
-                    vkd2d::PhysicalDisplay::new(entry, inst, dev.pdev, &s_loader, &info.window_info)
-                }
+                SurfaceType::Display => vkd2d::PhysicalDisplay::new(
+                    entry,
+                    inst,
+                    dev.pdev,
+                    &payload.sp_surface_loader,
+                    &info.window_info,
+                ),
                 #[cfg(feature = "sdl")]
                 SurfaceType::SDL2 => sdl::SDL2DisplayBackend::new(
                     entry,
                     inst,
                     dev.pdev,
-                    &s_loader,
+                    &payload.sp_surface_loader,
                     &info.window_info,
                 ),
                 _ => panic!("Unsupported surface type"),
@@ -278,7 +336,8 @@ impl VkSwapchain {
             // the best mode for presentation is FIFO (with triple buffering)
             // as this is recommended by the samsung developer page, which
             // I am *assuming* is a good reference for low power apps
-            let present_modes = s_loader
+            let present_modes = payload
+                .sp_surface_loader
                 .get_physical_device_surface_present_modes(dev.pdev, surf)
                 .unwrap();
             let mode = present_modes
@@ -292,7 +351,7 @@ impl VkSwapchain {
 
             Ok(Self {
                 d_dev: dev,
-                d_surface_loader: s_loader,
+                d_payload: info.payload.clone().unwrap(),
                 d_back: back,
                 d_surface: surf,
                 d_present_mode: mode,
@@ -337,8 +396,15 @@ impl Swapchain for VkSwapchain {
     /// surface capabilities. Even if the swapchain doesn't actually
     /// use VkSurfaceKHR these will still be filled in.
     fn get_surface_info(&self) -> ThundrResult<(vk::SurfaceCapabilitiesKHR, vk::SurfaceFormatKHR)> {
+        let payload = self
+            .d_payload
+            .as_any()
+            .downcast_ref::<VkSwapchainPayload>()
+            .unwrap();
+
         let surface_caps = unsafe {
-            self.d_surface_loader
+            payload
+                .sp_surface_loader
                 .get_physical_device_surface_capabilities(self.d_dev.pdev, self.d_surface)
                 .unwrap()
         };
@@ -487,7 +553,15 @@ impl Drop for VkSwapchain {
         unsafe {
             self.d_dev.dev.device_wait_idle().unwrap();
             self.destroy_swapchain();
-            self.d_surface_loader.destroy_surface(self.d_surface, None);
+
+            let payload = self
+                .d_payload
+                .as_any()
+                .downcast_ref::<VkSwapchainPayload>()
+                .unwrap();
+            payload
+                .sp_surface_loader
+                .destroy_surface(self.d_surface, None);
         }
     }
 }

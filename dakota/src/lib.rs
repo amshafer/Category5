@@ -46,6 +46,7 @@ mod scene;
 pub use scene::Scene;
 
 use std::os::fd::RawFd;
+use std::sync::Arc;
 
 /// Dakota Object Id
 ///
@@ -94,6 +95,7 @@ pub struct Dakota {
     // It might reference the window inside plat, and will segfault if
     // dropped after it.
     d_thund: th::Thundr,
+    d_display_infos: Vec<Arc<dyn th::DisplayInfoPayload>>,
     /// The current window system backend.
     ///
     /// This may be SDL2 for windowed systems, or direct2display. This handles platform-specific
@@ -234,11 +236,15 @@ impl Dakota {
     /// output.
     pub fn new() -> Result<Self> {
         let (plat, thundr) = Self::initialize_platform()?;
+        let info = th::CreateInfo::builder()
+            .surface_type(plat.get_th_surf_type()?)
+            .build();
 
         let mut output_ecs = ll::Instance::new();
 
         Ok(Self {
             d_plat: plat,
+            d_display_infos: thundr.get_display_info_list(&info)?,
             d_thund: thundr,
             d_global_event_system: GlobalEventSystem::new(),
             d_output_event_system: output_ecs.add_component(),
@@ -286,7 +292,11 @@ impl Dakota {
 
         let info = th::CreateInfo::builder()
             .surface_type(self.d_plat.get_th_surf_type()?)
+            // This is the private information Dakota's platform provides
             .window_info(win.get_th_window_info()?)
+            // This is the private information about the virtual/physical
+            // output provided by Thundr
+            .display_info(self.d_display_infos[0].clone())
             .build();
 
         let display = self

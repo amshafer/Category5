@@ -29,11 +29,14 @@ fn check_pixels(display: &mut th::Display, filename: &str) {
 
 /// Initialize our thundr test
 fn init_thundr() -> (th::Thundr, th::Display) {
-    let info = th::CreateInfo::builder()
+    let mut info = th::CreateInfo::builder()
         .surface_type(th::SurfaceType::Headless)
         .build();
 
     let mut thund = th::Thundr::new(&info).unwrap();
+
+    let display_infos = thund.get_display_info_list(&info).unwrap();
+    info.set_display_info(display_infos[0].clone());
     let display = thund.get_display(&info).unwrap();
 
     (thund, display)
