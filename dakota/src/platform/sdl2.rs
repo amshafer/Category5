@@ -90,17 +90,13 @@ impl SDL2Plat {
     /// which SDL toplevel surface the event was delivered on. We need to
     /// turn this into our OutputId for the Output or VirtualOutput that
     /// we should queue this event up on.
-    fn get_output_from_sdl_id(&self, window_id: u32) -> (u32, OutputId, OutputId) {
+    fn get_output_from_sdl_id(&self, window_id: u32) -> Option<(u32, OutputId, OutputId)> {
         self.sdl_window_id_map
             .read()
             .unwrap()
             .iter()
             .find(|e| e.0 == window_id)
-            .expect(&format!(
-                "Could not find output corresponding to SDL window id {}",
-                window_id
-            ))
-            .clone()
+            .cloned()
     }
 
     /// Returns Result<bool, DakotaError>, true if we should terminate
@@ -130,7 +126,15 @@ impl SDL2Plat {
                         return Ok(());
                     }
 
-                    let (_, output_id, virtual_id) = self.get_output_from_sdl_id(window_id);
+                    // If we couldn't find an output for this id then the output
+                    // may already be destroyed.
+                    let (_, output_id, virtual_id) = match self.get_output_from_sdl_id(window_id) {
+                        Some(t) => t,
+                        None => {
+                            log::error!("SDL Event on invalid window_id {:?}", event);
+                            return Ok(());
+                        }
+                    };
 
                     (
                         Some(output_queues.get_mut(&output_id).unwrap()),
