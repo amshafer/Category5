@@ -40,13 +40,12 @@ mod output;
 mod virtual_output;
 pub use virtual_output::VirtualOutput;
 mod render;
-pub use output::Output;
+pub use output::{Output, OutputInfo};
 mod font;
 mod scene;
 pub use scene::Scene;
 
 use std::os::fd::RawFd;
-use std::sync::Arc;
 
 /// Dakota Object Id
 ///
@@ -95,7 +94,9 @@ pub struct Dakota {
     // It might reference the window inside plat, and will segfault if
     // dropped after it.
     d_thund: th::Thundr,
-    d_display_infos: Vec<Arc<dyn th::DisplayInfoPayload>>,
+    /// The list of OutputInfos available for use. These can be used to
+    /// specify a particular display region while creating an Output.
+    d_output_infos: Vec<OutputInfo>,
     /// The current window system backend.
     ///
     /// This may be SDL2 for windowed systems, or direct2display. This handles platform-specific
@@ -241,13 +242,20 @@ impl Dakota {
             .build();
 
         let mut output_ecs = ll::Instance::new();
+        let output_evsys = output_ecs.add_component();
+
+        let mut output_infos = Vec::with_capacity(1);
+        let display_infos = thundr.get_display_info_list(&info)?;
+        for info in display_infos {
+            output_infos.push(OutputInfo::new(output_evsys.clone(), info));
+        }
 
         Ok(Self {
             d_plat: plat,
-            d_display_infos: thundr.get_display_info_list(&info)?,
+            d_output_infos: output_infos,
             d_thund: thundr,
             d_global_event_system: GlobalEventSystem::new(),
-            d_output_event_system: output_ecs.add_component(),
+            d_output_event_system: output_evsys,
             d_platform_event_system: output_ecs.add_component(),
             d_output_ecs: output_ecs,
         })
@@ -275,12 +283,36 @@ impl Dakota {
 
     /// Create a new Output
     ///
-    /// Outputs represent a displayable surface and allow for performing
-    /// rendering and presentation.
-    ///
-    /// The new Output will be created to be compatible with the provided
+    /// Outputs represent a displayable surface and allow for performing rendering and
+    /// presentation. The new Output will be created to be compatible with the provided
     /// VirtualOutput.
+    ///
+    /// This chooses the default output type. For fine-grained control use
+    /// `create_output_with_info`.
     pub fn create_output(&mut self, virtual_output: &VirtualOutput) -> Result<Output> {
+        let output_info = self.d_output_infos[0].clone();
+        self.create_output_with_info(&output_info, virtual_output)
+    }
+
+    /// Create a new Output
+    ///
+    /// Outputs represent a displayable surface and allow for performing rendering and
+    /// presentation. The new Output will be created to be compatible with the provided
+    /// VirtualOutput.
+    ///
+    /// This accepts an OutputInfo parameter, specifying the particular output type to
+    /// create.
+    pub fn create_output_with_info(
+        &mut self,
+        output_info: &OutputInfo,
+        virtual_output: &VirtualOutput,
+    ) -> Result<Output> {
+        if !output_info.can_create_output() {
+            return Err(anyhow!(
+                "Maximum number of Outputs for this OutputInfo has been reached"
+            ));
+        }
+
         let output_id = self.d_output_ecs.add_entity();
         let win = self
             .d_plat
@@ -296,7 +328,7 @@ impl Dakota {
             .window_info(win.get_th_window_info()?)
             // This is the private information about the virtual/physical
             // output provided by Thundr
-            .display_info(self.d_display_infos[0].clone())
+            .display_info(output_info.oi_payload.clone())
             .build();
 
         let display = self
@@ -304,9 +336,13 @@ impl Dakota {
             .get_display(&info)
             .context("Failed to get Thundr Display")?;
 
-        let ret = Output::new(win, display, output_id, self.d_output_event_system.clone()).unwrap();
+        let ret = Output::new(win, display, output_id, self.d_output_event_system.clone());
+        // If we successfully created an Output, add its id to our OutputInfo for tracking
+        if let Ok(output) = &ret {
+            output_info.add_output(output.d_id.clone());
+        }
 
-        Ok(ret)
+        return ret;
     }
 
     /// Add a file descriptor to watch

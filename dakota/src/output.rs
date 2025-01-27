@@ -15,10 +15,112 @@ use utils::log;
 use utils::{anyhow, Error, Result};
 
 use std::ops::DerefMut;
+use std::sync::{Arc, RwLock};
 
+/// OutputInfo
+///
+/// This trait encapsulates per Output backend information about
+/// a particular Display area. This info may describe an available
+/// window system or a physical display device that an Output object
+/// can be created on.
+///
+/// These OutputInfo objects are used to initialize a specific Output.
+/// Some output types may support creation of multiple Output objects,
+/// or may only support a single Output.
+#[derive(Clone)]
+pub struct OutputInfo {
+    /// Our info payload.
+    /// This is a swapchain backend specific set of information that
+    /// holds the physical display information, surface objects, etc.
+    pub(crate) oi_payload: Arc<dyn th::DisplayInfoPayload>,
+    /// Cached event queue list. This will be used to add events to
+    /// existing Outputs.
+    oi_event_queues: ll::Component<OutputEventSystem>,
+    oi_internal: Arc<RwLock<OutputInfoInternal>>,
+}
+
+/// OutputInfo is clonable because we need to both keep an internal
+/// list of it and pass it in as an argument to create_output, which
+/// requires interior mutability for tracking active usage counts.
+pub(crate) struct OutputInfoInternal {
+    /// Event Queues consuming this Output source.
+    /// When this output source is destroyed we need to
+    /// The length of this array is the number of active displays,
+    /// which will be returned in the active count.
+    oi_outputs: Vec<OutputId>,
+    /// Has this output type been destroyed
+    oi_destroyed: bool,
+}
+
+impl OutputInfo {
+    /// Initialize an empty OutputInfo with the provided payload
+    pub(crate) fn new(
+        evsys: ll::Component<OutputEventSystem>,
+        payload: Arc<dyn th::DisplayInfoPayload>,
+    ) -> Self {
+        Self {
+            oi_payload: payload,
+            oi_event_queues: evsys,
+            oi_internal: Arc::new(RwLock::new(OutputInfoInternal {
+                oi_outputs: Vec::with_capacity(1),
+                oi_destroyed: false,
+            })),
+        }
+    }
+
+    /// Add this OutputId to our internal tracker
+    pub(crate) fn add_output(&self, id: OutputId) {
+        self.oi_internal.write().unwrap().oi_outputs.push(id)
+    }
+
+    /// Destroy this OutputInfo
+    ///
+    /// This signals that the output type this represents is no longer
+    /// available. This will send the Destroyed event to all child Outputs.
+    pub fn destroy(&self) {
+        let mut internal = self.oi_internal.write().unwrap();
+        assert!(!internal.oi_destroyed);
+        internal.oi_destroyed = true;
+
+        for id in internal.oi_outputs.iter() {
+            self.oi_event_queues
+                .get_mut(&id)
+                .unwrap()
+                .add_event_destroyed();
+        }
+    }
+
+    /// Multiple Displays may be created for the platform this info describes
+    /// or only one, depending on the capabilities of this Display backend.
+    /// Returns the number of Displays we can create for this output.
+    pub fn max_output_count(&self) -> usize {
+        self.oi_payload.max_output_count()
+    }
+
+    /// Returns true if we can create another Output from this info.
+    ///
+    /// This will return false if the current maximum number of Outputs has
+    /// been created, or if this OutputInfo has been destroyed.
+    pub fn can_create_output(&self) -> bool {
+        let internal = self.oi_internal.read().unwrap();
+
+        !internal.oi_destroyed && internal.oi_outputs.len() < self.max_output_count()
+    }
+}
+
+/// Dakota Output
+///
+/// The Output object controls all presentation and rendering logic,
+/// allowing a virtual scene to be redrawn and displayed on the screen.
+/// An Output may be a toplevel desktop window, a subsurface, or
+/// a physical display.
+///
+/// Outputs are the final line in the content pipeline. After a Scene
+/// has been created and layout calculated on a VirtualOutput, we can
+/// actually composit the scene and show it to the user on this Output.
 pub struct Output {
     /// Internal ID
-    d_id: OutputId,
+    pub(crate) d_id: OutputId,
     /// Our thundr output object
     pub(crate) d_display: th::Display,
     /// Platform handling specific to this output
