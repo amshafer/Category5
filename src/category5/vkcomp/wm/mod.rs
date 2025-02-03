@@ -40,8 +40,7 @@ extern crate image;
 extern crate lluvia as ll;
 extern crate utils;
 
-use dak::dom;
-use dak::DakotaId;
+use dak::{anyhow, dom, DakotaId};
 
 use crate::category5::atmosphere::*;
 use utils::{log, Context, Result};
@@ -58,6 +57,22 @@ use renderdoc::RenderDoc;
 static MENUBAR_SIZE: i32 = 32;
 pub static DESKTOP_OFFSET: i32 = MENUBAR_SIZE;
 
+/// WindowManagerOutput
+///
+/// This represents a monitor we are displaying a desktop
+/// on. This will present a region of the virtual output
+/// surface and has its own menubar/widgets
+pub struct WMOutput {
+    /// This is our presentation object which actually shows pixels
+    /// on a presentable surface such as a physical display.
+    wm_output: dak::Output,
+    /// This Element is the container that holds this output.
+    /// The menubar and others will be children of this.
+    wm_output_root: DakotaId,
+    /// The date time string UI element.
+    wm_datetime: DakotaId,
+}
+
 /// Encapsulates vkcomp and provides a sensible windowing API
 ///
 /// This layer provides graphical operations to the above
@@ -69,20 +84,27 @@ pub static DESKTOP_OFFSET: i32 = MENUBAR_SIZE;
 /// whereas windows are.
 pub struct WindowManager {
     wm_atmos_ids: Vec<SurfaceId>,
+    /// The list of displays we are presenting desktops to
+    wm_outputs: Vec<WMOutput>,
     /// The root element for our scene
     ///
     /// In Dakota layout is heirarchical, so we have a root node that we attach all
     /// elements to. This is that base node.
     wm_scene_root: DakotaId,
-    /// Font definition for UI widgets
-    wm_menubar_font: DakotaId,
-    /// The date time string UI element.
-    wm_datetime: DakotaId,
     /// The window area for this desktop
     ///
     /// This is a Dakota element that represents the region where all client windows
-    /// are laid out.
+    /// are laid out. This is layered behind the WMOutput's element.
     wm_desktop: DakotaId,
+    /// This is the effects layer, which holds the per-Output window or menu bars.
+    /// This is layed out on top of the desktop layer.
+    wm_effects_layer: DakotaId,
+    /// Font definition for UI widgets
+    wm_menubar_font: DakotaId,
+    /// The cursor layer. This is the uppermost layer which lays the cursor
+    /// image on top of everything. This is the size of the virtual output and
+    /// the cursor element moves on top of it.
+    wm_cursor_layer: DakotaId,
     /// Image representing the software cursor
     wm_cursor: Option<DakotaId>,
     /// Category5's cursor, used when the client hasn't set one.
@@ -157,18 +179,83 @@ impl WindowManager {
     /// This should be called every time change.
     pub fn refresh_datetime(&mut self, scene: &mut dak::Scene) {
         let date = chrono::Local::now();
-        // https://docs.rs/chrono-wasi07/latest/chrono/format/strftime/index.html
-        scene.set_text_regular(
-            &self.wm_datetime,
-            &date.format("%a %B %e %l:%M %p").to_string(),
-        );
-        scene
-            .text_font()
-            .set(&self.wm_datetime, self.wm_menubar_font.clone());
+
+        for wmo in self.wm_outputs.iter() {
+            // https://docs.rs/chrono-wasi07/latest/chrono/format/strftime/index.html
+            scene.set_text_regular(
+                &wmo.wm_datetime,
+                &date.format("%a %B %e %l:%M %p").to_string(),
+            );
+            scene
+                .text_font()
+                .set(&wmo.wm_datetime, self.wm_menubar_font.clone());
+        }
+
         log::error!(
             "Updated time to: {}",
             date.format("%a %B %e %l:%M %p").to_string()
         );
+    }
+
+    /// Add a new output to the system
+    ///
+    /// This adds the Output to our list and resizes the VirtualOutput
+    /// accordingly.
+    pub fn add_output(
+        &mut self,
+        dakota: &mut dak::Dakota,
+        output_info: &dak::OutputInfo,
+        virtual_output: &mut dak::VirtualOutput,
+        scene: &mut dak::Scene,
+    ) -> Result<()> {
+        let output = dakota
+            .create_output_with_info(output_info, virtual_output)
+            .context("Failed to create Dakota Output")?;
+
+        // First create the root element for this output
+        // ------------------------------------------------------------------
+        let root = scene.create_element().unwrap();
+        scene.add_child_to_element(&self.wm_effects_layer, root.clone());
+        // Position this new output as the rightmost
+        scene.offset().set(
+            &root,
+            dom::RelativeOffset::new(dom::Value::Constant(0), dom::Value::Constant(0)),
+        );
+
+        // Make this element the size of our output
+        let resolution = output.get_resolution();
+        scene
+            .width()
+            .set(&root, dom::Value::Constant(resolution.0 as i32));
+        scene
+            .height()
+            .set(&root, dom::Value::Constant(resolution.1 as i32));
+
+        // Now create our menu bar across the top of the screen
+        // ------------------------------------------------------------------
+        let menubar = Self::create_menubar(scene, self.wm_menubar_font.clone());
+        scene.add_child_to_element(&root, menubar.clone());
+
+        // Add a text region to display our date and time
+        // ------------------------------------------------------------------
+        let datetime = scene.create_element().unwrap();
+        scene.height().set(&datetime, dom::Value::Relative(1.0));
+        scene.content().set(
+            &menubar,
+            dom::Content {
+                el: datetime.clone(),
+            },
+        );
+
+        // Now we can create our output tracking object and add it to our
+        // output list
+        self.wm_outputs.push(WMOutput {
+            wm_output: output,
+            wm_datetime: datetime,
+            wm_output_root: root,
+        });
+
+        Ok(())
     }
 
     /// Create a new WindowManager
@@ -177,20 +264,17 @@ impl WindowManager {
     /// the compositor. The WindowManager will create and own
     /// the Thundr, thereby readying the display to draw.
     pub fn new(
-        virtual_output: &dak::VirtualOutput,
-        output: &dak::Output,
+        dakota: &mut dak::Dakota,
+        virtual_output: &mut dak::VirtualOutput,
         scene: &mut dak::Scene,
         atmos: &mut Atmosphere,
-    ) -> WindowManager {
+    ) -> Result<WindowManager> {
         #[cfg(feature = "renderdoc")]
         let doc = RenderDoc::new().unwrap();
 
         // Tell the atmosphere rend's resolution
         let res = virtual_output.get_size();
         atmos.set_resolution(res);
-        if let Some(drm_dev) = output.get_drm_dev() {
-            atmos.set_drm_dev(drm_dev);
-        }
 
         // Create a DOM object that all others will hang off of
         // ------------------------------------------------------------------
@@ -214,12 +298,7 @@ impl WindowManager {
             root_element: root.clone(),
         });
 
-        // First create our menu bar across the top of the screen
-        // ------------------------------------------------------------------
         let menubar_font = scene.create_font().unwrap();
-        let menubar = Self::create_menubar(scene, menubar_font.clone());
-        scene.add_child_to_element(&root, menubar.clone());
-
         scene.define_font(
             &menubar_font,
             dom::Font {
@@ -234,20 +313,14 @@ impl WindowManager {
                 }),
             },
         );
-        let datetime = scene.create_element().unwrap();
-        scene.height().set(&datetime, dom::Value::Relative(1.0));
-        scene.content().set(
-            &menubar,
-            dom::Content {
-                el: datetime.clone(),
-            },
-        );
 
         // Next add a dummy element to place all of the client window child elements
         // inside of.
         // ------------------------------------------------------------------
         let desktop = scene.create_element().unwrap();
         scene.add_child_to_element(&root, desktop.clone());
+        scene.width().set(&desktop, dom::Value::Relative(1.0));
+        scene.height().set(&desktop, dom::Value::Relative(1.0));
         // set the background for this desktop
         let image = scene.create_resource().unwrap();
         scene
@@ -259,27 +332,58 @@ impl WindowManager {
             .expect("Could not import background image into scene");
         scene.resource().set(&desktop, image);
 
+        // Above this lies the desktop effects. These are layed out
+        // above the toplevel windows.
+        // ------------------------------------------------------------------
+        let effects_layer = scene.create_element().unwrap();
+        scene.add_child_to_element(&root, effects_layer.clone());
+        scene.width().set(&effects_layer, dom::Value::Relative(1.0));
+        scene
+            .height()
+            .set(&effects_layer, dom::Value::Relative(1.0));
+
         // now add a cursor on top of this
         // ------------------------------------------------------------------
+        let cursor_layer = scene.create_element().unwrap();
+        scene.add_child_to_element(&root, cursor_layer.clone());
+        scene.width().set(&cursor_layer, dom::Value::Relative(1.0));
+        scene.height().set(&cursor_layer, dom::Value::Relative(1.0));
+
         let cursor = WindowManager::get_default_cursor(scene);
-        scene.add_child_to_element(&root, cursor.clone());
+        scene.add_child_to_element(&cursor_layer, cursor.clone());
 
         let mut ret = WindowManager {
+            wm_outputs: Vec::with_capacity(1),
+            wm_scene_root: root,
+            wm_desktop: desktop,
+            wm_effects_layer: effects_layer,
+            wm_cursor_layer: cursor_layer,
             wm_cursor: Some(cursor.clone()),
             wm_default_cursor: cursor,
-            wm_scene_root: root,
             wm_menubar_font: menubar_font,
-            wm_datetime: datetime,
-            wm_desktop: desktop,
             wm_atmos_ids: Vec::new(),
             #[cfg(feature = "renderdoc")]
             wm_renderdoc: doc,
         };
+
+        // Create an Output for each display we have detected
+        for info in dakota.get_output_info().iter() {
+            ret.add_output(dakota, info, virtual_output, scene);
+        }
+
+        if ret.wm_outputs.len() == 0 {
+            return Err(anyhow!("Could not find an Output to present to"));
+        }
+
+        if let Some(drm_dev) = ret.wm_outputs[0].wm_output.get_drm_dev() {
+            atmos.set_drm_dev(drm_dev);
+        }
+
         ret.refresh_datetime(scene);
         // This sets the desktop size
         ret.handle_ood(virtual_output, scene);
 
-        return ret;
+        return Ok(ret);
     }
 
     /// Set the desktop background for the renderer

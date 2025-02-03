@@ -439,6 +439,14 @@ impl Thundr {
         }
     }
 
+    /// Get the primary Device
+    ///
+    /// This is helpful for clients that need to know which Device
+    /// to create resources on by default.
+    pub fn get_primary_dev(&self) -> Arc<Device> {
+        self.th_primary_dev.clone()
+    }
+
     /// Get a display object to draw with
     ///
     /// Display objects represent a particular output, either a window in a desktop
