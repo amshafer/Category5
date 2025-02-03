@@ -134,6 +134,12 @@ pub struct RelativeOffset {
     pub y: Value,
 }
 
+impl RelativeOffset {
+    pub fn new(x: Value, y: Value) -> Self {
+        Self { x: x, y: y }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Copy, Clone)]
 pub struct Offset<T: Copy> {
     pub x: T,

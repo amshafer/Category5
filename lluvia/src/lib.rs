@@ -1088,6 +1088,19 @@ pub struct Snapshot<'a, T: Clone + 'static> {
     s_ids: VecContainer<Entity>,
     /// sparse blocks holding updated values.
     s_data: VecContainer<T>,
+    /// Cached drop container
+    ///
+    /// One unfortunate side effect of snapshots is that they hold a lock
+    /// while applying all of the updates. This becomes a problem when the
+    /// data type is or contains an Entity. When this happens and this is
+    /// the last reference to the Entity the Entity will be dropped, triggering
+    /// a free in all data tables. Problem is we are still holding a write
+    /// lock during that time.
+    ///
+    /// This provides a way to "cache" the dropped value, stashing it here
+    /// until all write updates are complete and then dropping all of the
+    /// old ones once we have release our lock.
+    s_cached_drop: Vec<T>,
 }
 
 impl<'a, T: Clone + 'static> Snapshot<'a, T> {
@@ -1101,6 +1114,7 @@ impl<'a, T: Clone + 'static> Snapshot<'a, T> {
             s_parent: parent,
             s_readlock: Some(readlock),
             s_is_modified: false,
+            s_cached_drop: Vec::with_capacity(0),
         }
     }
 
@@ -1171,6 +1185,26 @@ impl<'a, T: Clone + 'static> Snapshot<'a, T> {
     /// This resets the snapshot
     #[inline]
     pub fn commit(&mut self) {
+        self.commit_internal(false);
+    }
+
+    /// Commit this snapshot while caching all old values
+    ///
+    /// This is the exact same as commit but stores all old values and releases
+    /// them after the lock has been released. This is mean to be used for data
+    /// types which are or contain an Entity. This is an expensive variant.
+    #[inline]
+    pub fn commit_with_cached_drop(&mut self) {
+        self.commit_internal(true);
+    }
+
+    /// Commit this snapshot
+    ///
+    /// This will merge all changes back into the parent component atomically.
+    ///
+    /// This resets the snapshot
+    #[inline]
+    pub fn commit_internal(&mut self, cache_on_drop: bool) {
         // First we need to drop our read lock
         self.precommit();
 
@@ -1181,6 +1215,15 @@ impl<'a, T: Clone + 'static> Snapshot<'a, T> {
             // for each entity in the snapshot
             // set the parent value to whatever's contained in the snapshot
             for id in self.s_ids.iter() {
+                // If the user requested it (knowing that the data type contains
+                // an Entity) cache the replaced values here until we release the
+                // lock
+                if cache_on_drop {
+                    if let Some(val) = writer.t_entity.take(id.get_raw_id()) {
+                        self.s_cached_drop.push(val);
+                    }
+                }
+
                 // we clear our data container here, as every id modified in
                 // the system will have its data set back to None
                 if let Some(val) = self.s_data.take(id.get_raw_id()) {
@@ -1192,6 +1235,9 @@ impl<'a, T: Clone + 'static> Snapshot<'a, T> {
                 }
             }
         }
+
+        // Drop any cached values
+        self.s_cached_drop.clear();
 
         self.s_is_modified = false;
         self.s_ids.clear();

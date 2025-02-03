@@ -107,6 +107,8 @@ pub struct LibinputPlat {
     /// id, so we need to find a way to allow recreation of the
     /// VirtualOutput.
     dp_output_id: Option<OutputId>,
+    /// Dummy timeout we use for triggering a draw on startup
+    dp_cached_timeout: Option<usize>,
 }
 
 impl LibinputPlat {
@@ -149,6 +151,7 @@ impl LibinputPlat {
             dp_current_modifiers: Mods::NONE,
             dp_fdwatch: fdwatch,
             dp_output_id: None,
+            dp_cached_timeout: Some(0),
         })
     }
 
@@ -328,8 +331,12 @@ impl Platform for LibinputPlat {
         _global_evsys: &mut GlobalEventSystem,
         _output_queues: &mut ll::Component<OutputEventSystem>,
         platform_queues: &mut ll::Component<PlatformEventSystem>,
-        timeout: Option<usize>,
+        mut timeout: Option<usize>,
     ) -> Result<()> {
+        if self.dp_cached_timeout.is_some() && timeout.is_none() {
+            timeout = self.dp_cached_timeout.take();
+        }
+
         self.dp_fdwatch.wait_for_events(timeout);
         // TODO: return UserFdReadable?
 
@@ -340,7 +347,11 @@ impl Platform for LibinputPlat {
     }
 
     fn get_th_surf_type<'a>(&self) -> Result<th::SurfaceType> {
-        Ok(th::SurfaceType::Display)
+        Ok(match self.dp_type {
+            #[cfg(feature = "drm")]
+            BackendType::Drm => th::SurfaceType::Drm,
+            BackendType::VkD2d => th::SurfaceType::Display,
+        })
     }
 }
 

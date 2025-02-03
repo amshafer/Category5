@@ -157,17 +157,17 @@ impl<'a> LayoutTransaction<'a> {
         self.lt_resource_thundr_image.commit();
         self.lt_resource_color.commit();
         self.lt_fonts.commit();
-        self.lt_text_font.commit();
+        self.lt_text_font.commit_with_cached_drop();
         self.lt_texts.commit();
         self.lt_glyphs.commit();
         self.lt_is_viewport.commit();
         self.lt_viewports.commit();
-        self.lt_layout_nodes.commit();
+        self.lt_layout_nodes.commit_with_cached_drop();
         self.lt_contents.commit();
         self.lt_widths.commit();
         self.lt_heights.commit();
         self.lt_offsets.commit();
-        self.lt_children.commit();
+        self.lt_children.commit_with_cached_drop();
     }
 
     /// Helper to get the Font Instance for a particular element

@@ -281,6 +281,33 @@ impl Dakota {
         .ok()
     }
 
+    /// Get the DRM format modifiers supported by Dakota's primary GPU
+    pub fn get_supported_drm_render_modifiers(&self) -> Vec<u64> {
+        self.d_thund
+            .get_primary_dev()
+            .get_supported_drm_render_modifiers()
+            .iter()
+            .map(|m| m.drm_format_modifier)
+            .collect()
+    }
+
+    /// Get list of OutputInfos
+    ///
+    /// This returns a list of OutputInfo structures that can be used to create
+    /// Outputs. Each OutputInfo represents an abstract presentation region. Multiple
+    /// Outputs can possibly be created from an OutputInfo, or only a one to one
+    /// relationship may be supported.
+    pub fn get_output_info(&self) -> Vec<OutputInfo> {
+        self.d_output_infos.clone()
+    }
+
+    /// Create a scene compatible with this VirtualOutput
+    ///
+    /// Resources will be created on the primary, default GPU.
+    pub fn create_scene(&self, virtual_output: &VirtualOutput) -> Result<Scene> {
+        Scene::new(self.d_thund.get_primary_dev(), virtual_output.get_size())
+    }
+
     /// Create a new Output
     ///
     /// Outputs represent a displayable surface and allow for performing rendering and
