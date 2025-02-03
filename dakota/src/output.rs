@@ -127,6 +127,9 @@ pub struct Output {
     d_output_plat: Box<dyn OutputPlatform>,
     /// per-Output event queues
     d_output_event_system: ll::Component<OutputEventSystem>,
+    /// Offset of this Output within the VirtualOutput. This controls
+    /// which region of the Scene is drawn.
+    pub(crate) d_offset: (i32, i32),
 }
 
 impl Output {
@@ -143,6 +146,7 @@ impl Output {
             d_output_event_system: evsys,
             d_output_plat: window_plat,
             d_display: display,
+            d_offset: (0, 0),
         })
     }
 
@@ -156,6 +160,14 @@ impl Output {
     /// Get the current size of the drawing region for this display
     pub fn get_resolution(&self) -> (u32, u32) {
         self.d_display.get_resolution()
+    }
+
+    /// Set the presentation offset of this Output
+    ///
+    /// Sets the offset of this Output within the VirtualOutput. This controls
+    /// which region of the Scene is drawn.
+    pub fn set_offset(&mut self, x: i32, y: i32) {
+        self.d_offset = (x, y);
     }
 
     /// Get the major, minor of the DRM device currently in use

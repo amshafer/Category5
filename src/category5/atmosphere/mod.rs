@@ -625,21 +625,27 @@ impl Atmosphere {
         self.set_cursor_pos((pos.0 + dx, pos.1 + dy));
 
         // Now update the grabbed window if it exists
-        let grabbed = match self.get_grabbed() {
-            Some(g) => g,
-            None => return,
-        };
+        if let Some(grabbed) = self.get_grabbed() {
+            self.move_surface(&grabbed, dx, dy);
+        }
+    }
 
+    /// Helper to move a surface to a particular location
+    ///
+    /// This will handle any reparenting or layout that needs to
+    /// take place. If the new coordinates are invalid the move will
+    /// not take place.
+    pub fn move_surface(&mut self, surf: &SurfaceId, dx: f64, dy: f64) {
         // Need to update both the surface and window positions
-        let mut gpos = *self.a_window_pos.get(&grabbed).unwrap();
+        let mut gpos = *self.a_window_pos.get(&surf).unwrap();
         gpos.0 += dx as f32;
         gpos.1 += dy as f32;
-        self.a_window_pos.set(&grabbed, (gpos.0, gpos.1));
+        self.a_window_pos.set(&surf, (gpos.0, gpos.1));
 
-        let mut gpos = *self.a_surface_pos.get(&grabbed).unwrap();
+        let mut gpos = *self.a_surface_pos.get(&surf).unwrap();
         gpos.0 += dx as f32;
         gpos.1 += dy as f32;
-        self.a_surface_pos.set(&grabbed, (gpos.0, gpos.1));
+        self.a_surface_pos.set(&surf, (gpos.0, gpos.1));
     }
 
     // -- subsystem specific handlers --

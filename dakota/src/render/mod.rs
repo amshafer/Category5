@@ -326,8 +326,9 @@ impl<'a> RenderTransaction<'a> {
         frame: &mut th::FrameRenderer<'a>,
         root_viewport: &th::Viewport,
         root_node: DakotaId,
+        base: (i32, i32),
     ) -> th::Result<()> {
-        self.draw_node_recurse(frame, &root_viewport, &root_node, (0, 0))
+        self.draw_node_recurse(frame, &root_viewport, &root_node, base)
     }
 }
 
@@ -336,6 +337,8 @@ impl Output {
     ///
     /// This starts at the root viewport and draws all child viewports
     /// present in the specified scene object.
+    ///
+    /// Offset specifies the starting offset into this Scene to start drawing.
     pub(crate) fn draw_surfacelists(&mut self, scene: &Scene) -> th::Result<()> {
         let root_node = scene
             .d_layout_tree_root
@@ -355,7 +358,14 @@ impl Output {
             rt_viewports: scene.d_viewports.snapshot(),
             rt_layout_nodes: scene.d_layout_nodes.snapshot(),
         };
-        trans.draw_surfacelists(&mut frame, &root_viewport, root_node)?;
+        trans.draw_surfacelists(
+            &mut frame,
+            &root_viewport,
+            root_node,
+            // Invert the direction of our offset. This will shift
+            // everything down to the origin of our window
+            (-self.d_offset.0, -self.d_offset.1),
+        )?;
         trans.commit();
         frame.present()
     }

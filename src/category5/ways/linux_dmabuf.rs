@@ -48,8 +48,7 @@ impl ws::GlobalDispatch<zldv1::ZwpLinuxDmabufV1, ()> for Climate {
         for format in drm_formats {
             dma.format(format);
 
-            let render_mods = state.c_output.get_supported_drm_render_modifiers();
-            for modifier in render_mods.iter() {
+            for modifier in state.c_primary_render_mods.iter() {
                 let mod_hi = (modifier >> 32) as u32;
                 let mod_low = (modifier & 0xffffffff) as u32;
                 dma.modifier(format, mod_hi, mod_low);

@@ -66,9 +66,8 @@ pub struct Climate {
     /// This is the virtual surface that we lay out a desktop on
     /// and present portions of.
     c_virtual_output: dak::VirtualOutput,
-    /// This is our presentation object which actually shows pixels
-    /// on a presentable surface such as a physical display.
-    c_output: dak::Output,
+    /// The DRM format modifiers supported by the primary GPU
+    c_primary_render_mods: Vec<u64>,
     /// This is our scene, a layout tree of the Dakota Elements which
     /// correspond to our Wayland surfaces.
     c_scene: dak::Scene,
@@ -79,6 +78,7 @@ pub struct Climate {
     ///
     /// We need this so that we can iterate through and signal size
     /// changes and the like.
+    // TODO: make this a Component for OutputId
     c_outputs: Vec<wl_output::WlOutput>,
     /// The input subsystem
     c_input: Input,
@@ -91,24 +91,22 @@ impl Climate {
         let mut virtual_output = dakota
             .create_virtual_output()
             .expect("Failed to create Dakota Virtual Output Surface");
-        let output = dakota
-            .create_output(&virtual_output)
-            .expect("Failed to create Dakota Output");
 
-        let resolution = output.get_resolution();
-        virtual_output.set_size(resolution);
+        // Set a default resolution. The window manager will update this
+        // as Outputs are added
+        virtual_output.set_size((128, 128));
 
-        let scene = output
+        let scene = dakota
             .create_scene(&virtual_output)
             .expect("Could not create scene");
 
         Self {
             c_atmos: Arc::new(Mutex::new(Atmosphere::new(&scene))),
+            c_primary_render_mods: dakota.get_supported_drm_render_modifiers(),
             c_dakota: dakota,
             c_virtual_output: virtual_output,
-            c_output: output,
             c_scene: scene,
-            c_outputs: Vec::new(),
+            c_outputs: Vec::with_capacity(1),
             c_input: Input::new(),
         }
     }
@@ -167,11 +165,12 @@ impl EventManager {
         // Our big state holder for wayland-rs
         let mut state = Climate::new();
         let wm = WindowManager::new(
+            &mut state.c_dakota,
             &mut state.c_virtual_output,
-            &mut state.c_output,
             &mut state.c_scene,
             state.c_atmos.lock().unwrap().deref_mut(),
-        );
+        )
+        .expect("Could not create Window Manager");
 
         let evman = EventManager {
             em_wm: wm,
@@ -225,53 +224,6 @@ impl EventManager {
         )?;
 
         return Ok(id);
-    }
-
-    /// Handle Dakota notifying us that the display surface is out of date
-    ///
-    /// This is where we update the resolution and notify clients of the
-    /// change
-    fn handle_ood(&mut self) {
-        let res = self.em_climate.c_output.get_resolution();
-        {
-            let mut atmos = self.em_climate.c_atmos.lock().unwrap();
-            atmos.mark_changed();
-            atmos.set_resolution(res);
-        }
-        self.em_climate.send_all_geometry();
-
-        // First handle the resize on this output
-        self.em_climate
-            .c_output
-            .handle_resize()
-            .expect("Failed to resize output");
-        // Update our VirtualOutput with the newly resized dimensions
-        let resolution = self.em_climate.c_output.get_resolution();
-        self.em_climate.c_virtual_output.set_size(resolution);
-
-        // Notify our WM that the resize has taken place
-        self.em_wm.handle_ood(
-            &mut self.em_climate.c_virtual_output,
-            &mut self.em_climate.c_scene,
-        );
-    }
-
-    /// Redraw the output
-    ///
-    /// This recompiles our scene and redraws our Dakota Output
-    fn redraw(&mut self) {
-        let mut atmos = self.em_climate.c_atmos.lock().unwrap();
-        log::debug!("trying to render frame");
-        self.em_wm
-            .render_frame(
-                &mut self.em_climate.c_virtual_output,
-                &mut self.em_climate.c_output,
-                &mut self.em_climate.c_scene,
-                &mut atmos,
-            )
-            .expect("Failed to redraw output");
-        log::debug!("rendering frame done");
-        atmos.clear_changed();
     }
 
     /// Each subsystem has a function that implements its main
@@ -347,26 +299,15 @@ impl EventManager {
                 .dispatch_clients(&mut self.em_climate)
                 .unwrap();
 
-            // If our state database was updated by input or wayland processing then
-            // we need to rerender
-            let mut needs_render = self.em_climate.c_atmos.lock().unwrap().is_changed();
-
-            while let Some(ev) = self.em_climate.c_output.pop_event() {
-                match &ev {
-                    // Redraw our scene
-                    dak::OutputEvent::Redraw => {
-                        needs_render = false;
-                        self.redraw();
-                    }
-                    // Our output surface is out of date, reallocate it
-                    dak::OutputEvent::Resized => self.handle_ood(),
-                    dak::OutputEvent::Destroyed => {}
-                }
-            }
-
-            if needs_render {
-                self.redraw();
-            }
+            let mut atmos = self.em_climate.c_atmos.lock().unwrap();
+            self.em_wm
+                .dispatch_drawing(
+                    &mut self.em_climate.c_virtual_output,
+                    &mut self.em_climate.c_scene,
+                    &mut atmos,
+                )
+                .unwrap();
+            atmos.clear_changed();
             log::debug!("Output handling done");
 
             // Flush any wayland events we sent here
