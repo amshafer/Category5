@@ -228,7 +228,46 @@ impl DrmSwapchain {
         }
 
         let mut payloads: Vec<Arc<dyn DisplayInfoPayload>> = Vec::new();
-        let (res, coninfo, crtcinfo) = Self::get_drm_infos(&drm);
+        let (resources, coninfo, crtcinfo) = Self::get_drm_infos(&drm);
+
+        // Our list of available primary planes
+        let mut primary_planes = drm.plane_handles().or(Err(ThundrError::NO_DISPLAY))?;
+        primary_planes.retain(|&plane| {
+            // verify that this is a primary plane
+            if let Ok(plane_prop_list) = drm.get_properties(plane) {
+                for (&id, &val) in plane_prop_list.iter() {
+                    if let Ok(prop_info) = drm.get_property(id) {
+                        if prop_info
+                            .name()
+                            .to_str()
+                            .map(|x| x == "type")
+                            .unwrap_or(false)
+                        {
+                            return val == (drm::control::PlaneType::Primary as u32).into();
+                        }
+                    }
+                }
+            }
+            false
+        });
+
+        // Find the next CRTC + Primary plane combo available. Some hw
+        // only supports one primary plane per CRTC, so we do need to check
+        // all of them.
+        let mut get_primary_plane_crtc_combo = || {
+            for crtc in crtcinfo.iter() {
+                for i in 0..primary_planes.len() {
+                    let info = drm.get_plane(primary_planes[i]).unwrap();
+                    // verify this plane supports our crtc
+                    let compatible_crtcs = resources.filter_crtcs(info.possible_crtcs());
+                    if compatible_crtcs.contains(&crtc.handle()) {
+                        return Some((primary_planes.swap_remove(i), crtc));
+                    }
+                }
+            }
+
+            return None;
+        };
 
         // Filter each connector until we find one that's connected.
         // We will fill up our payload list with everything we find
@@ -236,41 +275,7 @@ impl DrmSwapchain {
             .iter()
             .filter(|&i| i.state() == connector::State::Connected)
         {
-            // Default to the first CRTC available
-            let crtc = crtcinfo.first().ok_or(ThundrError::NO_DISPLAY)?;
-
-            // Find the primary plane
-            // We need to find a compatible plane for this available connector
-            let planes = drm.plane_handles().or(Err(ThundrError::NO_DISPLAY))?;
-            let plane = *planes
-                .iter()
-                .find(|&&plane| {
-                    let plane_prop_list = match drm.get_properties(plane) {
-                        Ok(props) => props,
-                        Err(_) => return false,
-                    };
-                    let info = drm.get_plane(plane).unwrap();
-                    // verify this plane supports our crtc
-                    let compatible_crtcs = res.filter_crtcs(info.possible_crtcs());
-                    if !compatible_crtcs.contains(&crtc.handle()) {
-                        return false;
-                    }
-
-                    for (&id, &val) in plane_prop_list.iter() {
-                        if let Ok(prop_info) = drm.get_property(id) {
-                            if prop_info
-                                .name()
-                                .to_str()
-                                .map(|x| x == "type")
-                                .unwrap_or(false)
-                            {
-                                return val == (drm::control::PlaneType::Primary as u32).into();
-                            }
-                        }
-                    }
-                    false
-                })
-                .ok_or(ThundrError::NO_DISPLAY)?;
+            let (plane, crtc) = get_primary_plane_crtc_combo().ok_or(ThundrError::NO_DISPLAY)?;
 
             let mut props = Vec::new();
 
