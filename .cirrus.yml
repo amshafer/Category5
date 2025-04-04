@@ -1,5 +1,5 @@
 freebsd_instance:
-        image_family: freebsd-14-1
+        image_family: freebsd-14-2
 
 category5_freebsd_task:
         install_dependencies_script: pkg install -y rust vulkan-loader mesa-libs mesa-dri libxkbcommon libinput wayland wayland-protocols libudev-devd pkgconf sdl2 cmake ninja harfbuzz vulkan-validation-layers perceptualdiff fontconfig jetbrains-mono inconsolata-ttf
